@@ -1,0 +1,2 @@
+rustfmt --edition 2021 --check crates/script/tests/client_adapter_inventory.rs
+exit 0

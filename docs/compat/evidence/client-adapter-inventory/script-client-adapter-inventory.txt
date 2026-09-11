@@ -1,0 +1,9 @@
+running 6 tests
+test caller_mutation_does_not_corrupt_posted_snapshot ... ok
+test counts_ops_and_component_identity_are_posted_not_invented ... ok
+test empty_inventory_does_not_read_bank_or_equipment ... ok
+test omitted_delta_keeps_last_inventory_replacement_and_clear_update ... ok
+test sparse_slots_keep_duplicate_names_and_distinct_ids ... ok
+test two_isolates_do_not_exchange_inventory_rows ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
