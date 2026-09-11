@@ -1,0 +1,13 @@
+{
+  "verified_at": "2026-09-11T06:29:02.766261+00:00",
+  "host_commit": "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 6242,
+  "binary_sha256": "a8a00e966071b2c016dd9ad6fa665e5aafa33dff458d373760971107e327fe8e",
+  "engine_manifest_sha256": "a8490093c5af0dc947d10aaa121842b94bf8a01048fc673916b232b200cf027f",
+  "engine_files_verified": 1213,
+  "original_service": "WorkingDirectory=/home/acfrazier/274bot-campaign/server-4c95f87\nUser=acfrazier\nActiveState=inactive\nSubState=dead\n",
+  "overlays": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  }
+}

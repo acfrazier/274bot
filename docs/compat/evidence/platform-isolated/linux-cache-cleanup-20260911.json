@@ -1,0 +1,34 @@
+{
+  "checked_at": "2026-09-11T06:05:00.883162+00:00",
+  "targets": [
+    {
+      "target": "/home/builder/274bot-campaign/multirevision-20260910/target-isolated-6c7075ce",
+      "no_open_files": true,
+      "kept_binaries": [
+        {
+          "path": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-6c7075ce/bin/catalog_boundary_live-6c7075ce",
+          "sha256": "bfec980e02fabe70c05dd9721e92156403c32418a46db27a710fab9ad33c534f"
+        },
+        {
+          "path": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-6c7075ce/bin/tui-play-6c7075ce",
+          "sha256": "8daf7d45cde90fdd4ec938bafb00645dbe95688b50224e36e3a963a430225b09"
+        }
+      ],
+      "exit_code": 0,
+      "output": "     Removed 8568 files, 7.9GiB total\n"
+    },
+    {
+      "target": "/home/builder/274bot-campaign/multirevision-20260910/target-tui-isolated-6c7075ce",
+      "no_open_files": true,
+      "kept_binaries": [
+        {
+          "path": "/home/builder/274bot-campaign/multirevision-20260910/tui-isolated-6c7075ce/tui-proof",
+          "sha256": "78149b98fe0d380d3a43098c1db10b86b3caad7b3ef8a141517b231ad252d946"
+        }
+      ],
+      "exit_code": 0,
+      "output": "     Removed 6178 files, 4.8GiB total\n"
+    }
+  ],
+  "scope": "Only two completed Cargo targets; source exports, copied binaries and all raw evidence retained."
+}

@@ -1,0 +1,19 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"VialFiller","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/VialFiller/VialFiller.ts","source_sha256":"58f95dca5a65bfc6048c1da6a3eda8a8153b90979c0a30c237e76ed437c8bd4c","compiled_sha256":"b5e83534ea1879e250bd8511577beffd8d153724e17bffc53a8ac79cd3fdc306","siblings":[{"module":"/rs2b0t/bot/scripts/bot/VialFillerLogic.js","compiled_sha256":"cab7a8d2ae274f32bb091f2da933660b0e4025e83f5c1f393524e832b58aa633"}],"settings":{"bank":"Falador West","buyVials":false,"buyEveryRuns":5.0,"buyQty":27.0,"coinsPerTrip":1000.0}},"account":"live8rxtvd_0","engine_speed_ms":null}
+[host-play] slot live8rxtvd_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot live8rxtvd_0: handshake begin reconnect=false
+[host-play] slot live8rxtvd_0: handshake ok
+[host-play] slot live8rxtvd_0: queued mainland tele+setvar (scene 2)
+[host] slot live8rxtvd_0: d_loop_us=7759 d_raster_us=0 d_observe_us=34697 max_observe_us=3503 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot live8rxtvd_0: handshake begin reconnect=true
+[host-play] slot live8rxtvd_0: handshake ok
+[host] slot live8rxtvd_0: d_loop_us=648 d_raster_us=0 d_observe_us=30691 max_observe_us=2840 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live8rxtvd_0: queued mainland tele+setvar (scene 2)
+[host] slot live8rxtvd_0: d_loop_us=19563 d_raster_us=0 d_observe_us=64584 max_observe_us=6239 d_paints=0 d_skips=50 d_ticks=26 window_ms=15544
+[host] slot live8rxtvd_0: d_loop_us=2066 d_raster_us=0 d_observe_us=30697 max_observe_us=2630 d_paints=0 d_skips=50 d_ticks=42 window_ms=25194
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot live8rxtvd_0: d_loop_us=2039 d_raster_us=0 d_observe_us=28426 max_observe_us=896 d_paints=0 d_skips=50 d_ticks=43 window_ms=25798
+[host] slot live8rxtvd_0: d_loop_us=2521 d_raster_us=0 d_observe_us=29115 max_observe_us=1593 d_paints=0 d_skips=50 d_ticks=41 window_ms=24598
+FAIL: catalog_boundary_live: scenario failed: step 6 (open and acknowledge the exact empty-vial seed bank): fresh_bank_item_id(229)>=56 not seen within 150 ticks; evidence=Some(Evidence { scenario: "vial_filler", outcome: "FAIL", predicate: "fresh_bank_item_id(229)>=56", ticks: 161, elapsed_ms: 108051, message: Some("step 6 (open and acknowledge the exact empty-vial seed bank): fresh_bank_item_id(229)>=56 not seen within 150 ticks"), tile: Some([2946, 3368, 0]), inv: [], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: "Inventory wiped.", username: None }, ChatRow { text: "set tutorial: to 1000", username: None }, ChatRow { text: "Welcome to RuneScape.", username: None }], scene: 2 })

@@ -1,0 +1,54 @@
+{
+  "overlays": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "host_commit": "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "platform": "win32",
+  "source_files_verified": 6242,
+  "target_dir": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\target-isolated-b1cff8a7",
+  "isolated_build": true,
+  "target_started_empty": true,
+  "jobs": [
+    {
+      "name": "catalog_boundary_live",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "test",
+        "-p",
+        "host-play",
+        "--test",
+        "catalog_boundary_live",
+        "--features",
+        "memory-profile",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T06:04:55.479277+00:00",
+      "elapsed_seconds": 130.246,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-b1cff8a7\\bin\\catalog_boundary_live-b1cff8a7.exe",
+      "binary_sha256": "1b4a7043ada0f7d8a080b45c0e10090df76402094e6b1266ca28673d4ec8add9",
+      "binary_bytes": 106229248
+    },
+    {
+      "name": "catalog_watch",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "build",
+        "-p",
+        "panel",
+        "--example",
+        "catalog_watch",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T06:07:07.260898+00:00",
+      "elapsed_seconds": 75.727,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-b1cff8a7\\bin\\catalog_watch-b1cff8a7.exe",
+      "binary_sha256": "8aba73bc9b2faf8162892a6d2e4976daaca85e3a91385578ca3a2453d926db9c",
+      "binary_bytes": 111185920
+    }
+  ],
+  "elapsed_is_not_performance_measurement": true
+}
