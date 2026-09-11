@@ -9,6 +9,32 @@ function varp(index) {
     return row ? row.value : 0;
 }
 
+function finiteInt(n) {
+    return typeof n === 'number' && Number.isInteger(n);
+}
+
+// Posted native scene origin/dims/level. Missing, unavailable, or a
+// zero-dim old buffer must not convert through a silent zero base.
+function sceneReach() {
+    const reach = snap().reach;
+    if (!reach || reach.available !== true) return null;
+    if (
+        !finiteInt(reach.base_x) ||
+        !finiteInt(reach.base_z) ||
+        !finiteInt(reach.level) ||
+        !finiteInt(reach.width) ||
+        !finiteInt(reach.height)
+    ) {
+        return null;
+    }
+    if (reach.width <= 0 || reach.height <= 0) return null;
+    return reach;
+}
+
+function inScene(lx, lz, reach) {
+    return lx >= 0 && lz >= 0 && lx < reach.width && lz < reach.height;
+}
+
 export const reader = proxy('reader', {
     worldTile() {
         return host().tile || snap().here || null;
@@ -120,6 +146,15 @@ export const reader = proxy('reader', {
             buttons: (p.buttons || []).map((b) => ({ qty: b.qty, comId: b.comId })),
         }));
     },
+    toLocal(x, z) {
+        if (!finiteInt(x) || !finiteInt(z)) return null;
+        const reach = sceneReach();
+        if (!reach) return null;
+        const lx = x - reach.base_x;
+        const lz = z - reach.base_z;
+        if (!inScene(lx, lz, reach)) return null;
+        return { lx, lz };
+    },
 });
 
 export const actions = proxy('actions', {
@@ -141,6 +176,19 @@ export const actions = proxy('actions', {
     },
     setRetaliate(on) {
         queue({ op: 'set-retaliate', on: !!on });
+        return true;
+    },
+    walkTo(lx, lz) {
+        if (!finiteInt(lx) || !finiteInt(lz)) return false;
+        const reach = sceneReach();
+        if (!reach) return false;
+        if (!inScene(lx, lz, reach)) return false;
+        queue({
+            op: 'walk-to',
+            x: reach.base_x + lx,
+            z: reach.base_z + lz,
+            level: reach.level,
+        });
         return true;
     },
 });
