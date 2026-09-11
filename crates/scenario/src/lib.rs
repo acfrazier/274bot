@@ -386,6 +386,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         "bone_burier" => Some(bone_burier_scenario()),
         "chicken_killer" => Some(chicken_killer_scenario()),
+        "chicken_killer_bank" => Some(chicken_killer_bank_scenario()),
         "thiever" => Some(thiever_scenario()),
         "alcher" => Some(alcher_scenario()),
         "alcher_custom" => Some(alcher_custom_scenario()),
@@ -431,6 +432,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_paint_path",
         "bone_burier",
         "chicken_killer",
+        "chicken_killer_bank",
         "thiever",
         "alcher",
         "alcher_custom",
@@ -1868,6 +1870,147 @@ fn chicken_killer_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("ChickenKiller"),
             terminal_shot: Some("chicken_killer terminal"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Falador south chicken pen, immediately south of the host cow-field pin
+/// `(3029,3305,0)`. Default Lumbridge pen `(3235,3295,0)` cannot reach a
+/// same-plane Use-quickly booth inside PeriodicBank's 60s walk: castle
+/// booths are upstairs, and Draynor/Al Kharid/Varrock West are ≥128
+/// Chebyshev. This interior is Chebyshev 61 from Falador East vs 64 from
+/// Draynor, so nearest packed booth stays Falador East. ChickenKiller
+/// `destination()` is null; return radius is the reviewed service 6.
+const FALADOR_CHICKENS: WorldTile = WorldTile {
+    x: 3029,
+    z: 3294,
+    level: 0,
+};
+
+const STRENGTH_STAT: i32 = 2;
+
+const CHICKEN_KILLER_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Loot count"),
+    },
+    ScriptSettingInject {
+        id: "bankEveryItems",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "lootMatch",
+        value: ScriptInjectValue::Str("feather"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+];
+
+/// ChickenKiller loot-count trip: melee, `bankEveryItems=1`, Feather 314.
+/// Bones stay the bury keep-list default; melee `afterDeposit` is a no-op.
+/// Prepare only before Start. Proof is combat, exact loot, fresh deposit,
+/// return to the original anchor, then further Strength XP.
+fn chicken_killer_bank_scenario() -> Scenario {
+    let tele = FALADOR_CHICKENS;
+    let first_strength = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let further_strength = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "clear the pack and tele to Falador south chickens before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm no seeded feathers in pack before Start",
+        Proof::ItemIdAtMost {
+            id: FEATHER_ID,
+            count: 0,
+        },
+    ));
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch Strength XP from melee chicken combat",
+            first_strength,
+        ),
+        (
+            "watch exact Feather 314 looted after Start",
+            Proof::ItemId {
+                id: FEATHER_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch script-looted feathers enter a fresh bank",
+            Proof::BankItemId {
+                id: FEATHER_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of feathers after deposit",
+            Proof::ItemIdAtMost {
+                id: FEATHER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch return to the Falador chicken anchor within radius 6",
+            Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius: 6,
+            },
+        ),
+        (
+            "watch the periodic bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch further Strength XP after return", further_strength),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "chicken_killer_bank",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_strength,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ChickenKiller"),
+            script_settings_inject: Some(CHICKEN_KILLER_BANK_INJECT),
+            terminal_shot: Some("chicken_killer_bank"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -5023,6 +5166,7 @@ mod tests {
                 "nav_paint_path",
                 "bone_burier",
                 "chicken_killer",
+                "chicken_killer_bank",
                 "thiever",
                 "alcher",
                 "alcher_custom",
@@ -5292,6 +5436,31 @@ mod tests {
         );
         assert_eq!(chickens.settings.start_script, Some("ChickenKiller"));
         assert!(chickens.settings.require_mainland_base);
+
+        // chicken_killer_bank: Falador pen after seed, loot-count inject, then
+        // combat / exact feather / fresh deposit / return r6 / further XP.
+        let bank = get("chicken_killer_bank").unwrap();
+        let i = start_idx("chicken_killer_bank");
+        assert_eq!(
+            bank.steps[i - 1].wait.arm,
+            Proof::ItemIdAtMost {
+                id: FEATHER_ID,
+                count: 0
+            },
+            "chicken_killer_bank StartScript follows empty-feather ack"
+        );
+        assert_eq!(
+            bank.steps[i - 2].wait.arm,
+            Proof::ArrivedNear {
+                x: 3029,
+                z: 3294,
+                level: 0,
+                radius: 8,
+            },
+            "chicken_killer_bank teles to Falador south chickens"
+        );
+        assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
+        assert!(bank.settings.require_mainland_base);
 
         // thiever: after tele + DrainDialogs, before watch XP
         let thiever = get("thiever").unwrap();
@@ -6194,6 +6363,100 @@ mod tests {
     }
 
     #[test]
+    fn chicken_killer_bank_registers_loot_count_feather_trip() {
+        let bank = get("chicken_killer_bank").expect("chicken_killer_bank");
+        assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
+        assert_eq!(bank.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(bank.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("bankStrategy"),
+            Some(&Value::String("Loot count".into()))
+        );
+        assert_eq!(inject.get("bankEveryItems"), Some(&Value::from(1.0)));
+        assert_eq!(
+            inject.get("lootMatch"),
+            Some(&Value::String("feather".into()))
+        );
+        assert_eq!(
+            inject.get("combatStyle"),
+            Some(&Value::String("melee".into()))
+        );
+        assert!(inject.get("buryBones").is_none());
+        let start = bank
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = bank.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 3029,
+            z: 3294,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: FEATHER_ID,
+            count: 0,
+        }));
+        let watch = bank.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1
+                },
+                Proof::ItemId {
+                    id: FEATHER_ID,
+                    count: 1
+                },
+                Proof::BankItemId {
+                    id: FEATHER_ID,
+                    count: 1
+                },
+                Proof::ItemIdAtMost {
+                    id: FEATHER_ID,
+                    count: 0
+                },
+                Proof::ArrivedNear {
+                    x: 3029,
+                    z: 3294,
+                    level: 0,
+                    radius: 6,
+                },
+                Proof::BankClosed,
+                Proof::StatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1
+                },
+            ]
+        );
+        assert_eq!(
+            bank.proof,
+            Proof::StatXpGain {
+                id: STRENGTH_STAT,
+                min: 1
+            }
+        );
+        let core = get("chicken_killer").unwrap();
+        assert!(
+            core.settings
+                .script_settings_inject
+                .as_ref()
+                .map(|rows| !rows.iter().any(|row| row.id == "bankStrategy"))
+                .unwrap_or(true),
+            "default chicken_killer banking stays off"
+        );
+        assert!(names().contains(&"chicken_killer_bank"));
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -6241,6 +6504,7 @@ mod tests {
         for name in [
             "bone_burier",
             "chicken_killer",
+            "chicken_killer_bank",
             "thiever",
             "alcher",
             "alcher_custom_alias",

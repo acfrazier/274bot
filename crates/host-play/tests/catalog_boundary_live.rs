@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -65,12 +65,14 @@ const GNOME_AFTER_LOG: (i32, i32, i32) = (2474, 3429, 0);
 const GNOME_GROUND_RETURN: (i32, i32, i32) = (2487, 3420, 0);
 const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
 const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
+const FALADOR_CHICKENS: (i32, i32, i32) = (3029, 3294, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum CoreCase {
     BoneBurier,
     ChickenKiller,
+    ChickenKillerBank,
     Thiever,
     Alcher,
     AlcherCustom,
@@ -102,6 +104,7 @@ impl CoreCase {
         match value {
             "bone_burier" => Ok(Self::BoneBurier),
             "chicken_killer" => Ok(Self::ChickenKiller),
+            "chicken_killer_bank" => Ok(Self::ChickenKillerBank),
             "thiever" => Ok(Self::Thiever),
             "alcher" => Ok(Self::Alcher),
             "alcher_custom" => Ok(Self::AlcherCustom),
@@ -136,6 +139,7 @@ impl CoreCase {
         match self {
             Self::BoneBurier => "bone_burier",
             Self::ChickenKiller => "chicken_killer",
+            Self::ChickenKillerBank => "chicken_killer_bank",
             Self::Thiever => "thiever",
             Self::Alcher => "alcher",
             Self::AlcherCustom => "alcher_custom",
@@ -166,7 +170,7 @@ impl CoreCase {
     fn card_name(self) -> &'static str {
         match self {
             Self::BoneBurier => "BoneBurier",
-            Self::ChickenKiller => "ChickenKiller",
+            Self::ChickenKiller | Self::ChickenKillerBank => "ChickenKiller",
             Self::Thiever => "Thiever",
             Self::Alcher => "Alcher",
             Self::AlcherCustom
@@ -560,6 +564,9 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             near(baseline.tile, (3220, 3212, 0), 8) && baseline.item("Bones") >= 5
         }
         CoreCase::ChickenKiller => near(baseline.tile, (3235, 3295, 0), 8),
+        CoreCase::ChickenKillerBank => {
+            near(baseline.tile, FALADOR_CHICKENS, 8) && baseline.item_id(FEATHER_ID) == 0
+        }
         CoreCase::Thiever => {
             near(baseline.tile, (2661, 3306, 0), 10)
                 && baseline.item("Lobster") >= 10
@@ -698,6 +705,9 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
     let requirement = match case {
         CoreCase::BoneBurier => "Lumbridge mainland and five Bones",
         CoreCase::ChickenKiller => "Lumbridge chicken pen",
+        CoreCase::ChickenKillerBank => {
+            "Falador south chickens (3029,3294,0) and empty pack of Feather 314"
+        }
         CoreCase::Thiever => "Ardougne guard stand, ten Lobsters, and prepared stats",
         CoreCase::Alcher
         | CoreCase::AlcherCustom
@@ -778,6 +788,7 @@ struct CoreWitness {
     gnome_course_cycle: GnomeCourseCycle,
     flax_picker_cycle: FlaxPickerCycle,
     superheater_cycle: SuperheaterCycle,
+    chicken_killer_bank_cycle: ChickenKillerBankCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1414,6 +1425,49 @@ impl SuperheaterCycle {
     }
 }
 
+/// Combat and exact feather loot, then a fresh deposit, return r6, further work.
+#[derive(Debug, Clone, Default, Serialize)]
+struct ChickenKillerBankCycle {
+    combat_loot: bool,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+}
+
+impl ChickenKillerBankCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.combat_loot |= now.skill_xp("strength") > baseline.skill_xp("strength")
+            && now.item_id(FEATHER_ID) >= 1
+            && baseline.item_id(FEATHER_ID) == 0;
+        if self.combat_loot
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(FEATHER_ID) == 0
+            && now.bank_item_id(FEATHER_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && near(now.tile, FALADOR_CHICKENS, 6);
+        }
+        if self.returned {
+            if let Some(deposited) = &self.deposited {
+                self.further |= now.skill_xp("strength") > deposited.skill_xp("strength")
+                    || now.item_id(FEATHER_ID) >= 1;
+            }
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -1436,6 +1490,7 @@ impl CoreWitness {
             gnome_course_cycle: GnomeCourseCycle::default(),
             flax_picker_cycle: FlaxPickerCycle::default(),
             superheater_cycle: SuperheaterCycle::default(),
+            chicken_killer_bank_cycle: ChickenKillerBankCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -1574,6 +1629,10 @@ impl CoreWitness {
                 observation,
             );
         }
+        if matches!(self.case, CoreCase::ChickenKillerBank) {
+            self.chicken_killer_bank_cycle
+                .observe(&self.baseline, observation);
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -1634,6 +1693,7 @@ impl CoreWitness {
                     && self.xp_gained("prayer")
                     && self.saw_bury_chat
             }
+            CoreCase::ChickenKillerBank => self.chicken_killer_bank_cycle.qualified(),
             CoreCase::Thiever => self.xp_gained("thieving") && self.item_increased("Coins"),
             CoreCase::Alcher
             | CoreCase::AlcherCustom
@@ -1712,6 +1772,7 @@ impl CoreWitness {
             "gnome_course_cycle": self.gnome_course_cycle,
             "flax_picker_cycle": self.flax_picker_cycle,
             "superheater_cycle": self.superheater_cycle,
+            "chicken_killer_bank_cycle": self.chicken_killer_bank_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -2445,6 +2506,115 @@ mod tests {
 
         let preseeded_only = witness(CoreCase::ChickenKiller, &buried, [&buried]);
         assert!(preseeded_only.qualify().is_err());
+    }
+
+    fn chicken_bank_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        strength_xp: i32,
+    ) -> Observation {
+        let mut observation = observation(&[], &[("strength", strength_xp)], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work() {
+        let baseline = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 100);
+        validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).unwrap();
+
+        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 5)], &[], 104);
+        let mut deposited = chicken_bank_obs((3012, 3355, 0), &[], &[(FEATHER_ID, 5)], 104);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = chicken_bank_obs(FALADOR_CHICKENS, &[], &[(FEATHER_ID, 5)], 104);
+        returned.bank_generation = 1;
+        let mut further = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 3)], &[], 108);
+        further.bank_generation = 1;
+
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&looted])
+            .qualify()
+            .is_err());
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        let xp_only = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 104);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&xp_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut name_only = looted.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Feather".into(), 5);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&name_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut stale = deposited.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &stale, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut closed = deposited.clone();
+        closed.bank_open = false;
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(FEATHER_ID, 5)], 104);
+        far.bank_generation = 1;
+        let mut further_far = further.clone();
+        further_far.tile = Some((3185, 3440, 0));
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &far, &further_far]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(FEATHER_ID, 1);
+        assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &seeded).is_err());
+
+        let lumbridge = chicken_bank_obs((3235, 3295, 0), &[], &[], 100);
+        assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &lumbridge).is_err());
+        validate_case_baseline(CoreCase::ChickenKiller, &lumbridge).unwrap();
     }
 
     #[test]
@@ -3605,6 +3775,7 @@ mod tests {
             CoreCase::FlaxPicker,
             CoreCase::Superheater,
             CoreCase::SuperheaterSteel,
+            CoreCase::ChickenKillerBank,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

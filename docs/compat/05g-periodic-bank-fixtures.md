@@ -1,0 +1,59 @@
+# ChickenKiller periodic-bank fixture
+
+This bounded extension keeps both frozen ChickenKiller cards and script
+source unchanged. Default `chicken_killer` stays melee Off at the Lumbridge
+pen. One shared scenario name:
+
+- `chicken_killer_bank`: `bankStrategy=Loot count`, `bankEveryItems=1`,
+  `lootMatch=feather`, `combatStyle=melee`. Both catalogs, both selected
+  revisions.
+
+Frozen ChickenKiller.ts is identical across catalogs
+(`997caf51e5f409703f4523e74e52f9aa22d388059c36e2810358176b26f9087f`).
+Banking settings `bankRules.ts` is identical
+(`bd9b6d08c9cb23e437f7c18ec05e5a9a99cfcd4b3065554ca10eece28b51be90`):
+labels `Off` / `Loot count` / `Time` / `Either`, `bankEveryItems` min 1.
+Selected 274/289 Feather is id 314, name `Feather`, stackable, alias
+`feather`. Bones 526 remain the bury keep-list default; they are not the
+depositable. Melee `afterDeposit` returns without restock. No autocast.
+
+Default Lumbridge pen `(3235,3295,0)` cannot reach a same-plane
+Use-quickly booth inside the reviewed 60_000 ms walk. Castle booths are
+upstairs; Draynor / Al Kharid / Varrock West are Chebyshev ≥128. The
+fixture therefore anchors at Falador south chickens `(3029,3294,0)`,
+immediately south of the host cow-field pin `(3029,3305,0)`. That interior
+is Chebyshev 61 from Falador East vs 64 from Draynor, so nearest packed
+booth stays Falador East. ChickenKiller `destination()` is null. Return
+radius is the reviewed service 6. Native walk/bank timeouts are unchanged.
+
+Prepare only before Start: empty pack, tele to the Falador interior,
+acknowledge no Feather 314. Script must cause Strength XP and exact
+feather loot, deposit those feathers into a fresh bank generation, return
+to the original anchor within 6, close the bank, then further Strength XP
+or new exact feathers. Queued walk/open/deposit, XP-only, name-only
+feathers, stale/closed bank, or a return outside radius 6 fail. Default
+core ChickenKiller proof is untouched.
+
+Panel and host-play keep using `scenario::get` / `names()`.
+
+## Verification
+
+Implementation baseline: host
+`064de2cfcd7f09db1a5f30e91f269efaf6e0c7af`, client
+`56d80272bcbda3eb1e22db096c1c5e21d3497de4`, plus these owned files.
+Frozen export: `/Users/acfrazier/experiments/274bot/.worktrees/t_63524882-src-064de2cf`
+(git archive of that host + client archive + owned overlay; frozen catalog
+inputs linked read-only). Isolated empty target:
+`/Users/acfrazier/experiments/274bot/.worktrees/t_63524882-target-064de2cf`
+(`isolated_build=true`). Shared campaign target was not used.
+
+- `cargo test -p scenario` — 87 passed.
+- `cargo test -p host-play --features memory-profile --test catalog_boundary_live`
+  — 21 passed, 1 ignored (`LIVE` cell).
+- `cargo clippy -p scenario -- -D warnings` — passed.
+- `cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings`
+  — passed.
+- `cargo fmt --check -p scenario` — clean.
+
+No LIVE or fixture process was launched. Root owns the catalog × revision
+cells after review. Source review does not grant live acceptance.
