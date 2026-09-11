@@ -1,0 +1,31 @@
+{
+  "kind": "unique derived hashes for t_8a8e6ef3 / 05o; original live receipts were not copied",
+  "host_commit": "6750713b80ecfb8ad5036f3ffb0564459f67a856",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "campaign_head_at_writeup": "047fe5869a9dcdf686c6d1165c25417d53461381",
+  "branch": "codex/rs2b0t-multirevision",
+  "brief_84_sha256": "c9422be7b7799022361d403a87899be9cbc187a7c81fb49078bae4f9856deae6",
+  "frozen_export": ".superpowers/review-exports/catalog-root-6750713b",
+  "headless_binary_sha256": "9bd499e7d977ad14b9a96ec54d79a2bef9c9d62b5ed7e669b54f1717915c4450",
+  "headless_binary_bytes": 178455304,
+  "old_catalog": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "newer_catalog": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "engine_274": "4c95f87efe00b068cadbd229d94736626907bd1a",
+  "engine_289": "cc359656b4acd216ca452495874b6beba9a0ac75",
+  "files": {
+    "RuneCrafter.ts both catalogs": "a944049b42ee5adf882aaf119fb7b7f4604b63e2d07ff34e2db6dbf9e3954843",
+    "crates/script/src/shim/bank.js": "31d0380098d9c9d1b759447ce832461c3dd9b52069ceb9b6bd96d5181cfb1aeb",
+    "crates/script/src/shim/rune_craft_locations.js": "2b4863503fbc25f98b9a2bb98746079c91111b2858a42f29da773e6470d94a22",
+    "crates/scenario/src/lib.rs": "d33283c6c30c1b37ac00b1cf7bf6e236048c34fbf185f0cdacd42226f8f58bb6",
+    "crates/scenario/src/proof.rs": "0b1df11b6008c172b38678eaec357f5072ce82b212aa2f8b3a3c3c54ba238784",
+    "crates/scenario/src/runner.rs": "a9003714240d17bc26f60a66f37405172dca181b1ab2c8afdf229be767062ad5",
+    "crates/host-play/tests/catalog_boundary_live.rs": "bf796b98c552275603ae473c825b00d55e28cd2a5608299e05eb3c830c55eee5"
+  },
+  "live_log_sha256_matches_cell_json": {
+    "r274-rune-crafter-100adccc-6750713b.log": "228f63ab13849a5c0b62add58670a6293b89dd7730af9f419b2df9d6e6b15e8c",
+    "r274-rune-crafter-8e7d965b-6750713b.log": "ceaa09e76438350abb6209f3a03f7b6b8fdb10281531fd697d85c2e7ac5af7bc",
+    "r289-rune-crafter-100adccc-6750713b.log": "3c5a6b509ca90a5e2dab51ebff2dd43f06321c06f704f8014a87f64161bfeba2",
+    "r289-rune-crafter-8e7d965b-6750713b.log": "e0a7cbfd04b6e99dfabbc52027e4f75117f0f6905435686e0677a9db779a01e9"
+  },
+  "cmp_RuneCrafter_ts": 0
+}

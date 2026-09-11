@@ -1,0 +1,70 @@
+{
+  "scenario": "rune_crafter",
+  "host": "6750713b80ecfb8ad5036f3ffb0564459f67a856",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "9bd499e7d977ad14b9a96ec54d79a2bef9c9d62b5ed7e669b54f1717915c4450",
+  "note": "elapsed_seconds is wall time, not a performance claim",
+  "cells": [
+    {
+      "id": "r274-rune-crafter-100adccc-6750713b",
+      "revision": "274",
+      "catalog": "100adccc",
+      "exit_code": 0,
+      "elapsed_seconds": 141.452,
+      "runner_outcome": "PASS",
+      "predicate": "has_item_id(556)>=1",
+      "ticks": 243,
+      "elapsed_ms": 138340,
+      "tile": [2843, 4832, 0],
+      "inv": [{"id": 1438, "name": "Air talisman", "count": 1}, {"id": 556, "name": "Air rune", "count": 27}],
+      "core_present": true,
+      "core_further": true
+    },
+    {
+      "id": "r289-rune-crafter-100adccc-6750713b",
+      "revision": "289",
+      "catalog": "100adccc",
+      "exit_code": 0,
+      "elapsed_seconds": 140.881,
+      "runner_outcome": "PASS",
+      "predicate": "has_item_id(556)>=1",
+      "ticks": 244,
+      "elapsed_ms": 137716,
+      "tile": [2843, 4832, 0],
+      "inv": [{"id": 1438, "name": "Air talisman", "count": 1}, {"id": 556, "name": "Air rune", "count": 27}],
+      "core_present": true,
+      "core_further": true
+    },
+    {
+      "id": "r289-rune-crafter-8e7d965b-6750713b",
+      "revision": "289",
+      "catalog": "8e7d965b",
+      "exit_code": 0,
+      "elapsed_seconds": 142.601,
+      "runner_outcome": "PASS",
+      "predicate": "has_item_id(556)>=1",
+      "ticks": 248,
+      "elapsed_ms": 139481,
+      "tile": [2843, 4832, 0],
+      "inv": [{"id": 1438, "name": "Air talisman", "count": 1}, {"id": 556, "name": "Air rune", "count": 27}],
+      "core_present": true,
+      "core_further": true
+    },
+    {
+      "id": "r274-rune-crafter-8e7d965b-6750713b",
+      "revision": "274",
+      "catalog": "8e7d965b",
+      "exit_code": 1,
+      "elapsed_seconds": 183.106,
+      "runner_outcome": "FAIL",
+      "predicate": "has_item_id(556)<=0",
+      "ticks": 334,
+      "elapsed_ms": 180010,
+      "tile": [3011, 3355, 0],
+      "inv": [{"id": 1438, "name": "Air talisman", "count": 1}, {"id": 556, "name": "Air rune", "count": 27}],
+      "message": "rune_crafter: deadline 180s exceeded",
+      "core_present": false,
+      "core_further": null
+    }
+  ]
+}
