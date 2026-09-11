@@ -1,0 +1,341 @@
+{"elapsed_seconds": 0.123898, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.611111, "line": "[host-play] slot live1gpyau_0: thread up"}
+{"elapsed_seconds": 4.648671, "line": "274bot: loaded snapshot (4556 models, 336 anim records)"}
+{"elapsed_seconds": 4.839739, "line": "[panel] scenario capture armed: Some(\"alcher terminal\")"}
+{"elapsed_seconds": 4.839791, "line": "[panel] live1gpyau_0: live1gpyau_0: slot up"}
+{"elapsed_seconds": 4.861674, "line": "[host-play] slot live1gpyau_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 5.24362, "line": "[host-play] slot live1gpyau_0: handshake ok"}
+{"elapsed_seconds": 5.314531, "line": "[host] hitch live1gpyau_0: frame_us=70275 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 5.319651, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 5.919437, "line": "[host] hitch live1gpyau_0: frame_us=68853 paints=25 skips=0 ticks=1"}
+{"elapsed_seconds": 5.920622, "line": "[panel] live1gpyau_0: live1gpyau_0: mainland hop queued"}
+{"elapsed_seconds": 5.923831, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 5.923889, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 5.92391, "line": "live script_paint_buttons_ui: running step 1/6"}
+{"elapsed_seconds": 6.471078, "line": "[host] slot live1gpyau_0: d_loop_us=10693 d_raster_us=277415 d_observe_us=44654 max_observe_us=2393 d_paints=50 d_skips=0 d_ticks=3 window_ms=0"}
+{"elapsed_seconds": 6.507258, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 6.611339, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 6.611414, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 7.61451, "line": "[host] slot live1gpyau_0: d_loop_us=10702 d_raster_us=175878 d_observe_us=59451 max_observe_us=3443 d_paints=50 d_skips=0 d_ticks=1 window_ms=1143"}
+{"elapsed_seconds": 8.632331, "line": "live script_paint_buttons_ui: running step 2/6"}
+{"elapsed_seconds": 8.765657, "line": "[host] slot live1gpyau_0: d_loop_us=1064 d_raster_us=152345 d_observe_us=27713 max_observe_us=829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 8.882552, "line": "[host-play] slot live1gpyau_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 8.903073, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 0"}
+{"elapsed_seconds": 9.443249, "line": "[host-play] slot live1gpyau_0: handshake ok"}
+{"elapsed_seconds": 9.507195, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 10.361374, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 10.361453, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 10.627903, "line": "[host] slot live1gpyau_0: d_loop_us=13919 d_raster_us=164694 d_observe_us=72104 max_observe_us=5659 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 11.779185, "line": "[host] slot live1gpyau_0: d_loop_us=1105 d_raster_us=156224 d_observe_us=34435 max_observe_us=3420 d_paints=50 d_skips=0 d_ticks=3 window_ms=1151"}
+{"elapsed_seconds": 12.382296, "line": "live script_paint_buttons_ui: running step 3/6"}
+{"elapsed_seconds": 12.486369, "line": "live script_paint_buttons_ui: running step 4/6"}
+{"elapsed_seconds": 12.93131, "line": "[host] slot live1gpyau_0: d_loop_us=1075 d_raster_us=150812 d_observe_us=29373 max_observe_us=909 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 13.111342, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 13.21553, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 13.215587, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 14.084545, "line": "[host] slot live1gpyau_0: d_loop_us=10307 d_raster_us=166458 d_observe_us=67214 max_observe_us=6957 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 15.236484, "line": "live script_paint_buttons_ui: running step 5/6"}
+{"elapsed_seconds": 15.245499, "line": "[script live1gpyau_0] start load"}
+{"elapsed_seconds": 15.324723, "line": "live script_paint_buttons_ui: running step 6/6"}
+{"elapsed_seconds": 15.324794, "line": "[host] hitch live1gpyau_0: observe_us=79812 paints=249 skips=0 ticks=10"}
+{"elapsed_seconds": 15.328076, "line": "[host] slot live1gpyau_0: d_loop_us=953 d_raster_us=168096 d_observe_us=111080 max_observe_us=79812 d_paints=50 d_skips=0 d_ticks=2 window_ms=1243"}
+{"elapsed_seconds": 15.487839, "line": "[host] hitch live1gpyau_0: observe_us=21888 paints=256 skips=0 ticks=11"}
+{"elapsed_seconds": 16.091247, "line": "[script live1gpyau_0] NatureCrafter runner starting \u2014 ferrying essence for Air runes to [paintproof] straight from the bank (unnoted)"}
+{"elapsed_seconds": 16.091342, "line": "[script live1gpyau_0] interact WalkNear { x: 3013, z: 3355, level: 0, radius: 3, allow_teleports: false }"}
+{"elapsed_seconds": 16.098852, "line": "[panel] live1gpyau_0: script: NatureCrafter runner starting \u2014 ferrying essence for Air runes to [paintproof] straight from the bank (unnoted)"}
+{"elapsed_seconds": 16.464167, "line": "[host] slot live1gpyau_0: d_loop_us=825 d_raster_us=148560 d_observe_us=64531 max_observe_us=21888 d_paints=50 d_skips=0 d_ticks=2 window_ms=1136"}
+{"elapsed_seconds": 16.703374, "line": "[nav-follow] here=WorldTile { x: 3185, z: 3440, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 17.308729, "line": "[nav-walk] here=WorldTile { x: 3184, z: 3439, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 17.308812, "line": "[nav-follow] here=WorldTile { x: 3184, z: 3439, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 17.308831, "line": "[host] hitch live1gpyau_0: observe_us=23009 paints=335 skips=0 ticks=14"}
+{"elapsed_seconds": 17.619487, "line": "[host] slot live1gpyau_0: d_loop_us=912 d_raster_us=155937 d_observe_us=71295 max_observe_us=23009 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 17.897152, "line": "[nav-walk] here=WorldTile { x: 3184, z: 3437, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 17.897237, "line": "[nav-follow] here=WorldTile { x: 3184, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 17.897254, "line": "[host] hitch live1gpyau_0: observe_us=18542 paints=360 skips=0 ticks=15"}
+{"elapsed_seconds": 18.50342, "line": "[nav-walk] here=WorldTile { x: 3183, z: 3435, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 18.503479, "line": "[nav-follow] here=WorldTile { x: 3183, z: 3435, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 18.503495, "line": "[host] hitch live1gpyau_0: observe_us=24700 paints=386 skips=0 ticks=16"}
+{"elapsed_seconds": 18.788358, "line": "[host] slot live1gpyau_0: d_loop_us=922 d_raster_us=149496 d_observe_us=78671 max_observe_us=24700 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 19.095177, "line": "[nav-walk] here=WorldTile { x: 3182, z: 3433, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 19.095253, "line": "[nav-follow] here=WorldTile { x: 3182, z: 3433, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 19.095271, "line": "[host] hitch live1gpyau_0: observe_us=21940 paints=412 skips=0 ticks=17"}
+{"elapsed_seconds": 19.68954, "line": "[nav-walk] here=WorldTile { x: 3181, z: 3432, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 19.689609, "line": "[nav-follow] here=WorldTile { x: 3181, z: 3432, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 19.689636, "line": "[host] hitch live1gpyau_0: observe_us=17429 paints=438 skips=0 ticks=18"}
+{"elapsed_seconds": 19.923477, "line": "[host] slot live1gpyau_0: d_loop_us=950 d_raster_us=161935 d_observe_us=74019 max_observe_us=21940 d_paints=50 d_skips=0 d_ticks=2 window_ms=1135"}
+{"elapsed_seconds": 20.29695, "line": "[nav-walk] here=WorldTile { x: 3179, z: 3432, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 20.297122, "line": "[nav-follow] here=WorldTile { x: 3179, z: 3432, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 20.297159, "line": "[host] hitch live1gpyau_0: observe_us=19897 paints=465 skips=0 ticks=19"}
+{"elapsed_seconds": 20.90314, "line": "[nav-walk] here=WorldTile { x: 3177, z: 3432, level: 0 } aim=WorldTile { x: 3176, z: 3432, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3185, z: 3440, level: 0 })"}
+{"elapsed_seconds": 20.903206, "line": "[nav-follow] here=WorldTile { x: 3177, z: 3432, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 20.90322, "line": "[host] hitch live1gpyau_0: observe_us=19303 paints=491 skips=0 ticks=20"}
+{"elapsed_seconds": 21.070923, "line": "[host] slot live1gpyau_0: d_loop_us=920 d_raster_us=152530 d_observe_us=69581 max_observe_us=19897 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 21.507207, "line": "[nav-walk] here=WorldTile { x: 3175, z: 3431, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 21.507278, "line": "[nav-follow] here=WorldTile { x: 3175, z: 3431, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 21.507299, "line": "[host] hitch live1gpyau_0: observe_us=22862 paints=517 skips=0 ticks=21"}
+{"elapsed_seconds": 22.102712, "line": "[nav-walk] here=WorldTile { x: 3173, z: 3431, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 22.102785, "line": "[nav-follow] here=WorldTile { x: 3173, z: 3431, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 22.102804, "line": "[host] hitch live1gpyau_0: observe_us=21393 paints=543 skips=0 ticks=22"}
+{"elapsed_seconds": 22.22931, "line": "[host] slot live1gpyau_0: d_loop_us=968 d_raster_us=166547 d_observe_us=88256 max_observe_us=22862 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 22.698569, "line": "[nav-walk] here=WorldTile { x: 3171, z: 3429, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 22.698637, "line": "[nav-follow] here=WorldTile { x: 3171, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 22.698654, "line": "[host] hitch live1gpyau_0: observe_us=19842 paints=569 skips=0 ticks=23"}
+{"elapsed_seconds": 23.298752, "line": "[nav-walk] here=WorldTile { x: 3169, z: 3428, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 23.298826, "line": "[nav-follow] here=WorldTile { x: 3169, z: 3428, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 23.298856, "line": "[host] hitch live1gpyau_0: observe_us=22216 paints=595 skips=0 ticks=24"}
+{"elapsed_seconds": 23.374156, "line": "[host] slot live1gpyau_0: d_loop_us=825 d_raster_us=153345 d_observe_us=75462 max_observe_us=22216 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 23.901308, "line": "[nav-walk] here=WorldTile { x: 3167, z: 3426, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 23.901386, "line": "[nav-follow] here=WorldTile { x: 3167, z: 3426, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 23.901416, "line": "[host] hitch live1gpyau_0: observe_us=25328 paints=621 skips=0 ticks=25"}
+{"elapsed_seconds": 24.50658, "line": "[nav-walk] here=WorldTile { x: 3165, z: 3424, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 24.506656, "line": "[nav-follow] here=WorldTile { x: 3165, z: 3424, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 24.506674, "line": "[host] hitch live1gpyau_0: observe_us=21495 paints=647 skips=0 ticks=26"}
+{"elapsed_seconds": 24.534636, "line": "[host] slot live1gpyau_0: d_loop_us=866 d_raster_us=152421 d_observe_us=86743 max_observe_us=25328 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 25.091462, "line": "[nav-walk] here=WorldTile { x: 3163, z: 3422, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 25.091539, "line": "[nav-follow] here=WorldTile { x: 3163, z: 3422, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 25.091563, "line": "[host] hitch live1gpyau_0: observe_us=23546 paints=672 skips=0 ticks=27"}
+{"elapsed_seconds": 25.696408, "line": "[nav-walk] here=WorldTile { x: 3161, z: 3422, level: 0 } aim=WorldTile { x: 3160, z: 3423, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3177, z: 3432, level: 0 })"}
+{"elapsed_seconds": 25.696481, "line": "[nav-follow] here=WorldTile { x: 3161, z: 3422, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 25.696497, "line": "[host] hitch live1gpyau_0: observe_us=17613 paints=698 skips=0 ticks=28"}
+{"elapsed_seconds": 25.702612, "line": "[host] slot live1gpyau_0: d_loop_us=951 d_raster_us=140854 d_observe_us=78585 max_observe_us=23546 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 26.301309, "line": "[nav-walk] here=WorldTile { x: 3159, z: 3422, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 26.301402, "line": "[nav-follow] here=WorldTile { x: 3159, z: 3422, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 26.301419, "line": "[host] hitch live1gpyau_0: observe_us=22614 paints=724 skips=0 ticks=29"}
+{"elapsed_seconds": 26.862781, "line": "[host] slot live1gpyau_0: d_loop_us=970 d_raster_us=146484 d_observe_us=56899 max_observe_us=22614 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 26.896479, "line": "[nav-walk] here=WorldTile { x: 3157, z: 3422, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 26.896548, "line": "[nav-follow] here=WorldTile { x: 3157, z: 3422, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 26.896564, "line": "[host] hitch live1gpyau_0: observe_us=18175 paints=750 skips=0 ticks=30"}
+{"elapsed_seconds": 27.49464, "line": "[nav-walk] here=WorldTile { x: 3155, z: 3422, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 27.494713, "line": "[nav-follow] here=WorldTile { x: 3155, z: 3422, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 27.494728, "line": "[host] hitch live1gpyau_0: observe_us=19562 paints=776 skips=0 ticks=31"}
+{"elapsed_seconds": 27.543415, "line": "[script live1gpyau_0] Go bank pressed \u2014 heading to the bank to park"}
+{"elapsed_seconds": 27.555994, "line": "[panel] live1gpyau_0: script: Go bank pressed \u2014 heading to the bank to park"}
+{"elapsed_seconds": 28.01244, "line": "[host] slot live1gpyau_0: d_loop_us=837 d_raster_us=133275 d_observe_us=68241 max_observe_us=19562 d_paints=50 d_skips=0 d_ticks=1 window_ms=1149"}
+{"elapsed_seconds": 28.094644, "line": "[nav-walk] here=WorldTile { x: 3153, z: 3420, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 28.094713, "line": "[nav-follow] here=WorldTile { x: 3153, z: 3420, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 28.094732, "line": "[host] hitch live1gpyau_0: observe_us=18584 paints=802 skips=0 ticks=32"}
+{"elapsed_seconds": 28.678003, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 28.802992, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 28.803059, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 29.163883, "line": "[host] slot live1gpyau_0: d_loop_us=9665 d_raster_us=145824 d_observe_us=89962 max_observe_us=18584 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 29.291939, "line": "[nav-walk] here=WorldTile { x: 3149, z: 3419, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 29.292016, "line": "[nav-follow] here=WorldTile { x: 3149, z: 3419, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 29.292034, "line": "[host] hitch live1gpyau_0: observe_us=18181 paints=854 skips=0 ticks=34"}
+{"elapsed_seconds": 29.889701, "line": "[nav-walk] here=WorldTile { x: 3147, z: 3419, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 29.88977, "line": "[nav-follow] here=WorldTile { x: 3147, z: 3419, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 29.889789, "line": "[host] hitch live1gpyau_0: observe_us=19324 paints=880 skips=0 ticks=35"}
+{"elapsed_seconds": 30.312335, "line": "[host] slot live1gpyau_0: d_loop_us=815 d_raster_us=139817 d_observe_us=70165 max_observe_us=19324 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 30.507419, "line": "[nav-walk] here=WorldTile { x: 3145, z: 3420, level: 0 } aim=WorldTile { x: 3144, z: 3421, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3161, z: 3422, level: 0 })"}
+{"elapsed_seconds": 30.507489, "line": "[nav-follow] here=WorldTile { x: 3145, z: 3420, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 31.107312, "line": "[nav-walk] here=WorldTile { x: 3143, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 31.107386, "line": "[nav-follow] here=WorldTile { x: 3143, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 31.107402, "line": "[host] hitch live1gpyau_0: observe_us=19070 paints=933 skips=0 ticks=37"}
+{"elapsed_seconds": 31.462527, "line": "[host] slot live1gpyau_0: d_loop_us=861 d_raster_us=137833 d_observe_us=69954 max_observe_us=19070 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 31.702783, "line": "[nav-walk] here=WorldTile { x: 3141, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 31.702856, "line": "[nav-follow] here=WorldTile { x: 3141, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 32.305122, "line": "[nav-walk] here=WorldTile { x: 3139, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 32.305206, "line": "[nav-follow] here=WorldTile { x: 3139, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 32.305227, "line": "[host] hitch live1gpyau_0: observe_us=16450 paints=985 skips=0 ticks=39"}
+{"elapsed_seconds": 32.613644, "line": "[host] slot live1gpyau_0: d_loop_us=867 d_raster_us=129283 d_observe_us=63852 max_observe_us=16450 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 32.898037, "line": "[nav-walk] here=WorldTile { x: 3137, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 32.898113, "line": "[nav-follow] here=WorldTile { x: 3137, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 32.926853, "line": "[script live1gpyau_0] Resume pressed \u2014 back to the loop"}
+{"elapsed_seconds": 32.947479, "line": "[panel] live1gpyau_0: script: Resume pressed \u2014 back to the loop"}
+{"elapsed_seconds": 33.484922, "line": "[nav-walk] here=WorldTile { x: 3135, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 33.484992, "line": "[nav-follow] here=WorldTile { x: 3135, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 33.764276, "line": "[host] slot live1gpyau_0: d_loop_us=883 d_raster_us=120624 d_observe_us=52187 max_observe_us=14977 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 34.082248, "line": "[nav-walk] here=WorldTile { x: 3133, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 34.082317, "line": "[nav-follow] here=WorldTile { x: 3133, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 34.677793, "line": "[nav-walk] here=WorldTile { x: 3131, z: 3422, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 34.677883, "line": "[nav-follow] here=WorldTile { x: 3131, z: 3422, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 34.915399, "line": "[host] slot live1gpyau_0: d_loop_us=890 d_raster_us=125792 d_observe_us=38736 max_observe_us=3296 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 35.294353, "line": "[nav-walk] here=WorldTile { x: 3129, z: 3421, level: 0 } aim=WorldTile { x: 3128, z: 3420, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3145, z: 3420, level: 0 })"}
+{"elapsed_seconds": 35.294429, "line": "[nav-follow] here=WorldTile { x: 3129, z: 3421, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 35.890981, "line": "[nav-walk] here=WorldTile { x: 3127, z: 3419, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 35.891058, "line": "[nav-follow] here=WorldTile { x: 3127, z: 3419, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 36.076734, "line": "[host] slot live1gpyau_0: d_loop_us=912 d_raster_us=130050 d_observe_us=44684 max_observe_us=3943 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 36.484663, "line": "[nav-walk] here=WorldTile { x: 3125, z: 3419, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 36.484741, "line": "[nav-follow] here=WorldTile { x: 3125, z: 3419, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 37.077336, "line": "[nav-walk] here=WorldTile { x: 3123, z: 3419, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 37.077414, "line": "[nav-follow] here=WorldTile { x: 3123, z: 3419, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 37.220529, "line": "[host] slot live1gpyau_0: d_loop_us=838 d_raster_us=130827 d_observe_us=36829 max_observe_us=966 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 37.676971, "line": "[nav-walk] here=WorldTile { x: 3121, z: 3418, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 37.67704, "line": "[nav-follow] here=WorldTile { x: 3121, z: 3418, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 38.289641, "line": "[nav-walk] here=WorldTile { x: 3119, z: 3418, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 38.289726, "line": "[nav-follow] here=WorldTile { x: 3119, z: 3418, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 38.361621, "line": "[host] slot live1gpyau_0: d_loop_us=824 d_raster_us=130105 d_observe_us=36794 max_observe_us=1010 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 38.871104, "line": "[nav-walk] here=WorldTile { x: 3117, z: 3419, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 38.87119, "line": "[nav-follow] here=WorldTile { x: 3117, z: 3419, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 39.471017, "line": "[nav-walk] here=WorldTile { x: 3115, z: 3419, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 39.4711, "line": "[nav-follow] here=WorldTile { x: 3115, z: 3419, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 39.520913, "line": "[host] slot live1gpyau_0: d_loop_us=854 d_raster_us=143607 d_observe_us=38734 max_observe_us=1212 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 40.073983, "line": "[nav-walk] here=WorldTile { x: 3113, z: 3420, level: 0 } aim=WorldTile { x: 3112, z: 3421, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3129, z: 3421, level: 0 })"}
+{"elapsed_seconds": 40.074205, "line": "[nav-follow] here=WorldTile { x: 3113, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 40.690501, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 40.69122, "line": "[host] slot live1gpyau_0: d_loop_us=940 d_raster_us=134636 d_observe_us=43879 max_observe_us=6765 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 40.815519, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 40.815587, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 41.285166, "line": "[nav-walk] here=WorldTile { x: 3109, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 41.285239, "line": "[nav-follow] here=WorldTile { x: 3109, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 41.840433, "line": "[host] slot live1gpyau_0: d_loop_us=11071 d_raster_us=150553 d_observe_us=62978 max_observe_us=3824 d_paints=50 d_skips=0 d_ticks=1 window_ms=1149"}
+{"elapsed_seconds": 41.882044, "line": "[nav-walk] here=WorldTile { x: 3107, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 41.882128, "line": "[nav-follow] here=WorldTile { x: 3107, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 42.493362, "line": "[nav-walk] here=WorldTile { x: 3105, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 42.493429, "line": "[nav-follow] here=WorldTile { x: 3105, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 43.002091, "line": "[host] slot live1gpyau_0: d_loop_us=830 d_raster_us=132002 d_observe_us=32482 max_observe_us=988 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 43.072537, "line": "[nav-walk] here=WorldTile { x: 3103, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 43.072592, "line": "[nav-follow] here=WorldTile { x: 3103, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 43.668335, "line": "[nav-walk] here=WorldTile { x: 3101, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 43.6684, "line": "[nav-follow] here=WorldTile { x: 3101, z: 3420, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None"}
+{"elapsed_seconds": 44.164597, "line": "[host] slot live1gpyau_0: d_loop_us=920 d_raster_us=139447 d_observe_us=43087 max_observe_us=4297 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 44.274927, "line": "[nav-walk] here=WorldTile { x: 3099, z: 3420, level: 0 } aim=WorldTile { x: 3097, z: 3421, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3113, z: 3420, level: 0 })"}
+{"elapsed_seconds": 44.275007, "line": "[nav-follow] here=WorldTile { x: 3099, z: 3420, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 44.878556, "line": "[nav-walk] here=WorldTile { x: 3097, z: 3420, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 44.878674, "line": "[nav-follow] here=WorldTile { x: 3097, z: 3420, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 45.321979, "line": "[host] slot live1gpyau_0: d_loop_us=885 d_raster_us=161390 d_observe_us=35667 max_observe_us=1005 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 45.480787, "line": "[nav-walk] here=WorldTile { x: 3095, z: 3420, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 45.480856, "line": "[nav-follow] here=WorldTile { x: 3095, z: 3420, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 46.075287, "line": "[nav-walk] here=WorldTile { x: 3093, z: 3420, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 46.075357, "line": "[nav-follow] here=WorldTile { x: 3093, z: 3420, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 46.464406, "line": "[host] slot live1gpyau_0: d_loop_us=960 d_raster_us=161921 d_observe_us=39025 max_observe_us=3391 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 46.69055, "line": "[nav-walk] here=WorldTile { x: 3091, z: 3420, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 46.690627, "line": "[nav-follow] here=WorldTile { x: 3091, z: 3420, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 47.279788, "line": "[nav-walk] here=WorldTile { x: 3089, z: 3421, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 47.279857, "line": "[nav-follow] here=WorldTile { x: 3089, z: 3421, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 47.604395, "line": "[host] slot live1gpyau_0: d_loop_us=1006 d_raster_us=185319 d_observe_us=34924 max_observe_us=1121 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 47.872908, "line": "[nav-walk] here=WorldTile { x: 3087, z: 3421, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 47.872984, "line": "[nav-follow] here=WorldTile { x: 3087, z: 3421, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 48.480364, "line": "[nav-walk] here=WorldTile { x: 3085, z: 3421, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 48.480438, "line": "[nav-follow] here=WorldTile { x: 3085, z: 3421, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None"}
+{"elapsed_seconds": 48.739542, "line": "[host] slot live1gpyau_0: d_loop_us=1065 d_raster_us=220734 d_observe_us=40389 max_observe_us=3596 d_paints=50 d_skips=0 d_ticks=2 window_ms=1135"}
+{"elapsed_seconds": 49.080134, "line": "[nav-walk] here=WorldTile { x: 3083, z: 3423, level: 0 } aim=WorldTile { x: 3081, z: 3425, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3099, z: 3420, level: 0 })"}
+{"elapsed_seconds": 49.080202, "line": "[nav-follow] here=WorldTile { x: 3083, z: 3423, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 49.675634, "line": "[nav-walk] here=WorldTile { x: 3081, z: 3423, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 49.675704, "line": "[nav-follow] here=WorldTile { x: 3081, z: 3423, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 49.882407, "line": "[host] slot live1gpyau_0: d_loop_us=1094 d_raster_us=210900 d_observe_us=35049 max_observe_us=923 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 50.275062, "line": "[nav-walk] here=WorldTile { x: 3079, z: 3423, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 50.27514, "line": "[nav-follow] here=WorldTile { x: 3079, z: 3423, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 50.875963, "line": "[nav-walk] here=WorldTile { x: 3077, z: 3421, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 50.876045, "line": "[nav-follow] here=WorldTile { x: 3077, z: 3421, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 51.04151, "line": "[host] slot live1gpyau_0: d_loop_us=1010 d_raster_us=204871 d_observe_us=35191 max_observe_us=1015 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 51.481896, "line": "[nav-walk] here=WorldTile { x: 3075, z: 3421, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 51.481972, "line": "[nav-follow] here=WorldTile { x: 3075, z: 3421, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 52.079838, "line": "[nav-walk] here=WorldTile { x: 3073, z: 3419, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 52.079921, "line": "[nav-follow] here=WorldTile { x: 3073, z: 3419, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 52.197938, "line": "[host] slot live1gpyau_0: d_loop_us=948 d_raster_us=192536 d_observe_us=34519 max_observe_us=1138 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 52.686293, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 52.832244, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 52.832313, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 53.275552, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3417, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 53.275641, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3417, level: 0 } walk=true transport=false leg=0 hops=8 outcome=None"}
+{"elapsed_seconds": 53.344405, "line": "[host] slot live1gpyau_0: d_loop_us=9229 d_raster_us=174329 d_observe_us=73260 max_observe_us=6886 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 53.893767, "line": "[nav-walk] here=WorldTile { x: 3068, z: 3415, level: 0 } aim=WorldTile { x: 3067, z: 3413, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3083, z: 3423, level: 0 })"}
+{"elapsed_seconds": 53.893838, "line": "[nav-follow] here=WorldTile { x: 3068, z: 3415, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 54.48373, "line": "[nav-walk] here=WorldTile { x: 3067, z: 3413, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 54.483789, "line": "[nav-follow] here=WorldTile { x: 3067, z: 3413, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 54.493194, "line": "[host] slot live1gpyau_0: d_loop_us=964 d_raster_us=139066 d_observe_us=48892 max_observe_us=14302 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 55.081743, "line": "[nav-walk] here=WorldTile { x: 3067, z: 3411, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 55.08181, "line": "[nav-follow] here=WorldTile { x: 3067, z: 3411, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 55.638181, "line": "[host] slot live1gpyau_0: d_loop_us=800 d_raster_us=123605 d_observe_us=43800 max_observe_us=13753 d_paints=50 d_skips=0 d_ticks=1 window_ms=1144"}
+{"elapsed_seconds": 55.697254, "line": "[nav-walk] here=WorldTile { x: 3067, z: 3409, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 55.697322, "line": "[nav-follow] here=WorldTile { x: 3067, z: 3409, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 56.298095, "line": "[nav-walk] here=WorldTile { x: 3067, z: 3407, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 56.298156, "line": "[nav-follow] here=WorldTile { x: 3067, z: 3407, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 56.298174, "line": "[host] hitch live1gpyau_0: observe_us=16101 paints=2027 skips=0 ticks=79"}
+{"elapsed_seconds": 56.790301, "line": "[host] slot live1gpyau_0: d_loop_us=784 d_raster_us=109756 d_observe_us=60525 max_observe_us=16101 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 56.891879, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3405, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 56.891944, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3405, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 57.480687, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3403, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 57.480752, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3403, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 57.961269, "line": "[host] slot live1gpyau_0: d_loop_us=737 d_raster_us=107841 d_observe_us=56717 max_observe_us=14089 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 58.089328, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3401, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 58.089408, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3401, level: 0 } walk=true transport=false leg=0 hops=9 outcome=None"}
+{"elapsed_seconds": 58.693257, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3399, level: 0 } aim=WorldTile { x: 3067, z: 3397, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3068, z: 3415, level: 0 })"}
+{"elapsed_seconds": 58.693327, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3399, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 59.114922, "line": "[host] slot live1gpyau_0: d_loop_us=718 d_raster_us=110706 d_observe_us=60158 max_observe_us=15487 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 59.289375, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3397, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 59.289451, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3397, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 59.871183, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3395, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 59.871244, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3395, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 60.271074, "line": "[host] slot live1gpyau_0: d_loop_us=709 d_raster_us=103930 d_observe_us=42354 max_observe_us=13901 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 60.4777, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3393, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 60.477771, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3393, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 61.081671, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3391, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 61.081752, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3391, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 61.422491, "line": "[host] slot live1gpyau_0: d_loop_us=676 d_raster_us=100188 d_observe_us=29942 max_observe_us=847 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 61.679407, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3389, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 61.679483, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3389, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 62.279652, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3387, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 62.279723, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3387, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 62.581364, "line": "[host] slot live1gpyau_0: d_loop_us=655 d_raster_us=97198 d_observe_us=32667 max_observe_us=3466 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 62.879678, "line": "[nav-walk] here=WorldTile { x: 3066, z: 3385, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 62.879756, "line": "[nav-follow] here=WorldTile { x: 3066, z: 3385, level: 0 } walk=true transport=false leg=0 hops=10 outcome=None"}
+{"elapsed_seconds": 63.482237, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 1"}
+{"elapsed_seconds": 63.60711, "line": "[panel] live1gpyau_0: live1gpyau_0: ingame"}
+{"elapsed_seconds": 63.607206, "line": "[panel] live1gpyau_0: live1gpyau_0: scene 2"}
+{"elapsed_seconds": 63.745699, "line": "[host] slot live1gpyau_0: d_loop_us=7570 d_raster_us=107650 d_observe_us=63624 max_observe_us=6025 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 64.084843, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3381, level: 0 } aim=WorldTile { x: 3069, z: 3381, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3066, z: 3399, level: 0 })"}
+{"elapsed_seconds": 64.084905, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3381, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 64.688049, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3379, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 64.688123, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3379, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 64.901907, "line": "[host] slot live1gpyau_0: d_loop_us=650 d_raster_us=101246 d_observe_us=32629 max_observe_us=2894 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 65.288034, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3377, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 65.288094, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3377, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 65.889829, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3375, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 65.889902, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3375, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 66.051415, "line": "[host] slot live1gpyau_0: d_loop_us=823 d_raster_us=118225 d_observe_us=41381 max_observe_us=4133 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 66.484887, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3373, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 66.484964, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3373, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 67.079107, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3371, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 67.079189, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3371, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 67.197446, "line": "[host] slot live1gpyau_0: d_loop_us=835 d_raster_us=135860 d_observe_us=38458 max_observe_us=989 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 67.682604, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3369, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 67.6827, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3369, level: 0 } walk=true transport=false leg=0 hops=11 outcome=None"}
+{"elapsed_seconds": 68.29222, "line": "[nav-walk] here=WorldTile { x: 3069, z: 3367, level: 0 } aim=WorldTile { x: 3067, z: 3365, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3069, z: 3381, level: 0 })"}
+{"elapsed_seconds": 68.292285, "line": "[nav-follow] here=WorldTile { x: 3069, z: 3367, level: 0 } walk=true transport=false leg=0 hops=12 outcome=None"}
+{"elapsed_seconds": 68.35728, "line": "[host] slot live1gpyau_0: d_loop_us=842 d_raster_us=155407 d_observe_us=45056 max_observe_us=3968 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 68.879535, "line": "[nav-walk] here=WorldTile { x: 3067, z: 3365, level: 0 } aim=WorldTile { x: 3060, z: 3358, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3069, z: 3367, level: 0 })"}
+{"elapsed_seconds": 68.879623, "line": "[nav-follow] here=WorldTile { x: 3067, z: 3365, level: 0 } walk=true transport=false leg=0 hops=12 outcome=None"}
+{"elapsed_seconds": 69.480022, "line": "[nav-walk] here=WorldTile { x: 3065, z: 3363, level: 0 } aim=WorldTile { x: 3060, z: 3358, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3069, z: 3367, level: 0 })"}
+{"elapsed_seconds": 69.480098, "line": "[nav-follow] here=WorldTile { x: 3065, z: 3363, level: 0 } walk=true transport=false leg=0 hops=12 outcome=None"}
+{"elapsed_seconds": 69.506839, "line": "[host] slot live1gpyau_0: d_loop_us=747 d_raster_us=152447 d_observe_us=34609 max_observe_us=958 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 70.082459, "line": "[nav-walk] here=WorldTile { x: 3063, z: 3361, level: 0 } aim=WorldTile { x: 3060, z: 3358, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3069, z: 3367, level: 0 })"}
+{"elapsed_seconds": 70.082539, "line": "[nav-follow] here=WorldTile { x: 3063, z: 3361, level: 0 } walk=true transport=false leg=0 hops=12 outcome=None"}
+{"elapsed_seconds": 70.66263, "line": "[host] slot live1gpyau_0: d_loop_us=867 d_raster_us=159247 d_observe_us=45895 max_observe_us=4853 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 70.684967, "line": "[nav-walk] here=WorldTile { x: 3061, z: 3359, level: 0 } aim=WorldTile { x: 3060, z: 3358, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3069, z: 3367, level: 0 })"}
+{"elapsed_seconds": 70.68503, "line": "[nav-follow] here=WorldTile { x: 3061, z: 3359, level: 0 } walk=true transport=false leg=0 hops=12 outcome=None"}
+{"elapsed_seconds": 71.284651, "line": "[nav-walk] here=WorldTile { x: 3060, z: 3358, level: 0 } aim=WorldTile { x: 3060, z: 3358, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3069, z: 3367, level: 0 })"}
+{"elapsed_seconds": 71.284895, "line": "[nav-follow] here=WorldTile { x: 3060, z: 3358, level: 0 } walk=false transport=true leg=1 hops=12 outcome=None"}
+{"elapsed_seconds": 71.820983, "line": "[host] slot live1gpyau_0: d_loop_us=842 d_raster_us=151191 d_observe_us=45723 max_observe_us=4454 d_paints=50 d_skips=0 d_ticks=1 window_ms=1158"}
+{"elapsed_seconds": 71.885699, "line": "[nav-transport] here=WorldTile { x: 3060, z: 3358, level: 0 } to=WorldTile { x: 3059, z: 3357, level: 1 } troll=false ticks_waited=0 loc_id=1750 open=false"}
+{"elapsed_seconds": 71.885784, "line": "[nav-follow] here=WorldTile { x: 3060, z: 3358, level: 0 } walk=false transport=false leg=1 hops=12 outcome=Some(Refused { at: WorldTile { x: 3060, z: 3358, level: 0 }, reason: Unreachable })"}
+{"elapsed_seconds": 72.973528, "line": "[host] slot live1gpyau_0: d_loop_us=908 d_raster_us=146473 d_observe_us=34937 max_observe_us=1116 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 74.137687, "line": "[host] slot live1gpyau_0: d_loop_us=741 d_raster_us=133327 d_observe_us=30124 max_observe_us=832 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 75.282618, "line": "[host] slot live1gpyau_0: d_loop_us=766 d_raster_us=124140 d_observe_us=30377 max_observe_us=1028 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 76.44506, "line": "[host] slot live1gpyau_0: d_loop_us=753 d_raster_us=142933 d_observe_us=33534 max_observe_us=950 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 77.610899, "line": "[host] slot live1gpyau_0: d_loop_us=726 d_raster_us=130349 d_observe_us=30249 max_observe_us=829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 78.764208, "line": "[host] slot live1gpyau_0: d_loop_us=802 d_raster_us=146989 d_observe_us=35141 max_observe_us=966 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 79.91728, "line": "[host] slot live1gpyau_0: d_loop_us=679 d_raster_us=128633 d_observe_us=29446 max_observe_us=1028 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 81.070796, "line": "[host] slot live1gpyau_0: d_loop_us=671 d_raster_us=116439 d_observe_us=27739 max_observe_us=1129 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 82.236116, "line": "[host] slot live1gpyau_0: d_loop_us=765 d_raster_us=127913 d_observe_us=29694 max_observe_us=854 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 83.396397, "line": "[host] slot live1gpyau_0: d_loop_us=750 d_raster_us=138808 d_observe_us=32972 max_observe_us=869 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 84.536201, "line": "[host] slot live1gpyau_0: d_loop_us=710 d_raster_us=139012 d_observe_us=32013 max_observe_us=1008 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 85.691034, "line": "[host] slot live1gpyau_0: d_loop_us=682 d_raster_us=126973 d_observe_us=29987 max_observe_us=848 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 86.847215, "line": "[host] slot live1gpyau_0: d_loop_us=724 d_raster_us=132547 d_observe_us=32140 max_observe_us=996 d_paints=50 d_skips=0 d_ticks=1 window_ms=1156"}
+{"elapsed_seconds": 87.998297, "line": "[host] slot live1gpyau_0: d_loop_us=721 d_raster_us=129435 d_observe_us=30118 max_observe_us=946 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 89.15733, "line": "[host] slot live1gpyau_0: d_loop_us=622 d_raster_us=107660 d_observe_us=25466 max_observe_us=810 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 90.320057, "line": "[host] slot live1gpyau_0: d_loop_us=626 d_raster_us=110347 d_observe_us=25958 max_observe_us=751 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 91.477152, "line": "[host] slot live1gpyau_0: d_loop_us=608 d_raster_us=108736 d_observe_us=25583 max_observe_us=867 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 92.619775, "line": "[host] slot live1gpyau_0: d_loop_us=615 d_raster_us=106974 d_observe_us=25764 max_observe_us=709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 93.779122, "line": "[host] slot live1gpyau_0: d_loop_us=623 d_raster_us=107007 d_observe_us=26763 max_observe_us=918 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 94.930923, "line": "[host] slot live1gpyau_0: d_loop_us=692 d_raster_us=119272 d_observe_us=28005 max_observe_us=939 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 96.079151, "line": "[host] slot live1gpyau_0: d_loop_us=735 d_raster_us=134859 d_observe_us=30637 max_observe_us=874 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 97.235414, "line": "[host] slot live1gpyau_0: d_loop_us=732 d_raster_us=134294 d_observe_us=30676 max_observe_us=859 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 98.387446, "line": "[host] slot live1gpyau_0: d_loop_us=694 d_raster_us=132625 d_observe_us=30776 max_observe_us=874 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 98.870242, "line": "[panel] scenario capture requested: alcher terminal"}
+{"elapsed_seconds": 98.943049, "line": "[host] hitch live1gpyau_0: observe_us=73670 paints=3870 skips=0 ticks=150"}
+{"elapsed_seconds": 98.945395, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 99.595577, "line": "[host] slot live1gpyau_0: d_loop_us=722 d_raster_us=124709 d_observe_us=99477 max_observe_us=73670 d_paints=50 d_skips=0 d_ticks=2 window_ms=1208"}
+{"elapsed_seconds": 99.838661, "line": "[panel] shot alcher terminal -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-paint-buttons-ui-8e7d965b-paint025-controls/shots/2026-09-11T14-19-02_18321/2026-09-11T14-20-36_alcher_terminal.png"}
+{"elapsed_seconds": 99.838731, "line": "FAIL: live script_paint_buttons_ui {\"scenario\":\"paint_buttons_ui\",\"outcome\":\"FAIL\",\"predicate\":\"stat_xp_gain(6)>=1\",\"ticks\":153,\"elapsed_ms\":94336,\"message\":\"step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks\",\"tile\":[3060,3358,0],\"stat\":{\"runenergy\":43},\"chat\":[{\"text\":\"I can't reach that!\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 99.838763, "line": "FAIL: step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks"}

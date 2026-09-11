@@ -1,0 +1,1846 @@
+[
+  {
+    "name": "r274-bone-burier-100adccc-21446414.json",
+    "size": 1772,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid",
+        "finished_at",
+        "elapsed_seconds",
+        "exit_code",
+        "log_sha256",
+        "nav_sha256",
+        "engine_commit"
+      ],
+      "revision": "274",
+      "exit_code": 0,
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:02:38.555941+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 87859,
+      "finished_at": "2026-09-11T14:04:57.356516+00:00",
+      "elapsed_seconds": 138.798,
+      "log_sha256": "b20d8c0a6686be3cb3ce43082c3312421e33425cbaf787816cc643b8b728527b",
+      "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+      "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a"
+    }
+  },
+  {
+    "name": "r274-bone-burier-100adccc-21446414.log",
+    "size": 93032,
+    "scan": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.log",
+      "size": 93032,
+      "lines": 680,
+      "walk_nearest": 2,
+      "open_booth": 1,
+      "timeout": 0,
+      "walk_timeout": 0,
+      "slow_ticks": 0,
+      "slow_tick_ms": [],
+      "phases": {
+        "identity": 1,
+        "baseline-after-preparation": 1,
+        "start": 1
+      },
+      "samples": [
+        [
+          14,
+          "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"liverew0zc_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Liverew0zc 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"d"
+        ],
+        [
+          18,
+          "[script liverew0zc_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+        ],
+        [
+          19,
+          "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          20,
+          "[shim-held] Bones Bury slot=0 -> sent"
+        ],
+        [
+          23,
+          "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          24,
+          "[shim-held] Bones Bury slot=1 -> sent"
+        ],
+        [
+          26,
+          "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          27,
+          "[shim-held] Bones Bury slot=2 -> sent"
+        ],
+        [
+          31,
+          "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          32,
+          "[shim-held] Bones Bury slot=3 -> sent"
+        ],
+        [
+          36,
+          "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          37,
+          "[shim-held] Bones Bury slot=4 -> sent"
+        ],
+        [
+          39,
+          "[script liverew0zc_0] slow tick 37: 65.328791ms"
+        ],
+        [
+          40,
+          "[script liverew0zc_0] interact WalkNearestBank"
+        ],
+        [
+          41,
+          "[script liverew0zc_0] slow tick 38: 59.949917ms"
+        ],
+        [
+          43,
+          "[script liverew0zc_0] slow tick 39: 60.153041ms"
+        ],
+        [
+          45,
+          "[script liverew0zc_0] slow tick 40: 72.686792ms"
+        ],
+        [
+          50,
+          "[script liverew0zc_0] slow tick 41: 60.870792ms"
+        ],
+        [
+          54,
+          "[script liverew0zc_0] slow tick 42: 62.374041ms"
+        ],
+        [
+          58,
+          "[script liverew0zc_0] slow tick 43: 59.444208ms"
+        ],
+        [
+          62,
+          "[script liverew0zc_0] slow tick 44: 59.775708ms"
+        ],
+        [
+          67,
+          "[script liverew0zc_0] slow tick 45: 61.089417ms"
+        ],
+        [
+          71,
+          "[script liverew0zc_0] slow tick 46: 60.220667ms"
+        ],
+        [
+          76,
+          "[script liverew0zc_0] slow tick 47: 60.207792ms"
+        ],
+        [
+          80,
+          "[script liverew0zc_0] slow tick 48: 60.393292ms"
+        ],
+        [
+          85,
+          "[script liverew0zc_0] slow tick 49: 59.603084ms"
+        ],
+        [
+          89,
+          "[script liverew0zc_0] slow tick 50: 59.491917ms"
+        ],
+        [
+          92,
+          "[script liverew0zc_0] slow tick 51: 58.597542ms"
+        ],
+        [
+          97,
+          "[script liverew0zc_0] slow tick 52: 58.340834ms"
+        ],
+        [
+          101,
+          "[script liverew0zc_0] slow tick 53: 60.278042ms"
+        ],
+        [
+          106,
+          "[script liverew0zc_0] slow tick 54: 60.166542ms"
+        ],
+        [
+          110,
+          "[script liverew0zc_0] slow tick 55: 60.108417ms"
+        ],
+        [
+          115,
+          "[script liverew0zc_0] slow tick 56: 61.165542ms"
+        ],
+        [
+          119,
+          "[script liverew0zc_0] slow tick 57: 59.48325ms"
+        ],
+        [
+          124,
+          "[script liverew0zc_0] slow tick 58: 60.988792ms"
+        ],
+        [
+          128,
+          "[script liverew0zc_0] slow tick 59: 60.563208ms"
+        ],
+        [
+          133,
+          "[script liverew0zc_0] slow tick 60: 60.688167ms"
+        ],
+        [
+          137,
+          "[script liverew0zc_0] slow tick 61: 60.375375ms"
+        ],
+        [
+          141,
+          "[script liverew0zc_0] slow tick 62: 60.67275ms"
+        ],
+        [
+          146,
+          "[script liverew0zc_0] slow tick 63: 58.613375ms"
+        ],
+        [
+          150,
+          "[script liverew0zc_0] slow tick 64: 60.497541ms"
+        ],
+        [
+          155,
+          "[script liverew0zc_0] slow tick 66: 55.068708ms"
+        ],
+        [
+          160,
+          "[script liverew0zc_0] slow tick 67: 55.255916ms"
+        ],
+        [
+          164,
+          "[script liverew0zc_0] slow tick 68: 56.337375ms"
+        ],
+        [
+          169,
+          "[script liverew0zc_0] slow tick 69: 55.73725ms"
+        ],
+        [
+          173,
+          "[script liverew0zc_0] slow tick 70: 55.431667ms"
+        ],
+        [
+          178,
+          "[script liverew0zc_0] slow tick 71: 54.627333ms"
+        ],
+        [
+          182,
+          "[script liverew0zc_0] slow tick 72: 54.764584ms"
+        ],
+        [
+          187,
+          "[script liverew0zc_0] slow tick 73: 55.385167ms"
+        ],
+        [
+          191,
+          "[script liverew0zc_0] slow tick 74: 55.005834ms"
+        ],
+        [
+          195,
+          "[script liverew0zc_0] slow tick 75: 54.380542ms"
+        ],
+        [
+          200,
+          "[script liverew0zc_0] slow tick 76: 56.255416ms"
+        ],
+        [
+          204,
+          "[script liverew0zc_0] slow tick 77: 54.474875ms"
+        ],
+        [
+          209,
+          "[script liverew0zc_0] slow tick 78: 55.009667ms"
+        ],
+        [
+          213,
+          "[script liverew0zc_0] slow tick 79: 55.964708ms"
+        ],
+        [
+          218,
+          "[script liverew0zc_0] slow tick 80: 57.096709ms"
+        ],
+        [
+          222,
+          "[script liverew0zc_0] slow tick 81: 55.426292ms"
+        ],
+        [
+          227,
+          "[script liverew0zc_0] slow tick 82: 55.833084ms"
+        ],
+        [
+          231,
+          "[script liverew0zc_0] slow tick 83: 55.383042ms"
+        ],
+        [
+          235,
+          "[script liverew0zc_0] slow tick 84: 54.7415ms"
+        ],
+        [
+          240,
+          "[script liverew0zc_0] slow tick 85: 55.761916ms"
+        ],
+        [
+          244,
+          "[script liverew0zc_0] slow tick 86: 55.431833ms"
+        ],
+        [
+          249,
+          "[script liverew0zc_0] slow tick 87: 55.583583ms"
+        ],
+        [
+          253,
+          "[script liverew0zc_0] slow tick 88: 55.24125ms"
+        ],
+        [
+          413,
+          "[script liverew0zc_0] interact WalkNearestBank"
+        ],
+        [
+          526,
+          "[script liverew0zc_0] slow tick 174: 58.489458ms"
+        ],
+        [
+          531,
+          "[script liverew0zc_0] slow tick 175: 58.488209ms"
+        ],
+        [
+          535,
+          "[script liverew0zc_0] slow tick 176: 58.653833ms"
+        ],
+        [
+          540,
+          "[script liverew0zc_0] slow tick 177: 58.822542ms"
+        ],
+        [
+          544,
+          "[script liverew0zc_0] slow tick 178: 59.69775ms"
+        ],
+        [
+          549,
+          "[script liverew0zc_0] slow tick 179: 61.587792ms"
+        ],
+        [
+          553,
+          "[script liverew0zc_0] slow tick 180: 59.71275ms"
+        ],
+        [
+          558,
+          "[script liverew0zc_0] slow tick 181: 59.136208ms"
+        ],
+        [
+          562,
+          "[script liverew0zc_0] slow tick 182: 58.243833ms"
+        ],
+        [
+          566,
+          "[script liverew0zc_0] slow tick 183: 56.985ms"
+        ],
+        [
+          570,
+          "[script liverew0zc_0] slow tick 184: 60.141167ms"
+        ],
+        [
+          574,
+          "[script liverew0zc_0] slow tick 185: 58.056667ms"
+        ],
+        [
+          579,
+          "[script liverew0zc_0] slow tick 186: 58.9425ms"
+        ],
+        [
+          583,
+          "[script liverew0zc_0] slow tick 187: 59.928375ms"
+        ],
+        [
+          588,
+          "[script liverew0zc_0] slow tick 188: 57.223708ms"
+        ]
+      ],
+      "here_samples": [],
+      "nearest_booth_samples": [],
+      "locs_len_samples": [],
+      "bank_events": [],
+      "first_last": [
+        [
+          1,
+          ""
+        ]
+      ],
+      "tail": [
+        "27,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"saw_bury_chat\":true,\"post_start_observations\":4497,\"bone_bank_cycle\":{\"first_batch_buried\":true,\"opened\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Liverew0zc 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":194,\"items\":{},\"item_ids\":{},\"bank\":{\"Bones\":28},\"bank_ids\":{\"526\":28},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"withdrawn\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Liverew0zc 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":202,\"items\":{\"Bones\":28},\"item_ids\":{\"526\":28},\"bank\":{},\"bank_ids\":{},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"buried_after_withdrawal\":true},\"bank_fletcher_cycle\":{\"first_pack_created\":false,\"deposited\":null,\"withdrawn\":null,\"crafted_after_withdrawal\":false},\"bank_fletcher_option_cycle\":{\"first\":null,\"deposited\":null,\"restocked\":null,\"further\":false},\"bank_fletcher_string_cycle\":{\"initial_pairs_strung\":false,\"deposited\":null,\"withdrawn\":null,\"strung_after_withdrawal\":false},\"bank_fletcher_cut_string_cycle\":{\"cut_pair_created\":false,\"deposited\":null,\"withdrawn\":null,\"string_pair_created\":false},\"alcher_defaults_cycle\":{\"withdrawn\":null,\"consumed\":false},\"alcher_generated_custom_cycle\":{\"withdrawn\":null,\"consumed\":false},\"dart_fletcher_cycle\":{\"first\":null,\"further\":false,\"wrong_tier\":false},\"herb_cleaner_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cleaned_after_withdrawal\":false,\"filter_violated\":false},\"gem_cutter_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cut_after_withdrawal\":false,\"filter_violated\":false},\"door_opener_cycle\":{\"selected\":null,\"opened\":false},\"gnome_course_cycle\":{\"log\":null,\"ground_return\":null,\"pipe\":null,\"second_lap\":false},\"wildy_agility_cycle\":{\"ridge\":null,\"pipe\":null,\"rope\":null,\"stone\":null,\"log\":null,\"rocks\":null,\"further_pipe\":false},\"brimhaven_agility_cycle\":{\"paid\":false,\"entered\":null,\"moved\":null,\"first_tag\":false,\"ticket\":null,\"subsequent_work\":false},\"flax_picker_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"superheater_cycle\":{\"first_bars\":false,\"deposited\":null,\"withdrawn\":null,\"produced_after_withdrawal\":false,\"wrong_product\":false,\"wrong_staff\":false},\"chicken_killer_bank_cycle\":{\"combat_loot\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"vial_filler_cycle\":{\"filled\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false},\"potion_maker_cycle\":{\"unfinished\":null,\"finished\":null,\"deposited\":null,\"withdrawn\":null,\"further\":false,\"wrong_product\":false,\"filter_violated\":false},\"tanner_bot_cycle\":{\"widget\":null,\"tanned\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"shop\":false},\"rune_crafter_cycle\":{\"withdrawn\":null,\"entered\":null,\"crafted\":null,\"exited\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_cakes_cycle\":{\"stolen\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_thiever_cycle\":{\"pickpocketed\":null,\"deposited\":null,\"returned\":false,\"further\":false},\"gnome_chop_cycle\":{\"chopped\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"gnome_fletch_cycle\":{\"chopped\":null,\"fletched\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"coal_trucks_cycle\":{\"mined\":null,\"trucked\":null,\"further\":false,\"noted\":false,\"banked\":false},\"station_production_cycle\":{\"withdrawn\":null,\"produced\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_cycle\":{\"picked\":null,\"produced\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_pick_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_eggs_cycle\":{\"taken\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_newt_cycle\":{\"bought\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"coins_spent\":false,\"coins_peak\":0,\"wrong_product\":false,\"noted\":false},\"combat_core_cycle\":{\"engagements\":0,\"defeats\":0,\"style_xp\":false,\"looted\":false,\"noted\":false,\"activated\":false,\"shield_worn\":false,\"stolen_food\":false,\"wrong_item\":false,\"dormant_indexes\":[],\"dormant_tiles\":{},\"last\":{},\"currently_engaged\":[],\"facts\":[]},\"ordered_first_exhausted\":false}}",
+        "test catalog_boundary_live ... ok",
+        "",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 138.79s",
+        ""
+      ],
+      "tick_ms_by_phase": {},
+      "slow_tick_ms_n": 0
+    }
+  },
+  {
+    "name": "r274-bone-burier-100adccc-21446414.process.json",
+    "size": 1440,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.process.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid"
+      ],
+      "revision": "274",
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:02:38.555941+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 87859
+    }
+  },
+  {
+    "name": "r274-bone-burier-8e7d965b-21446414.json",
+    "size": 1772,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid",
+        "finished_at",
+        "elapsed_seconds",
+        "exit_code",
+        "log_sha256",
+        "nav_sha256",
+        "engine_commit"
+      ],
+      "revision": "274",
+      "exit_code": 0,
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:04:57.511264+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 90891,
+      "finished_at": "2026-09-11T14:07:16.548488+00:00",
+      "elapsed_seconds": 139.035,
+      "log_sha256": "5cf58208971c03bbaea9251f07bcd3b05b51ac605f5c7eb61203ec8eda4964de",
+      "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+      "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a"
+    }
+  },
+  {
+    "name": "r274-bone-burier-8e7d965b-21446414.log",
+    "size": 94055,
+    "scan": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.log",
+      "size": 94055,
+      "lines": 691,
+      "walk_nearest": 2,
+      "open_booth": 1,
+      "timeout": 0,
+      "walk_timeout": 0,
+      "slow_ticks": 0,
+      "slow_tick_ms": [],
+      "phases": {
+        "identity": 1,
+        "baseline-after-preparation": 1,
+        "start": 1
+      },
+      "samples": [
+        [
+          14,
+          "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"livefkh0ft_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livefkh0ft 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"d"
+        ],
+        [
+          18,
+          "[script livefkh0ft_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+        ],
+        [
+          19,
+          "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          20,
+          "[shim-held] Bones Bury slot=0 -> sent"
+        ],
+        [
+          22,
+          "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          23,
+          "[shim-held] Bones Bury slot=1 -> sent"
+        ],
+        [
+          27,
+          "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          28,
+          "[shim-held] Bones Bury slot=2 -> sent"
+        ],
+        [
+          34,
+          "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          35,
+          "[shim-held] Bones Bury slot=3 -> sent"
+        ],
+        [
+          39,
+          "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          40,
+          "[shim-held] Bones Bury slot=4 -> sent"
+        ],
+        [
+          44,
+          "[script livefkh0ft_0] slow tick 36: 71.901084ms"
+        ],
+        [
+          45,
+          "[script livefkh0ft_0] interact WalkNearestBank"
+        ],
+        [
+          46,
+          "[script livefkh0ft_0] slow tick 37: 59.205167ms"
+        ],
+        [
+          48,
+          "[script livefkh0ft_0] slow tick 38: 59.466375ms"
+        ],
+        [
+          50,
+          "[script livefkh0ft_0] slow tick 39: 69.774209ms"
+        ],
+        [
+          55,
+          "[script livefkh0ft_0] slow tick 40: 62.079875ms"
+        ],
+        [
+          59,
+          "[script livefkh0ft_0] slow tick 41: 60.998625ms"
+        ],
+        [
+          63,
+          "[script livefkh0ft_0] slow tick 42: 61.938958ms"
+        ],
+        [
+          68,
+          "[script livefkh0ft_0] slow tick 43: 62.403292ms"
+        ],
+        [
+          72,
+          "[script livefkh0ft_0] slow tick 44: 60.033041ms"
+        ],
+        [
+          76,
+          "[script livefkh0ft_0] slow tick 45: 60.021083ms"
+        ],
+        [
+          79,
+          "[script livefkh0ft_0] slow tick 46: 58.568917ms"
+        ],
+        [
+          84,
+          "[script livefkh0ft_0] slow tick 47: 61.026ms"
+        ],
+        [
+          88,
+          "[script livefkh0ft_0] slow tick 48: 60.569417ms"
+        ],
+        [
+          93,
+          "[script livefkh0ft_0] slow tick 49: 62.79575ms"
+        ],
+        [
+          97,
+          "[script livefkh0ft_0] slow tick 50: 59.050417ms"
+        ],
+        [
+          102,
+          "[script livefkh0ft_0] slow tick 51: 61.44175ms"
+        ],
+        [
+          106,
+          "[script livefkh0ft_0] slow tick 52: 59.451708ms"
+        ],
+        [
+          110,
+          "[script livefkh0ft_0] slow tick 53: 61.025334ms"
+        ],
+        [
+          115,
+          "[script livefkh0ft_0] slow tick 54: 60.108375ms"
+        ],
+        [
+          119,
+          "[script livefkh0ft_0] slow tick 55: 61.467583ms"
+        ],
+        [
+          124,
+          "[script livefkh0ft_0] slow tick 56: 61.228541ms"
+        ],
+        [
+          128,
+          "[script livefkh0ft_0] slow tick 57: 62.758041ms"
+        ],
+        [
+          132,
+          "[script livefkh0ft_0] slow tick 58: 58.995709ms"
+        ],
+        [
+          135,
+          "[script livefkh0ft_0] slow tick 59: 60.398791ms"
+        ],
+        [
+          140,
+          "[script livefkh0ft_0] slow tick 60: 58.775291ms"
+        ],
+        [
+          144,
+          "[script livefkh0ft_0] slow tick 61: 59.695625ms"
+        ],
+        [
+          149,
+          "[script livefkh0ft_0] slow tick 62: 60.261958ms"
+        ],
+        [
+          153,
+          "[script livefkh0ft_0] slow tick 63: 60.280708ms"
+        ],
+        [
+          158,
+          "[script livefkh0ft_0] slow tick 65: 55.097042ms"
+        ],
+        [
+          162,
+          "[script livefkh0ft_0] slow tick 66: 54.386458ms"
+        ],
+        [
+          167,
+          "[script livefkh0ft_0] slow tick 67: 55.434292ms"
+        ],
+        [
+          171,
+          "[script livefkh0ft_0] slow tick 68: 55.538541ms"
+        ],
+        [
+          176,
+          "[script livefkh0ft_0] slow tick 69: 55.676125ms"
+        ],
+        [
+          180,
+          "[script livefkh0ft_0] slow tick 70: 56.693834ms"
+        ],
+        [
+          185,
+          "[script livefkh0ft_0] slow tick 71: 55.136125ms"
+        ],
+        [
+          189,
+          "[script livefkh0ft_0] slow tick 72: 55.6705ms"
+        ],
+        [
+          194,
+          "[script livefkh0ft_0] slow tick 73: 55.388ms"
+        ],
+        [
+          198,
+          "[script livefkh0ft_0] slow tick 74: 55.441834ms"
+        ],
+        [
+          201,
+          "[script livefkh0ft_0] slow tick 75: 55.787709ms"
+        ],
+        [
+          206,
+          "[script livefkh0ft_0] slow tick 76: 55.106584ms"
+        ],
+        [
+          210,
+          "[script livefkh0ft_0] slow tick 77: 54.839375ms"
+        ],
+        [
+          214,
+          "[script livefkh0ft_0] slow tick 78: 57.945375ms"
+        ],
+        [
+          218,
+          "[script livefkh0ft_0] slow tick 79: 58.777708ms"
+        ],
+        [
+          223,
+          "[script livefkh0ft_0] slow tick 80: 54.805416ms"
+        ],
+        [
+          227,
+          "[script livefkh0ft_0] slow tick 81: 55.21575ms"
+        ],
+        [
+          232,
+          "[script livefkh0ft_0] slow tick 82: 55.673417ms"
+        ],
+        [
+          236,
+          "[script livefkh0ft_0] slow tick 83: 55.155458ms"
+        ],
+        [
+          241,
+          "[script livefkh0ft_0] slow tick 84: 56.125042ms"
+        ],
+        [
+          245,
+          "[script livefkh0ft_0] slow tick 85: 56.14225ms"
+        ],
+        [
+          248,
+          "[script livefkh0ft_0] slow tick 86: 56.334583ms"
+        ],
+        [
+          252,
+          "[script livefkh0ft_0] slow tick 87: 58.384083ms"
+        ],
+        [
+          413,
+          "[script livefkh0ft_0] interact WalkNearestBank"
+        ],
+        [
+          524,
+          "[script livefkh0ft_0] slow tick 173: 60.05825ms"
+        ],
+        [
+          528,
+          "[script livefkh0ft_0] slow tick 174: 58.945333ms"
+        ],
+        [
+          533,
+          "[script livefkh0ft_0] slow tick 175: 59.920875ms"
+        ],
+        [
+          537,
+          "[script livefkh0ft_0] slow tick 176: 58.542417ms"
+        ],
+        [
+          542,
+          "[script livefkh0ft_0] slow tick 177: 59.060042ms"
+        ],
+        [
+          546,
+          "[script livefkh0ft_0] slow tick 178: 60.277333ms"
+        ],
+        [
+          551,
+          "[script livefkh0ft_0] slow tick 179: 61.598166ms"
+        ],
+        [
+          555,
+          "[script livefkh0ft_0] slow tick 180: 59.57425ms"
+        ],
+        [
+          560,
+          "[script livefkh0ft_0] slow tick 181: 59.266959ms"
+        ],
+        [
+          564,
+          "[script livefkh0ft_0] slow tick 182: 59.628375ms"
+        ],
+        [
+          569,
+          "[script livefkh0ft_0] slow tick 183: 61.43775ms"
+        ],
+        [
+          573,
+          "[script livefkh0ft_0] slow tick 184: 60.73975ms"
+        ],
+        [
+          577,
+          "[script livefkh0ft_0] slow tick 185: 60.245083ms"
+        ],
+        [
+          582,
+          "[script livefkh0ft_0] slow tick 186: 59.7385ms"
+        ],
+        [
+          586,
+          "[script livefkh0ft_0] slow tick 187: 59.63175ms"
+        ]
+      ],
+      "here_samples": [],
+      "nearest_booth_samples": [],
+      "locs_len_samples": [],
+      "bank_events": [],
+      "first_last": [
+        [
+          1,
+          ""
+        ]
+      ],
+      "tail": [
+        "27,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"saw_bury_chat\":true,\"post_start_observations\":4514,\"bone_bank_cycle\":{\"first_batch_buried\":true,\"opened\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livefkh0ft 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":195,\"items\":{},\"item_ids\":{},\"bank\":{\"Bones\":28},\"bank_ids\":{\"526\":28},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"withdrawn\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livefkh0ft 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":203,\"items\":{\"Bones\":28},\"item_ids\":{\"526\":28},\"bank\":{},\"bank_ids\":{},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"buried_after_withdrawal\":true},\"bank_fletcher_cycle\":{\"first_pack_created\":false,\"deposited\":null,\"withdrawn\":null,\"crafted_after_withdrawal\":false},\"bank_fletcher_option_cycle\":{\"first\":null,\"deposited\":null,\"restocked\":null,\"further\":false},\"bank_fletcher_string_cycle\":{\"initial_pairs_strung\":false,\"deposited\":null,\"withdrawn\":null,\"strung_after_withdrawal\":false},\"bank_fletcher_cut_string_cycle\":{\"cut_pair_created\":false,\"deposited\":null,\"withdrawn\":null,\"string_pair_created\":false},\"alcher_defaults_cycle\":{\"withdrawn\":null,\"consumed\":false},\"alcher_generated_custom_cycle\":{\"withdrawn\":null,\"consumed\":false},\"dart_fletcher_cycle\":{\"first\":null,\"further\":false,\"wrong_tier\":false},\"herb_cleaner_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cleaned_after_withdrawal\":false,\"filter_violated\":false},\"gem_cutter_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cut_after_withdrawal\":false,\"filter_violated\":false},\"door_opener_cycle\":{\"selected\":null,\"opened\":false},\"gnome_course_cycle\":{\"log\":null,\"ground_return\":null,\"pipe\":null,\"second_lap\":false},\"wildy_agility_cycle\":{\"ridge\":null,\"pipe\":null,\"rope\":null,\"stone\":null,\"log\":null,\"rocks\":null,\"further_pipe\":false},\"brimhaven_agility_cycle\":{\"paid\":false,\"entered\":null,\"moved\":null,\"first_tag\":false,\"ticket\":null,\"subsequent_work\":false},\"flax_picker_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"superheater_cycle\":{\"first_bars\":false,\"deposited\":null,\"withdrawn\":null,\"produced_after_withdrawal\":false,\"wrong_product\":false,\"wrong_staff\":false},\"chicken_killer_bank_cycle\":{\"combat_loot\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"vial_filler_cycle\":{\"filled\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false},\"potion_maker_cycle\":{\"unfinished\":null,\"finished\":null,\"deposited\":null,\"withdrawn\":null,\"further\":false,\"wrong_product\":false,\"filter_violated\":false},\"tanner_bot_cycle\":{\"widget\":null,\"tanned\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"shop\":false},\"rune_crafter_cycle\":{\"withdrawn\":null,\"entered\":null,\"crafted\":null,\"exited\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_cakes_cycle\":{\"stolen\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_thiever_cycle\":{\"pickpocketed\":null,\"deposited\":null,\"returned\":false,\"further\":false},\"gnome_chop_cycle\":{\"chopped\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"gnome_fletch_cycle\":{\"chopped\":null,\"fletched\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"coal_trucks_cycle\":{\"mined\":null,\"trucked\":null,\"further\":false,\"noted\":false,\"banked\":false},\"station_production_cycle\":{\"withdrawn\":null,\"produced\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_cycle\":{\"picked\":null,\"produced\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_pick_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_eggs_cycle\":{\"taken\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_newt_cycle\":{\"bought\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"coins_spent\":false,\"coins_peak\":0,\"wrong_product\":false,\"noted\":false},\"combat_core_cycle\":{\"engagements\":0,\"defeats\":0,\"style_xp\":false,\"looted\":false,\"noted\":false,\"activated\":false,\"shield_worn\":false,\"stolen_food\":false,\"wrong_item\":false,\"dormant_indexes\":[],\"dormant_tiles\":{},\"last\":{},\"currently_engaged\":[],\"facts\":[]},\"ordered_first_exhausted\":false}}",
+        "test catalog_boundary_live ... ok",
+        "",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 139.02s",
+        ""
+      ],
+      "tick_ms_by_phase": {},
+      "slow_tick_ms_n": 0
+    }
+  },
+  {
+    "name": "r274-bone-burier-8e7d965b-21446414.process.json",
+    "size": 1440,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.process.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid"
+      ],
+      "revision": "274",
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:04:57.511264+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 90891
+    }
+  },
+  {
+    "name": "r289-bone-burier-100adccc-21446414.json",
+    "size": 1778,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid",
+        "finished_at",
+        "elapsed_seconds",
+        "exit_code",
+        "log_sha256",
+        "nav_sha256",
+        "engine_commit"
+      ],
+      "revision": "289",
+      "exit_code": 0,
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:02:39.695711+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 87911,
+      "finished_at": "2026-09-11T14:05:00.555346+00:00",
+      "elapsed_seconds": 140.857,
+      "log_sha256": "2d33c0ab9a5735d768cac64da43155e645a51393f128d352599351a6cdb09071",
+      "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+      "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75"
+    }
+  },
+  {
+    "name": "r289-bone-burier-100adccc-21446414.log",
+    "size": 91572,
+    "scan": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.log",
+      "size": 91572,
+      "lines": 657,
+      "walk_nearest": 2,
+      "open_booth": 1,
+      "timeout": 0,
+      "walk_timeout": 0,
+      "slow_ticks": 0,
+      "slow_tick_ms": [],
+      "phases": {
+        "identity": 1,
+        "baseline-after-preparation": 1,
+        "start": 1
+      },
+      "samples": [
+        [
+          14,
+          "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"live8sl3gx_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Live8sl3gx 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":6,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"d"
+        ],
+        [
+          18,
+          "[script live8sl3gx_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+        ],
+        [
+          19,
+          "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          20,
+          "[shim-held] Bones Bury slot=0 -> sent"
+        ],
+        [
+          24,
+          "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          25,
+          "[shim-held] Bones Bury slot=1 -> sent"
+        ],
+        [
+          28,
+          "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          29,
+          "[shim-held] Bones Bury slot=2 -> sent"
+        ],
+        [
+          33,
+          "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          34,
+          "[shim-held] Bones Bury slot=3 -> sent"
+        ],
+        [
+          36,
+          "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          37,
+          "[shim-held] Bones Bury slot=4 -> sent"
+        ],
+        [
+          40,
+          "[script live8sl3gx_0] slow tick 38: 63.906167ms"
+        ],
+        [
+          41,
+          "[script live8sl3gx_0] interact WalkNearestBank"
+        ],
+        [
+          42,
+          "[script live8sl3gx_0] slow tick 39: 59.231875ms"
+        ],
+        [
+          44,
+          "[script live8sl3gx_0] slow tick 40: 60.143625ms"
+        ],
+        [
+          46,
+          "[script live8sl3gx_0] slow tick 41: 62.633541ms"
+        ],
+        [
+          51,
+          "[script live8sl3gx_0] slow tick 42: 58.404708ms"
+        ],
+        [
+          55,
+          "[script live8sl3gx_0] slow tick 43: 58.215ms"
+        ],
+        [
+          59,
+          "[script live8sl3gx_0] slow tick 44: 58.115916ms"
+        ],
+        [
+          64,
+          "[script live8sl3gx_0] slow tick 45: 58.134041ms"
+        ],
+        [
+          68,
+          "[script live8sl3gx_0] slow tick 46: 60.212583ms"
+        ],
+        [
+          72,
+          "[script live8sl3gx_0] slow tick 47: 60.393083ms"
+        ],
+        [
+          76,
+          "[script live8sl3gx_0] slow tick 48: 58.916667ms"
+        ],
+        [
+          81,
+          "[script live8sl3gx_0] slow tick 49: 58.763291ms"
+        ],
+        [
+          85,
+          "[script live8sl3gx_0] slow tick 50: 57.868208ms"
+        ],
+        [
+          90,
+          "[script live8sl3gx_0] slow tick 51: 57.949208ms"
+        ],
+        [
+          94,
+          "[script live8sl3gx_0] slow tick 52: 58.75375ms"
+        ],
+        [
+          99,
+          "[script live8sl3gx_0] slow tick 53: 58.274291ms"
+        ],
+        [
+          103,
+          "[script live8sl3gx_0] slow tick 54: 58.147583ms"
+        ],
+        [
+          108,
+          "[script live8sl3gx_0] slow tick 55: 59.7565ms"
+        ],
+        [
+          112,
+          "[script live8sl3gx_0] slow tick 56: 58.417084ms"
+        ],
+        [
+          116,
+          "[script live8sl3gx_0] slow tick 57: 60.032792ms"
+        ],
+        [
+          120,
+          "[script live8sl3gx_0] slow tick 58: 60.304959ms"
+        ],
+        [
+          124,
+          "[script live8sl3gx_0] slow tick 59: 66.59825ms"
+        ],
+        [
+          129,
+          "[script live8sl3gx_0] slow tick 60: 58.624917ms"
+        ],
+        [
+          133,
+          "[script live8sl3gx_0] slow tick 61: 58.566125ms"
+        ],
+        [
+          138,
+          "[script live8sl3gx_0] slow tick 62: 58.506833ms"
+        ],
+        [
+          142,
+          "[script live8sl3gx_0] slow tick 63: 57.6765ms"
+        ],
+        [
+          147,
+          "[script live8sl3gx_0] slow tick 64: 59.388041ms"
+        ],
+        [
+          151,
+          "[script live8sl3gx_0] slow tick 65: 58.498417ms"
+        ],
+        [
+          156,
+          "[script live8sl3gx_0] slow tick 67: 57.32975ms"
+        ],
+        [
+          160,
+          "[script live8sl3gx_0] slow tick 68: 52.894334ms"
+        ],
+        [
+          165,
+          "[script live8sl3gx_0] slow tick 69: 54.660125ms"
+        ],
+        [
+          169,
+          "[script live8sl3gx_0] slow tick 70: 53.503834ms"
+        ],
+        [
+          174,
+          "[script live8sl3gx_0] slow tick 71: 54.4915ms"
+        ],
+        [
+          177,
+          "[script live8sl3gx_0] slow tick 72: 53.864708ms"
+        ],
+        [
+          182,
+          "[script live8sl3gx_0] slow tick 73: 53.848792ms"
+        ],
+        [
+          186,
+          "[script live8sl3gx_0] slow tick 74: 53.853833ms"
+        ],
+        [
+          191,
+          "[script live8sl3gx_0] slow tick 75: 53.218875ms"
+        ],
+        [
+          195,
+          "[script live8sl3gx_0] slow tick 76: 53.569333ms"
+        ],
+        [
+          200,
+          "[script live8sl3gx_0] slow tick 77: 53.608708ms"
+        ],
+        [
+          204,
+          "[script live8sl3gx_0] slow tick 78: 53.431167ms"
+        ],
+        [
+          208,
+          "[script live8sl3gx_0] slow tick 79: 54.289875ms"
+        ],
+        [
+          213,
+          "[script live8sl3gx_0] slow tick 80: 53.60225ms"
+        ],
+        [
+          217,
+          "[script live8sl3gx_0] slow tick 81: 54.417875ms"
+        ],
+        [
+          222,
+          "[script live8sl3gx_0] slow tick 82: 53.825625ms"
+        ],
+        [
+          226,
+          "[script live8sl3gx_0] slow tick 83: 53.409917ms"
+        ],
+        [
+          231,
+          "[script live8sl3gx_0] slow tick 84: 54.542333ms"
+        ],
+        [
+          235,
+          "[script live8sl3gx_0] slow tick 85: 54.051375ms"
+        ],
+        [
+          240,
+          "[script live8sl3gx_0] slow tick 86: 53.944ms"
+        ],
+        [
+          245,
+          "[script live8sl3gx_0] slow tick 87: 53.487375ms"
+        ],
+        [
+          250,
+          "[script live8sl3gx_0] slow tick 88: 53.950625ms"
+        ],
+        [
+          253,
+          "[script live8sl3gx_0] slow tick 89: 54.263291ms"
+        ],
+        [
+          408,
+          "[script live8sl3gx_0] interact WalkNearestBank"
+        ],
+        [
+          513,
+          "[script live8sl3gx_0] slow tick 175: 57.759583ms"
+        ],
+        [
+          518,
+          "[script live8sl3gx_0] slow tick 176: 57.612208ms"
+        ],
+        [
+          522,
+          "[script live8sl3gx_0] slow tick 177: 57.340709ms"
+        ],
+        [
+          527,
+          "[script live8sl3gx_0] slow tick 178: 58.930125ms"
+        ],
+        [
+          531,
+          "[script live8sl3gx_0] slow tick 179: 57.028833ms"
+        ],
+        [
+          535,
+          "[script live8sl3gx_0] slow tick 180: 57.156375ms"
+        ],
+        [
+          539,
+          "[script live8sl3gx_0] slow tick 181: 57.776958ms"
+        ],
+        [
+          543,
+          "[script live8sl3gx_0] slow tick 182: 56.863292ms"
+        ],
+        [
+          548,
+          "[script live8sl3gx_0] slow tick 183: 58.421125ms"
+        ],
+        [
+          552,
+          "[script live8sl3gx_0] slow tick 184: 57.984125ms"
+        ],
+        [
+          556,
+          "[script live8sl3gx_0] slow tick 185: 58.127125ms"
+        ],
+        [
+          560,
+          "[script live8sl3gx_0] slow tick 186: 56.997666ms"
+        ],
+        [
+          565,
+          "[script live8sl3gx_0] slow tick 187: 57.056959ms"
+        ],
+        [
+          569,
+          "[script live8sl3gx_0] slow tick 188: 56.675458ms"
+        ],
+        [
+          574,
+          "[script live8sl3gx_0] slow tick 189: 58.282084ms"
+        ]
+      ],
+      "here_samples": [],
+      "nearest_booth_samples": [],
+      "locs_len_samples": [],
+      "bank_events": [],
+      "first_last": [
+        [
+          1,
+          ""
+        ]
+      ],
+      "tail": [
+        "27,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"saw_bury_chat\":true,\"post_start_observations\":4530,\"bone_bank_cycle\":{\"first_batch_buried\":true,\"opened\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Live8sl3gx 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":194,\"items\":{},\"item_ids\":{},\"bank\":{\"Bones\":28},\"bank_ids\":{\"526\":28},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"withdrawn\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Live8sl3gx 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":202,\"items\":{\"Bones\":28},\"item_ids\":{\"526\":28},\"bank\":{},\"bank_ids\":{},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"buried_after_withdrawal\":true},\"bank_fletcher_cycle\":{\"first_pack_created\":false,\"deposited\":null,\"withdrawn\":null,\"crafted_after_withdrawal\":false},\"bank_fletcher_option_cycle\":{\"first\":null,\"deposited\":null,\"restocked\":null,\"further\":false},\"bank_fletcher_string_cycle\":{\"initial_pairs_strung\":false,\"deposited\":null,\"withdrawn\":null,\"strung_after_withdrawal\":false},\"bank_fletcher_cut_string_cycle\":{\"cut_pair_created\":false,\"deposited\":null,\"withdrawn\":null,\"string_pair_created\":false},\"alcher_defaults_cycle\":{\"withdrawn\":null,\"consumed\":false},\"alcher_generated_custom_cycle\":{\"withdrawn\":null,\"consumed\":false},\"dart_fletcher_cycle\":{\"first\":null,\"further\":false,\"wrong_tier\":false},\"herb_cleaner_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cleaned_after_withdrawal\":false,\"filter_violated\":false},\"gem_cutter_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cut_after_withdrawal\":false,\"filter_violated\":false},\"door_opener_cycle\":{\"selected\":null,\"opened\":false},\"gnome_course_cycle\":{\"log\":null,\"ground_return\":null,\"pipe\":null,\"second_lap\":false},\"wildy_agility_cycle\":{\"ridge\":null,\"pipe\":null,\"rope\":null,\"stone\":null,\"log\":null,\"rocks\":null,\"further_pipe\":false},\"brimhaven_agility_cycle\":{\"paid\":false,\"entered\":null,\"moved\":null,\"first_tag\":false,\"ticket\":null,\"subsequent_work\":false},\"flax_picker_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"superheater_cycle\":{\"first_bars\":false,\"deposited\":null,\"withdrawn\":null,\"produced_after_withdrawal\":false,\"wrong_product\":false,\"wrong_staff\":false},\"chicken_killer_bank_cycle\":{\"combat_loot\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"vial_filler_cycle\":{\"filled\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false},\"potion_maker_cycle\":{\"unfinished\":null,\"finished\":null,\"deposited\":null,\"withdrawn\":null,\"further\":false,\"wrong_product\":false,\"filter_violated\":false},\"tanner_bot_cycle\":{\"widget\":null,\"tanned\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"shop\":false},\"rune_crafter_cycle\":{\"withdrawn\":null,\"entered\":null,\"crafted\":null,\"exited\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_cakes_cycle\":{\"stolen\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_thiever_cycle\":{\"pickpocketed\":null,\"deposited\":null,\"returned\":false,\"further\":false},\"gnome_chop_cycle\":{\"chopped\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"gnome_fletch_cycle\":{\"chopped\":null,\"fletched\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"coal_trucks_cycle\":{\"mined\":null,\"trucked\":null,\"further\":false,\"noted\":false,\"banked\":false},\"station_production_cycle\":{\"withdrawn\":null,\"produced\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_cycle\":{\"picked\":null,\"produced\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_pick_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_eggs_cycle\":{\"taken\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_newt_cycle\":{\"bought\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"coins_spent\":false,\"coins_peak\":0,\"wrong_product\":false,\"noted\":false},\"combat_core_cycle\":{\"engagements\":0,\"defeats\":0,\"style_xp\":false,\"looted\":false,\"noted\":false,\"activated\":false,\"shield_worn\":false,\"stolen_food\":false,\"wrong_item\":false,\"dormant_indexes\":[],\"dormant_tiles\":{},\"last\":{},\"currently_engaged\":[],\"facts\":[]},\"ordered_first_exhausted\":false}}",
+        "test catalog_boundary_live ... ok",
+        "",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 140.85s",
+        ""
+      ],
+      "tick_ms_by_phase": {},
+      "slow_tick_ms_n": 0
+    }
+  },
+  {
+    "name": "r289-bone-burier-100adccc-21446414.process.json",
+    "size": 1446,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.process.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid"
+      ],
+      "revision": "289",
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:02:39.695711+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 87911
+    }
+  },
+  {
+    "name": "r289-bone-burier-8e7d965b-21446414.json",
+    "size": 1778,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid",
+        "finished_at",
+        "elapsed_seconds",
+        "exit_code",
+        "log_sha256",
+        "nav_sha256",
+        "engine_commit"
+      ],
+      "revision": "289",
+      "exit_code": 0,
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:05:00.700208+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 90929,
+      "finished_at": "2026-09-11T14:07:21.529675+00:00",
+      "elapsed_seconds": 140.827,
+      "log_sha256": "5630473ae34b5aaaa097c43194a7b2d6bf2c96977c757bebc3cf2c7aa09a6c1b",
+      "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+      "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75"
+    }
+  },
+  {
+    "name": "r289-bone-burier-8e7d965b-21446414.log",
+    "size": 91687,
+    "scan": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.log",
+      "size": 91687,
+      "lines": 658,
+      "walk_nearest": 2,
+      "open_booth": 1,
+      "timeout": 0,
+      "walk_timeout": 0,
+      "slow_ticks": 0,
+      "slow_tick_ms": [],
+      "phases": {
+        "identity": 1,
+        "baseline-after-preparation": 1,
+        "start": 1
+      },
+      "samples": [
+        [
+          14,
+          "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"livehrm041_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livehrm041 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"d"
+        ],
+        [
+          18,
+          "[script livehrm041_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+        ],
+        [
+          19,
+          "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          20,
+          "[shim-held] Bones Bury slot=0 -> sent"
+        ],
+        [
+          25,
+          "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          26,
+          "[shim-held] Bones Bury slot=1 -> sent"
+        ],
+        [
+          30,
+          "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          31,
+          "[shim-held] Bones Bury slot=2 -> sent"
+        ],
+        [
+          33,
+          "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          34,
+          "[shim-held] Bones Bury slot=3 -> sent"
+        ],
+        [
+          36,
+          "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+        ],
+        [
+          37,
+          "[shim-held] Bones Bury slot=4 -> sent"
+        ],
+        [
+          40,
+          "[script livehrm041_0] slow tick 36: 60.124667ms"
+        ],
+        [
+          41,
+          "[script livehrm041_0] interact WalkNearestBank"
+        ],
+        [
+          42,
+          "[script livehrm041_0] slow tick 37: 61.910917ms"
+        ],
+        [
+          44,
+          "[script livehrm041_0] slow tick 38: 59.575708ms"
+        ],
+        [
+          46,
+          "[script livehrm041_0] slow tick 39: 64.378917ms"
+        ],
+        [
+          49,
+          "[script livehrm041_0] slow tick 40: 59.656333ms"
+        ],
+        [
+          54,
+          "[script livehrm041_0] slow tick 41: 58.996917ms"
+        ],
+        [
+          58,
+          "[script livehrm041_0] slow tick 42: 59.301125ms"
+        ],
+        [
+          63,
+          "[script livehrm041_0] slow tick 43: 58.692709ms"
+        ],
+        [
+          67,
+          "[script livehrm041_0] slow tick 44: 63.030084ms"
+        ],
+        [
+          72,
+          "[script livehrm041_0] slow tick 45: 61.433417ms"
+        ],
+        [
+          76,
+          "[script livehrm041_0] slow tick 46: 61.340041ms"
+        ],
+        [
+          81,
+          "[script livehrm041_0] slow tick 47: 58.781792ms"
+        ],
+        [
+          85,
+          "[script livehrm041_0] slow tick 48: 59.038125ms"
+        ],
+        [
+          89,
+          "[script livehrm041_0] slow tick 49: 58.840291ms"
+        ],
+        [
+          92,
+          "[script livehrm041_0] slow tick 50: 58.409041ms"
+        ],
+        [
+          96,
+          "[script livehrm041_0] slow tick 51: 59.366542ms"
+        ],
+        [
+          100,
+          "[script livehrm041_0] slow tick 52: 59.176959ms"
+        ],
+        [
+          105,
+          "[script livehrm041_0] slow tick 53: 59.470417ms"
+        ],
+        [
+          109,
+          "[script livehrm041_0] slow tick 54: 58.678125ms"
+        ],
+        [
+          113,
+          "[script livehrm041_0] slow tick 55: 59.325792ms"
+        ],
+        [
+          117,
+          "[script livehrm041_0] slow tick 56: 58.414708ms"
+        ],
+        [
+          121,
+          "[script livehrm041_0] slow tick 57: 58.75125ms"
+        ],
+        [
+          126,
+          "[script livehrm041_0] slow tick 58: 58.371583ms"
+        ],
+        [
+          130,
+          "[script livehrm041_0] slow tick 59: 58.517542ms"
+        ],
+        [
+          135,
+          "[script livehrm041_0] slow tick 60: 58.659333ms"
+        ],
+        [
+          139,
+          "[script livehrm041_0] slow tick 61: 58.422292ms"
+        ],
+        [
+          144,
+          "[script livehrm041_0] slow tick 62: 58.433625ms"
+        ],
+        [
+          148,
+          "[script livehrm041_0] slow tick 63: 58.270666ms"
+        ],
+        [
+          152,
+          "[script livehrm041_0] slow tick 65: 55.134ms"
+        ],
+        [
+          155,
+          "[script livehrm041_0] slow tick 66: 54.105ms"
+        ],
+        [
+          160,
+          "[script livehrm041_0] slow tick 67: 56.3285ms"
+        ],
+        [
+          164,
+          "[script livehrm041_0] slow tick 68: 55.4385ms"
+        ],
+        [
+          168,
+          "[script livehrm041_0] slow tick 69: 54.840792ms"
+        ],
+        [
+          172,
+          "[script livehrm041_0] slow tick 70: 55.79925ms"
+        ],
+        [
+          177,
+          "[script livehrm041_0] slow tick 71: 54.468292ms"
+        ],
+        [
+          181,
+          "[script livehrm041_0] slow tick 72: 54.0865ms"
+        ],
+        [
+          186,
+          "[script livehrm041_0] slow tick 73: 54.107292ms"
+        ],
+        [
+          190,
+          "[script livehrm041_0] slow tick 74: 54.561458ms"
+        ],
+        [
+          195,
+          "[script livehrm041_0] slow tick 75: 54.085583ms"
+        ],
+        [
+          199,
+          "[script livehrm041_0] slow tick 76: 54.513792ms"
+        ],
+        [
+          203,
+          "[script livehrm041_0] slow tick 77: 54.694083ms"
+        ],
+        [
+          207,
+          "[script livehrm041_0] slow tick 78: 56.916625ms"
+        ],
+        [
+          211,
+          "[script livehrm041_0] slow tick 79: 57.860417ms"
+        ],
+        [
+          216,
+          "[script livehrm041_0] slow tick 80: 57.294833ms"
+        ],
+        [
+          220,
+          "[script livehrm041_0] slow tick 81: 54.958ms"
+        ],
+        [
+          224,
+          "[script livehrm041_0] slow tick 82: 58.104ms"
+        ],
+        [
+          228,
+          "[script livehrm041_0] slow tick 83: 54.331166ms"
+        ],
+        [
+          233,
+          "[script livehrm041_0] slow tick 84: 54.958166ms"
+        ],
+        [
+          236,
+          "[script livehrm041_0] slow tick 85: 55.431208ms"
+        ],
+        [
+          240,
+          "[script livehrm041_0] slow tick 86: 56.852458ms"
+        ],
+        [
+          245,
+          "[script livehrm041_0] slow tick 87: 55.328584ms"
+        ],
+        [
+          398,
+          "[script livehrm041_0] interact WalkNearestBank"
+        ],
+        [
+          498,
+          "[script livehrm041_0] slow tick 173: 58.733375ms"
+        ],
+        [
+          503,
+          "[script livehrm041_0] slow tick 174: 58.736792ms"
+        ],
+        [
+          507,
+          "[script livehrm041_0] slow tick 175: 58.83ms"
+        ],
+        [
+          512,
+          "[script livehrm041_0] slow tick 176: 58.378792ms"
+        ],
+        [
+          516,
+          "[script livehrm041_0] slow tick 177: 60.093958ms"
+        ],
+        [
+          521,
+          "[script livehrm041_0] slow tick 178: 59.525459ms"
+        ],
+        [
+          525,
+          "[script livehrm041_0] slow tick 179: 58.665125ms"
+        ],
+        [
+          529,
+          "[script livehrm041_0] slow tick 180: 58.38275ms"
+        ],
+        [
+          534,
+          "[script livehrm041_0] slow tick 181: 60.562833ms"
+        ],
+        [
+          538,
+          "[script livehrm041_0] slow tick 182: 59.072084ms"
+        ],
+        [
+          543,
+          "[script livehrm041_0] slow tick 183: 59.447375ms"
+        ],
+        [
+          547,
+          "[script livehrm041_0] slow tick 184: 58.636792ms"
+        ],
+        [
+          552,
+          "[script livehrm041_0] slow tick 185: 60.270834ms"
+        ],
+        [
+          555,
+          "[script livehrm041_0] slow tick 186: 58.679208ms"
+        ],
+        [
+          560,
+          "[script livehrm041_0] slow tick 187: 58.79875ms"
+        ]
+      ],
+      "here_samples": [],
+      "nearest_booth_samples": [],
+      "locs_len_samples": [],
+      "bank_events": [],
+      "first_last": [
+        [
+          1,
+          ""
+        ]
+      ],
+      "tail": [
+        "27,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"saw_bury_chat\":true,\"post_start_observations\":4522,\"bone_bank_cycle\":{\"first_batch_buried\":true,\"opened\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livehrm041 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":195,\"items\":{},\"item_ids\":{},\"bank\":{\"Bones\":28},\"bank_ids\":{\"526\":28},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"withdrawn\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livehrm041 0\",\"tile\":[3269,3169,0],\"combat_level\":3,\"tick\":203,\"items\":{\"Bones\":28},\"item_ids\":{\"526\":28},\"bank\":{},\"bank_ids\":{},\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"levels\":{\"-unused-\":0,\"agility\":1,\"attack\":1,\"cooking\":1,\"crafting\":1,\"defence\":1,\"firemaking\":1,\"fishing\":1,\"fletching\":1,\"herblore\":1,\"hitpoints\":10,\"magic\":1,\"mining\":1,\"prayer\":1,\"ranged\":1,\"runecraft\":1,\"slayer\":1,\"smithing\":1,\"strength\":1,\"thieving\":1,\"woodcutting\":1},\"xp\":{\"-unused-\":0,\"agility\":0,\"attack\":0,\"cooking\":0,\"crafting\":0,\"defence\":0,\"firemaking\":0,\"fishing\":0,\"fletching\":0,\"herblore\":0,\"hitpoints\":1154,\"magic\":0,\"mining\":0,\"prayer\":22,\"ranged\":0,\"runecraft\":0,\"slayer\":0,\"smithing\":0,\"strength\":0,\"thieving\":0,\"woodcutting\":0},\"varps\":{\"309\":0},\"chat\":[[16,\"You bury the bones.\"],[15,\"You dig a hole in the ground...\"],[14,\"You bury the bones.\"],[13,\"You dig a hole in the ground...\"],[12,\"You bury the bones.\"],[11,\"You dig a hole in the ground...\"],[10,\"You bury the bones.\"],[9,\"You dig a hole in the ground...\"],[8,\"You bury the bones.\"],[7,\"You dig a hole in the ground...\"],[6,\"set tutorial: to 1000\"],[5,\"Welcome to RuneScape.\"]],\"loc_facts\":[],\"npc_facts\":[],\"ground_loot\":[],\"local_in_combat\":false,\"local_target_npc\":null,\"local_health\":0,\"local_animation\":-1,\"equipment_ids\":{},\"main_modal\":5292,\"widget_ids\":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"buried_after_withdrawal\":true},\"bank_fletcher_cycle\":{\"first_pack_created\":false,\"deposited\":null,\"withdrawn\":null,\"crafted_after_withdrawal\":false},\"bank_fletcher_option_cycle\":{\"first\":null,\"deposited\":null,\"restocked\":null,\"further\":false},\"bank_fletcher_string_cycle\":{\"initial_pairs_strung\":false,\"deposited\":null,\"withdrawn\":null,\"strung_after_withdrawal\":false},\"bank_fletcher_cut_string_cycle\":{\"cut_pair_created\":false,\"deposited\":null,\"withdrawn\":null,\"string_pair_created\":false},\"alcher_defaults_cycle\":{\"withdrawn\":null,\"consumed\":false},\"alcher_generated_custom_cycle\":{\"withdrawn\":null,\"consumed\":false},\"dart_fletcher_cycle\":{\"first\":null,\"further\":false,\"wrong_tier\":false},\"herb_cleaner_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cleaned_after_withdrawal\":false,\"filter_violated\":false},\"gem_cutter_cycle\":{\"first_pack\":false,\"deposited\":null,\"withdrawn\":null,\"cut_after_withdrawal\":false,\"filter_violated\":false},\"door_opener_cycle\":{\"selected\":null,\"opened\":false},\"gnome_course_cycle\":{\"log\":null,\"ground_return\":null,\"pipe\":null,\"second_lap\":false},\"wildy_agility_cycle\":{\"ridge\":null,\"pipe\":null,\"rope\":null,\"stone\":null,\"log\":null,\"rocks\":null,\"further_pipe\":false},\"brimhaven_agility_cycle\":{\"paid\":false,\"entered\":null,\"moved\":null,\"first_tag\":false,\"ticket\":null,\"subsequent_work\":false},\"flax_picker_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"superheater_cycle\":{\"first_bars\":false,\"deposited\":null,\"withdrawn\":null,\"produced_after_withdrawal\":false,\"wrong_product\":false,\"wrong_staff\":false},\"chicken_killer_bank_cycle\":{\"combat_loot\":false,\"deposited\":null,\"returned\":false,\"further\":false},\"vial_filler_cycle\":{\"filled\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false},\"potion_maker_cycle\":{\"unfinished\":null,\"finished\":null,\"deposited\":null,\"withdrawn\":null,\"further\":false,\"wrong_product\":false,\"filter_violated\":false},\"tanner_bot_cycle\":{\"widget\":null,\"tanned\":null,\"deposited\":null,\"withdrawn\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"shop\":false},\"rune_crafter_cycle\":{\"withdrawn\":null,\"entered\":null,\"crafted\":null,\"exited\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_cakes_cycle\":{\"stolen\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"ardy_thiever_cycle\":{\"pickpocketed\":null,\"deposited\":null,\"returned\":false,\"further\":false},\"gnome_chop_cycle\":{\"chopped\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"gnome_fletch_cycle\":{\"chopped\":null,\"fletched\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"coal_trucks_cycle\":{\"mined\":null,\"trucked\":null,\"further\":false,\"noted\":false,\"banked\":false},\"station_production_cycle\":{\"withdrawn\":null,\"produced\":null,\"deposited\":null,\"restocked\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_cycle\":{\"picked\":null,\"produced\":null,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"flax_aio_pick_cycle\":{\"first_pack\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_eggs_cycle\":{\"taken\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"wrong_product\":false,\"noted\":false},\"herblore_newt_cycle\":{\"bought\":false,\"deposited\":null,\"returned\":false,\"further\":false,\"coins_spent\":false,\"coins_peak\":0,\"wrong_product\":false,\"noted\":false},\"combat_core_cycle\":{\"engagements\":0,\"defeats\":0,\"style_xp\":false,\"looted\":false,\"noted\":false,\"activated\":false,\"shield_worn\":false,\"stolen_food\":false,\"wrong_item\":false,\"dormant_indexes\":[],\"dormant_tiles\":{},\"last\":{},\"currently_engaged\":[],\"facts\":[]},\"ordered_first_exhausted\":false}}",
+        "test catalog_boundary_live ... ok",
+        "",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 140.82s",
+        ""
+      ],
+      "tick_ms_by_phase": {},
+      "slow_tick_ms_n": 0
+    }
+  },
+  {
+    "name": "r289-bone-burier-8e7d965b-21446414.process.json",
+    "size": 1446,
+    "summary": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.process.json",
+      "top_keys": [
+        "command",
+        "started_at",
+        "host_commit",
+        "client_commit",
+        "binary_sha256",
+        "catalog_commit",
+        "revision",
+        "case",
+        "environment",
+        "elapsed_is_not_performance_measurement",
+        "pid"
+      ],
+      "revision": "289",
+      "command_len": 5,
+      "command_0": "'/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-21446414'",
+      "started_at": "2026-09-11T14:05:00.700208+00:00",
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+      "case": "bone_burier",
+      "environment_keys": [
+        "LIVE",
+        "BOT_CPU",
+        "BOT_DEBUG",
+        "RUST_BACKTRACE",
+        "CATALOG_REVISION",
+        "CATALOG_SCENARIO",
+        "CATALOG_COMMIT",
+        "CATALOG_ROOT",
+        "CATALOG_NAV_PACK",
+        "CATALOG_NAV_FLAGS",
+        "CATALOG_ENGINE_DIR"
+      ],
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 90929
+    }
+  }
+]

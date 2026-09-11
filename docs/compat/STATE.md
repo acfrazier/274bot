@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 14:10 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 14:31 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -25,28 +25,44 @@ and client5c73a4a are confirmed remote. Cleanup completed:41 inactive worktrees
 and43 local branches removed after verified history/local-artifact backups. Only
 primary and active campaign worktrees remain. See10-worktree-cleanup.md.
 
-Native hint117, Agility118 R2, preparation120 and native sequencing123 have
-completed their required reviews. Source21446414 is running the next controlled
-274/289 qualification batch. Resource125 is active, followed by trained
-Brimhaven preparation131, mage combat fixture132 and Mule bootstrap127.
-Native retaliate128 is active and gates teleport/shop/Make-X/fire/trade126.
+Native hint117, Agility118 R2, preparation120, native sequencing123,
+retaliate128 and TUI130 have completed verified reviews. Exact21446414 batch
+continues; current raw harness outcomes include19 PASS and7 FAIL, plus four
+new15e Wildy FAILs. The369-row ledger is append-only. Current combat PASSs
+are diagnostic pending corrected observer136; do not promote them as final
+acceptance. Bone/default Alcher/shaft/headless fletching cycles passed across
+four cells with real work. ArdyCakes214 fails after isolate termination.
 
-## Agility and paint follow-up (14:10 UTC)
+Fixture lane: resource125 active -> trained Brimhaven131 -> Wildy plane135
+-> combat observer/Coal bounded preparation136 -> mage132 -> Mule bootstrap127.
+Native lane: observation projection134 active after audit133/retaliate128 ->
+teleport -> shop -> Make-X -> fire -> trade126. Existing parent gates remain.
+No new main publication beyond76b2016b7 yet; stage2 needs native correction
+and reviewed/live-qualified scope.
 
-Exact cd49e147/client aef3952d builds verified4409 files. All8 new headless
-agility cells failed and are appended to339-row ledger. Four Wildy failures
-identify missing reader.retaliateControls. Four Brimhaven failures reached paid
-entrance and obstacle attempts with Agility1; Grok129 found incomplete native
-course reachability at that level. Fixture131 will prepare Agility52 and require
-acknowledgement before Start. Post-fall animation uncertainty remains open.
-Original180s/150 bounds and full ticket-cycle witnesses remain unchanged.
+## Current agility, UI and observation findings
 
-Native paint diagnostic reached real Go bank/Resume callbacks and visible label
-changes; host Pause/Stop proof remains open. TUI paint clipped the button in its
-six-row pane;130 is fixing layout and hit testing. These are private UI diagnostics,
-not gameplay acceptance. See06af and preserved failures. Audit133 is checking
-bulk observation transfer in the new Rust sequencing bridge before publication;
-slow ticks under concurrent diagnostic work are not a performance measurement.
+Retaliate128 cleared the missing binding; all four exact15e Wildy reruns start
+and toggle the native control. Three reach script lap messages but the oracle
+waits for player plane1 at the log. Task135 verifies effective player plane
+against raw scenery and corrects both fixture/oracle; one274 newer run fell at
+the ridge and died. All four remain FAIL. See06ac and agility-wildy15e.json.
+Brimhaven still awaits trained52 preparation131; all original clocks stay.
+
+Native274 real CUA and TUI289 real PTY controls2 now pass paint Go bank/Resume,
+host Pause/Resume/Stop, and paused-click rejection. TUI also rejects body clicks
+and displays the button. Original private Alcher watches still FAIL; these are
+UI-only results with canonical Air runes, not NatureCrafter gameplay acceptance.
+The first manual TUI attempt was incomplete and remains retained. See06af.
+
+Audit133 actual Grok4.6 confirms repeated bulk world/inventory roundtrips in
+native123 bank/cake polling;134 is replacing them with compact native facts.
+Bone's60s timeout was mid-route, not an arrival-radius mismatch; preserve bounds.
+ArdyCakes termination coexists with slow ticks but no matched causation claim.
+CombatCoreCycle also has sticky defeated/new-spawn counting and stale-loot
+risks;136 corrects observation state before combat acceptance and mage132.
+Coal's27-free-slot Mining30 fixture misses bounded pack fill;136 uses honest
+nonproduct ballast while preserving actual mining/deposit/further-work evidence.
 
 ## Incremental integration and ownership correction
 

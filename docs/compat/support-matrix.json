@@ -14510,7 +14510,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "RockCrab",
@@ -15431,7 +15432,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "MossGiant",
@@ -16178,7 +16180,8 @@
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "MossGiant",
@@ -16925,7 +16928,8 @@
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "GreenDragon",
@@ -17853,7 +17857,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "GreenDragon",
@@ -18781,7 +18786,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "FireGiant",
@@ -19635,7 +19641,8 @@
       "known_gaps": [],
       "status": "PENDING",
       "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "FireGiant",
@@ -20489,7 +20496,8 @@
       "known_gaps": [],
       "status": "PENDING",
       "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyFighter",
@@ -21176,7 +21184,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyFighter",
@@ -21863,7 +21872,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "Thiever",
@@ -23957,7 +23967,8 @@
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "AutoFighter",
@@ -24913,7 +24924,8 @@
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyThiever",
@@ -26562,13 +26574,21 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "status_detail": "Current214 ArdyCakes fails after slow ticks and execution termination. Native observation repair134 pending; original failures retained; no current acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "ardy_cakes",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -26934,13 +26954,21 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "status_detail": "Current214 ArdyCakes fails after slow ticks and execution termination. Native observation repair134 pending; original failures retained; no current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "ardy_cakes",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -30828,7 +30856,21 @@
         "docs/compat/evidence/inventory-use-on/review.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-100adccc-21446414.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -31176,7 +31218,21 @@
         "docs/compat/evidence/inventory-use-on/review.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-100adccc-21446414.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -33519,7 +33575,15 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -33684,7 +33748,15 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -35005,7 +35077,15 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -35284,7 +35364,15 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -38901,7 +38989,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_readiness": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -38911,11 +38999,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
       ]
     },
     {
@@ -39342,7 +39432,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 39: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_readiness": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -39352,11 +39442,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 39: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
       ]
     },
     {
@@ -42804,7 +42896,8 @@
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "HillGiant",
@@ -43285,7 +43378,8 @@
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
-      ]
+      ],
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "VialFiller",
@@ -49544,7 +49638,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "RockCrab",
@@ -50465,7 +50560,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "MossGiant",
@@ -51207,7 +51303,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "MossGiant",
@@ -51949,7 +52046,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "GreenDragon",
@@ -52877,7 +52975,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "GreenDragon",
@@ -53805,7 +53904,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "FireGiant",
@@ -54659,7 +54759,8 @@
       "known_gaps": [],
       "status": "PENDING",
       "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "FireGiant",
@@ -55513,7 +55614,8 @@
       "known_gaps": [],
       "status": "PENDING",
       "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyFighter",
@@ -56200,7 +56302,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyFighter",
@@ -56887,7 +56990,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "Thiever",
@@ -58976,7 +59080,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "AutoFighter",
@@ -59927,7 +60032,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "ArdyThiever",
@@ -65785,7 +65891,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.log",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-8e7d965b-21446414.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -66149,7 +66269,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.log",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-8e7d965b-21446414.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -68482,7 +68616,15 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -68647,7 +68789,15 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -69980,7 +70130,15 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -70259,7 +70417,15 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-21446414.json"
+        }
       ]
     },
     {
@@ -73845,7 +74011,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_readiness": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 7 (watch ridge Agility XP): stat_xp_gain(16)>=15 not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -73855,11 +74021,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 7 (watch ridge Agility XP): stat_xp_gain(16)>=15 not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
       ]
     },
     {
@@ -74286,7 +74454,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 41: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_readiness": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -74296,11 +74464,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 41: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
       ]
     },
     {
@@ -77717,7 +77887,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "fixture_id": "local-274",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "HillGiant",
@@ -78193,7 +78364,8 @@
       ],
       "status": "BLOCKED",
       "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "fixture_id": "local-289",
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
     },
     {
       "display_name": "VialFiller",

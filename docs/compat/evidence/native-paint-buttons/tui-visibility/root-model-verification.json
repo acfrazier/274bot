@@ -1,0 +1,10 @@
+{
+  "task": "t_193e97fb",
+  "run": 1359,
+  "session": "20260911_101510_caa179",
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_calls": 7,
+  "actual_model_verified": true,
+  "verdict": "Reviewed and approved 025e31281. Shared paint_layout + preferred_height fix six-row clipping and above-button false hits; actual-render tests cover 140x40/compact/wrap rejection and modal priority. Independent cargo test -p tui: 114 passed (nature_crafter x2, paint_click_rejects, paint_modal_still). Scope TUI-only; no LIVE."
+}

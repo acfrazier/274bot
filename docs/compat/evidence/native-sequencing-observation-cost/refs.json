@@ -1,0 +1,93 @@
+{
+  "reviewer": "grok46",
+  "model": "grok-4.6",
+  "provider": "xai-oauth",
+  "kanban_task": "t_97028e08",
+  "kind": "read-only source/finished-log audit",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "025e31281aae64a3ec944bef532b42eabfd8dbd2",
+  "log_host": "21446414d21b50088aabf100df4392c3674b89fa",
+  "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+  "bank_js_unchanged_vs_21446414": true,
+  "bank_open_rs_unchanged_vs_21446414": true,
+  "cake_stall_js_unchanged_vs_21446414": true,
+  "cake_stall_rs_unchanged_vs_21446414": true,
+  "sha256": {
+    "brief_133": "fcf26e34b1974751e25f11bcf50cc4b1dd7afbed28b51d9b4b302b3c56e8960e",
+    "bank.js": "52ee4c0ff2d33d323c07891e1d6cf87651bfada476a20759a4548ab278da7166",
+    "bank_open.rs": "06c965780fbd818c82cfbda0a9ad1db0408ce8a3010fdcdef8f8ff73c0890dc5",
+    "cake_stall.js": "228cb685e6227b4d17e343e13fefce0c4c984449e742f1cfeb529d5ec62ed4d0",
+    "cake_stall.rs": "c54e1f15601403f3a07ed2eb9f8f31f1ec1d65331121e9c7f3d8e4ff70e064d7",
+    "periodic_bank.js": "e6e73c68022009ac0f0348f494e006bc1a42b0fced18fecef742373a8f63aecd",
+    "periodic_bank.rs": "1706b769b1357f72ebeabeaf8648b9aa5a6c71fd65d1180147acc4c4723aaa82",
+    "banking.js": "e68871ac927e76ec90fd71414ef92bff2089bc77e5587fd66027f478e82851e0",
+    "execution.js": "e1d6131f779bb7a2cf34ee19e5db9a442f119a0cbee79a952fe0a4738fa8ff61"
+  },
+  "receipts": {
+    "r274-100adccc": {
+      "exit_code": 0,
+      "elapsed_seconds": 138.798,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "b20d8c0a6686be3cb3ce43082c3312421e33425cbaf787816cc643b8b728527b",
+      "slow_n": 84,
+      "slow_median_ms": 58.489458,
+      "slow_min_ms": 50.141375,
+      "slow_max_ms": 72.686792
+    },
+    "r274-8e7d965b": {
+      "exit_code": 0,
+      "elapsed_seconds": 139.035,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "5cf58208971c03bbaea9251f07bcd3b05b51ac605f5c7eb61203ec8eda4964de",
+      "slow_n": 87,
+      "slow_median_ms": 59.050417,
+      "slow_min_ms": 50.22225,
+      "slow_max_ms": 71.901084
+    },
+    "r289-100adccc": {
+      "exit_code": 0,
+      "elapsed_seconds": 140.857,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "2d33c0ab9a5735d768cac64da43155e645a51393f128d352599351a6cdb09071",
+      "slow_n": 80,
+      "slow_median_ms": 57.6765,
+      "slow_min_ms": 50.027041,
+      "slow_max_ms": 66.59825
+    },
+    "r289-8e7d965b": {
+      "exit_code": 0,
+      "elapsed_seconds": 140.827,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "5630473ae34b5aaaa097c43194a7b2d6bf2c96977c757bebc3cf2c7aa09a6c1b",
+      "slow_n": 87,
+      "slow_median_ms": 58.422292,
+      "slow_min_ms": 50.265292,
+      "slow_max_ms": 64.378917
+    },
+    "r274-ardy-cakes-100adccc": {
+      "exit_code": 1,
+      "elapsed_seconds": 112.602,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "ea0b9d97792311b080207ff8e4def5b0ae6cd9da79090d484ce88618a433d492",
+      "slow_n": 143,
+      "slow_ge200": 93,
+      "slow_median_ms": 238.013041,
+      "slow_min_ms": 75.853458,
+      "slow_max_ms": 471.803833,
+      "terminal": "tick 177 Unknown error after interrupted slow tick 176 / execution terminated"
+    },
+    "r289-ardy-cakes-100adccc": {
+      "exit_code": 1,
+      "elapsed_seconds": 108.448,
+      "elapsed_is_not_performance_measurement": true,
+      "log_sha256": "f3fed565edf73c53eda750de30a8ea9081d9f218d449da96595589982b72e363",
+      "slow_n": 138,
+      "slow_ge200": 96,
+      "slow_median_ms": 234.071208,
+      "slow_min_ms": 75.422,
+      "slow_max_ms": 472.184041,
+      "terminal": "tick 167 Unknown error after interrupted slow tick 166 / execution terminated"
+    }
+  }
+}

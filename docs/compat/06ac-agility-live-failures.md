@@ -19,3 +19,16 @@ post-climb pit/animation observation; no diagnosis is treated as acceptance.
 `evidence/catalog-harness/agility-cd49e147.json` retains every source-bound
 failure and script action. The append-only ledger has339 rows; matrix cells
 remain PARTIAL. No clock, gameplay, frozen script, or witness was weakened.
+
+
+## Native retaliate mapping follow-up (14:29 UTC)
+
+Native128 passed actual Grok4.5 review1358. Fresh exact15e779cad/aef builds
+verified4423 files; all four Wildy reruns still FAIL. All now dispatch the native
+auto-retaliate control and start the script. Three reach the script's full-lap
+messages but the ordered fixture stalls on log destination plane1; source
+inspection shows the command path uses the observed plane0. Task135 verifies
+raw scenery versus observed player plane before correcting both fixture and
+core oracle. One274 newer run falls at the ridge and dies before ridge XP.
+These failures remain failures, and script lap messages do not substitute for
+the full ordered observation witness. Raw rows: agility-wildy15e.json.
