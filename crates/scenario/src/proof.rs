@@ -3,7 +3,7 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::{GameSnapshot, LocView, WorldTile};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -84,6 +84,27 @@ pub enum Proof {
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
     /// the player on the player's level.
     NpcNear { r#type: usize, radius: i32 },
+    /// A placed loc of exact `id` stands within chebyshev `radius` of
+    /// `(x, z, level)` on the snapshot loc sweep.
+    LocIdNear {
+        id: i32,
+        x: i32,
+        z: i32,
+        level: i32,
+        radius: i32,
+    },
+    /// A placed loc of exact `id` within chebyshev `radius` of
+    /// `(x, z, level)` has (`present`) or lacks an action matching `action`
+    /// (`/^action/i`). Missing loc facts fail closed.
+    LocActionNear {
+        id: i32,
+        x: i32,
+        z: i32,
+        level: i32,
+        radius: i32,
+        action: &'static str,
+        present: bool,
+    },
 }
 
 impl Proof {
@@ -121,6 +142,25 @@ impl Proof {
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
+            Proof::LocIdNear {
+                id,
+                x,
+                z,
+                level,
+                radius,
+            } => format!("loc_id({id})@({x},{z},{level},r{radius})"),
+            Proof::LocActionNear {
+                id,
+                x,
+                z,
+                level,
+                radius,
+                action,
+                present,
+            } => {
+                let rel = if *present { "has" } else { "lacks" };
+                format!("loc_id({id})@({x},{z},{level},r{radius})_{rel}_{action}")
+            }
         }
     }
 
@@ -310,6 +350,29 @@ impl Proof {
                         ) <= *radius
                 })
             }),
+            Proof::LocIdNear {
+                id,
+                x,
+                z,
+                level,
+                radius,
+            } => loc_ready(snap) && loc_near(snap, *id, *x, *z, *level, *radius).is_some(),
+            Proof::LocActionNear {
+                id,
+                x,
+                z,
+                level,
+                radius,
+                action,
+                present,
+            } => {
+                if !loc_ready(snap) {
+                    return false;
+                }
+                let has = loc_near(snap, *id, *x, *z, *level, *radius)
+                    .is_some_and(|loc| loc_action_matches(loc, action));
+                has == *present
+            }
         }
     }
 }
@@ -329,6 +392,33 @@ fn fresh_bank(snap: &GameSnapshot) -> bool {
 /// XP for skill `id` from the snapshot stat table (`None` when absent).
 fn stat_xp(snap: &GameSnapshot, id: i32) -> Option<i32> {
     snap.stats().iter().find(|s| s.index == id).map(|s| s.xp)
+}
+
+fn loc_ready(snap: &GameSnapshot) -> bool {
+    snap.ingame() && snap.scene_state() == 2
+}
+
+fn loc_near(
+    snap: &GameSnapshot,
+    id: i32,
+    x: i32,
+    z: i32,
+    level: i32,
+    radius: i32,
+) -> Option<&LocView> {
+    snap.locs().iter().find(|loc| {
+        loc.id == id
+            && loc.tile.level == level
+            && (loc.tile.x - x).abs().max((loc.tile.z - z).abs()) <= radius
+    })
+}
+
+fn loc_action_matches(loc: &LocView, action: &str) -> bool {
+    let wanted = action.trim().to_ascii_lowercase();
+    loc.actions.iter().flatten().any(|op| {
+        let got = op.trim().to_ascii_lowercase();
+        got == wanted || got.starts_with(&wanted)
+    })
 }
 
 /// A decoded stat-family value: run energy (id 16) from the run energy

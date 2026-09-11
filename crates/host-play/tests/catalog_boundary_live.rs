@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -42,6 +42,20 @@ const SAPPHIRE_ID: i32 = 1607;
 const UNCUT_OPAL_ID: i32 = 1625;
 const CHISEL_ID: i32 = 1755;
 const CRUSHED_GEMSTONE_ID: i32 = 1633;
+const WOODEN_DOOR_CLOSED_ID: i32 = 1530;
+const WOODEN_DOOR_OPEN_ID: i32 = 1531;
+const WOODEN_GATE_CLOSED_ID: i32 = 1551;
+const WOODEN_GATE_OPEN_ID: i32 = 1552;
+const FLAX_ID: i32 = 1779;
+const LUMBRIDGE_DOOR: (i32, i32, i32) = (3208, 3211, 0);
+const LUMBRIDGE_DOOR_STAND: (i32, i32, i32) = (3208, 3212, 0);
+const LUMBRIDGE_GATE: (i32, i32, i32) = (3213, 3261, 0);
+const LUMBRIDGE_GATE_STAND: (i32, i32, i32) = (3213, 3260, 0);
+const GNOME_START: (i32, i32, i32) = (2474, 3436, 0);
+const GNOME_AFTER_LOG: (i32, i32, i32) = (2474, 3429, 0);
+const GNOME_GROUND_RETURN: (i32, i32, i32) = (2487, 3420, 0);
+const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
+const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +78,11 @@ enum CoreCase {
     HerbCleanerNamed,
     GemCutter,
     GemCutterNamed,
+    DoorOpener,
+    DoorOpenerGate,
+    GnomeCourse,
+    GnomeCourseRadius,
+    FlaxPicker,
 }
 
 impl CoreCase {
@@ -87,6 +106,11 @@ impl CoreCase {
             "herb_cleaner_named" => Ok(Self::HerbCleanerNamed),
             "gem_cutter" => Ok(Self::GemCutter),
             "gem_cutter_named" => Ok(Self::GemCutterNamed),
+            "door_opener" => Ok(Self::DoorOpener),
+            "door_opener_gate" => Ok(Self::DoorOpenerGate),
+            "gnome_course" => Ok(Self::GnomeCourse),
+            "gnome_course_radius" => Ok(Self::GnomeCourseRadius),
+            "flax_picker" => Ok(Self::FlaxPicker),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -113,6 +137,11 @@ impl CoreCase {
             Self::HerbCleanerNamed => "herb_cleaner_named",
             Self::GemCutter => "gem_cutter",
             Self::GemCutterNamed => "gem_cutter_named",
+            Self::DoorOpener => "door_opener",
+            Self::DoorOpenerGate => "door_opener_gate",
+            Self::GnomeCourse => "gnome_course",
+            Self::GnomeCourseRadius => "gnome_course_radius",
+            Self::FlaxPicker => "flax_picker",
         }
     }
 
@@ -133,6 +162,9 @@ impl CoreCase {
             Self::DartFletcher | Self::DartFletcherIron => "DartFletcher",
             Self::HerbCleaner | Self::HerbCleanerNamed => "HerbCleaner",
             Self::GemCutter | Self::GemCutterNamed => "GemCutter",
+            Self::DoorOpener | Self::DoorOpenerGate => "DoorOpener",
+            Self::GnomeCourse | Self::GnomeCourseRadius => "GnomeCourse",
+            Self::FlaxPicker => "FlaxPicker",
         }
     }
 }
@@ -302,6 +334,18 @@ struct Observation {
     levels: BTreeMap<String, i32>,
     xp: BTreeMap<String, i32>,
     chat: Vec<(i32, String)>,
+    loc_facts: Vec<BoundedLoc>,
+}
+
+/// One loc retained for these named cases. The live loc sweep is not copied.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct BoundedLoc {
+    id: i32,
+    x: i32,
+    z: i32,
+    level: i32,
+    name: Option<String>,
+    open: bool,
 }
 
 impl Observation {
@@ -348,6 +392,24 @@ impl Observation {
         let player = snapshot
             .local_player()
             .and_then(|local| local.player.actor.name.clone());
+        let loc_facts = snapshot
+            .locs()
+            .iter()
+            .filter(|loc| loc.distance <= 8 && keep_bounded_loc(loc.id, loc.name.as_deref()))
+            .take(16)
+            .map(|loc| BoundedLoc {
+                id: loc.id,
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                name: loc.name.clone(),
+                open: loc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|op| op.trim().to_ascii_lowercase().starts_with("open")),
+            })
+            .collect();
         Self {
             ingame: snapshot.ingame() && snapshot.attached(),
             scene_state: snapshot.scene_state(),
@@ -364,6 +426,7 @@ impl Observation {
             levels,
             xp,
             chat,
+            loc_facts,
         }
     }
 
@@ -390,6 +453,41 @@ impl Observation {
     fn level(&self, name: &str) -> i32 {
         self.levels.get(name).copied().unwrap_or(0)
     }
+}
+
+fn keep_bounded_loc(id: i32, name: Option<&str>) -> bool {
+    matches!(
+        id,
+        WOODEN_DOOR_CLOSED_ID | WOODEN_DOOR_OPEN_ID | WOODEN_GATE_CLOSED_ID | WOODEN_GATE_OPEN_ID
+    ) || name.is_some_and(|name| {
+        let n = name.trim().to_ascii_lowercase();
+        n == "door" || n.ends_with(" door") || n.contains("gate")
+    })
+}
+
+fn loc_name_matches(name: Option<&str>, gate: bool) -> bool {
+    let n = name.unwrap_or("").trim().to_ascii_lowercase();
+    if n.is_empty() {
+        return false;
+    }
+    if gate {
+        n.contains("gate")
+    } else {
+        n == "door" || n.ends_with(" door") || n.contains("gate")
+    }
+}
+
+fn loc_at(
+    observation: &Observation,
+    id: i32,
+    tile: (i32, i32, i32),
+    radius: i32,
+) -> Option<&BoundedLoc> {
+    observation.loc_facts.iter().find(|loc| {
+        loc.id == id
+            && loc.level == tile.2
+            && (loc.x - tile.0).abs().max((loc.z - tile.1).abs()) <= radius
+    })
 }
 
 fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32) -> bool {
@@ -494,6 +592,20 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.item_id(CRUSHED_GEMSTONE_ID) == 0
                 && baseline.level("crafting") >= 20
         }
+        CoreCase::DoorOpener => {
+            near(baseline.tile, LUMBRIDGE_DOOR_STAND, 1)
+                && loc_at(baseline, WOODEN_DOOR_CLOSED_ID, LUMBRIDGE_DOOR, 1)
+                    .is_some_and(|loc| loc.open)
+        }
+        CoreCase::DoorOpenerGate => {
+            near(baseline.tile, LUMBRIDGE_GATE_STAND, 1)
+                && loc_at(baseline, WOODEN_GATE_CLOSED_ID, LUMBRIDGE_GATE, 1)
+                    .is_some_and(|loc| loc.open)
+        }
+        CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => near(baseline.tile, GNOME_START, 2),
+        CoreCase::FlaxPicker => {
+            near(baseline.tile, FLAX_FIELD, 6) && baseline.item_id(FLAX_ID) == 0
+        }
     };
     if ready {
         return Ok(());
@@ -534,6 +646,16 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::GemCutterNamed => {
             "Varrock West bank, empty pack of 1755/1623/1625/1607/1633, and Crafting 20"
         }
+        CoreCase::DoorOpener => {
+            "adjacent stand (3208,3212,0) and shut wooden door 1530 offering Open"
+        }
+        CoreCase::DoorOpenerGate => {
+            "adjacent stand (3213,3260,0) and shut wooden gate 1551 offering Open"
+        }
+        CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
+            "Gnome Stronghold start (2474,3436,0)"
+        }
+        CoreCase::FlaxPicker => "Seers flax field (2741,3444,0) with empty pack of 1779",
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -558,6 +680,9 @@ struct CoreWitness {
     dart_fletcher_cycle: DartFletcherCycle,
     herb_cleaner_cycle: HerbCleanerCycle,
     gem_cutter_cycle: GemCutterCycle,
+    door_opener_cycle: DoorOpenerCycle,
+    gnome_course_cycle: GnomeCourseCycle,
+    flax_picker_cycle: FlaxPickerCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -963,6 +1088,140 @@ impl GemCutterCycle {
     }
 }
 
+/// Selected shut loc must lose Open through a same-session world change.
+#[derive(Debug, Clone, Default, Serialize)]
+struct DoorOpenerCycle {
+    selected: Option<BoundedLoc>,
+    opened: bool,
+}
+
+impl DoorOpenerCycle {
+    fn observe(
+        &mut self,
+        gate: bool,
+        packed: (i32, i32, i32),
+        closed_id: i32,
+        open_id: i32,
+        baseline: &Observation,
+        now: &Observation,
+    ) {
+        if self.selected.is_none() {
+            self.selected = baseline
+                .loc_facts
+                .iter()
+                .find(|loc| {
+                    loc.id == closed_id
+                        && loc.open
+                        && loc.level == packed.2
+                        && (loc.x - packed.0).abs().max((loc.z - packed.1).abs()) <= 1
+                        && loc_name_matches(loc.name.as_deref(), gate)
+                })
+                .cloned();
+        }
+        let Some(selected) = &self.selected else {
+            return;
+        };
+        let still_shut = loc_at(
+            now,
+            selected.id,
+            (selected.x, selected.z, selected.level),
+            1,
+        )
+        .is_some_and(|loc| loc.open);
+        let opened_leaf =
+            loc_at(now, open_id, (selected.x, selected.z, selected.level), 3).is_some();
+        self.opened |= !still_shut && opened_leaf;
+    }
+
+    fn qualified(&self) -> bool {
+        self.selected.as_ref().is_some_and(|loc| loc.open) && self.opened
+    }
+}
+
+/// Ordered plane/tile/XP milestones from selected gnome_course.rs2 dests.
+#[derive(Debug, Clone, Default, Serialize)]
+struct GnomeCourseCycle {
+    log: Option<Observation>,
+    ground_return: Option<Observation>,
+    pipe: Option<Observation>,
+    second_lap: bool,
+}
+
+impl GnomeCourseCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        let xp = now.skill_xp("agility");
+        if self.log.is_none()
+            && xp > baseline.skill_xp("agility")
+            && near(now.tile, GNOME_AFTER_LOG, 3)
+        {
+            self.log = Some(now.clone());
+        }
+        if let Some(log) = &self.log {
+            if self.ground_return.is_none()
+                && xp > log.skill_xp("agility")
+                && near(now.tile, GNOME_GROUND_RETURN, 3)
+            {
+                self.ground_return = Some(now.clone());
+            }
+        }
+        if let Some(ground) = &self.ground_return {
+            if self.pipe.is_none()
+                && xp > ground.skill_xp("agility")
+                && near(now.tile, GNOME_PIPE, 6)
+            {
+                self.pipe = Some(now.clone());
+            }
+        }
+        if let Some(pipe) = &self.pipe {
+            self.second_lap |= xp > pipe.skill_xp("agility") && near(now.tile, GNOME_START, 8);
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.second_lap
+    }
+}
+
+/// Full pack of exact flax 1779, Seers deposit, return, further pick.
+#[derive(Debug, Clone, Default, Serialize)]
+struct FlaxPickerCycle {
+    first_pack: bool,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+}
+
+impl FlaxPickerCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.first_pack |= now.item_id(FLAX_ID) >= 28
+            && baseline.item_id(FLAX_ID) == 0
+            && now.item_id(FLAX_ID) > baseline.item_id(FLAX_ID);
+        if self.first_pack
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(FLAX_ID) == 0
+            && now.bank_item_id(FLAX_ID) >= 28
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && near(now.tile, FLAX_FIELD, 12);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(FLAX_ID) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -981,6 +1240,9 @@ impl CoreWitness {
             dart_fletcher_cycle: DartFletcherCycle::default(),
             herb_cleaner_cycle: HerbCleanerCycle::default(),
             gem_cutter_cycle: GemCutterCycle::default(),
+            door_opener_cycle: DoorOpenerCycle::default(),
+            gnome_course_cycle: GnomeCourseCycle::default(),
+            flax_picker_cycle: FlaxPickerCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -1050,6 +1312,35 @@ impl CoreWitness {
                 &self.baseline,
                 observation,
             );
+        }
+        if matches!(self.case, CoreCase::DoorOpener) {
+            self.door_opener_cycle.observe(
+                false,
+                LUMBRIDGE_DOOR,
+                WOODEN_DOOR_CLOSED_ID,
+                WOODEN_DOOR_OPEN_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::DoorOpenerGate) {
+            self.door_opener_cycle.observe(
+                true,
+                LUMBRIDGE_GATE,
+                WOODEN_GATE_CLOSED_ID,
+                WOODEN_GATE_OPEN_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(
+            self.case,
+            CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius
+        ) {
+            self.gnome_course_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::FlaxPicker) {
+            self.flax_picker_cycle.observe(&self.baseline, observation);
         }
         let baseline_sequence = self
             .baseline
@@ -1154,6 +1445,11 @@ impl CoreWitness {
                 self.herb_cleaner_cycle.qualified()
             }
             CoreCase::GemCutter | CoreCase::GemCutterNamed => self.gem_cutter_cycle.qualified(),
+            CoreCase::DoorOpener | CoreCase::DoorOpenerGate => self.door_opener_cycle.qualified(),
+            CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
+                self.gnome_course_cycle.qualified()
+            }
+            CoreCase::FlaxPicker => self.flax_picker_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -1177,6 +1473,9 @@ impl CoreWitness {
             "dart_fletcher_cycle": self.dart_fletcher_cycle,
             "herb_cleaner_cycle": self.herb_cleaner_cycle,
             "gem_cutter_cycle": self.gem_cutter_cycle,
+            "door_opener_cycle": self.door_opener_cycle,
+            "gnome_course_cycle": self.gnome_course_cycle,
+            "flax_picker_cycle": self.flax_picker_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -1749,6 +2048,7 @@ mod tests {
                 .iter()
                 .map(|(sequence, text)| (*sequence, (*text).to_string()))
                 .collect(),
+            loc_facts: Vec::new(),
         }
     }
 
@@ -1804,6 +2104,9 @@ mod tests {
                 CoreCase::DartFletcher,
                 CoreCase::HerbCleaner,
                 CoreCase::GemCutter,
+                CoreCase::DoorOpener,
+                CoreCase::GnomeCourse,
+                CoreCase::FlaxPicker,
             ] {
                 let row = ledger_card(&matrix, commit, 274, case).unwrap();
                 verify_source_identity(&root, &row).unwrap();
@@ -2649,6 +2952,157 @@ mod tests {
         }
     }
 
+    fn bounded_loc(id: i32, tile: (i32, i32, i32), name: &str, open: bool) -> BoundedLoc {
+        BoundedLoc {
+            id,
+            x: tile.0,
+            z: tile.1,
+            level: tile.2,
+            name: Some(name.into()),
+            open,
+        }
+    }
+
+    fn door_obs(tile: (i32, i32, i32), locs: Vec<BoundedLoc>) -> Observation {
+        let mut observation = observation(&[], &[], &[]);
+        observation.tile = Some(tile);
+        observation.loc_facts = locs;
+        observation
+    }
+
+    fn gnome_obs(tile: (i32, i32, i32), agility_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("agility", agility_xp)], &[]);
+        observation.tile = Some(tile);
+        observation
+    }
+
+    fn flax_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+    ) -> Observation {
+        let mut observation = observation(&[], &[], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn door_opener_requires_selected_world_change_not_queued_open() {
+        for (case, stand, packed, closed, open, name) in [
+            (
+                CoreCase::DoorOpener,
+                LUMBRIDGE_DOOR_STAND,
+                LUMBRIDGE_DOOR,
+                WOODEN_DOOR_CLOSED_ID,
+                WOODEN_DOOR_OPEN_ID,
+                "Door",
+            ),
+            (
+                CoreCase::DoorOpenerGate,
+                LUMBRIDGE_GATE_STAND,
+                LUMBRIDGE_GATE,
+                WOODEN_GATE_CLOSED_ID,
+                WOODEN_GATE_OPEN_ID,
+                "Gate",
+            ),
+        ] {
+            let shut = bounded_loc(closed, packed, name, true);
+            let baseline = door_obs(stand, vec![shut.clone()]);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let opened = door_obs(stand, vec![bounded_loc(open, packed, name, false)]);
+            assert!(witness(case, &baseline, [&opened]).qualify().is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+
+            let queued = door_obs(stand, vec![shut.clone()]);
+            assert!(witness(case, &baseline, [&queued]).qualify().is_err());
+
+            let unrelated = door_obs(
+                stand,
+                vec![
+                    shut.clone(),
+                    bounded_loc(open, (3100, 3100, 0), name, false),
+                ],
+            );
+            assert!(witness(case, &baseline, [&unrelated]).qualify().is_err());
+
+            let mut already_open = baseline.clone();
+            already_open.loc_facts = vec![bounded_loc(open, packed, name, false)];
+            assert!(validate_case_baseline(case, &already_open).is_err());
+        }
+    }
+
+    #[test]
+    fn gnome_course_requires_complete_lap_and_second_lap_progress() {
+        for case in [CoreCase::GnomeCourse, CoreCase::GnomeCourseRadius] {
+            let baseline = gnome_obs(GNOME_START, 0);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let log = gnome_obs(GNOME_AFTER_LOG, 75);
+            let ground = gnome_obs(GNOME_GROUND_RETURN, 200);
+            let pipe = gnome_obs(GNOME_PIPE, 400);
+            let second = gnome_obs(GNOME_START, 475);
+            assert!(witness(case, &baseline, [&log, &ground, &pipe, &second])
+                .qualify()
+                .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&log]).qualify().is_err());
+            assert!(witness(case, &baseline, [&log, &log]).qualify().is_err());
+            assert!(witness(case, &baseline, [&log, &ground, &pipe])
+                .qualify()
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn flax_picker_requires_full_pack_deposit_return_and_further_pick() {
+        let baseline = flax_obs(FLAX_FIELD, &[], &[]);
+        validate_case_baseline(CoreCase::FlaxPicker, &baseline).unwrap();
+
+        let first = flax_obs(FLAX_FIELD, &[(FLAX_ID, 28)], &[]);
+        let mut deposited = flax_obs(FLAX_FIELD, &[], &[(FLAX_ID, 28)]);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = flax_obs(FLAX_FIELD, &[], &[]);
+        returned.bank_generation = 1;
+        let further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        assert!(witness(
+            CoreCase::FlaxPicker,
+            &baseline,
+            [&first, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::FlaxPicker, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::FlaxPicker, &baseline, [&first])
+            .qualify()
+            .is_err());
+        assert!(
+            witness(CoreCase::FlaxPicker, &baseline, [&first, &deposited])
+                .qualify()
+                .is_err()
+        );
+
+        let mut stale = deposited.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::FlaxPicker,
+            &baseline,
+            [&first, &stale, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(FLAX_ID, 28);
+        assert!(validate_case_baseline(CoreCase::FlaxPicker, &seeded).is_err());
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -2665,6 +3119,11 @@ mod tests {
             CoreCase::HerbCleanerNamed,
             CoreCase::GemCutter,
             CoreCase::GemCutterNamed,
+            CoreCase::DoorOpener,
+            CoreCase::DoorOpenerGate,
+            CoreCase::GnomeCourse,
+            CoreCase::GnomeCourseRadius,
+            CoreCase::FlaxPicker,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

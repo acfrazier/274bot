@@ -402,6 +402,11 @@ pub fn get(name: &str) -> Option<Scenario> {
         "herb_cleaner_named" => Some(herb_cleaner_named_scenario()),
         "gem_cutter" => Some(gem_cutter_scenario()),
         "gem_cutter_named" => Some(gem_cutter_named_scenario()),
+        "door_opener" => Some(door_opener_scenario()),
+        "door_opener_gate" => Some(door_opener_gate_scenario()),
+        "gnome_course" => Some(gnome_course_scenario()),
+        "gnome_course_radius" => Some(gnome_course_radius_scenario()),
+        "flax_picker" => Some(flax_picker_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -439,6 +444,11 @@ pub fn names() -> Vec<&'static str> {
         "herb_cleaner_named",
         "gem_cutter",
         "gem_cutter_named",
+        "door_opener",
+        "door_opener_gate",
+        "gnome_course",
+        "gnome_course_radius",
+        "flax_picker",
         "script_trade",
     ]
 }
@@ -3704,6 +3714,403 @@ fn gem_cutter_variant(
     }
 }
 
+const AGILITY_STAT: i32 = 16;
+const FLAX_ID: i32 = 1779;
+const GATE_CLOSED_ID: i32 = 1551;
+const GATE_OPEN_ID: i32 = 1552;
+
+/// Packed closed wooden door 1530 on selected 274/289 m50_50, adjacent to
+/// DoorOpener's default Lumbridge stand.
+const LUMBRIDGE_DOOR: WorldTile = WorldTile {
+    x: 3208,
+    z: 3211,
+    level: 0,
+};
+const LUMBRIDGE_DOOR_STAND: WorldTile = WorldTile {
+    x: 3208,
+    z: 3212,
+    level: 0,
+};
+
+/// Packed closed wooden gate 1551 on selected 274/289 m50_50.
+const LUMBRIDGE_GATE: WorldTile = WorldTile {
+    x: 3213,
+    z: 3261,
+    level: 0,
+};
+const LUMBRIDGE_GATE_STAND: WorldTile = WorldTile {
+    x: 3213,
+    z: 3260,
+    level: 0,
+};
+
+const GNOME_START: WorldTile = WorldTile {
+    x: 2474,
+    z: 3436,
+    level: 0,
+};
+/// Log Walk-across dest is coord z-7 from selected gnome_course.rs2.
+const GNOME_AFTER_LOG: WorldTile = WorldTile {
+    x: 2474,
+    z: 3429,
+    level: 0,
+};
+/// Climb-down lands at packed 0_38_53_55_28.
+const GNOME_GROUND_RETURN: WorldTile = WorldTile {
+    x: 2487,
+    z: 3420,
+    level: 0,
+};
+const GNOME_PIPE: WorldTile = WorldTile {
+    x: 2484,
+    z: 3431,
+    level: 0,
+};
+
+const FLAX_FIELD: WorldTile = WorldTile {
+    x: 2741,
+    z: 3444,
+    level: 0,
+};
+
+const DOOR_OPENER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "stand",
+    value: ScriptInjectValue::Str("3208,3212,0"),
+}];
+
+const DOOR_OPENER_GATE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "stand",
+        value: ScriptInjectValue::Str("3213,3260,0"),
+    },
+    ScriptSettingInject {
+        id: "obstacle",
+        value: ScriptInjectValue::Str("gate"),
+    },
+];
+
+const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "searchRadius",
+    value: ScriptInjectValue::Num(8.0),
+}];
+
+fn door_opener_scenario() -> Scenario {
+    door_opener_variant(
+        "door_opener",
+        DOOR_OPENER_INJECT,
+        LUMBRIDGE_DOOR,
+        LUMBRIDGE_DOOR_STAND,
+        CLOSED_ID,
+        OPEN_ID,
+    )
+}
+
+fn door_opener_gate_scenario() -> Scenario {
+    door_opener_variant(
+        "door_opener_gate",
+        DOOR_OPENER_GATE_INJECT,
+        LUMBRIDGE_GATE,
+        LUMBRIDGE_GATE_STAND,
+        GATE_CLOSED_ID,
+        GATE_OPEN_ID,
+    )
+}
+
+/// Walk to an adjacent stand, Close any open leaf before Start, then require
+/// the selected shut loc to become the open id through a same-session world
+/// change. Queued Open or script counters are not this proof.
+fn door_opener_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    packed: WorldTile,
+    stand: WorldTile,
+    closed_id: i32,
+    open_id: i32,
+) -> Scenario {
+    let shut = Proof::LocActionNear {
+        id: closed_id,
+        x: packed.x,
+        z: packed.z,
+        level: packed.level,
+        radius: 1,
+        action: "Open",
+        present: true,
+    };
+    let opened = Proof::LocIdNear {
+        id: open_id,
+        x: packed.x,
+        z: packed.z,
+        level: packed.level,
+        radius: 3,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "tele adjacent to the selected shut loc",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 1,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "close the selected loc if it is still open",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, snapshot| {
+                if let Some(loc) = snapshot.locs().iter().find(|loc| {
+                    loc.id == open_id
+                        && loc.tile.level == packed.level
+                        && (loc.tile.x - packed.x)
+                            .abs()
+                            .max((loc.tile.z - packed.z).abs())
+                            <= 3
+                }) {
+                    op_loc(c, loc.tile.x, loc.tile.z, loc.id);
+                }
+                true
+            }),
+        },
+        wait: Wait {
+            arm: shut,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(bank_fletcher_watch(
+        "watch the selected loc become open after Start",
+        opened,
+    ));
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: opened,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("DoorOpener"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn gnome_course_scenario() -> Scenario {
+    gnome_course_variant("gnome_course", None)
+}
+
+fn gnome_course_radius_scenario() -> Scenario {
+    gnome_course_variant("gnome_course_radius", Some(GNOME_COURSE_RADIUS_INJECT))
+}
+
+/// Complete natural gnome lap from selected server dests, then further
+/// progress back at the log. Snapshot tile.level is always 0; ground return
+/// is the packed climb-down coord.
+fn gnome_course_variant(
+    name: &'static str,
+    inject: Option<&'static [ScriptSettingInject]>,
+) -> Scenario {
+    let first_xp = Proof::StatXpGain {
+        id: AGILITY_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::StatXpGain {
+        id: AGILITY_STAT,
+        min: 1,
+    };
+    let start = GNOME_START;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "tele to the gnome course start before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(start.level, start.x, start.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: start.x,
+                z: start.z,
+                level: start.level,
+                radius: 2,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Agility XP from the first obstacle", first_xp),
+        (
+            "watch the log dest tile after Walk-across",
+            Proof::ArrivedNear {
+                x: GNOME_AFTER_LOG.x,
+                z: GNOME_AFTER_LOG.z,
+                level: GNOME_AFTER_LOG.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch the selected climb-down ground return",
+            Proof::ArrivedNear {
+                x: GNOME_GROUND_RETURN.x,
+                z: GNOME_GROUND_RETURN.z,
+                level: GNOME_GROUND_RETURN.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch the obstacle pipe after the ground nets",
+            Proof::ArrivedNear {
+                x: GNOME_PIPE.x,
+                z: GNOME_PIPE.z,
+                level: GNOME_PIPE.level,
+                radius: 6,
+            },
+        ),
+        (
+            "watch further Agility XP at the start of a second lap",
+            further_xp,
+        ),
+        (
+            "watch return toward the log for second-lap progress",
+            Proof::ArrivedNear {
+                x: start.x,
+                z: start.z,
+                level: start.level,
+                radius: 8,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("GnomeCourse"),
+            script_settings_inject: inject,
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn flax_picker_scenario() -> Scenario {
+    let field = FLAX_FIELD;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "clear the pack and tele to the default Seers flax field",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(field.level, field.x, field.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm no seeded flax in pack before Start",
+        Proof::ItemIdAtMost {
+            id: FLAX_ID,
+            count: 0,
+        },
+    ));
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch a full pack of exact flax 1779",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 28,
+            },
+        ),
+        (
+            "watch script-created flax enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: FLAX_ID,
+                count: 28,
+            },
+        ),
+        ("watch the flax bank close after deposit", Proof::BankClosed),
+        (
+            "watch return to the flax field after banking",
+            Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 12,
+            },
+        ),
+        (
+            "watch further exact flax after return",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "flax_picker",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemId {
+            id: FLAX_ID,
+            count: 1,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("FlaxPicker"),
+            terminal_shot: Some("flax_picker"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -4221,6 +4628,11 @@ mod tests {
                 "herb_cleaner_named",
                 "gem_cutter",
                 "gem_cutter_named",
+                "door_opener",
+                "door_opener_gate",
+                "gnome_course",
+                "gnome_course_radius",
+                "flax_picker",
                 "script_trade",
             ]
         );
@@ -5016,6 +5428,185 @@ mod tests {
     }
 
     #[test]
+    fn location_world_cases_register_exact_settings_and_witnesses() {
+        let door = get("door_opener").expect("door_opener");
+        assert_eq!(door.settings.start_script, Some("DoorOpener"));
+        assert_eq!(door.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(door.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("stand"),
+            Some(&Value::String("3208,3212,0".into()))
+        );
+        let door_start = door
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let door_seed = door.steps[..door_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(door_seed.contains(&Proof::LocActionNear {
+            id: CLOSED_ID,
+            x: 3208,
+            z: 3211,
+            level: 0,
+            radius: 1,
+            action: "Open",
+            present: true,
+        }));
+        assert_eq!(
+            door.steps[door_start + 1].wait.arm,
+            Proof::LocIdNear {
+                id: OPEN_ID,
+                x: 3208,
+                z: 3211,
+                level: 0,
+                radius: 3,
+            }
+        );
+
+        let gate = get("door_opener_gate").expect("door_opener_gate");
+        let inject = settings_inject_map(gate.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("obstacle"), Some(&Value::String("gate".into())));
+        assert_eq!(
+            inject.get("stand"),
+            Some(&Value::String("3213,3260,0".into()))
+        );
+        let gate_start = gate
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let gate_seed = gate.steps[..gate_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(gate_seed.contains(&Proof::LocActionNear {
+            id: GATE_CLOSED_ID,
+            x: 3213,
+            z: 3261,
+            level: 0,
+            radius: 1,
+            action: "Open",
+            present: true,
+        }));
+        assert_eq!(
+            gate.steps[gate_start + 1].wait.arm,
+            Proof::LocIdNear {
+                id: GATE_OPEN_ID,
+                x: 3213,
+                z: 3261,
+                level: 0,
+                radius: 3,
+            }
+        );
+
+        let gnome = get("gnome_course").expect("gnome_course");
+        assert_eq!(gnome.settings.start_script, Some("GnomeCourse"));
+        assert!(gnome.settings.script_settings_inject.is_none());
+        let gnome_start = gnome
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let gnome_watch = gnome.steps[gnome_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            gnome_watch[0],
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 1
+            }
+        );
+        assert!(gnome_watch.contains(&Proof::ArrivedNear {
+            x: 2474,
+            z: 3429,
+            level: 0,
+            radius: 3,
+        }));
+        assert!(gnome_watch.contains(&Proof::ArrivedNear {
+            x: 2487,
+            z: 3420,
+            level: 0,
+            radius: 3,
+        }));
+        assert!(gnome_watch.contains(&Proof::ArrivedNear {
+            x: 2484,
+            z: 3431,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(gnome_watch.contains(&Proof::ArrivedNear {
+            x: 2474,
+            z: 3436,
+            level: 0,
+            radius: 8,
+        }));
+
+        let radius = get("gnome_course_radius").expect("gnome_course_radius");
+        let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("searchRadius").and_then(Value::as_f64),
+            Some(8.0)
+        );
+
+        let flax = get("flax_picker").expect("flax_picker");
+        assert_eq!(flax.settings.start_script, Some("FlaxPicker"));
+        let flax_start = flax
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let flax_seed = flax.steps[..flax_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(flax_seed.contains(&Proof::ItemIdAtMost {
+            id: FLAX_ID,
+            count: 0,
+        }));
+        let flax_watch = flax.steps[flax_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(flax_watch.contains(&Proof::ItemId {
+            id: FLAX_ID,
+            count: 28,
+        }));
+        assert!(flax_watch.contains(&Proof::BankItemId {
+            id: FLAX_ID,
+            count: 28,
+        }));
+        assert!(flax_watch.contains(&Proof::BankClosed));
+        assert!(flax_watch.contains(&Proof::ArrivedNear {
+            x: 2741,
+            z: 3444,
+            level: 0,
+            radius: 12,
+        }));
+        assert_eq!(
+            flax.proof,
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            }
+        );
+
+        for name in [
+            "door_opener",
+            "door_opener_gate",
+            "gnome_course",
+            "gnome_course_radius",
+            "flax_picker",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -5076,6 +5667,11 @@ mod tests {
             "herb_cleaner_named",
             "gem_cutter",
             "gem_cutter_named",
+            "door_opener",
+            "door_opener_gate",
+            "gnome_course",
+            "gnome_course_radius",
+            "flax_picker",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
