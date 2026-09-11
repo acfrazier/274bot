@@ -1,0 +1,89 @@
+{
+  "task": "t_c48f1d6a",
+  "date": "2026-09-11",
+  "brief": "docs/compat/briefs/144-native-npc-paint-box.md",
+  "brief_sha256": "47cc91859323a800924cddf473592e51aa0874246dc0a05b65873333cf6c296e",
+  "root_base_commit": "2c4fd6040f9cd0c9ab9b90143fd91576eaebf362",
+  "root_implementation_commit": "a1434ae2015a0af0b24bf4819ec8a919e5de28dc",
+  "root_projection_gate_commit": "e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc",
+  "checked_root_commit": "e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc",
+  "client_base_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "client_commit": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
+  "owned_git_blobs": {
+    "crates/host-play/src/lib.rs": "3750c616160cb0768e9d49d72c4ac820141f4769",
+    "crates/script/host-js/index.d.ts": "fd8908504d97e7a20e47f816fc3ad494fa90d77a",
+    "crates/script/schema/isolate.fbs": "8c9558503f7e61157a93ed0d8a67ad53e8fe9277",
+    "crates/script/src/host_js.rs": "ebf651d3ab4bb223150c6929f89b1d5124a304dd",
+    "crates/script/src/isolate_fb.rs": "77c5b0134b721d6b9c33e6aec02a1e4b18901d84",
+    "crates/script/src/load.rs": "0d2e2b51d195822e1dc8f9e39e4892d1b2316c6c",
+    "crates/script/src/shim/client_adapter.js": "5f606c89aea4e23f4cbbfd3de62d0fa8d6bdf1b4",
+    "crates/script/tests/native_npc_box.rs": "0addbced4cc5512e6040adb87b13b696404d8ee3",
+    "vendor/fr-client-rust": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
+    "vendor/fr-client-rust/crates/client/src/render/draw.rs": "fb5b961fd83ee857117205abb7f536473c2063a8",
+    "vendor/fr-client-rust/crates/client/src/render/mod.rs": "c6bb0e7bddad5279c68eb6b17ffc95f9c684ec97",
+    "vendor/fr-client-rust/crates/client/tests/npc_overlay.rs": "0a9917b406639cd290629f33b91aaced73075824",
+    "vendor/fr-client-rust/crates/client/tests/overlays.rs": "aea5c83ff60786e07c338c1afb825e0412a3dd3a"
+  },
+  "export": ".superpowers/review-exports/native-npc-paint-box-t_c48f1d6a-e05ecafb8-r1",
+  "cargo_target_dirs": [
+    "target-review-t_c48f1d6a-r2",
+    "vendor/fr-client-rust/target-review-t_c48f1d6a-r2"
+  ],
+  "live": false,
+  "frozen_sources": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "ClientAdapter.ts": "4e17962b60e126e33a34e56e6155b2813227f4955787bbfb55204325f61b1425",
+      "FireGiant.ts": "b7463f7f4f81088270fbdf382aeb6da9eee58aa9ce64678382cd02b4f04e3f21"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "ClientAdapter.ts": "4e17962b60e126e33a34e56e6155b2813227f4955787bbfb55204325f61b1425",
+      "FireGiant.ts": "b7463f7f4f81088270fbdf382aeb6da9eee58aa9ce64678382cd02b4f04e3f21"
+    }
+  },
+  "tests": [
+    {
+      "command": "cargo test --locked --offline -p script --lib -- --test-threads=1",
+      "passed": 83,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test native_npc_box -- --test-threads=1",
+      "passed": 5,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test host_js -- --test-threads=1",
+      "passed": 2,
+      "ignored": 1,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p host-play --lib -- --test-threads=1",
+      "passed": 146,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p client --test overlays --test npc_overlay -- --test-threads=1",
+      "passed": 11,
+      "status": "pass"
+    }
+  ],
+  "checks": [
+    "cargo clippy --locked --offline --no-deps -p script --lib --test native_npc_box --test host_js -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p client --lib --test overlays --test npc_overlay -- -D warnings",
+    "cargo fmt --all -- --check in exact root and client archives",
+    "git diff --check on scoped root and client commits"
+  ],
+  "unrelated_commits_after_checked_root": [
+    "bbe1742cd8c31e33edb4b95d6dd3babf9610d705",
+    "3bf3644ad5ed06ef7cbf52c87307e07885265526",
+    "29bed3b73055e376b7f27f2aa87ec6d7e781b4d7"
+  ],
+  "limits": [
+    "No LIVE run or catalog acceptance claim.",
+    "No locBox, playerBox, TaskBot, scenario, fixture, catalog, navigation, or foreign-runtime change.",
+    "Any unprojectable corner makes the optional current-frame NPC box unavailable.",
+    "Projection is performed only for a Running load isolate on a posting tick edge; no geometry history is retained."
+  ]
+}
