@@ -1,0 +1,37 @@
+[
+  {
+    "label": "before",
+    "source": "catalog-root-brimdim4bad",
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "script",
+      "--locked",
+      "--test",
+      "gold_stubs",
+      "bank_access_already_adjacent_does_not_rearm_navigation",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit_code": 101
+  },
+  {
+    "label": "after",
+    "source": "catalog-root-banktest4bad",
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "script",
+      "--locked",
+      "--test",
+      "gold_stubs",
+      "--test",
+      "named_bank_approach",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit_code": 0
+  }
+]

@@ -519,27 +519,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn bank_access_already_adjacent_does_not_rearm_navigation() {
-    let src = r#"
-import { Bank } from '../../api/bank/Bank.js';
-export default class T extends LoopingBot {
-    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot={here:{x:10,z:10,level:0},nearest_booth:{x:11,z:10,level:0,id:2213},bank_open:false,bank_loaded:false};true").unwrap();
-    iso.on_game_tick(1);
-    iso.probe("true").unwrap();
-    let requests = iso.drain_interacts();
-    assert_eq!(requests.len(), 1);
-    assert!(matches!(
-        requests[0],
-        script::shim::InteractReq::OpenBooth { .. }
-    ));
-    iso.join();
-}
-
-#[test]
 fn withdraw_x_waits_for_inventory_publication() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
