@@ -626,3 +626,36 @@ fn session_reset_clears_native_bank_observation() {
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
+
+#[test]
+fn bank_access_already_adjacent_does_not_rearm_navigation() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    // Publish through the production transport so the native bank owner sees
+    // the same observation as the thin JavaScript access wrapper.
+    let mut snap = base_snapshot();
+    snap.here = Some(tile(10, 10));
+    snap.nearest_booth = Some(NearestBoothInput {
+        x: 11,
+        z: 10,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let requests = iso.drain_interacts();
+    assert_eq!(requests.len(), 1);
+    assert!(matches!(
+        requests[0],
+        script::shim::InteractReq::OpenBooth { .. }
+    ));
+    iso.join();
+}
