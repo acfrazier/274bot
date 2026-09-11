@@ -28,6 +28,7 @@ use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::profile::ProfileEnvironment;
+use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::{
     open_vault, run_prepared_template, run_with_io, run_with_template, Play, PlayOptions,
     ProfileOptions, ScriptNavPaint, ServerProfile, SharedClientTemplate, SlotArm, SlotStatus,
@@ -69,10 +70,29 @@ pub(crate) struct ProfilePreparation {
 }
 
 impl ProfilePreparation {
+    #[cfg(test)]
     pub(crate) fn run(self) -> Result<Arc<SharedClientTemplate>, String> {
-        self.options
-            .resolve_with_env(Some(self.saved_revision), &self.environment)?
-            .prepare_template()
+        self.run_with_progress(&ProfileProgressObserver::default())
+    }
+
+    pub(crate) fn run_with_progress(
+        self,
+        observer: &ProfileProgressObserver,
+    ) -> Result<Arc<SharedClientTemplate>, String> {
+        observer.report(ProfileProgress::steps(
+            ProfileProgressStage::SelectingServerProfile,
+            0,
+            1,
+        ));
+        let selection = self
+            .options
+            .resolve_with_env(Some(self.saved_revision), &self.environment)?;
+        observer.report(ProfileProgress::steps(
+            ProfileProgressStage::SelectingServerProfile,
+            1,
+            1,
+        ));
+        selection.prepare_template_with_progress(observer)
     }
 }
 
