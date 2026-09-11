@@ -248,3 +248,9 @@ Two source-grounded Grok 4.6 fixture designs cover the remaining 40 cards:
 t_a88cd22e / run 1172 / session 20260910_203957_1e123e and
 t_c8c317d0 / run 1173 / session 20260910_203957_c7b349. Brief 49 supplements
 the accepted capability architecture; reports are design, not LIVE acceptance.
+
+Operator quota direction at 01:00 UTC moves the next four implementation cards
+(t_3737503d loadouts, t_63138b8b spells, t_51452e47 periodic banking, and
+t_0c5ce97f death recovery) to profile grok46, configured grok-4.6 / xai-oauth
+with high reasoning. Existing workers and dependency/reviewer gates remain.
+Actual implementation model verification follows when each queued run starts.
