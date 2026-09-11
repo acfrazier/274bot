@@ -130,7 +130,6 @@ pub struct PickpocketSpot {
     pub z: i32,
     pub level: i32,
     pub leash: i32,
-    pub required_thieving: i32,
 }
 
 pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
@@ -140,7 +139,6 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3306,
         level: 0,
         leash: 19,
-        required_thieving: 40,
     },
     PickpocketSpot {
         name: "Knight of Ardougne",
@@ -148,7 +146,6 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3306,
         level: 0,
         leash: 29,
-        required_thieving: 55,
     },
     PickpocketSpot {
         name: "Paladin",
@@ -156,7 +153,6 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3306,
         level: 0,
         leash: 12,
-        required_thieving: 70,
     },
     PickpocketSpot {
         name: "Hero",
@@ -164,7 +160,6 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3306,
         level: 0,
         leash: 17,
-        required_thieving: 80,
     },
     PickpocketSpot {
         name: "Man",
@@ -172,7 +167,6 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3222,
         level: 0,
         leash: 19,
-        required_thieving: 1,
     },
     PickpocketSpot {
         name: "Woman",
@@ -180,27 +174,8 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         z: 3222,
         level: 0,
         leash: 19,
-        required_thieving: 1,
     },
 ];
-
-/// Obj-debug name, client id, display name, shop cost. Gold scripts that
-/// still import `ITEM_DB` (AlcherLogic) read these at module eval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ItemRecord {
-    pub obj: &'static str,
-    pub id: i32,
-    pub name: &'static str,
-    pub cost: i32,
-}
-
-/// Live-gold alch fodder only — not a clone of the catalog item database.
-pub const ITEMS: &[ItemRecord] = &[ItemRecord {
-    obj: "rune_chainbody",
-    id: 1113,
-    name: "Rune chainbody",
-    cost: 50000,
-}];
 
 pub const ROCK_TYPE_NAMES: &[&str] = &[
     "Clay",
@@ -243,35 +218,6 @@ pub fn matches_common_bank_loot(name: &str, id: i32) -> bool {
                 .any(|part| name.to_ascii_lowercase().contains(part)))
 }
 
-/// Existing supported food heals, shared by compatibility readers.
-pub const FOOD_HEALS: &[(&str, i32)] = &[
-    ("Shark", 20),
-    ("Lobster", 12),
-    ("Swordfish", 14),
-    ("Tuna", 10),
-    ("Salmon", 9),
-    ("Trout", 7),
-    ("Pike", 8),
-    ("Bass", 13),
-    ("Herring", 5),
-    ("Sardine", 4),
-    ("Anchovies", 1),
-    ("Shrimps", 3),
-    ("Cooked meat", 3),
-    ("Cooked chicken", 3),
-    ("Bread", 5),
-    ("Stew", 11),
-    ("Cake", 4),
-    ("Chocolate cake", 5),
-    ("Plain pizza", 7),
-    ("Meat pizza", 8),
-    ("Anchovy pizza", 9),
-    ("Pineapple pizza", 11),
-    ("Redberry pie", 6),
-    ("Meat pie", 6),
-    ("Apple pie", 7),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,17 +253,6 @@ mod tests {
             .find(|p| p.name == "Guard")
             .expect("Guard");
         assert_eq!((guard.x, guard.z, guard.level), (2661, 3306, 0));
-        assert_eq!(guard.required_thieving, 40);
-    }
-
-    #[test]
-    fn items_include_alcher_gold_rune_chainbody() {
-        let row = ITEMS
-            .iter()
-            .find(|i| i.obj == "rune_chainbody")
-            .expect("rune_chainbody");
-        assert_eq!(row.id, 1113);
-        assert_eq!(row.name, "Rune chainbody");
     }
 
     #[test]

@@ -209,6 +209,7 @@ pub struct ProfilePlayOptions {
 /// only the shared Arcs; mutable interface overlays remain per client.
 pub struct SharedClientTemplate {
     profile: Arc<ServerProfile>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     cache: Arc<Cache>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
@@ -234,6 +235,8 @@ impl SharedClientTemplate {
     pub fn load(profile: Arc<ServerProfile>) -> Result<Arc<Self>, String> {
         profile.validate_resources()?;
         let (cache, ifaces, ifaces_mut) = load_template_checked(profile.client().cache_dir())?;
+        let game_data =
+            api::game_data::for_optional_profile(profile.revision(), profile.cache_id())?;
         let world = match profile.nav_availability() {
             profile::NavAvailability::Unavailable(_) => None,
             profile::NavAvailability::Legacy274 | profile::NavAvailability::Bound => {
@@ -244,6 +247,7 @@ impl SharedClientTemplate {
         };
         Ok(Arc::new(Self {
             profile,
+            game_data,
             cache: Arc::new(cache),
             ifaces: Arc::new(ifaces),
             ifaces_mut: Arc::new(ifaces_mut),
@@ -254,6 +258,9 @@ impl SharedClientTemplate {
 
     pub fn profile(&self) -> &Arc<ServerProfile> {
         &self.profile
+    }
+    pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.game_data.clone()
     }
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.clone()
@@ -3780,6 +3787,8 @@ pub struct Play {
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
     connection: PlayConnection,
+    /// Generated facts only when the profile cache matches a checked-in asset.
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
@@ -3828,6 +3837,7 @@ pub struct Play {
 #[derive(Clone)]
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
 }
 
 impl ScriptStartHandle {
@@ -3848,7 +3858,13 @@ impl ScriptStartHandle {
         let result = script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings);
+            .start_load_with_settings_and_game_data(
+                source,
+                shape,
+                settings_bag.as_ref(),
+                siblings,
+                self.game_data.clone(),
+            );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -3866,6 +3882,7 @@ impl Play {
         let cache = Arc::new(cache);
         Self::assemble(
             PlayConnection::Legacy(options.clone()),
+            None,
             cache,
             Arc::new(ifaces),
             Arc::new(ifaces_mut_template),
@@ -3879,6 +3896,7 @@ impl Play {
                 template: Arc::clone(&template),
                 mainland,
             },
+            template.game_data.clone(),
             Arc::clone(&template.cache),
             Arc::clone(&template.ifaces),
             Arc::clone(&template.ifaces_mut),
@@ -3888,6 +3906,7 @@ impl Play {
 
     fn assemble(
         connection: PlayConnection,
+        game_data: Option<Arc<api::game_data::SelectedGameData>>,
         cache: Arc<Cache>,
         ifaces: Arc<Vec<Option<Box<IfType>>>>,
         ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
@@ -3898,6 +3917,7 @@ impl Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             handles: HashMap::new(),
             connection,
+            game_data,
             cache,
             obj_names,
             ifaces,
@@ -3949,6 +3969,10 @@ impl Play {
     /// pack loaded.
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.clone()
+    }
+
+    pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.game_data.clone()
     }
 
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's
@@ -4076,7 +4100,13 @@ impl Play {
         let result = script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load_with_settings(source, shape, settings_bag.as_ref(), siblings);
+            .start_load_with_settings_and_game_data(
+                source,
+                shape,
+                settings_bag.as_ref(),
+                siblings,
+                self.game_data.clone(),
+            );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -4090,6 +4120,7 @@ impl Play {
     pub fn script_start_handle(&self) -> ScriptStartHandle {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
+            game_data: self.game_data.clone(),
         }
     }
 

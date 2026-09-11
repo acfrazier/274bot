@@ -600,7 +600,7 @@ impl Run {
             bag.insert("bankAtFood".into(), serde_json::json!(3));
             let slot = crate::script_slot_or_insert(&play.scripts, name);
             let mut slot = slot.lock().unwrap();
-            slot.start_load_with_loadouts(
+            slot.start_load_with_loadouts_and_game_data(
                 card.js.clone(),
                 card.shape,
                 siblings.clone(),
@@ -609,6 +609,7 @@ impl Run {
                     worn: vec![],
                     carry: vec!["Lobster".into()],
                 }],
+                play.game_data(),
             )?;
             slot.post_settings_bag(&bag);
             drop(slot);
@@ -618,7 +619,13 @@ impl Run {
         // Fixtures must not read the operator's saved loadouts.
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
-        slot.start_load_with_loadouts(card.js.clone(), card.shape, siblings.clone(), &[])?;
+        slot.start_load_with_loadouts_and_game_data(
+            card.js.clone(),
+            card.shape,
+            siblings.clone(),
+            &[],
+            play.game_data(),
+        )?;
         slot.post_settings_bag(bag);
         drop(slot);
         play.wake(name);

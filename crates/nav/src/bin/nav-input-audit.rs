@@ -54,6 +54,12 @@ fn run() -> Result<(), String> {
 
     let cache_manifest: CacheManifest = read_json(cache_manifest_path)?;
     cache_manifest.verify(revision, cache_dir)?;
+    let client_revision = match revision {
+        274 => client::io::ClientRevision::R274,
+        289 => client::io::ClientRevision::R289,
+        _ => return Err("revision must be 274 or 289".into()),
+    };
+    let game_data = api::game_data::for_profile(client_revision, &cache_manifest.identity())?;
     let nav_bytes =
         std::fs::read(nav_path).map_err(|e| format!("navigation {}: {e}", nav_path.display()))?;
     let flags_path = nav_path.with_extension("navflags");
@@ -115,8 +121,8 @@ fn run() -> Result<(), String> {
         })
         .map(|loc| json!({"id": loc.id, "name": loc.name, "ops": loc.op}))
         .collect();
-    let food: Vec<Value> = api::content::FOOD_HEALS
-        .iter()
+    let food: Vec<Value> = game_data
+        .fixed_food_heals()
         .map(|(name, heal)| {
             let ids: Vec<i32> = cache
                 .objs
