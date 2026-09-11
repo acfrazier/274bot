@@ -1,0 +1,71 @@
+{
+  "task": "t_24333a16",
+  "brief": "docs/compat/briefs/97-cake-stall-native-mapping.md",
+  "brief_sha256": "fb29ed287b91f0dd04da52b4c2924710e46b4304ae7ad64355844159510e4590",
+  "source_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/cake-stall-native-t_24333a16",
+  "cargo_target_dir": ".superpowers/review-exports/cake-stall-native-t_24333a16-target",
+  "manifest": ".superpowers/review-exports/cake-stall-native-t_24333a16-manifest.json",
+  "files": 3526,
+  "live": false,
+  "headed_loc_2561": {
+    "274": {"id": 2561, "name": "Baker's stall", "op": "Steal from", "tiles": [[2667, 3310, 0], [2655, 3311, 0]], "width": 2, "length": 2, "block_walk": true},
+    "289": {"id": 2561, "name": "Baker's stall", "op": "Steal from", "tiles": [[2667, 3310, 0], [2655, 3311, 0]], "width": 2, "length": 2, "block_walk": true}
+  },
+  "live_stand": [2668, 3312, 0],
+  "overlay": [
+    "crates/api/src/cake_stall.rs",
+    "crates/api/src/lib.rs",
+    "crates/script/src/shim/mod.rs",
+    "crates/script/src/shim/cake_stall.js",
+    "crates/script/src/shim/cake_stall_data.js",
+    "crates/script/tests/cake_stall_native_mapping.rs"
+  ],
+  "overlay_sha256": {
+    "crates/api/src/cake_stall.rs": "82ff96553e6dde4f39b9e3e97b3b2d81979ba4b2f1e9750f1079835159774223",
+    "crates/api/src/lib.rs": "612cd0a02700cd6bb2c9b261d0b06b35065999b7e1b9260be2668253ad14175e",
+    "crates/script/src/shim/mod.rs": "72db2f3563f06d6c4621439cf929df9427c3e27482de8eaf84941f44aa8afb15",
+    "crates/script/src/shim/cake_stall.js": "d173f107d88ca5055d9a64fe0712004aaba17a49c508f79a39bf09717559dd92",
+    "crates/script/src/shim/cake_stall_data.js": "c27293de643388cb17bd43dddf5226d9e3c58975f9ff8245769240329dc3ec02",
+    "crates/script/tests/cake_stall_native_mapping.rs": "21d901d38e380cdecf49ee96e0d721bb8541e92d2e804cb6a3245b1a07893bd9"
+  },
+  "commands": [
+    {
+      "name": "api-cake-stall",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/cake-stall-native-t_24333a16",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/cake-stall-native-t_24333a16-target",
+      "cmd": "cargo test --locked --offline -p api cake_stall -- --test-threads=1",
+      "exit": 0,
+      "result": "5 passed"
+    },
+    {
+      "name": "script-cake-stall-native-mapping",
+      "cmd": "cargo test --locked --offline -p script --test cake_stall_native_mapping -- --test-threads=1",
+      "exit": 0,
+      "result": "6 passed"
+    },
+    {
+      "name": "api-clippy-lib",
+      "cmd": "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy-cake-stall-native-mapping",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test cake_stall_native_mapping -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cmd": "rustfmt --edition 2021 --check crates/api/src/cake_stall.rs crates/api/src/lib.rs crates/script/tests/cake_stall_native_mapping.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "Traversal.js is registered before CakeStall.js so the thin walkTo import resolves. Composition only.",
+    "Partial food below fillTo returns no-progress. classifySteal stays not impl.",
+    "Not LIVE. Root owns Ardy requalification and cache cleanup.",
+    "Empty-target cache: .superpowers/review-exports/cake-stall-native-t_24333a16-target (4.4G)."
+  ]
+}

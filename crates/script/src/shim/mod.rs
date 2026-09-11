@@ -367,6 +367,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("steal_rules.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/walking/Traversal.js",
+            include_str!("traversal.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/thieving/cakeStallData.js",
             include_str!("cake_stall_data.js"),
         ),
@@ -413,10 +417,6 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/ai/clues/data/cluedb.js",
             include_str!("cluedb.js"),
-        ),
-        Module::new(
-            "/rs2b0t/bot/api/walking/Traversal.js",
-            include_str!("traversal.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/ai/quests/exec/primitives.js",
@@ -524,6 +524,7 @@ pub(crate) fn content_json(
     game_data: Option<&api::game_data::SelectedGameData>,
     named_banks: &api::named_banks::NamedBankFacts,
 ) -> String {
+    use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES};
     let items = game_data
         .map(|data| {
@@ -633,6 +634,16 @@ pub(crate) fn content_json(
         "items": items,
         "rock_type_names": ROCK_TYPE_NAMES,
         "pickpocket_spots": pickpocket_spots,
+        "baker_stall": {
+            "loc_id": BAKER_STALL.loc_id,
+            "name": BAKER_STALL.name,
+            "op": BAKER_STALL.op,
+            "stall": {"x": BAKER_STALL.stall.x, "z": BAKER_STALL.stall.z, "level": BAKER_STALL.stall.level},
+            "stand": {"x": BAKER_STALL.stand.x, "z": BAKER_STALL.stand.z, "level": BAKER_STALL.stand.level},
+            "stand_alt": {"x": BAKER_STALL.stand_alt.x, "z": BAKER_STALL.stand_alt.z, "level": BAKER_STALL.stand_alt.level},
+            "flee": {"x": BAKER_STALL.flee.x, "z": BAKER_STALL.flee.z, "level": BAKER_STALL.flee.level},
+            "cake_items": CAKE_ITEM_NAMES,
+        },
         "spell_db": spell_db,
         "staff_runes": staff_runes,
         "autocast": game_data.and_then(|data| {
