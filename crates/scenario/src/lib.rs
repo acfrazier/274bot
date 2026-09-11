@@ -4712,9 +4712,10 @@ const GUAM_HERBLORE: i32 = 3;
 /// not refused; this is not a generated-data requirement.
 const RANARR_HERBLORE: i32 = 38;
 
+// The seed opener performs once: start adjacent so Sent means bank operation.
 const FALADOR_WEST_BANK: WorldTile = WorldTile {
     x: 2946,
-    z: 3369,
+    z: 3368,
     level: 0,
 };
 const FALADOR_WEST_BOOTH: WorldTile = WorldTile {
