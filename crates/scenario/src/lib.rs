@@ -10043,7 +10043,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
     if let Some(id) = wear_id {
         steps.push(Step {
             name: "wear and acknowledge Dragonfire shield before hostile-field teleport",
-            kind: StepKind::Repeat {
+            kind: StepKind::Perform {
                 send: Box::new(move |c, snapshot| {
                     matches!(
                         Interactions::new(snapshot, c).wear(id),
@@ -10270,7 +10270,7 @@ fn auto_fighter_mage_scenario() -> Scenario {
     }
     steps.push(Step {
         name: "wield and acknowledge Staff of fire before hostile-field teleport",
-        kind: StepKind::Repeat {
+        kind: StepKind::Perform {
             send: Box::new(|c, snapshot| {
                 matches!(
                     Interactions::new(snapshot, c).wear(STAFF_OF_FIRE_ID),
