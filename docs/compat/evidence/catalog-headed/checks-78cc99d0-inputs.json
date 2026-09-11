@@ -1,0 +1,97 @@
+{
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3364,
+  "checks": [
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.283,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-inputs-catalog.log",
+      "log_sha256": "101118e812c2aee4daad9814b6f3c85839163e69091ab2814cf49c3d6e984c86"
+    },
+    {
+      "label": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 18.31,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-inputs-scenario.log",
+      "log_sha256": "9a01ed9c33d76837e950abccc2f788c6479983782c7f0d97bd12764e7fef74c3"
+    },
+    {
+      "label": "clippy-catalog",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 5.897,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-inputs-clippy-catalog.log",
+      "log_sha256": "f50559cc38d84a2b66ab7f3a9ca1b9592d8aabef8fa2441b49672b32aa872ee5"
+    }
+  ],
+  "all_passed": true,
+  "isolated_build": true,
+  "prior_attempt": "docs/compat/evidence/catalog-headed/checks-78cc99d0.json",
+  "prior_count_dialog_pass": {
+    "label": "count-dialog",
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "script",
+      "--test",
+      "client_adapter_count_dialog",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 15.439,
+    "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-count-dialog.log",
+    "log_sha256": "aa604b7422d9ff8a86112e99df8d9bbbd1bdffe3c1cd5e87ba68bb21843886bf"
+  },
+  "prior_count_dialog_clippy_pass": {
+    "label": "clippy-count-dialog",
+    "command": [
+      "cargo",
+      "clippy",
+      "-p",
+      "script",
+      "--test",
+      "client_adapter_count_dialog",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 13.418,
+    "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-retry-clippy-count-dialog.log",
+    "log_sha256": "3e32e86f3e6f15912b52ec041d2c33e21173d416a4414cbb48c9b08f2b9a6969"
+  },
+  "frozen_inputs_link": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-78cc99d0/.superpowers/inputs"
+}

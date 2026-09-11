@@ -1,0 +1,25 @@
+   Compiling simd-adler32 v0.3.10
+   Compiling image v0.25.10
+   Compiling miniz_oxide v0.8.9
+   Compiling flate2 v1.1.9
+   Compiling deno_web v0.244.0
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-78cc99d0/vendor/fr-client-rust/crates/client)
+   Compiling deno_crypto v0.227.0
+   Compiling rustyscript v0.12.3
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-78cc99d0/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-78cc99d0/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.96s
+     Running tests/client_adapter_count_dialog.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-78cc99d0/debug/deps/client_adapter_count_dialog-bb2ad4116cb59f30)
+
+running 8 tests
+test answer_count_does_not_queue_when_dialog_is_closed ... ok
+test answer_count_invalid_values_do_not_dispatch ... ok
+test answer_count_queues_valid_integer_on_open_dialog ... ok
+test answer_count_round_trips_through_flatbuffer ... ok
+test answer_count_zero_is_a_supported_integer ... ok
+test count_dialog_open_follows_closed_open_closed_posts ... ok
+test count_dialog_open_rejects_missing_and_malformed_as_closed ... ok
+test tanner_inv_button_then_posted_dialog_then_count_answer ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+

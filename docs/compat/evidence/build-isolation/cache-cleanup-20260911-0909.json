@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-11T09:09:04.025930+00:00",
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-4cc6cc27",
+  "bytes_before": 8080798888,
+  "retained_binaries": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-4cc6cc27",
+      "sha256": "2738f2985b3243b0645261173de6d80639cf7b8a2291b1b16c021476820d32db"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-4cc6cc27",
+      "sha256": "0fb28e5ceafe9a3168a152ce67e695dd216f6f6a7c4b0e8850c063ceb0027f1a"
+    }
+  ],
+  "reason": "Root4cc build/checks complete. Ongoing headless LIVE uses the verified copied binary and source tree outside this compiler target. No open target references. Native proof already completed; all raw/source retained.",
+  "clean_stderr": "     Removed 18390 files, 7.5GiB total\n"
+}

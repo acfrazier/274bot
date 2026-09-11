@@ -1,0 +1,26 @@
+{
+  "mode": "native",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "catalog_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T09:12:55.358075+00:00",
+  "elapsed_seconds": 20.358,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-78cc99d0",
+  "target_started_empty": true,
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-78cc99d0",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-78cc99d0",
+  "binary_sha256": "4400a7c1eacf0a1fe9a57354199f53936321d5034f2683294604db9f97459d31",
+  "binary_bytes": 189207072,
+  "source_files_verified": 3364,
+  "elapsed_is_not_performance_measurement": true
+}

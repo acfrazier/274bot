@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-11T09:30:09.510741+00:00",
+  "run": {
+    "id": 1285,
+    "task_id": "t_fa68337f",
+    "profile": "grok46",
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Read-only grok46 audit on frozen 4cc6cc27: first owner for ArdyCakes Flee and ArdyThiever Guard/Knight is shim stealCakes (unfiltered nearest, ignored options, boolean return, STAND pin 2661,3301), not Flee/inCombat, not pickpocket, not a foreign regression. Do not dim; do not clone CakeStall.ts. Report docs/compat/04u-ardy-cake-native-audit.md.",
+    "metadata": {
+      "review_outcome": "audit-complete",
+      "frozen_host": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+      "frozen_client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "report": "docs/compat/04u-ardy-cake-native-audit.md",
+      "evidence": "docs/compat/evidence/ardy-cake-native-audit/",
+      "first_owner": "shim stealCakes mapping",
+      "dim": false,
+      "clone_cakestall": false,
+      "blocked": [
+        "missing cakeStallData.classifySteal"
+      ],
+      "live": false,
+      "compilation": false,
+      "source_edits": false,
+      "tests_run": "none (read-only; no compilation/LIVE)",
+      "changed_files": [
+        "docs/compat/04u-ardy-cake-native-audit.md",
+        "docs/compat/evidence/ardy-cake-native-audit/hashes.json",
+        "docs/compat/evidence/ardy-cake-native-audit/excerpts.md"
+      ],
+      "cells": {
+        "cakes": "FAIL first Thieving XP, tile 2668,3312, stand log 2661,3301",
+        "guard_knight": "FAIL first Thieving XP, restocking cake (have 0) ~149x"
+      },
+      "artifacts": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/04u-ardy-cake-native-audit.md",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/ardy-cake-native-audit/hashes.json",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/ardy-cake-native-audit/excerpts.md"
+      ],
+      "worker_session_id": "20260911_051725_6a64aa"
+    }
+  },
+  "actual_model": "grok-4.6",
+  "actual_provider": "xai-oauth",
+  "actual_api_calls": 26,
+  "first_api_call": "2026-09-11 05:17:33,255 INFO [20260911_051725_6a64aa] agent.conversation_loop: API call #1: model=grok-4.6 provider=xai-oauth in=22233 out=321 total=22554 latency=6.3s cache=1152/22233 (5%) id=884cd12b-7c5c-97d4-ba2a-ccd4b052baed",
+  "last_api_call": "2026-09-11 05:26:43,704 INFO [20260911_051725_6a64aa] agent.conversation_loop: API call #26: model=grok-4.6 provider=xai-oauth in=209125 out=598 total=209723 latency=10.7s cache=205952/209125 (98%) id=d3d9129e-291a-9d7f-ba89-81d9304fc370",
+  "turn_end": "2026-09-11 05:26:43,822 INFO [20260911_051725_6a64aa] agent.conversation_loop: Turn ended: reason=kanban_run_ended model=grok-4.6 api_calls=0/16 budget=0/16 tool_turns=26 last_msg_role=user response_len=0 session=20260911_051725_6a64aa"
+}
