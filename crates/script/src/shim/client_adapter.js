@@ -147,6 +147,11 @@ export const reader = proxy('reader', {
         if (!row || typeof row.text !== 'string') return null;
         return row.text;
     },
+    // Posted native count-dialog fact. False, missing, or malformed is
+    // real closed state — never a missing-op throw or a synthetic open.
+    countDialogOpen() {
+        return snap().count_dialog_open === true;
+    },
     makeProducts() {
         return (snap().make_products || []).map((p) => ({
             name: p.name,
@@ -196,6 +201,16 @@ export const actions = proxy('actions', {
             z: reach.base_z + lz,
             level: reach.level,
         });
+        return true;
+    },
+    // Queue the existing host answer-count. Integer validation matches
+    // Interactions::answer_count (non-negative i32). No dialog, or a
+    // malformed count, returns false and queues nothing; Rust still
+    // owns stale/closed/logout refusal if a later tick dispatches.
+    answerCountDialog(value) {
+        if (!finiteInt(value) || value < 0 || value > 2147483647) return false;
+        if (snap().count_dialog_open !== true) return false;
+        queue({ op: 'answer-count', value });
         return true;
     },
 });

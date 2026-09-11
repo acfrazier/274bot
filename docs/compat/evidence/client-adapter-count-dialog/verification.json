@@ -1,0 +1,50 @@
+{
+  "task": "t_ee0d3dbd",
+  "brief": "docs/compat/briefs/87-client-adapter-count-dialog.md",
+  "brief_sha256": "97823b5fc307ea0cf7ed25a7b1a4c3ee8616ef32a1c4f99330c6cfb50cd3dc7e",
+  "source_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/count-dialog-t_ee0d3dbd",
+  "cargo_target_dir": ".superpowers/review-exports/count-dialog-t_ee0d3dbd-target",
+  "manifest": ".superpowers/review-exports/count-dialog-t_ee0d3dbd-manifest.json",
+  "files": 3191,
+  "live": false,
+  "overlay": [
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/tests/client_adapter_count_dialog.rs"
+  ],
+  "overlay_sha256": {
+    "crates/script/src/shim/client_adapter.js": "f80db4b8518498de5151c6c8da5c02f1073ae9aabaf70b8bcd4b7f92b325ce28",
+    "crates/script/tests/client_adapter_count_dialog.rs": "b5ae37e419dce279a12c9f92f9da96196808d167a4406ed78382160407e297fd"
+  },
+  "commands": [
+    {
+      "name": "script-client-adapter-count-dialog",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/count-dialog-t_ee0d3dbd",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/count-dialog-t_ee0d3dbd-target",
+      "cmd": "cargo test --locked --offline -p script --test client_adapter_count_dialog -- --test-threads=1",
+      "exit": 0,
+      "result": "8 passed (count_dialog_open_follows_closed_open_closed_posts, count_dialog_open_rejects_missing_and_malformed_as_closed, answer_count_queues_valid_integer_on_open_dialog, answer_count_zero_is_a_supported_integer, answer_count_invalid_values_do_not_dispatch, answer_count_does_not_queue_when_dialog_is_closed, tanner_inv_button_then_posted_dialog_then_count_answer, answer_count_round_trips_through_flatbuffer)"
+    },
+    {
+      "name": "script-clippy-affected",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/count-dialog-t_ee0d3dbd",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/count-dialog-t_ee0d3dbd-target",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test client_adapter_count_dialog -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+      "cmd": "rustfmt --edition 2021 --check crates/script/tests/client_adapter_count_dialog.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "countDialogOpen/answerCountDialog are thin posted-fact and existing answer-count mappings.",
+    "Queue admission is not a completed withdrawal.",
+    "Not LIVE. Root owns Tanner LIVE.",
+    "Empty-target cache: .superpowers/review-exports/count-dialog-t_ee0d3dbd-target (3.4G). Root owns cleanup."
+  ]
+}
