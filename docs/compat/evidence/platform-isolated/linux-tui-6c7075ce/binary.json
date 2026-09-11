@@ -1,0 +1,28 @@
+{
+  "host_commit": "6c7075ce2ae98fac1f2641026445b9b87a566076",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "overlay": {
+    "crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "isolated_build": true,
+  "target_started_empty": true,
+  "cargo_target_dir": "/home/builder/274bot-campaign/multirevision-20260910/target-tui-isolated-6c7075ce",
+  "source_files_verified": 2241,
+  "command": [
+    "/home/builder/.cargo/bin/cargo",
+    "build",
+    "-p",
+    "tui",
+    "--example",
+    "platform_proof",
+    "--features",
+    "memory-profile",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T04:38:40.483930+00:00",
+  "elapsed_seconds": 129.705,
+  "exit_code": 0,
+  "binary": "/home/builder/274bot-campaign/multirevision-20260910/tui-isolated-6c7075ce/tui-proof",
+  "binary_sha256": "78149b98fe0d380d3a43098c1db10b86b3caad7b3ef8a141517b231ad252d946",
+  "elapsed_is_not_performance_measurement": true
+}

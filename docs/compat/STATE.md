@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 04:39 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 05:02 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -517,3 +517,45 @@ old compiler cache, removed that cache only and recovered the exact TUI binary
 copy, then reverified source/binary hashes. No platform LIVE launch yet. This candidate includes canStep 5612b265, whose source review must
 finish first, and the known ChickenKiller fixture correction remains pending.
 Evidence under platform-isolated/. No shared target or source overlay mutation.
+
+## 05:02 UTC follow-up
+
+CanStep 5612b265 passed actual Grok4.5 review1225/session
+20260911_003832_ffa188. Periodic Chicken fixture6f464d17 passed actual
+Grok4.5 review1226/session20260911_004133_daba7b. Root3be68eaf
+strengthens Gnome further work to actual second-log XP94 and destination;
+focused existing witness/registry tests and strict affected Clippy pass.
+The four older default Gnome runs remain one-lap evidence at XP86.
+
+Fresh isolated3be68eaf: both Superheater Fire battlestaff cells now pass after
+Attack30 setup. A native289/new-catalog run also passes and its internal PNG
+was read, showing restock and further production. Flax289 picks then fails
+on reader.toLocal at tick88; Flax274 times out with seven flax. These are
+distinct failures. The selected274 content deletes each picked loc for25ticks,
+while289 only probabilistically deletes; root is checking dynamic loc freshness
+before assigning ownership of the274 failure. Neither source nor timeout changed.
+Grok t_15c05b42 owns only client_adapter.js and a unique test for toLocal plus
+actions.walkTo, using posted native scene facts and existing Rust walk-to.
+
+DeathRecovery t_0c5ce97f is actual Grok4.6 run1228/session
+20260911_005143_e760be. Vial/potion fixture t_534895e5 is actual Grok4.6
+run1227/session20260911_005043_266a13. Tanner t_7dd2b216 then solo
+runecrafting t_942179cc are queued behind its review (briefs67/68). Two-slot
+relog correction587a69fd entered Grok4.5 review1230; root built an isolated
+binary but has not launched N2. Grok usage remains68%used at04:55UTC.
+
+Linux headless289/old-catalog Alcher6c7075ce passes with actual65MagicXP,
+30000coins and observed27-to26 certificate consumption. Windows native same
+case exits0 with an internal PNG saved; image inspection remains pending.
+Two500ms responsiveness timeouts occurred in its first4seconds on one window;
+retain those diagnostics. Concord TUI289 Alcher passes in an actual PTY using
+a four-line private-store entry built only on Hyper-V in an empty target.
+All3694 package files verified on Concord, and its1213 engine files/cache
+match currentcc359656. NoConcordbuild/Xvfb or service change. Native mode
+labels/paint alone do not establish an actualGPU backend performance claim.
+
+The resumed Chicken/Gnome batches run independently of the diagnosed Flax
+gap. First289 ChickenBank failed the180s deadline on the return route; root
+will inspect the full log and preserve it before resuming unrelated Gnome cells.
+Other live cells remain pending. Full options/frontend/control/integrated
+regression and final whole-branch Grok review remain required.

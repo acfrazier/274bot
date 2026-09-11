@@ -78,4 +78,7 @@ destination within three tiles. The existing witness regression rejects the
 actual 86-XP first-lap return and a queued next-log position with no new XP,
 then accepts the 94-XP destination. No gameplay source or timeout changed.
 `second-lap-witness-correction.json` preserves source hashes and old receipts.
-Corrected LIVE and focused checks remain pending.
+The focused existing catalog witness and scenario registry checks pass on
+exact3be68eaf, as do strict affected Clippy. A first bare --exact filter ran
+zero tests and is retained as a diagnostic; the qualified test uses its full
+name and runs one test. Corrected LIVE remains pending.

@@ -1,0 +1,31 @@
+{
+  "observed_at": "2026-09-11T04:51:23.222116+00:00",
+  "reviews": [
+    {
+      "task": "t_1a213450",
+      "source_commit": "5612b2652968ebcfa6577bf4439f183de1fd5e21",
+      "session": {
+        "id": "20260911_003832_ffa188",
+        "model": "grok-4.5",
+        "profile_name": "reviewer",
+        "started_at": 1789101513.565942,
+        "ended_at": 1789102247.969484
+      },
+      "verdict": "APPROVED; actual same-card completed review verified"
+    },
+    {
+      "task": "t_63524882",
+      "source_commit": "6f464d1740d19d1a9a99149afdd67d594a45f323",
+      "session": {
+        "id": "20260911_004133_daba7b",
+        "model": "grok-4.5",
+        "profile_name": "reviewer",
+        "started_at": 1789101694.813238,
+        "ended_at": 1789102187.701212
+      },
+      "verdict": "APPROVED; actual same-card completed review verified"
+    }
+  ],
+  "root_fixture_correction": "3be68eafffd586d790e72e8095ddcab457795672",
+  "focused_checks": "Gnome actual-86-XP rejection + 94-XP acceptance; scenario registry; strict affected Clippy passed"
+}
