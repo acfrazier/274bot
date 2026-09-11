@@ -1,0 +1,64 @@
+{
+  "verified_at": "2026-09-11T12:15:15.355134+00:00",
+  "run": {
+    "id": 1334,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved 9d6f86931 (R2 execution lens). R1 sticky-peak air_from_script + held-556 gate and observe-path regressions verified; full witness still requires deposited_received_air/restock/second cycle; AirSlotRecord unchanged. Isolated export at 9d6f869 + exclusive target: rustfmt pass, cargo test paired_catalog_live 39 passed / 3 ignored, clippy -D warnings pass, mule_live ignored; overlay sha256 matches verification.json; no LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 2,
+      "lens": "execution",
+      "commit": "9d6f8693137790661370dc7c403f0e27b775e509",
+      "prior_commit": "5dd89374ba50fe3c05fa85c5023b4ec4db7931d7",
+      "export": ".superpowers/review-exports/mule-paired-core-t_aba60704",
+      "cargo_target_dir": ".superpowers/review-exports/mule-paired-core-t_aba60704-target",
+      "export_head": "9d6f8693137790661370dc7c403f0e27b775e509",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "overlay_sha256_match": true,
+      "air_slot_record_changed": false,
+      "full_witness_weakened": false,
+      "r1_findings_resolved": [
+        "sticky peak MuleSlotRecord::air_from_script",
+        "full-cycle held-air gate peak-based",
+        "observe crafter deposit keeps FirstExchangeCraft",
+        "observe mule receive+deposit keeps held-air; restock fails honestly"
+      ],
+      "reviewer_checks": [
+        "read brief 114 + 05x report + verification.json",
+        "diff 9d6f869 sticky peak + qualify_full_cycle mule_held_script_air",
+        "AirSlotRecord air_from_script remains non-sticky current inventory",
+        "deposited_received_air still required after held-air gate",
+        "overlay sha256 match for live.rs/support/05x",
+        "export HEAD 9d6f869 hash-matched overlay",
+        "rustfmt --check edition 2021 pass",
+        "CARGO_TARGET_DIR exclusive mule-paired-core-t_aba60704-target cargo test -p host-play --test paired_catalog_live: 39 passed, 3 ignored",
+        "cargo clippy -p host-play --test paired_catalog_live --no-deps -- -D warnings: pass",
+        "paired_catalog_mule_live exact: 0 passed, 1 ignored",
+        "no LIVE"
+      ],
+      "hotspot": "crates/host-play/tests/support/paired_catalog.rs and crates/host-play/tests/paired_catalog_live.rs",
+      "caveat": "workspace dirty paint.buttons WIP unrelated; verification used clean export tree only. LIVE/root acceptance still deferred per brief.",
+      "worker_session_id": "20260911_080436_80827c"
+    },
+    "worker_pid": null,
+    "started_at": 1789128274,
+    "ended_at": 1789128378
+  },
+  "actual_model": "grok-4.5",
+  "actual_api_calls": 9,
+  "api_lines": [
+    "2026-09-11 08:04:44,232 INFO [20260911_080436_80827c] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23270 out=84 total=23354 latency=4.0s cache=384/23270 (2%) id=7490207c-a140-911b-a3d5-15f663051bc2",
+    "2026-09-11 08:04:49,815 INFO [20260911_080436_80827c] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=30480 out=368 total=30848 latency=5.3s cache=23168/30480 (76%) id=8bca4739-f5e4-9581-8509-653a110796b4",
+    "2026-09-11 08:04:57,396 INFO [20260911_080436_80827c] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=35126 out=369 total=35495 latency=6.8s cache=30464/35126 (87%) id=1072afe3-5693-9c46-9799-ef6e307f279d",
+    "2026-09-11 08:05:08,861 INFO [20260911_080436_80827c] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=43608 out=702 total=44310 latency=11.0s cache=35072/43608 (80%) id=70a3c4ca-0ef0-9498-8346-96e5d0306045",
+    "2026-09-11 08:05:15,201 INFO [20260911_080436_80827c] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=44401 out=343 total=44744 latency=6.1s cache=43520/44401 (98%) id=deb02bdf-70b0-98c4-9110-e2b3e98bff02",
+    "2026-09-11 08:05:35,173 INFO [20260911_080436_80827c] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=50877 out=1085 total=51962 latency=19.7s cache=44288/50877 (87%) id=ca2ee3cd-cc96-9f29-8e63-f702cdc2125f",
+    "2026-09-11 08:05:42,363 INFO [20260911_080436_80827c] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=55639 out=296 total=55935 latency=6.9s cache=50816/55639 (91%) id=72f58aea-ebab-9920-a82f-248e7c72ac9c",
+    "2026-09-11 08:06:00,588 INFO [20260911_080436_80827c] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=61050 out=993 total=62043 latency=16.8s cache=55552/61050 (91%) id=3ec280bd-2501-9397-8263-f14d7a12318f",
+    "2026-09-11 08:06:18,822 INFO [20260911_080436_80827c] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=65843 out=849 total=66692 latency=18.0s cache=60928/65843 (93%) id=f4ae04c2-2508-9ce1-afd1-02dd0eb5502c"
+  ]
+}

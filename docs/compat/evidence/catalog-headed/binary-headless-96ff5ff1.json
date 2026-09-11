@@ -1,0 +1,30 @@
+{
+  "mode": "headless",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "host-play",
+    "--test",
+    "catalog_boundary_live",
+    "--features",
+    "memory-profile",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T11:45:22.695357+00:00",
+  "elapsed_seconds": 10.294,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Completed reviewed combat99 compiler cache transferred exclusively to root for exact96 source after completed root04d builds; exclusively root-owned and not empty-started",
+  "host_commit": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-96ff5ff1",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-96ff5ff1",
+  "binary_sha256": "d96726010c0146a316ddd1af8a3ed538ef9b574c7408357e92e93ba278bd3d22",
+  "binary_bytes": 179839096,
+  "source_files_verified": 4161,
+  "elapsed_is_not_performance_measurement": true
+}

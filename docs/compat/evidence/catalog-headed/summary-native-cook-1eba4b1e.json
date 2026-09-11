@@ -1,0 +1,16 @@
+{
+  "outcome": "PASS",
+  "host_commit": "1eba4b1e11daf6b97e79ac3c393413a7540ab002",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": 289,
+  "receipt": "docs/compat/evidence/catalog-headed/r289-cook-bot-lobster-8e7d965b-1eba4b1e-gpu.json",
+  "screenshot": "docs/compat/evidence/catalog-headed/r289-cook-bot-lobster-8e7d965b-1eba4b1e-gpu/shots/2026-09-11T12-01-56_75569/2026-09-11T12-02-40_cook_bot_lobster.png",
+  "screenshot_sha256": "9b40e15d55ed1b3703b8407a138a3899ee81fe30664f393c1aeb51fa1ba9a1fd",
+  "screenshot_read": true,
+  "visual": "Scene2 at Catherby2817,3443. Cooked28 paint, Banktrips2, one cooked lobster in newly withdrawn raw pack, repeated withdrawal log and cooking chat. Paint lags further product.",
+  "scope": "Native cooking full cycle and further production representative; not all CookBot settings or performance.",
+  "runtime_errors": [],
+  "process_exit_code": 0,
+  "elapsed_ms": 44825
+}

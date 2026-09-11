@@ -1,13 +1,65 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 11:39 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 12:55 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (11:39 UTC)
+## Incremental integration and ownership correction
+
+The operator requested continual verified staging, main integration and remote
+publication on 2026-09-11. Root prepared isolated stage1 at
+`.worktrees/rs2b0t-stage-1`, branch `codex/rs2b0t-stage-1`, initial candidate
+659380651869bd12fc9d281a30037b3b0368b380 / client aef3952d. It retains the
+client/profile/protocol/world foundation before later catalog helpers. Formatting
+and strict Clippy passed; remaining workspace checks passed with two unchanged
+external-catalog failures separately reproduced on main. Client tests, fresh
+live boundaries, required whole-branch Grok4.6 review and publication remain
+pending. No merge or push yet. Stage1 has its own report08 and raw checks.
+
+Audit09 (actual Grok4.6, t_ba428941 run1341) confirms the strict no-JS-policy
+contract did not fully hold. Earlier design-approved one-shot composition is
+still executable JS sequencing. Root queued native ownership correction123,
+t_fbfa61d2, after hint117 and before teleport/shop/Make-X/fire. Bank approach,
+cake one-attempt and expanded autocast sequencing must move to Rust-owned phases
+with thin dispatch/callback shims, preserving successful behavior and refusal
+semantics. Root does not treat prior design exceptions as strict compliance.
+PeriodicBank/DeathRecovery already use native phase owners; no blanket rewrite.
+
+Resource audit121 completed as06ab (actual Grok4.6 run1339): no card dimming.
+Herblore fixture never opens a fresh bank; Gnome steel/Magic fixture cannot
+reasonably fill27 slots in180s; Flax nearest/reach facts still needed at failure.
+These are diagnoses, not new live acceptance. Agility118 R1 now authorizes only
+the narrow proof/runner support needed for fresh post-ticket work, preserving
+existing cumulative XP semantics; same-card Sol/reviewer cycle resumed.
+
+## Current follow-ups (12:16 UTC)
+
+- Cook salmon/lobster: all eight headless cells pass on exact1eba4b1e;
+  native289/newer lobster also passes, with screenshot read. Report06aa
+  retains ordered deposit/restock/further-production evidence. Ledger327.
+- User requested launched-revision branding at12:09. Commit3ba517559 makes
+  panel/native-window/rail/TUI headings dynamic via effective session revision,
+  retaining stable ImGui identities. Exact isolated panel/TUI all-target checks
+  pass with and without memory-profile; evidence/revision-branding/.
+- Paint113 commit73cce773e approved actualGrok4.5 run1335 (15 API calls).
+  Mulepair114 commit9d6f86931 approved actualGrok4.5 run1334 (9 API calls).
+  Native/TUI paint clicks and full paired LIVE remain root work.
+- Fighter109 e1fd1b0c reviewed and root checks pass. Audit06y identified
+  hostile-before-stat-ack and CoalTrucks combat prerequisite fixture issues;
+  task120 is serialized after Sol agility118 for their correction plus
+  three remaining production-option branches from audit06z. Preserve clocks.
+- Root private1eba diagnostic adds only snapshot/deposit logging for
+  HerbloreSecondaries, GnomeChop and FlaxAIO pick failures. Two overlays are
+  hash-bound in a fresh export; this is diagnostic, not a product candidate.
+- Runtime queue remains paint -> helper115 -> native signals117 -> teleport
+  -> shop -> Make-X -> fire. Ordinary campaign scope and final review remain.
+- Root reused its exclusive completed compiler cache; free285GiB at12:15.
+  Windows refresh and paused expiring-allowance heartbeat remain as below.
+
+## Earlier follow-ups (11:39 UTC)
 
 - Report06x records station912 14PASS/9FAIL, native Mac/Windows steel,
   Windows04d three builds/six check groups, and20 further failed cells.

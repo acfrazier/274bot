@@ -1,0 +1,101 @@
+{
+  "host_commit": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 4161,
+  "checks": [
+    {
+      "label": "cook",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "cook_location_shape"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 7.665,
+      "log": "docs/compat/evidence/catalog-headed/checks-96ff5ff1-cook.log",
+      "log_sha256": "e81c9996abe5c2661543f9a2039522ccd5860adb3c8e695c78bf2dee25ae1bca"
+    },
+    {
+      "label": "special",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "special"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.946,
+      "log": "docs/compat/evidence/catalog-headed/checks-96ff5ff1-special.log",
+      "log_sha256": "3d9f81492e7ee8a79388157a5c088981742792bc6fcb825b76dc35a7a44495bb"
+    },
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.297,
+      "log": "docs/compat/evidence/catalog-headed/checks-96ff5ff1-catalog.log",
+      "log_sha256": "c84ae39e303637d0d767958d9535517a35e99c9322f777341e7bcc9ca1bec5a1"
+    },
+    {
+      "label": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 9.5,
+      "log": "docs/compat/evidence/catalog-headed/checks-96ff5ff1-scenario.log",
+      "log_sha256": "f8d4a55cc6b488ff278164a898a60aef19dd723bfa1f1fe5ea8e9fdeaf30f7ac"
+    },
+    {
+      "label": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--lib",
+        "--test",
+        "cook_location_shape",
+        "--test",
+        "special",
+        "-p",
+        "scenario",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 5.194,
+      "log": "docs/compat/evidence/catalog-headed/checks-96ff5ff1-clippy.log",
+      "log_sha256": "7096c229d9603265212d9da4b69a1714adc4ad8ad358f43cee5221b478929f60"
+    }
+  ],
+  "all_passed": true,
+  "isolated_build": true,
+  "target_started_empty": false,
+  "cache_reuse": "Completed exclusive combat99 target transferred to root; exact96 source"
+}

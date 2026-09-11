@@ -1,0 +1,448 @@
+{"elapsed_seconds": 0.110031, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.663596, "line": "[host-play] slot liveg938j4_0: thread up"}
+{"elapsed_seconds": 4.699473, "line": "274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"}
+{"elapsed_seconds": 4.881014, "line": "[panel] scenario capture armed: Some(\"cook_bot_lobster\")"}
+{"elapsed_seconds": 4.881067, "line": "[panel] liveg938j4_0: liveg938j4_0: slot up"}
+{"elapsed_seconds": 6.421072, "line": "[host-play] slot liveg938j4_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 6.787668, "line": "[host-play] slot liveg938j4_0: handshake ok"}
+{"elapsed_seconds": 6.863987, "line": "[host] hitch liveg938j4_0: frame_us=75514 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 6.88374, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 1"}
+{"elapsed_seconds": 7.887128, "line": "[host] hitch liveg938j4_0: frame_us=75480 paints=43 skips=0 ticks=1"}
+{"elapsed_seconds": 7.888292, "line": "[panel] liveg938j4_0: liveg938j4_0: mainland hop queued"}
+{"elapsed_seconds": 7.904565, "line": "[panel] liveg938j4_0: liveg938j4_0: ingame"}
+{"elapsed_seconds": 7.904635, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 2"}
+{"elapsed_seconds": 7.904668, "line": "live script_cook_bot_lobster: running step 1/27"}
+{"elapsed_seconds": 8.035212, "line": "[host] slot liveg938j4_0: d_loop_us=12243 d_raster_us=256271 d_observe_us=59506 max_observe_us=2557 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 8.300373, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 1"}
+{"elapsed_seconds": 8.434958, "line": "[panel] liveg938j4_0: liveg938j4_0: ingame"}
+{"elapsed_seconds": 8.43505, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 2"}
+{"elapsed_seconds": 9.18642, "line": "[host] slot liveg938j4_0: d_loop_us=11459 d_raster_us=238832 d_observe_us=74933 max_observe_us=4970 d_paints=50 d_skips=0 d_ticks=3 window_ms=1151"}
+{"elapsed_seconds": 10.336189, "line": "[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=230912 d_observe_us=30466 max_observe_us=895 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 10.446161, "line": "live script_cook_bot_lobster: running step 2/27"}
+{"elapsed_seconds": 11.016723, "line": "[host-play] slot liveg938j4_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 11.029556, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 0"}
+{"elapsed_seconds": 11.587072, "line": "[host-play] slot liveg938j4_0: handshake ok"}
+{"elapsed_seconds": 11.654485, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 1"}
+{"elapsed_seconds": 12.559873, "line": "[host] hitch liveg938j4_0: frame_us=53214 paints=39 skips=0 ticks=1"}
+{"elapsed_seconds": 12.571133, "line": "[panel] liveg938j4_0: liveg938j4_0: ingame"}
+{"elapsed_seconds": 12.571213, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 2"}
+{"elapsed_seconds": 12.794696, "line": "[host] slot liveg938j4_0: d_loop_us=18264 d_raster_us=205001 d_observe_us=81758 max_observe_us=5432 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 13.949927, "line": "[host] slot liveg938j4_0: d_loop_us=1376 d_raster_us=189166 d_observe_us=39401 max_observe_us=6004 d_paints=50 d_skips=0 d_ticks=3 window_ms=1155"}
+{"elapsed_seconds": 14.571179, "line": "live script_cook_bot_lobster: running step 3/27"}
+{"elapsed_seconds": 15.109184, "line": "[host] slot liveg938j4_0: d_loop_us=1337 d_raster_us=191745 d_observe_us=26458 max_observe_us=829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 15.237788, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 1"}
+{"elapsed_seconds": 15.362788, "line": "[panel] liveg938j4_0: liveg938j4_0: ingame"}
+{"elapsed_seconds": 15.362858, "line": "[panel] liveg938j4_0: liveg938j4_0: scene 2"}
+{"elapsed_seconds": 16.263094, "line": "[host] slot liveg938j4_0: d_loop_us=8282 d_raster_us=195372 d_observe_us=57464 max_observe_us=5380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 17.383685, "line": "live script_cook_bot_lobster: running step 4/27"}
+{"elapsed_seconds": 17.404487, "line": "live script_cook_bot_lobster: running step 5/27"}
+{"elapsed_seconds": 17.416691, "line": "[host] slot liveg938j4_0: d_loop_us=1139 d_raster_us=242297 d_observe_us=29391 max_observe_us=1024 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 17.425338, "line": "live script_cook_bot_lobster: running step 6/27"}
+{"elapsed_seconds": 17.446166, "line": "live script_cook_bot_lobster: running step 7/27"}
+{"elapsed_seconds": 17.467023, "line": "live script_cook_bot_lobster: running step 8/27"}
+{"elapsed_seconds": 17.487821, "line": "live script_cook_bot_lobster: running step 9/27"}
+{"elapsed_seconds": 17.508662, "line": "live script_cook_bot_lobster: running step 10/27"}
+{"elapsed_seconds": 17.52947, "line": "live script_cook_bot_lobster: running step 11/27"}
+{"elapsed_seconds": 17.550313, "line": "live script_cook_bot_lobster: running step 12/27"}
+{"elapsed_seconds": 17.592007, "line": "live script_cook_bot_lobster: running step 13/27"}
+{"elapsed_seconds": 18.279518, "line": "live script_cook_bot_lobster: running step 14/27"}
+{"elapsed_seconds": 18.300341, "line": "live script_cook_bot_lobster: running step 15/27"}
+{"elapsed_seconds": 18.321142, "line": "live script_cook_bot_lobster: running step 16/27"}
+{"elapsed_seconds": 18.568507, "line": "[host] slot liveg938j4_0: d_loop_us=1207 d_raster_us=267072 d_observe_us=36987 max_observe_us=4012 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 18.842013, "line": "live script_cook_bot_lobster: running step 17/27"}
+{"elapsed_seconds": 18.860227, "line": "[script liveg938j4_0] start load"}
+{"elapsed_seconds": 18.938525, "line": "live script_cook_bot_lobster: running step 18/27"}
+{"elapsed_seconds": 18.9386, "line": "[host] hitch liveg938j4_0: observe_us=79000 paints=312 skips=0 ticks=13"}
+{"elapsed_seconds": 18.960209, "line": "live script_cook_bot_lobster: running step 19/27"}
+{"elapsed_seconds": 19.773136, "line": "[host] slot liveg938j4_0: d_loop_us=1117 d_raster_us=251055 d_observe_us=130626 max_observe_us=79000 d_paints=50 d_skips=0 d_ticks=2 window_ms=1204"}
+{"elapsed_seconds": 20.038971, "line": "[script liveg938j4_0] CookBot cooking 'Raw lobster' at Catherby, Range (2817, 3443, 0)"}
+{"elapsed_seconds": 20.039057, "line": "[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 20.041965, "line": "[panel] liveg938j4_0: script: CookBot cooking 'Raw lobster' at Catherby, Range (2817, 3443, 0)"}
+{"elapsed_seconds": 20.902761, "line": "[host] slot liveg938j4_0: d_loop_us=1152 d_raster_us=274567 d_observe_us=75405 max_observe_us=11095 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129"}
+{"elapsed_seconds": 21.853112, "line": "[script liveg938j4_0] withdrawing Raw lobster"}
+{"elapsed_seconds": 21.854456, "line": "[panel] liveg938j4_0: script: withdrawing Raw lobster"}
+{"elapsed_seconds": 22.046446, "line": "[host] slot liveg938j4_0: d_loop_us=1264 d_raster_us=290194 d_observe_us=79950 max_observe_us=7942 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143"}
+{"elapsed_seconds": 22.443444, "line": "[script liveg938j4_0] interact Walk { x: 2817, z: 3443, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 22.633801, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 22.845389, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3439, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 22.845472, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3439, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 23.049199, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 23.049271, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 23.173488, "line": "[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=267606 d_observe_us=94767 max_observe_us=14807 d_paints=50 d_skips=0 d_ticks=5 window_ms=1127"}
+{"elapsed_seconds": 23.227909, "line": "[nav-walk] here=WorldTile { x: 2811, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 23.227991, "line": "[nav-follow] here=WorldTile { x: 2811, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 23.430208, "line": "[nav-walk] here=WorldTile { x: 2813, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 23.430271, "line": "[nav-follow] here=WorldTile { x: 2813, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 23.635165, "line": "[nav-walk] here=WorldTile { x: 2815, z: 3438, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 23.635257, "line": "[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None"}
+{"elapsed_seconds": 23.840697, "line": "[nav-transport] here=WorldTile { x: 2816, z: 3439, level: 0 } to=WorldTile { x: 2816, z: 3439, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true"}
+{"elapsed_seconds": 23.840771, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 24.042915, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3441, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 24.042994, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3441, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 24.043011, "line": "[host] hitch liveg938j4_0: observe_us=16880 paints=537 skips=0 ticks=35"}
+{"elapsed_seconds": 24.247097, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 24.247159, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3443, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 24.307169, "line": "[host] slot liveg938j4_0: d_loop_us=1334 d_raster_us=257698 d_observe_us=117606 max_observe_us=16880 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133"}
+{"elapsed_seconds": 24.451938, "line": "[nav-walk] here=WorldTile { x: 2817, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 24.452002, "line": "[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2817, z: 3443, level: 0 } })"}
+{"elapsed_seconds": 24.483764, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 25.245741, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 25.25025, "line": "live script_cook_bot_lobster: running step 20/27"}
+{"elapsed_seconds": 25.271121, "line": "live script_cook_bot_lobster: running step 21/27"}
+{"elapsed_seconds": 25.458389, "line": "[host] slot liveg938j4_0: d_loop_us=1329 d_raster_us=237670 d_observe_us=79112 max_observe_us=12718 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151"}
+{"elapsed_seconds": 25.841902, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 26.463768, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 26.611247, "line": "[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=263380 d_observe_us=74671 max_observe_us=10570 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152"}
+{"elapsed_seconds": 27.051838, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 27.641644, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 27.73813, "line": "[host] slot liveg938j4_0: d_loop_us=1379 d_raster_us=274786 d_observe_us=86470 max_observe_us=11808 d_paints=50 d_skips=0 d_ticks=5 window_ms=1126"}
+{"elapsed_seconds": 28.255369, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 28.842569, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 28.871163, "line": "[host] slot liveg938j4_0: d_loop_us=1425 d_raster_us=276140 d_observe_us=86965 max_observe_us=11868 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133"}
+{"elapsed_seconds": 29.453824, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 30.00777, "line": "[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=262582 d_observe_us=72974 max_observe_us=11043 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 30.044347, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 30.639069, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 31.1529, "line": "[host] slot liveg938j4_0: d_loop_us=1323 d_raster_us=265778 d_observe_us=81731 max_observe_us=10821 d_paints=50 d_skips=0 d_ticks=5 window_ms=1145"}
+{"elapsed_seconds": 31.261087, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 31.8584, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 32.296218, "line": "[host] slot liveg938j4_0: d_loop_us=1334 d_raster_us=250319 d_observe_us=79994 max_observe_us=10520 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143"}
+{"elapsed_seconds": 32.451129, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 33.044804, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 33.453883, "line": "[host] slot liveg938j4_0: d_loop_us=1272 d_raster_us=229676 d_observe_us=77698 max_observe_us=10612 d_paints=50 d_skips=0 d_ticks=6 window_ms=1157"}
+{"elapsed_seconds": 33.645949, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 34.245472, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 34.598192, "line": "[host] slot liveg938j4_0: d_loop_us=1141 d_raster_us=210676 d_observe_us=65051 max_observe_us=9902 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144"}
+{"elapsed_seconds": 34.848248, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 35.454479, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 35.753234, "line": "[host] slot liveg938j4_0: d_loop_us=1076 d_raster_us=199898 d_observe_us=69634 max_observe_us=9055 d_paints=50 d_skips=0 d_ticks=5 window_ms=1155"}
+{"elapsed_seconds": 36.050894, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 36.650471, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 36.905707, "line": "[host] slot liveg938j4_0: d_loop_us=1373 d_raster_us=244276 d_observe_us=82022 max_observe_us=11882 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152"}
+{"elapsed_seconds": 37.263202, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 37.847052, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 38.044306, "line": "[host] slot liveg938j4_0: d_loop_us=1414 d_raster_us=251416 d_observe_us=88621 max_observe_us=12172 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 38.459004, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 39.052546, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 39.163216, "line": "[host] slot liveg938j4_0: d_loop_us=1318 d_raster_us=244689 d_observe_us=80736 max_observe_us=12119 d_paints=50 d_skips=0 d_ticks=5 window_ms=1118"}
+{"elapsed_seconds": 39.652979, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 40.249141, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 40.2981, "line": "[host] slot liveg938j4_0: d_loop_us=1419 d_raster_us=251121 d_observe_us=88730 max_observe_us=12775 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 40.861462, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 41.417308, "line": "[host] slot liveg938j4_0: d_loop_us=1388 d_raster_us=248007 d_observe_us=76928 max_observe_us=12145 d_paints=50 d_skips=0 d_ticks=6 window_ms=1119"}
+{"elapsed_seconds": 41.440705, "line": "live script_cook_bot_lobster: running step 22/27"}
+{"elapsed_seconds": 41.669019, "line": "[script liveg938j4_0] interact Walk { x: 2809, z: 3441, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 41.832934, "line": "[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 42.04333, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3442, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 42.043406, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3442, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 42.246188, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3440, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 42.246259, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3440, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 42.454581, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3439, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 42.454646, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None"}
+{"elapsed_seconds": 42.537029, "line": "[host] slot liveg938j4_0: d_loop_us=1317 d_raster_us=231924 d_observe_us=101568 max_observe_us=14967 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119"}
+{"elapsed_seconds": 42.636541, "line": "[nav-transport] here=WorldTile { x: 2816, z: 3437, level: 0 } to=WorldTile { x: 2816, z: 3437, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=false"}
+{"elapsed_seconds": 42.636605, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 42.845131, "line": "[nav-walk] here=WorldTile { x: 2814, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 42.845258, "line": "[nav-follow] here=WorldTile { x: 2814, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 43.053016, "line": "[nav-walk] here=WorldTile { x: 2812, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 43.05309, "line": "[nav-follow] here=WorldTile { x: 2812, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 43.253318, "line": "[nav-walk] here=WorldTile { x: 2810, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 43.253397, "line": "[nav-follow] here=WorldTile { x: 2810, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 43.459759, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3438, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 43.459837, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3438, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 43.641598, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3440, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 43.641663, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3440, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 43.672713, "line": "[host] slot liveg938j4_0: d_loop_us=1314 d_raster_us=234574 d_observe_us=117465 max_observe_us=15617 d_paints=50 d_skips=0 d_ticks=6 window_ms=1135"}
+{"elapsed_seconds": 43.854647, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3441, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 43.854722, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2809, z: 3441, level: 0 } })"}
+{"elapsed_seconds": 43.885708, "line": "[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 44.458597, "line": "live script_cook_bot_lobster: running step 23/27"}
+{"elapsed_seconds": 44.479474, "line": "live script_cook_bot_lobster: running step 24/27"}
+{"elapsed_seconds": 44.7881, "line": "[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=282240 d_observe_us=87640 max_observe_us=13586 d_paints=50 d_skips=0 d_ticks=5 window_ms=1115"}
+{"elapsed_seconds": 45.918302, "line": "[host] slot liveg938j4_0: d_loop_us=1249 d_raster_us=290029 d_observe_us=77546 max_observe_us=8569 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130"}
+{"elapsed_seconds": 46.047475, "line": "[script liveg938j4_0] withdrawing Raw lobster"}
+{"elapsed_seconds": 46.0629, "line": "[panel] liveg938j4_0: script: withdrawing Raw lobster"}
+{"elapsed_seconds": 46.250272, "line": "live script_cook_bot_lobster: running step 25/27"}
+{"elapsed_seconds": 46.458781, "line": "[script liveg938j4_0] interact Walk { x: 2817, z: 3443, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 46.648751, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 46.837407, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3439, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 46.837485, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3439, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 46.875263, "line": "live script_cook_bot_lobster: running step 26/27"}
+{"elapsed_seconds": 46.896211, "line": "live script_cook_bot_lobster: running step 27/27"}
+{"elapsed_seconds": 47.040573, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 47.040641, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 47.052765, "line": "[host] slot liveg938j4_0: d_loop_us=1237 d_raster_us=255210 d_observe_us=94288 max_observe_us=13132 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 47.24717, "line": "[nav-walk] here=WorldTile { x: 2811, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 47.247251, "line": "[nav-follow] here=WorldTile { x: 2811, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 47.452271, "line": "[nav-walk] here=WorldTile { x: 2813, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 47.452332, "line": "[nav-follow] here=WorldTile { x: 2813, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 47.647017, "line": "[nav-walk] here=WorldTile { x: 2815, z: 3438, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })"}
+{"elapsed_seconds": 47.647116, "line": "[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None"}
+{"elapsed_seconds": 47.852995, "line": "[nav-transport] cheap hop walk-through to WorldTile { x: 2816, z: 3439, level: 0 }"}
+{"elapsed_seconds": 47.853073, "line": "[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None"}
+{"elapsed_seconds": 48.053348, "line": "[nav-transport] here=WorldTile { x: 2816, z: 3439, level: 0 } to=WorldTile { x: 2816, z: 3439, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true"}
+{"elapsed_seconds": 48.053435, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 48.174822, "line": "[host] slot liveg938j4_0: d_loop_us=1269 d_raster_us=240742 d_observe_us=101166 max_observe_us=14866 d_paints=50 d_skips=0 d_ticks=5 window_ms=1122"}
+{"elapsed_seconds": 48.253353, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3441, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 48.253414, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3441, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 48.253428, "line": "[host] hitch liveg938j4_0: observe_us=16995 paints=1602 skips=0 ticks=156"}
+{"elapsed_seconds": 48.452145, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 48.452212, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3443, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 48.638278, "line": "[nav-walk] here=WorldTile { x: 2817, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })"}
+{"elapsed_seconds": 48.638347, "line": "[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2817, z: 3443, level: 0 } })"}
+{"elapsed_seconds": 48.671131, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 49.318839, "line": "[host] slot liveg938j4_0: d_loop_us=1442 d_raster_us=243708 d_observe_us=99621 max_observe_us=16995 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143"}
+{"elapsed_seconds": 49.430356, "line": "[panel] scenario capture requested: cook_bot_lobster"}
+{"elapsed_seconds": 49.489561, "line": "[host] hitch liveg938j4_0: observe_us=63009 paints=1654 skips=0 ticks=162"}
+{"elapsed_seconds": 49.490192, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 49.49538, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 50.046875, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 50.357272, "line": "[panel] shot cook_bot_lobster -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-cook-bot-lobster-8e7d965b-1eba4b1e-gpu/shots/2026-09-11T12-01-56_75569/2026-09-11T12-02-40_cook_bot_lobster.png"}
+{"elapsed_seconds": 50.357436, "line": "PASS: live script_cook_bot_lobster {\"scenario\":\"cook_bot_lobster\",\"outcome\":\"PASS\",\"predicate\":\"has_item_id(379)>=1\",\"ticks\":225,\"elapsed_ms\":44825,\"tile\":[2817,3443,0],\"inv\":[{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1},{\"id\":377,\"name\":\"Raw lobster\",\"count\":1}],\"stat\":{\"runenergy\":85},\"chat\":[{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"The lobster is now nicely cooked.\"},{\"text\":\"You put the lobster on the stove.\"},{\"text\":\"Inventory wiped.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 50.510584, "line": "[host] slot liveg938j4_0: d_loop_us=1161 d_raster_us=231637 d_observe_us=120998 max_observe_us=63009 d_paints=50 d_skips=0 d_ticks=6 window_ms=1191"}
+{"elapsed_seconds": 50.642057, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 51.24434, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 51.646995, "line": "[host] slot liveg938j4_0: d_loop_us=1289 d_raster_us=259546 d_observe_us=76988 max_observe_us=8807 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 51.860629, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 52.456374, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 52.776543, "line": "[host] slot liveg938j4_0: d_loop_us=1328 d_raster_us=261905 d_observe_us=72888 max_observe_us=10157 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129"}
+{"elapsed_seconds": 53.060372, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 53.649499, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 53.904535, "line": "[host] slot liveg938j4_0: d_loop_us=1440 d_raster_us=257351 d_observe_us=81997 max_observe_us=10546 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127"}
+{"elapsed_seconds": 54.26547, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 54.860417, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 55.057883, "line": "[host] slot liveg938j4_0: d_loop_us=1567 d_raster_us=263414 d_observe_us=83337 max_observe_us=10240 d_paints=50 d_skips=0 d_ticks=6 window_ms=1153"}
+{"elapsed_seconds": 55.460331, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 56.050581, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 56.192962, "line": "[host] slot liveg938j4_0: d_loop_us=1324 d_raster_us=259007 d_observe_us=71559 max_observe_us=10602 d_paints=50 d_skips=0 d_ticks=5 window_ms=1135"}
+{"elapsed_seconds": 56.661704, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 57.32351, "line": "[host] slot liveg938j4_0: d_loop_us=1483 d_raster_us=251349 d_observe_us=80673 max_observe_us=8727 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130"}
+{"elapsed_seconds": 57.456144, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 58.063237, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 58.455925, "line": "[host] slot liveg938j4_0: d_loop_us=1490 d_raster_us=257583 d_observe_us=82708 max_observe_us=10378 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132"}
+{"elapsed_seconds": 58.655519, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 59.250608, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 59.594764, "line": "[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=253607 d_observe_us=75549 max_observe_us=10731 d_paints=50 d_skips=0 d_ticks=5 window_ms=1138"}
+{"elapsed_seconds": 59.840364, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 60.461142, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 60.741737, "line": "[host] slot liveg938j4_0: d_loop_us=1319 d_raster_us=248786 d_observe_us=82606 max_observe_us=10359 d_paints=50 d_skips=0 d_ticks=6 window_ms=1146"}
+{"elapsed_seconds": 61.054781, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 61.842748, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 61.871275, "line": "[host] slot liveg938j4_0: d_loop_us=1374 d_raster_us=257696 d_observe_us=84721 max_observe_us=11343 d_paints=50 d_skips=0 d_ticks=6 window_ms=1129"}
+{"elapsed_seconds": 62.440931, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 63.026726, "line": "[host] slot liveg938j4_0: d_loop_us=1294 d_raster_us=234134 d_observe_us=71520 max_observe_us=8749 d_paints=50 d_skips=0 d_ticks=6 window_ms=1155"}
+{"elapsed_seconds": 63.035404, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 63.652395, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 64.168204, "line": "[host] slot liveg938j4_0: d_loop_us=1227 d_raster_us=216803 d_observe_us=59372 max_observe_us=8410 d_paints=50 d_skips=0 d_ticks=5 window_ms=1141"}
+{"elapsed_seconds": 64.255793, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 64.847049, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 65.320632, "line": "[host] slot liveg938j4_0: d_loop_us=1194 d_raster_us=213397 d_observe_us=65437 max_observe_us=8267 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152"}
+{"elapsed_seconds": 65.450494, "line": "[script liveg938j4_0] interact UseOn { name: \"Raw lobster\", kind: \"loc\", target_name: Some(\"Range\"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 66.252359, "line": "[script liveg938j4_0] interact Walk { x: 2809, z: 3441, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 66.444267, "line": "[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 66.462668, "line": "[host] slot liveg938j4_0: d_loop_us=1279 d_raster_us=225525 d_observe_us=72164 max_observe_us=8784 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142"}
+{"elapsed_seconds": 66.651032, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3442, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 66.651115, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3442, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 66.85292, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3440, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 66.853005, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3440, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 67.039029, "line": "[nav-walk] here=WorldTile { x: 2816, z: 3439, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })"}
+{"elapsed_seconds": 67.039116, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None"}
+{"elapsed_seconds": 67.236006, "line": "[nav-transport] here=WorldTile { x: 2816, z: 3437, level: 0 } to=WorldTile { x: 2816, z: 3437, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true"}
+{"elapsed_seconds": 67.236093, "line": "[nav-follow] here=WorldTile { x: 2816, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 67.440413, "line": "[nav-walk] here=WorldTile { x: 2814, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 67.440488, "line": "[nav-follow] here=WorldTile { x: 2814, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 67.591922, "line": "[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=241141 d_observe_us=97536 max_observe_us=14405 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129"}
+{"elapsed_seconds": 67.645302, "line": "[nav-walk] here=WorldTile { x: 2812, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 67.645369, "line": "[nav-follow] here=WorldTile { x: 2812, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 67.851069, "line": "[nav-walk] here=WorldTile { x: 2810, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 67.85115, "line": "[nav-follow] here=WorldTile { x: 2810, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 68.053294, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3438, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 68.053375, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3438, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 68.236346, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3440, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 68.236409, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3440, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None"}
+{"elapsed_seconds": 68.434937, "line": "[nav-walk] here=WorldTile { x: 2809, z: 3441, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })"}
+{"elapsed_seconds": 68.435026, "line": "[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2809, z: 3441, level: 0 } })"}
+{"elapsed_seconds": 68.464253, "line": "[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 68.721271, "line": "[host] slot liveg938j4_0: d_loop_us=1351 d_raster_us=250024 d_observe_us=108324 max_observe_us=15179 d_paints=50 d_skips=0 d_ticks=6 window_ms=1129"}
+{"elapsed_seconds": 69.849347, "line": "[host] slot liveg938j4_0: d_loop_us=1337 d_raster_us=299781 d_observe_us=79991 max_observe_us=10073 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128"}
+{"elapsed_seconds": 70.658126, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 70.67534, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 70.981374, "line": "[host] slot liveg938j4_0: d_loop_us=1200 d_raster_us=293443 d_observe_us=68306 max_observe_us=8248 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132"}
+{"elapsed_seconds": 72.120186, "line": "[host] slot liveg938j4_0: d_loop_us=1279 d_raster_us=276242 d_observe_us=72982 max_observe_us=8480 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 73.248202, "line": "[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=291378 d_observe_us=76063 max_observe_us=8458 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128"}
+{"elapsed_seconds": 73.44328, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 73.446024, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 74.377172, "line": "[host] slot liveg938j4_0: d_loop_us=1232 d_raster_us=292629 d_observe_us=70487 max_observe_us=8461 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128"}
+{"elapsed_seconds": 75.504511, "line": "[host] slot liveg938j4_0: d_loop_us=1344 d_raster_us=296418 d_observe_us=77989 max_observe_us=8435 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127"}
+{"elapsed_seconds": 76.460594, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 76.466986, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 76.653479, "line": "[host] slot liveg938j4_0: d_loop_us=1281 d_raster_us=285848 d_observe_us=77596 max_observe_us=8576 d_paints=50 d_skips=0 d_ticks=6 window_ms=1148"}
+{"elapsed_seconds": 77.772996, "line": "[host] slot liveg938j4_0: d_loop_us=1310 d_raster_us=296309 d_observe_us=70945 max_observe_us=8453 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119"}
+{"elapsed_seconds": 78.888019, "line": "[host] slot liveg938j4_0: d_loop_us=1278 d_raster_us=290430 d_observe_us=79268 max_observe_us=8805 d_paints=50 d_skips=0 d_ticks=6 window_ms=1115"}
+{"elapsed_seconds": 79.243571, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 79.258637, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 80.03573, "line": "[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=277095 d_observe_us=73883 max_observe_us=9656 d_paints=50 d_skips=0 d_ticks=6 window_ms=1147"}
+{"elapsed_seconds": 81.159632, "line": "[host] slot liveg938j4_0: d_loop_us=1300 d_raster_us=281343 d_observe_us=67221 max_observe_us=8156 d_paints=50 d_skips=0 d_ticks=5 window_ms=1123"}
+{"elapsed_seconds": 82.258789, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 82.2794, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 82.311595, "line": "[host] slot liveg938j4_0: d_loop_us=1178 d_raster_us=255978 d_observe_us=66181 max_observe_us=8526 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151"}
+{"elapsed_seconds": 83.452525, "line": "[host] slot liveg938j4_0: d_loop_us=1167 d_raster_us=260641 d_observe_us=65501 max_observe_us=8092 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140"}
+{"elapsed_seconds": 84.602843, "line": "[host] slot liveg938j4_0: d_loop_us=1065 d_raster_us=246209 d_observe_us=56181 max_observe_us=6643 d_paints=50 d_skips=0 d_ticks=6 window_ms=1150"}
+{"elapsed_seconds": 85.241597, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 85.258543, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 85.752584, "line": "[host] slot liveg938j4_0: d_loop_us=1083 d_raster_us=253972 d_observe_us=65173 max_observe_us=8375 d_paints=50 d_skips=0 d_ticks=5 window_ms=1149"}
+{"elapsed_seconds": 86.889189, "line": "[host] slot liveg938j4_0: d_loop_us=1288 d_raster_us=284551 d_observe_us=77098 max_observe_us=8287 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 88.033979, "line": "[host] slot liveg938j4_0: d_loop_us=1281 d_raster_us=282907 d_observe_us=74368 max_observe_us=8413 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144"}
+{"elapsed_seconds": 88.246683, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 88.258662, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 89.162362, "line": "[host] slot liveg938j4_0: d_loop_us=1243 d_raster_us=291329 d_observe_us=70100 max_observe_us=8241 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128"}
+{"elapsed_seconds": 90.293205, "line": "[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=289035 d_observe_us=76338 max_observe_us=8384 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130"}
+{"elapsed_seconds": 91.23993, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 91.258585, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 91.427273, "line": "[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=283965 d_observe_us=66360 max_observe_us=8220 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 92.557054, "line": "[host] slot liveg938j4_0: d_loop_us=1238 d_raster_us=292608 d_observe_us=75673 max_observe_us=8248 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129"}
+{"elapsed_seconds": 93.684328, "line": "[host] slot liveg938j4_0: d_loop_us=1194 d_raster_us=289074 d_observe_us=76509 max_observe_us=8613 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127"}
+{"elapsed_seconds": 94.060477, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 94.071184, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 94.820945, "line": "[host] slot liveg938j4_0: d_loop_us=1245 d_raster_us=300366 d_observe_us=68981 max_observe_us=8140 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 95.953981, "line": "[host] slot liveg938j4_0: d_loop_us=1340 d_raster_us=287797 d_observe_us=74363 max_observe_us=8827 d_paints=50 d_skips=0 d_ticks=5 window_ms=1133"}
+{"elapsed_seconds": 97.043872, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 97.0502, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 97.073864, "line": "[host] slot liveg938j4_0: d_loop_us=1246 d_raster_us=289490 d_observe_us=76933 max_observe_us=8285 d_paints=50 d_skips=0 d_ticks=6 window_ms=1119"}
+{"elapsed_seconds": 98.20711, "line": "[host] slot liveg938j4_0: d_loop_us=1258 d_raster_us=286779 d_observe_us=67277 max_observe_us=8340 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133"}
+{"elapsed_seconds": 99.343884, "line": "[host] slot liveg938j4_0: d_loop_us=1219 d_raster_us=283073 d_observe_us=76410 max_observe_us=8428 d_paints=50 d_skips=0 d_ticks=5 window_ms=1136"}
+{"elapsed_seconds": 99.853295, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 99.862724, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 100.466329, "line": "[host] slot liveg938j4_0: d_loop_us=1261 d_raster_us=291065 d_observe_us=77771 max_observe_us=8390 d_paints=50 d_skips=0 d_ticks=6 window_ms=1122"}
+{"elapsed_seconds": 101.603376, "line": "[host] slot liveg938j4_0: d_loop_us=1172 d_raster_us=266892 d_observe_us=62401 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137"}
+{"elapsed_seconds": 102.639011, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 102.654361, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 102.735986, "line": "[host] slot liveg938j4_0: d_loop_us=1150 d_raster_us=265683 d_observe_us=67591 max_observe_us=7752 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132"}
+{"elapsed_seconds": 103.878194, "line": "[host] slot liveg938j4_0: d_loop_us=1811 d_raster_us=261342 d_observe_us=65097 max_observe_us=7163 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142"}
+{"elapsed_seconds": 105.033665, "line": "[host] slot liveg938j4_0: d_loop_us=1185 d_raster_us=246703 d_observe_us=64300 max_observe_us=7134 d_paints=50 d_skips=0 d_ticks=6 window_ms=1155"}
+{"elapsed_seconds": 105.655545, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 105.675331, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 106.160669, "line": "[host] slot liveg938j4_0: d_loop_us=1218 d_raster_us=291182 d_observe_us=69741 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=5 window_ms=1126"}
+{"elapsed_seconds": 107.295406, "line": "[host] slot liveg938j4_0: d_loop_us=1266 d_raster_us=285591 d_observe_us=76053 max_observe_us=8293 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 108.423322, "line": "[host] slot liveg938j4_0: d_loop_us=1214 d_raster_us=288227 d_observe_us=68979 max_observe_us=8546 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127"}
+{"elapsed_seconds": 108.664125, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 108.675192, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 109.543782, "line": "[host] slot liveg938j4_0: d_loop_us=1209 d_raster_us=278506 d_observe_us=73822 max_observe_us=8374 d_paints=50 d_skips=0 d_ticks=5 window_ms=1120"}
+{"elapsed_seconds": 110.684957, "line": "[host] slot liveg938j4_0: d_loop_us=1294 d_raster_us=276451 d_observe_us=68738 max_observe_us=7754 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141"}
+{"elapsed_seconds": 111.651437, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 111.654433, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 111.817178, "line": "[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=301256 d_observe_us=71527 max_observe_us=10200 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132"}
+{"elapsed_seconds": 112.951475, "line": "[host] slot liveg938j4_0: d_loop_us=1332 d_raster_us=316017 d_observe_us=74704 max_observe_us=8545 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134"}
+{"elapsed_seconds": 114.100927, "line": "[host] slot liveg938j4_0: d_loop_us=1433 d_raster_us=301954 d_observe_us=74063 max_observe_us=7904 d_paints=50 d_skips=0 d_ticks=6 window_ms=1149"}
+{"elapsed_seconds": 114.655015, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 114.675224, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 115.242411, "line": "[host] slot liveg938j4_0: d_loop_us=1372 d_raster_us=288829 d_observe_us=71212 max_observe_us=7856 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141"}
+{"elapsed_seconds": 116.362058, "line": "[host] slot liveg938j4_0: d_loop_us=1284 d_raster_us=298943 d_observe_us=65393 max_observe_us=8127 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119"}
+{"elapsed_seconds": 117.451966, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 117.466885, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 117.504817, "line": "[host] slot liveg938j4_0: d_loop_us=1368 d_raster_us=290253 d_observe_us=74153 max_observe_us=8452 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142"}
+{"elapsed_seconds": 118.644528, "line": "[host] slot liveg938j4_0: d_loop_us=1390 d_raster_us=297295 d_observe_us=73930 max_observe_us=8119 d_paints=50 d_skips=0 d_ticks=6 window_ms=1139"}
+{"elapsed_seconds": 119.776405, "line": "[host] slot liveg938j4_0: d_loop_us=1304 d_raster_us=293523 d_observe_us=66718 max_observe_us=8170 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131"}
+{"elapsed_seconds": 120.452185, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 120.466891, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 120.909164, "line": "[host] slot liveg938j4_0: d_loop_us=2929 d_raster_us=288342 d_observe_us=74100 max_observe_us=8087 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132"}
+{"elapsed_seconds": 122.049526, "line": "[host] slot liveg938j4_0: d_loop_us=1349 d_raster_us=298837 d_observe_us=75702 max_observe_us=8184 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140"}
+{"elapsed_seconds": 123.186597, "line": "[host] slot liveg938j4_0: d_loop_us=1301 d_raster_us=293678 d_observe_us=66141 max_observe_us=7821 d_paints=50 d_skips=0 d_ticks=5 window_ms=1137"}
+{"elapsed_seconds": 123.248742, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 123.258632, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 124.325357, "line": "[host] slot liveg938j4_0: d_loop_us=1310 d_raster_us=291101 d_observe_us=73532 max_observe_us=8428 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 125.456822, "line": "[host] slot liveg938j4_0: d_loop_us=1391 d_raster_us=298735 d_observe_us=74264 max_observe_us=8040 d_paints=50 d_skips=0 d_ticks=6 window_ms=1131"}
+{"elapsed_seconds": 126.044057, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 126.05017, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 126.601262, "line": "[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=292873 d_observe_us=65761 max_observe_us=7852 d_paints=50 d_skips=0 d_ticks=5 window_ms=1144"}
+{"elapsed_seconds": 127.733632, "line": "[host] slot liveg938j4_0: d_loop_us=1340 d_raster_us=288622 d_observe_us=70109 max_observe_us=7776 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132"}
+{"elapsed_seconds": 128.839104, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 128.841794, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 128.868503, "line": "[host] slot liveg938j4_0: d_loop_us=1362 d_raster_us=296008 d_observe_us=75692 max_observe_us=8235 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 130.01348, "line": "[host] slot liveg938j4_0: d_loop_us=1385 d_raster_us=298515 d_observe_us=67331 max_observe_us=8202 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144"}
+{"elapsed_seconds": 131.146018, "line": "[host] slot liveg938j4_0: d_loop_us=1355 d_raster_us=297324 d_observe_us=76833 max_observe_us=8518 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132"}
+{"elapsed_seconds": 131.850538, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 131.862696, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 132.290224, "line": "[host] slot liveg938j4_0: d_loop_us=1278 d_raster_us=287702 d_observe_us=70863 max_observe_us=7696 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144"}
+{"elapsed_seconds": 133.434185, "line": "[host] slot liveg938j4_0: d_loop_us=1329 d_raster_us=298685 d_observe_us=75425 max_observe_us=8100 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143"}
+{"elapsed_seconds": 134.556496, "line": "[host] slot liveg938j4_0: d_loop_us=1363 d_raster_us=310074 d_observe_us=69352 max_observe_us=8295 d_paints=50 d_skips=0 d_ticks=5 window_ms=1122"}
+{"elapsed_seconds": 134.664683, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 134.675202, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 135.694956, "line": "[host] slot liveg938j4_0: d_loop_us=1379 d_raster_us=303876 d_observe_us=75136 max_observe_us=8073 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 136.836504, "line": "[host] slot liveg938j4_0: d_loop_us=1399 d_raster_us=363296 d_observe_us=75060 max_observe_us=8185 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141"}
+{"elapsed_seconds": 137.456092, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 137.466902, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 137.959673, "line": "[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=304841 d_observe_us=72325 max_observe_us=9169 d_paints=50 d_skips=0 d_ticks=5 window_ms=1123"}
+{"elapsed_seconds": 139.094763, "line": "[host] slot liveg938j4_0: d_loop_us=1352 d_raster_us=294925 d_observe_us=75214 max_observe_us=8231 d_paints=50 d_skips=0 d_ticks=6 window_ms=1135"}
+{"elapsed_seconds": 140.245898, "line": "[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=292346 d_observe_us=71502 max_observe_us=8221 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151"}
+{"elapsed_seconds": 140.459045, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 140.46687, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 141.379802, "line": "[host] slot liveg938j4_0: d_loop_us=1336 d_raster_us=296176 d_observe_us=67192 max_observe_us=8233 d_paints=50 d_skips=0 d_ticks=5 window_ms=1133"}
+{"elapsed_seconds": 142.515824, "line": "[host] slot liveg938j4_0: d_loop_us=1319 d_raster_us=293759 d_observe_us=71895 max_observe_us=8169 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 143.239459, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 143.258473, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 143.652133, "line": "[host] slot liveg938j4_0: d_loop_us=1320 d_raster_us=283846 d_observe_us=70144 max_observe_us=7766 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 144.783283, "line": "[host] slot liveg938j4_0: d_loop_us=1234 d_raster_us=261145 d_observe_us=59958 max_observe_us=8674 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131"}
+{"elapsed_seconds": 145.907541, "line": "[host] slot liveg938j4_0: d_loop_us=1202 d_raster_us=285995 d_observe_us=74459 max_observe_us=8858 d_paints=50 d_skips=0 d_ticks=6 window_ms=1124"}
+{"elapsed_seconds": 146.054752, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 146.07098, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 147.044107, "line": "[host] slot liveg938j4_0: d_loop_us=1291 d_raster_us=290812 d_observe_us=76521 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136"}
+{"elapsed_seconds": 148.173837, "line": "[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=277291 d_observe_us=71246 max_observe_us=11495 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129"}
+{"elapsed_seconds": 149.050385, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 149.07107, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 149.302759, "line": "[host] slot liveg938j4_0: d_loop_us=1282 d_raster_us=284199 d_observe_us=73788 max_observe_us=8250 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128"}
+{"elapsed_seconds": 150.450303, "line": "[host] slot liveg938j4_0: d_loop_us=1246 d_raster_us=263885 d_observe_us=65335 max_observe_us=7306 d_paints=50 d_skips=0 d_ticks=6 window_ms=1147"}
+{"elapsed_seconds": 151.584725, "line": "[host] slot liveg938j4_0: d_loop_us=1216 d_raster_us=262180 d_observe_us=58038 max_observe_us=6777 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134"}
+{"elapsed_seconds": 151.851487, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 151.862646, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 152.732871, "line": "[host] slot liveg938j4_0: d_loop_us=1298 d_raster_us=268750 d_observe_us=66406 max_observe_us=7163 d_paints=50 d_skips=0 d_ticks=6 window_ms=1148"}
+{"elapsed_seconds": 153.874998, "line": "[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=259692 d_observe_us=67449 max_observe_us=8626 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142"}
+{"elapsed_seconds": 154.65988, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 154.675277, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 155.007227, "line": "[host] slot liveg938j4_0: d_loop_us=1259 d_raster_us=290793 d_observe_us=70963 max_observe_us=8505 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132"}
+{"elapsed_seconds": 156.125264, "line": "[host] slot liveg938j4_0: d_loop_us=1285 d_raster_us=294389 d_observe_us=76516 max_observe_us=8044 d_paints=50 d_skips=0 d_ticks=6 window_ms=1118"}
+{"elapsed_seconds": 157.259324, "line": "[host] slot liveg938j4_0: d_loop_us=1249 d_raster_us=273437 d_observe_us=68919 max_observe_us=8057 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 157.449435, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 157.466893, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 158.38828, "line": "[host] slot liveg938j4_0: d_loop_us=1211 d_raster_us=282995 d_observe_us=62967 max_observe_us=7516 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128"}
+{"elapsed_seconds": 159.510224, "line": "[host] slot liveg938j4_0: d_loop_us=1386 d_raster_us=287464 d_observe_us=73008 max_observe_us=7889 d_paints=50 d_skips=0 d_ticks=6 window_ms=1121"}
+{"elapsed_seconds": 160.247378, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 160.258601, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 160.641182, "line": "[host] slot liveg938j4_0: d_loop_us=1266 d_raster_us=292091 d_observe_us=74688 max_observe_us=8582 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130"}
+{"elapsed_seconds": 161.772654, "line": "[host] slot liveg938j4_0: d_loop_us=3213 d_raster_us=291268 d_observe_us=62657 max_observe_us=7817 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131"}
+{"elapsed_seconds": 162.909911, "line": "[host] slot liveg938j4_0: d_loop_us=1395 d_raster_us=318725 d_observe_us=76411 max_observe_us=8763 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137"}
+{"elapsed_seconds": 163.060864, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 163.070978, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 164.049925, "line": "[host] slot liveg938j4_0: d_loop_us=1336 d_raster_us=292030 d_observe_us=71046 max_observe_us=7779 d_paints=50 d_skips=0 d_ticks=6 window_ms=1139"}
+{"elapsed_seconds": 165.193241, "line": "[host] slot liveg938j4_0: d_loop_us=2497 d_raster_us=311637 d_observe_us=66518 max_observe_us=8136 d_paints=50 d_skips=0 d_ticks=5 window_ms=1143"}
+{"elapsed_seconds": 165.840743, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 165.841764, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 166.330922, "line": "[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=303498 d_observe_us=73056 max_observe_us=8010 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137"}
+{"elapsed_seconds": 167.475721, "line": "[host] slot liveg938j4_0: d_loop_us=1401 d_raster_us=304778 d_observe_us=75609 max_observe_us=8280 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144"}
+{"elapsed_seconds": 168.621009, "line": "[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=313563 d_observe_us=67080 max_observe_us=7936 d_paints=50 d_skips=0 d_ticks=6 window_ms=1145"}
+{"elapsed_seconds": 168.658256, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 168.675143, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 169.755644, "line": "[host] slot liveg938j4_0: d_loop_us=1332 d_raster_us=305259 d_observe_us=76143 max_observe_us=8674 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134"}
+{"elapsed_seconds": 170.893791, "line": "[host] slot liveg938j4_0: d_loop_us=1271 d_raster_us=290975 d_observe_us=74425 max_observe_us=8368 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 171.441629, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 171.445944, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 172.044711, "line": "[host] slot liveg938j4_0: d_loop_us=1312 d_raster_us=287812 d_observe_us=70262 max_observe_us=7965 d_paints=50 d_skips=0 d_ticks=6 window_ms=1150"}
+{"elapsed_seconds": 173.176234, "line": "[host] slot liveg938j4_0: d_loop_us=1320 d_raster_us=309672 d_observe_us=65151 max_observe_us=7844 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131"}
+{"elapsed_seconds": 174.318739, "line": "[host] slot liveg938j4_0: d_loop_us=1368 d_raster_us=302623 d_observe_us=74291 max_observe_us=8544 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142"}
+{"elapsed_seconds": 174.449517, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 174.466832, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 175.460463, "line": "[host] slot liveg938j4_0: d_loop_us=1304 d_raster_us=305691 d_observe_us=75994 max_observe_us=9968 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141"}
+{"elapsed_seconds": 176.599031, "line": "[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=299650 d_observe_us=67308 max_observe_us=7964 d_paints=50 d_skips=0 d_ticks=5 window_ms=1138"}
+{"elapsed_seconds": 177.257353, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 177.258374, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 177.740692, "line": "[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=289378 d_observe_us=70781 max_observe_us=8257 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141"}
+{"elapsed_seconds": 178.875431, "line": "[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=295522 d_observe_us=72250 max_observe_us=7894 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134"}
+{"elapsed_seconds": 180.01623, "line": "[host] slot liveg938j4_0: d_loop_us=1306 d_raster_us=300166 d_observe_us=66109 max_observe_us=7920 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140"}
+{"elapsed_seconds": 180.053327, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 180.070971, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 181.152632, "line": "[host] slot liveg938j4_0: d_loop_us=1215 d_raster_us=293585 d_observe_us=71466 max_observe_us=7912 d_paints=50 d_skips=0 d_ticks=5 window_ms=1136"}
+{"elapsed_seconds": 182.276173, "line": "[host] slot liveg938j4_0: d_loop_us=1313 d_raster_us=296361 d_observe_us=74488 max_observe_us=8108 d_paints=50 d_skips=0 d_ticks=6 window_ms=1123"}
+{"elapsed_seconds": 182.857356, "line": "[script liveg938j4_0] no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 182.862599, "line": "[panel] liveg938j4_0: script: no 'Raw lobster' in the bank \u2014 idling"}
+{"elapsed_seconds": 183.415111, "line": "[host] slot liveg938j4_0: d_loop_us=1316 d_raster_us=283935 d_observe_us=64655 max_observe_us=8037 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138"}
+{"elapsed_seconds": 184.552573, "line": "[host] slot liveg938j4_0: d_loop_us=1116 d_raster_us=268353 d_observe_us=64779 max_observe_us=6900 d_paints=50 d_skips=0 d_ticks=5 window_ms=1137"}

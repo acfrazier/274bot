@@ -12507,16 +12507,19 @@
         "player query, identity and hostile/interaction facts"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener. No paired core accepted.",
+      "fixture_readiness": "Latest run failed: FAIL: paired_catalog_duel_live: no real duel combat: in-combat was never observed inside a pen",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener. No paired core accepted.",
+      "status_detail": "Latest isolated 04d7b1f4 duel FAIL: FAIL: paired_catalog_duel_live: no real duel combat: in-combat was never observed inside a pen. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.json",
-        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -12771,16 +12774,19 @@
         "player query, identity and hostile/interaction facts"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener. No paired core accepted.",
+      "fixture_readiness": "Latest run failed: FAIL: paired_catalog_duel_live: no real duel combat: in-combat was never observed inside a pen",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener. No paired core accepted.",
+      "status_detail": "Latest isolated 04d7b1f4 duel FAIL: FAIL: paired_catalog_duel_live: no real duel combat: in-combat was never observed inside a pen. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.json",
-        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -13171,13 +13177,18 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 chaos_druid FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "ChaosDruidKiller",
@@ -13567,13 +13578,18 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 chaos_druid FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "RockCrab",
@@ -16146,7 +16162,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 36: not impl: ranged.rangeLoadoutOf",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -16155,9 +16171,14 @@
           "source_evidence": "src/bot/scripts/MossGiant/MossGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 moss_giant FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: ranged.rangeLoadoutOf. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "MossGiant",
@@ -16888,7 +16909,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 34: not impl: ranged.rangeLoadoutOf",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -16897,9 +16918,14 @@
           "source_evidence": "src/bot/scripts/MossGiant/MossGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 moss_giant FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: ranged.rangeLoadoutOf. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "GreenDragon",
@@ -23911,7 +23937,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 34: SettingsStore.displayString is not a function",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -23924,9 +23950,14 @@
           "source_evidence": "src/bot/scripts/AutoFighter/AutoFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 auto_fighter FAIL: FAIL: catalog_boundary_live: script error: tick 34: SettingsStore.displayString is not a function. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "AutoFighter",
@@ -24862,7 +24893,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 36: SettingsStore.displayString is not a function",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -24875,9 +24906,14 @@
           "source_evidence": "src/bot/scripts/AutoFighter/AutoFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 auto_fighter FAIL: FAIL: catalog_boundary_live: script error: tick 36: SettingsStore.displayString is not a function. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "ArdyThiever",
@@ -27197,18 +27233,21 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Woodcutting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Latest isolated 04d7b1f4 gnome_chop FAIL: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -27501,18 +27540,21 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Woodcutting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Latest isolated 04d7b1f4 gnome_chop FAIL: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -27749,16 +27791,19 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 11 (watch arrival at the mine coal truck after the pack fill): arrived_near(2575,3486,0,4) not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Latest isolated 04d7b1f4 coal_trucks FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch arrival at the mine coal truck after the pack fill): arrived_near(2575,3486,0,4) not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -27995,16 +28040,19 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 9 (watch Mining XP from coal rocks after Start): stat_xp_gain(14)>=1 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Latest isolated 04d7b1f4 coal_trucks FAIL: FAIL: catalog_boundary_live: scenario failed: step 9 (watch Mining XP from coal rocks after Start): stat_xp_gain(14)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
       ]
     },
     {
@@ -29011,16 +29059,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "fixture_readiness": "Latest run failed: FAIL: paired_catalog_air_live: script error on livelq4bdl_1: tick 28: not impl: Paint.buttons",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "status_detail": "Paired 3ba51755 FAIL: no completed exchange. Paint-button dispatch fix is included; native trade mapping and honest bootstrap fixture need diagnosis. Previous failures retained; later catalog pair not retried.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.json",
-        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-91289e9b.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-91289e9b.log",
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-3ba51755.json"
       ]
     },
     {
@@ -29433,16 +29485,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "fixture_readiness": "Latest run failed: FAIL: paired_catalog_air_live: script error on live7i68fk_1: tick 27: not impl: Paint.buttons",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "status_detail": "Paired 3ba51755 FAIL: no completed exchange. Paint-button dispatch fix is included; native trade mapping and honest bootstrap fixture need diagnosis. Previous failures retained; later catalog pair not retried.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.json",
-        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-91289e9b.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-91289e9b.log",
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-3ba51755.json"
       ]
     },
     {
@@ -29920,17 +29976,20 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_readiness": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "status_detail": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-cook-bot-100adccc-91289e9b.json",
         "docs/compat/evidence/catalog-harness/live/r274-cook-bot-lobster-100adccc-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-100adccc-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-lobster-100adccc-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/cook-1eba4b1e.json"
       ]
     },
     {
@@ -30408,17 +30467,20 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_readiness": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "status_detail": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-cook-bot-100adccc-91289e9b.json",
         "docs/compat/evidence/catalog-harness/live/r289-cook-bot-lobster-100adccc-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-100adccc-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-lobster-100adccc-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/cook-1eba4b1e.json"
       ]
     },
     {
@@ -32134,13 +32196,18 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 herblore_secondaries FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "HerbloreSecondaries",
@@ -32421,13 +32488,18 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 herblore_secondaries FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "HerbCleaner",
@@ -37375,13 +37447,18 @@
         "inventory snapshot, item actions, item-on-item, drop and count semantics"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: flax_aio_pick: deadline 180s exceeded",
       "observable_proof_requirement": "configured pick/spin branch inventory transitions, XP, and banking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 flax_aio_pick FAIL: FAIL: catalog_boundary_live: scenario failed: flax_aio_pick: deadline 180s exceeded. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "FlaxAIO",
@@ -37535,13 +37612,18 @@
         "inventory snapshot, item actions, item-on-item, drop and count semantics"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 8 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks",
       "observable_proof_requirement": "configured pick/spin branch inventory transitions, XP, and banking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 flax_aio_pick FAIL: FAIL: catalog_boundary_live: scenario failed: step 8 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "GemCutter",
@@ -40431,7 +40513,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Paired 3ba51755 FAIL: no completed exchange. Paint-button dispatch fix is included; native trade mapping and honest bootstrap fixture need diagnosis. Previous failures retained; later catalog pair not retried.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-6750713b.json",
@@ -40439,7 +40521,8 @@
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-9cc6adb1.json",
-        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-mule-100adccc-3ba51755.json"
       ]
     },
     {
@@ -40740,7 +40823,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Paired 3ba51755 FAIL: no completed exchange. Paint-button dispatch fix is included; native trade mapping and honest bootstrap fixture need diagnosis. Previous failures retained; later catalog pair not retried.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-6750713b.json",
@@ -40748,7 +40831,8 @@
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-9cc6adb1.json",
-        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json",
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-mule-100adccc-3ba51755.json"
       ]
     },
     {
@@ -42688,7 +42772,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 38: not impl: foodCount",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -42697,9 +42781,14 @@
           "source_evidence": "src/bot/scripts/HillGiant/HillGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 hill_giant FAIL: FAIL: catalog_boundary_live: script error: tick 38: not impl: foodCount. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "HillGiant",
@@ -43164,7 +43253,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 37: not impl: foodCount",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -43173,9 +43262,14 @@
           "source_evidence": "src/bot/scripts/HillGiant/HillGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Latest isolated 04d7b1f4 hill_giant FAIL: FAIL: catalog_boundary_live: script error: tick 37: not impl: foodCount. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.log",
+        "docs/compat/06x-station-platform-and-remaining.md"
+      ]
     },
     {
       "display_name": "VialFiller",
@@ -64813,13 +64907,18 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-8e7d965b-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-lobster-8e7d965b-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/cook-1eba4b1e.json"
+      ]
     },
     {
       "display_name": "CookBot",
@@ -65296,13 +65395,18 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated1eba: cook_bot=PASS, cook_bot_lobster=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-8e7d965b-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-lobster-8e7d965b-1eba4b1e.json",
+        "docs/compat/evidence/catalog-harness/cook-1eba4b1e.json"
+      ]
     },
     {
       "display_name": "BankFletcher",

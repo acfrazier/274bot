@@ -1,0 +1,5 @@
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/3ba51755/crates/script)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/3ba51755/crates/panel)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/3ba51755/crates/host-play)
+    Checking tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/3ba51755/crates/tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.07s
