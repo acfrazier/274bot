@@ -1,0 +1,139 @@
+{
+  "task": "t_058b9696",
+  "brief": "docs/compat/briefs/109-remaining-fighter-core-fixtures.md",
+  "brief_sha256": "acae97af5bb96e686491445dac34bd21b5483bb874b63f3debf3bbde42f598d3",
+  "export_host_commit": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+  "campaign_head_at_verify": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "empty_started": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "shared_campaign_target": false,
+  "live": false,
+  "scenarios": [
+    "rock_crab",
+    "green_dragon",
+    "fire_giant",
+    "ardy_fighter"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "RockCrab.ts": "7e12b775e0133353f5f45ab8bdca48c62eabe75adec7d09ade997f4f7c62a5ff",
+      "RockCrabSpots.ts": "a9442a9213e8457c53269072bce9de21ed2625eff719fef4cba8816155201494",
+      "AmmoLogic.ts": "d6b7166c89c0c7040d27d50272fab08ec3c6df0b8d0516e2c50a6cdbb9ad352b",
+      "GreenDragon.ts": "46b667c46e82ca8f4d4c7461b93f6be8af05b021bd18126e82784d4264bf1fe9",
+      "GreenDragonLogic.ts": "d31023052e0bc86b98441657ffb28fd3eb9090abbaefdab00acf00f3687930fd",
+      "FireGiant.ts": "b7463f7f4f81088270fbdf382aeb6da9eee58aa9ce64678382cd02b4f04e3f21",
+      "FireGiantLogic.ts": "0640d29191a7ea0faaa9dd44884e968def4f262d68fab38599c699b0f7c2e43a",
+      "ArdyFighter.ts": "54d57cd5d161c0179cfd9c2d780ddfd4108ad1c857f85f631c6c02bd450e5a6d"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "RockCrab.ts": "7e12b775e0133353f5f45ab8bdca48c62eabe75adec7d09ade997f4f7c62a5ff",
+      "RockCrabSpots.ts": "a9442a9213e8457c53269072bce9de21ed2625eff719fef4cba8816155201494",
+      "AmmoLogic.ts": "d6b7166c89c0c7040d27d50272fab08ec3c6df0b8d0516e2c50a6cdbb9ad352b",
+      "GreenDragon.ts": "46b667c46e82ca8f4d4c7461b93f6be8af05b021bd18126e82784d4264bf1fe9",
+      "GreenDragonLogic.ts": "d31023052e0bc86b98441657ffb28fd3eb9090abbaefdab00acf00f3687930fd",
+      "FireGiant.ts": "b7463f7f4f81088270fbdf382aeb6da9eee58aa9ce64678382cd02b4f04e3f21",
+      "FireGiantLogic.ts": "0640d29191a7ea0faaa9dd44884e968def4f262d68fab38599c699b0f7c2e43a",
+      "ArdyFighter.ts": "54d57cd5d161c0179cfd9c2d780ddfd4108ad1c857f85f631c6c02bd450e5a6d"
+    }
+  },
+  "selected_ids": {
+    "glarials_amulet": 295,
+    "lobster": 379,
+    "casket": 405,
+    "big_bones": 532,
+    "dragon_bones": 536,
+    "noted_dragon_bones": 537,
+    "rope": 954,
+    "adamant_scimitar": 1331,
+    "rune_scimitar": 1333,
+    "antidragonbreathshield": 1540,
+    "noted_antidragonbreathshield": 1541,
+    "uncut_sapphire": 1623,
+    "dragonhide_green": 1753,
+    "noted_dragonhide_green": 1754,
+    "cake": 1891,
+    "chocolate_cake": 1897,
+    "chocolate_slice": 1901,
+    "bread": 2309,
+    "strength_stat": 2
+  },
+  "stands": {
+    "rock_crab_spot": [2704, 3726, 0],
+    "green_dragon_field": [3096, 3814, 0],
+    "fire_giant_room": [2575, 9893, 0],
+    "ardy_fighter_guard": [2661, 3306, 0]
+  },
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "unchanged": true
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "31c8e2b13c4372ec3f38c3c851b4184d283018b5f7e18083be024b7bd7e8f793",
+    "crates/host-play/tests/catalog_boundary_live.rs": "2bad9c6e521558ff9f2f47d45e4ebbc1bf3c306e78a4151d2e76e35821bee982",
+    "docs/compat/05u-remaining-fighter-core-fixtures.md": "674b8619c7c18e7dab21ab8ab294b7b486cce2b4a4fb25a8855e3fcf18752033"
+  },
+  "identities": {
+    "rock_crab": "RockCrab melee strength bankStrategy Off solveClues false lobster 8 spot 2704,3726 Rocks to Rock Crab",
+    "green_dragon": "GreenDragon melee strength Rune scimitar 1333 worn shield 1540 useSpecial false usePotions false escape Flee to bank",
+    "fire_giant": "FireGiant melee already in dungeon 2575,9893 Waterfall Quest amulet 295 rope 954 escapeTele Barrel (free)",
+    "ardy_fighter": "ArdyFighter Guard combatStyle strength bankStrategy Off solveClues false Thieving 5 no seeded cake"
+  },
+  "adapter_audit": {
+    "npc_attack": [
+      "Npc.interact Attack queues mapped op npc with posted index/name/action"
+    ],
+    "rock_activation": [
+      "RockCrab Attacks dormant Rocks and waits for Rock Crab; catalog requires native activation"
+    ],
+    "combat_style": [
+      "RockCrab GreenDragon FireGiant setCombatStyle melee strength by name",
+      "ArdyFighter combatStyle strength"
+    ],
+    "ground_take": [
+      "GroundItem.interact queues mapped op obj"
+    ],
+    "idle_not_this_card": [
+      "DeathRecovery",
+      "SolveClue",
+      "PeriodicBank",
+      "special",
+      "potions",
+      "teleports",
+      "named-bank",
+      "FireGiant approach/raft/rope/barrel",
+      "mage/range"
+    ],
+    "missing_ops_not_implemented_here": [
+      "combat_styles empty still gates style select until posted",
+      "generated game-data JSON has pickpocket NPCs only; combat type ids unresolved",
+      "two dragon/giant kills plus loot may not fit 180s"
+    ]
+  },
+  "checks": [
+    "isolated cargo test -p scenario --lib: 98 passed",
+    "remaining_fighter_core_cases_register_melee_cycles: passed",
+    "isolated cargo test -p host-play --features memory-profile --test catalog_boundary_live: 34 passed, 1 ignored LIVE",
+    "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed from isolated export with .superpowers/inputs symlink",
+    "combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot: passed",
+    "cargo clippy -p scenario -- -D warnings: pass",
+    "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
+    "rustfmt --check scenario and catalog harness: clean"
+  ],
+  "limits": [
+    "no live client run",
+    "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+    "two dragon/giant kills plus loot may not fit 180s; record exact partial phase rather than widen timeouts",
+    "combat NPC type ids unresolved in generated JSON; scripts query display names Rocks / Rock Crab / Green dragon / Fire giant / Guard",
+    "GreenDragon catalog baseline requires worn shield 1540; script equips from pack after Start if LIVE baseline is pack-only until first equip observation",
+    "FireGiant approach raft/rope/ledge and barrel/bank escape are unqualified",
+    "ArdyFighter stolen food may be eaten in the same tick as steal; catalog requires an observed 1891/2309/1901 bump versus baseline",
+    "DeathRecovery mage/range special potions teleports bank variants clue-true not this card",
+    "git export does not include gitignored catalog inputs; frozen-ledger identity rechecked with inputs symlink",
+    "did not touch completed combat99 target t_a74e9684-combat-target"
+  ]
+}

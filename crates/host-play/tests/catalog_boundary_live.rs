@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -181,7 +181,27 @@ const CHAOS_DRUID_FOOD: i32 = 12;
 const MOSS_GIANT_FOOD: i32 = 10;
 const HILL_GIANT_FOOD: i32 = 8;
 const AUTO_FIGHTER_FOOD: i32 = 8;
+const ROCK_CRAB_FOOD: i32 = 8;
+const GREEN_DRAGON_FOOD: i32 = 12;
+const FIRE_GIANT_FOOD: i32 = 12;
 const COMBAT_ATTACK_LEVEL: i32 = 40;
+const RUNE_SCIMITAR_ID: i32 = 1333;
+const DRAGONFIRE_SHIELD_ID: i32 = 1540;
+const NOTED_DRAGONFIRE_SHIELD_ID: i32 = 1541;
+const DRAGON_BONES_ID: i32 = 536;
+const NOTED_DRAGON_BONES_ID: i32 = 537;
+const GREEN_DRAGONHIDE_ID: i32 = 1753;
+const NOTED_GREEN_DRAGONHIDE_ID: i32 = 1754;
+const BLACK_DRAGONHIDE_ID: i32 = 1747;
+const RED_DRAGONHIDE_ID: i32 = 1749;
+const BLUE_DRAGONHIDE_ID: i32 = 1751;
+const GLARIALS_AMULET_ID: i32 = 295;
+const ROPE_ID: i32 = 954;
+const ROCK_CRAB_SPOT: (i32, i32, i32) = (2704, 3726, 0);
+const GREEN_DRAGON_FIELD: (i32, i32, i32) = (3096, 3814, 0);
+const FIRE_GIANT_ROOM: (i32, i32, i32) = (2575, 9893, 0);
+const WILDERNESS_MIN_Z: i32 = 3520;
+const DUNGEON_MIN_Z: i32 = 9000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -243,6 +263,10 @@ enum CoreCase {
     MossGiant,
     HillGiant,
     AutoFighter,
+    RockCrab,
+    GreenDragon,
+    FireGiant,
+    ArdyFighter,
 }
 
 impl CoreCase {
@@ -305,6 +329,10 @@ impl CoreCase {
             "moss_giant" => Ok(Self::MossGiant),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
+            "rock_crab" => Ok(Self::RockCrab),
+            "green_dragon" => Ok(Self::GreenDragon),
+            "fire_giant" => Ok(Self::FireGiant),
+            "ardy_fighter" => Ok(Self::ArdyFighter),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -370,6 +398,10 @@ impl CoreCase {
             Self::MossGiant => "moss_giant",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
+            Self::RockCrab => "rock_crab",
+            Self::GreenDragon => "green_dragon",
+            Self::FireGiant => "fire_giant",
+            Self::ArdyFighter => "ardy_fighter",
         }
     }
 
@@ -414,6 +446,10 @@ impl CoreCase {
             Self::MossGiant => "MossGiant",
             Self::HillGiant => "HillGiant",
             Self::AutoFighter => "AutoFighter",
+            Self::RockCrab => "RockCrab",
+            Self::GreenDragon => "GreenDragon",
+            Self::FireGiant => "FireGiant",
+            Self::ArdyFighter => "ArdyFighter",
         }
     }
 }
@@ -1410,7 +1446,11 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::ChaosDruid
         | CoreCase::MossGiant
         | CoreCase::HillGiant
-        | CoreCase::AutoFighter => {
+        | CoreCase::AutoFighter
+        | CoreCase::RockCrab
+        | CoreCase::GreenDragon
+        | CoreCase::FireGiant
+        | CoreCase::ArdyFighter => {
             combat_spec(case).is_some_and(|spec| combat_baseline_ready(baseline, spec))
         }
     };
@@ -1555,6 +1595,18 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         }
         CoreCase::AutoFighter => {
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, banking None"
+        }
+        CoreCase::RockCrab => {
+            "Rock crab spot (2704,3726,0), Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
+        }
+        CoreCase::GreenDragon => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 12, rune scimitar 1333, worn shield 1540, empty 536/1753"
+        }
+        CoreCase::FireGiant => {
+            "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, empty 532"
+        }
+        CoreCase::ArdyFighter => {
+            "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
         }
     };
     Err(format!(
@@ -2376,7 +2428,9 @@ struct CombatSpec {
     radius: i32,
     food_id: i32,
     food_count: i32,
+    weapon_id: i32,
     loot: CombatLoot,
+    extra: CombatExtra,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2384,7 +2438,17 @@ enum CombatLoot {
     HerbLawNature,
     BigBones,
     BigBonesOrLimpwurt,
+    DragonBonesOrHide,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CombatExtra {
+    None,
+    RockActivation,
+    WornShield,
+    DungeonAmulet,
+    StolenFood,
 }
 
 fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
@@ -2395,7 +2459,9 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             radius: 14,
             food_id: LOBSTER_ID,
             food_count: CHAOS_DRUID_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
             loot: CombatLoot::HerbLawNature,
+            extra: CombatExtra::None,
         }),
         CoreCase::MossGiant => Some(CombatSpec {
             target: "Moss giant",
@@ -2403,7 +2469,9 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             radius: 10,
             food_id: LOBSTER_ID,
             food_count: MOSS_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
             loot: CombatLoot::BigBones,
+            extra: CombatExtra::None,
         }),
         CoreCase::HillGiant => Some(CombatSpec {
             target: "Giant",
@@ -2411,7 +2479,9 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             radius: 16,
             food_id: TROUT_ID,
             food_count: HILL_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
             loot: CombatLoot::BigBonesOrLimpwurt,
+            extra: CombatExtra::None,
         }),
         CoreCase::AutoFighter => Some(CombatSpec {
             target: "Guard",
@@ -2419,7 +2489,49 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             radius: 8,
             food_id: TROUT_ID,
             food_count: AUTO_FIGHTER_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
             loot: CombatLoot::None,
+            extra: CombatExtra::None,
+        }),
+        CoreCase::RockCrab => Some(CombatSpec {
+            target: "Rock Crab",
+            stand: ROCK_CRAB_SPOT,
+            radius: 4,
+            food_id: LOBSTER_ID,
+            food_count: ROCK_CRAB_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            loot: CombatLoot::None,
+            extra: CombatExtra::RockActivation,
+        }),
+        CoreCase::GreenDragon => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            loot: CombatLoot::DragonBonesOrHide,
+            extra: CombatExtra::WornShield,
+        }),
+        CoreCase::FireGiant => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::DungeonAmulet,
+        }),
+        CoreCase::ArdyFighter => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 12,
+            food_id: CAKE_ID,
+            food_count: 0,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            loot: CombatLoot::None,
+            extra: CombatExtra::StolenFood,
         }),
         _ => None,
     }
@@ -2433,6 +2545,13 @@ fn combat_noted(observation: &Observation) -> bool {
         || observation.bank_item_id(NOTED_LIMPWURT_ROOT_ID) > 0
         || observation.item_id(NOTED_BONES_ID) > 0
         || observation.bank_item_id(NOTED_BONES_ID) > 0
+        || observation.item_id(NOTED_DRAGON_BONES_ID) > 0
+        || observation.bank_item_id(NOTED_DRAGON_BONES_ID) > 0
+        || observation.item_id(NOTED_GREEN_DRAGONHIDE_ID) > 0
+        || observation.bank_item_id(NOTED_GREEN_DRAGONHIDE_ID) > 0
+        || observation.item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
+        || observation.bank_item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
+        || noted_stall_food(observation) > 0
 }
 
 fn noted_herb_id_held(observation: &Observation) -> bool {
@@ -2460,19 +2579,46 @@ fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
         CombatLoot::BigBonesOrLimpwurt => {
             observation.item_id(BIG_BONES_ID) + observation.item_id(LIMPWURT_ROOT_ID)
         }
+        CombatLoot::DragonBonesOrHide => {
+            observation.item_id(DRAGON_BONES_ID) + observation.item_id(GREEN_DRAGONHIDE_ID)
+        }
         CombatLoot::None => 0,
     }
 }
 
 fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
+    let food_ok = if spec.food_count == 0 {
+        true
+    } else {
+        baseline.item_id(spec.food_id) >= spec.food_count
+    };
+    let extra_ok = match spec.extra {
+        CombatExtra::None | CombatExtra::RockActivation => true,
+        CombatExtra::WornShield => {
+            baseline.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1
+                && held_id(baseline, DRAGONFIRE_SHIELD_ID) >= 1
+                && baseline.tile.is_some_and(|tile| tile.1 >= WILDERNESS_MIN_Z)
+        }
+        CombatExtra::DungeonAmulet => {
+            held_id(baseline, GLARIALS_AMULET_ID) >= 1
+                && held_id(baseline, ROPE_ID) >= 1
+                && baseline.tile.is_some_and(|tile| tile.1 >= DUNGEON_MIN_Z)
+        }
+        CombatExtra::StolenFood => {
+            baseline.level("thieving") >= 5
+                && stall_food(baseline) == 0
+                && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+        }
+    };
     near(baseline.tile, spec.stand, spec.radius)
         && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
         && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
-        && baseline.item_id(spec.food_id) >= spec.food_count
-        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+        && food_ok
+        && held_id(baseline, spec.weapon_id) >= 1
         && combat_loot_count(baseline, spec.loot) == 0
         && !combat_noted(baseline)
+        && extra_ok
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -2505,6 +2651,12 @@ struct CombatCoreCycle {
     style_xp: bool,
     looted: bool,
     noted: bool,
+    activated: bool,
+    shield_worn: bool,
+    stolen_food: bool,
+    wrong_item: bool,
+    dormant_indexes: BTreeSet<usize>,
+    dormant_tiles: BTreeMap<usize, (i32, i32, i32)>,
     last: BTreeMap<usize, CombatNpcLast>,
     currently_engaged: BTreeSet<usize>,
     facts: Vec<CombatFact>,
@@ -2515,6 +2667,33 @@ impl CombatCoreCycle {
         self.noted |= combat_noted(now);
         self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength");
         self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
+        self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
+            || now.item_id(RED_DRAGONHIDE_ID) > 0
+            || now.item_id(BLUE_DRAGONHIDE_ID) > 0
+            || now.item_id(CHOCOLATE_CAKE_ID) > 0;
+        if spec.extra == CombatExtra::WornShield {
+            self.shield_worn |= now.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1;
+        }
+        if spec.extra == CombatExtra::StolenFood {
+            self.stolen_food |= stall_food(now) > stall_food(baseline);
+        }
+        if spec.extra == CombatExtra::RockActivation {
+            for npc in &now.npc_facts {
+                let Some(name) = npc.name.as_deref().map(str::trim) else {
+                    continue;
+                };
+                if name == "Rocks" {
+                    self.dormant_indexes.insert(npc.index);
+                    self.dormant_tiles.insert(npc.index, npc.tile);
+                }
+                if name == spec.target
+                    && (self.dormant_indexes.contains(&npc.index)
+                        || self.dormant_tiles.values().any(|tile| *tile == npc.tile))
+                {
+                    self.activated = true;
+                }
+            }
+        }
         let mut seen = BTreeSet::new();
         for npc in &now.npc_facts {
             let Some(name) = npc.name.as_deref().map(str::trim) else {
@@ -2624,12 +2803,20 @@ impl CombatCoreCycle {
         }
     }
 
-    fn qualified(&self, loot: CombatLoot) -> bool {
+    fn qualified(&self, spec: CombatSpec) -> bool {
+        let extra_ok = match spec.extra {
+            CombatExtra::None | CombatExtra::DungeonAmulet => true,
+            CombatExtra::RockActivation => self.activated,
+            CombatExtra::WornShield => self.shield_worn,
+            CombatExtra::StolenFood => self.stolen_food,
+        };
         self.engagements >= 2
             && self.defeats >= 1
             && self.style_xp
-            && (loot == CombatLoot::None || self.looted)
+            && (spec.loot == CombatLoot::None || self.looted)
             && !self.noted
+            && !self.wrong_item
+            && extra_ok
     }
 }
 
@@ -2640,6 +2827,7 @@ fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         }
         CombatLoot::BigBones => id == BIG_BONES_ID,
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
+        CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
         CombatLoot::None => false,
     }
 }
@@ -4117,8 +4305,13 @@ impl CoreWitness {
             CoreCase::ChaosDruid
             | CoreCase::MossGiant
             | CoreCase::HillGiant
-            | CoreCase::AutoFighter => combat_spec(self.case)
-                .is_some_and(|spec| self.combat_core_cycle.qualified(spec.loot)),
+            | CoreCase::AutoFighter
+            | CoreCase::RockCrab
+            | CoreCase::GreenDragon
+            | CoreCase::FireGiant
+            | CoreCase::ArdyFighter => {
+                combat_spec(self.case).is_some_and(|spec| self.combat_core_cycle.qualified(spec))
+            }
         };
         if !ok {
             return Err(format!(
@@ -4813,6 +5006,10 @@ mod tests {
                 CoreCase::MossGiant,
                 CoreCase::HillGiant,
                 CoreCase::AutoFighter,
+                CoreCase::RockCrab,
+                CoreCase::GreenDragon,
+                CoreCase::FireGiant,
+                CoreCase::ArdyFighter,
             ] {
                 let row = ledger_card(&matrix, commit, 274, case).unwrap();
                 verify_source_identity(&root, &row).unwrap();
@@ -9036,6 +9233,367 @@ mod tests {
         )
         .qualify()
         .is_ok());
+
+        let rock_base = combat_obs(
+            ROCK_CRAB_SPOT,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[("strength", 40)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::RockCrab, &rock_base).unwrap();
+        let rocks = combat_obs(
+            ROCK_CRAB_SPOT,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[("strength", 40)],
+            &levels,
+            &[combat_npc(3, "Rocks", 50, false, ROCK_CRAB_SPOT)],
+            false,
+            None,
+        );
+        let woke = combat_obs(
+            ROCK_CRAB_SPOT,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[("strength", 40)],
+            &levels,
+            &[combat_npc(3, "Rock Crab", 50, true, ROCK_CRAB_SPOT)],
+            true,
+            Some(3),
+        );
+        let rock_second = combat_obs(
+            ROCK_CRAB_SPOT,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[("strength", 48)],
+            &levels,
+            &[
+                combat_npc(3, "Rock Crab", 0, false, ROCK_CRAB_SPOT),
+                combat_npc(6, "Rock Crab", 40, true, ROCK_CRAB_SPOT),
+            ],
+            true,
+            Some(6),
+        );
+        assert!(witness(
+            CoreCase::RockCrab,
+            &rock_base,
+            [&rocks, &woke, &rock_second]
+        )
+        .qualify()
+        .is_ok());
+        assert!(
+            witness(CoreCase::RockCrab, &rock_base, [&woke, &rock_second])
+                .qualify()
+                .is_err()
+        );
+        let crab_alias = combat_obs(
+            ROCK_CRAB_SPOT,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[("strength", 48)],
+            &levels,
+            &[
+                combat_npc(3, "Rock crab", 0, true, ROCK_CRAB_SPOT),
+                combat_npc(6, "Rock crab", 40, true, ROCK_CRAB_SPOT),
+            ],
+            true,
+            Some(3),
+        );
+        assert!(
+            witness(CoreCase::RockCrab, &rock_base, [&rocks, &crab_alias])
+                .qualify()
+                .is_err()
+        );
+
+        let mut dragon_base = combat_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[("strength", 90)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        dragon_base.equipment_ids.clear();
+        dragon_base.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        dragon_base.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        validate_case_baseline(CoreCase::GreenDragon, &dragon_base).unwrap();
+        let mut pack_only = dragon_base.clone();
+        pack_only.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        pack_only.item_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        assert!(validate_case_baseline(CoreCase::GreenDragon, &pack_only).is_err());
+        let dragon_first = {
+            let mut observation = combat_obs(
+                GREEN_DRAGON_FIELD,
+                &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+                &[("strength", 90)],
+                &levels,
+                &[combat_npc(2, "Green dragon", 80, true, GREEN_DRAGON_FIELD)],
+                true,
+                Some(2),
+            );
+            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation
+        };
+        let dragon_second = {
+            let mut observation = combat_obs(
+                GREEN_DRAGON_FIELD,
+                &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGON_BONES_ID, 1)],
+                &[("strength", 110)],
+                &levels,
+                &[
+                    combat_npc(2, "Green dragon", 0, false, GREEN_DRAGON_FIELD),
+                    combat_npc(4, "Green dragon", 70, true, GREEN_DRAGON_FIELD),
+                ],
+                true,
+                Some(4),
+            );
+            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation
+        };
+        assert!(witness(
+            CoreCase::GreenDragon,
+            &dragon_base,
+            [&dragon_first, &dragon_second]
+        )
+        .qualify()
+        .is_ok());
+        let mut hide_ok = dragon_second.clone();
+        hide_ok.item_ids.remove(&DRAGON_BONES_ID);
+        hide_ok.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        assert!(witness(
+            CoreCase::GreenDragon,
+            &dragon_base,
+            [&dragon_first, &hide_ok]
+        )
+        .qualify()
+        .is_ok());
+        let mut wrong_hide = dragon_second.clone();
+        wrong_hide.item_ids.insert(BLACK_DRAGONHIDE_ID, 1);
+        assert!(witness(
+            CoreCase::GreenDragon,
+            &dragon_base,
+            [&dragon_first, &wrong_hide]
+        )
+        .qualify()
+        .is_err());
+        let dragon_alias = {
+            let mut observation = combat_obs(
+                GREEN_DRAGON_FIELD,
+                &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGON_BONES_ID, 1)],
+                &[("strength", 110)],
+                &levels,
+                &[
+                    combat_npc(2, "Green Dragon", 0, true, GREEN_DRAGON_FIELD),
+                    combat_npc(4, "Green Dragon", 70, true, GREEN_DRAGON_FIELD),
+                ],
+                true,
+                Some(2),
+            );
+            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation
+        };
+        assert!(
+            witness(CoreCase::GreenDragon, &dragon_base, [&dragon_alias])
+                .qualify()
+                .is_err()
+        );
+        let mut unworn = dragon_second.clone();
+        unworn.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        unworn.item_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        let mut unworn_first = dragon_first.clone();
+        unworn_first.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        assert!(witness(
+            CoreCase::GreenDragon,
+            &dragon_base,
+            [&unworn_first, &unworn]
+        )
+        .qualify()
+        .is_err());
+
+        let fire_base = combat_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+            ],
+            &[("strength", 70)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::FireGiant, &fire_base).unwrap();
+        let mut no_amulet = fire_base.clone();
+        no_amulet.item_ids.remove(&GLARIALS_AMULET_ID);
+        assert!(validate_case_baseline(CoreCase::FireGiant, &no_amulet).is_err());
+        let fire_first = combat_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+            ],
+            &[("strength", 70)],
+            &levels,
+            &[combat_npc(8, "Fire giant", 90, true, FIRE_GIANT_ROOM)],
+            true,
+            Some(8),
+        );
+        let fire_second = combat_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+                (BIG_BONES_ID, 1),
+            ],
+            &[("strength", 86)],
+            &levels,
+            &[
+                combat_npc(8, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(11, "Fire giant", 80, true, FIRE_GIANT_ROOM),
+            ],
+            true,
+            Some(11),
+        );
+        assert!(
+            witness(CoreCase::FireGiant, &fire_base, [&fire_first, &fire_second])
+                .qualify()
+                .is_ok()
+        );
+        let fire_alias = combat_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+                (BIG_BONES_ID, 1),
+            ],
+            &[("strength", 86)],
+            &levels,
+            &[
+                combat_npc(8, "Fire Giant", 0, true, FIRE_GIANT_ROOM),
+                combat_npc(11, "Fire Giant", 80, true, FIRE_GIANT_ROOM),
+            ],
+            true,
+            Some(8),
+        );
+        assert!(witness(CoreCase::FireGiant, &fire_base, [&fire_alias])
+            .qualify()
+            .is_err());
+
+        let mut ardy_base = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[],
+            &[("strength", 60)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        ardy_base.levels.insert("thieving".into(), 5);
+        validate_case_baseline(CoreCase::ArdyFighter, &ardy_base).unwrap();
+        let mut seeded_cake = ardy_base.clone();
+        seeded_cake.item_ids.insert(CAKE_ID, 1);
+        assert!(validate_case_baseline(CoreCase::ArdyFighter, &seeded_cake).is_err());
+        let stolen = {
+            let mut observation = combat_obs(
+                ARDY_THIEVER_STAND,
+                &[(CAKE_ID, 1)],
+                &[("strength", 60)],
+                &levels,
+                &[],
+                false,
+                None,
+            );
+            observation.levels.insert("thieving".into(), 5);
+            observation
+        };
+        let ardy_first = {
+            let mut observation = combat_obs(
+                ARDY_THIEVER_STAND,
+                &[(CAKE_ID, 1)],
+                &[("strength", 60)],
+                &levels,
+                &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+                true,
+                Some(5),
+            );
+            observation.levels.insert("thieving".into(), 5);
+            observation
+        };
+        let ardy_second = {
+            let mut observation = combat_obs(
+                ARDY_THIEVER_STAND,
+                &[(CAKE_ID, 1)],
+                &[("strength", 72)],
+                &levels,
+                &[
+                    combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                    combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+                ],
+                true,
+                Some(9),
+            );
+            observation.levels.insert("thieving".into(), 5);
+            observation
+        };
+        assert!(witness(
+            CoreCase::ArdyFighter,
+            &ardy_base,
+            [&stolen, &ardy_first, &ardy_second]
+        )
+        .qualify()
+        .is_ok());
+        let ardy_first_empty = {
+            let mut observation = combat_obs(
+                ARDY_THIEVER_STAND,
+                &[],
+                &[("strength", 60)],
+                &levels,
+                &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+                true,
+                Some(5),
+            );
+            observation.levels.insert("thieving".into(), 5);
+            observation
+        };
+        let ardy_second_empty = {
+            let mut observation = combat_obs(
+                ARDY_THIEVER_STAND,
+                &[],
+                &[("strength", 72)],
+                &levels,
+                &[
+                    combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                    combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+                ],
+                true,
+                Some(9),
+            );
+            observation.levels.insert("thieving".into(), 5);
+            observation
+        };
+        assert!(witness(
+            CoreCase::ArdyFighter,
+            &ardy_base,
+            [&ardy_first_empty, &ardy_second_empty]
+        )
+        .qualify()
+        .is_err());
+        let chocolate = {
+            let mut observation = ardy_second.clone();
+            observation.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+            observation
+        };
+        assert!(witness(
+            CoreCase::ArdyFighter,
+            &ardy_base,
+            [&stolen, &ardy_first, &chocolate]
+        )
+        .qualify()
+        .is_err());
     }
 
     #[test]
@@ -9102,6 +9660,10 @@ mod tests {
             CoreCase::MossGiant,
             CoreCase::HillGiant,
             CoreCase::AutoFighter,
+            CoreCase::RockCrab,
+            CoreCase::GreenDragon,
+            CoreCase::FireGiant,
+            CoreCase::ArdyFighter,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
