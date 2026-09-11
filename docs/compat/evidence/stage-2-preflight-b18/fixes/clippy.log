@@ -1,0 +1,29 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/vendor/fr-client-rust/crates/client)
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/vault)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/panel)
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/api)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/script)
+    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/nav)
+    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/host)
+    Checking scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/scenario)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/host-play)
+    Checking tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/tui)
+    Checking e2e v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix/crates/e2e)
+error: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/tui/src/bin.rs:1667:30
+     |
+1667 |       fn frontend_fixture() -> (
+     |  ______________________________^
+1668 | |         Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
+1669 | |         Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+1670 | |         SlotTravellers,
+1671 | |         Arc<Mutex<NavStepLatch>>,
+1672 | |     ) {
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+     = note: `-D clippy::type-complexity` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: could not compile `tui` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
