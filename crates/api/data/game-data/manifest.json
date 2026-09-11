@@ -20,8 +20,18 @@
         "selected_value": 2,
         "armed_value": 3
       },
-      "bytes": 1385352,
-      "sha256": "e08bcf585d3f310381e2fc12bc1a99d3345b3799e1e2807b9ab01d711e4bc87d",
+      "duel": {
+        "select_modal": 6575,
+        "confirm_modal": 6412,
+        "win_modal": 6733,
+        "select_accept": 6674,
+        "confirm_accept": 6520,
+        "select_partner": 6671,
+        "select_status": 6684,
+        "confirm_status": 6571
+      },
+      "bytes": 1385582,
+      "sha256": "d310498c02aff231d4bd3a45095c9bb5d89007f899ada70f7b02863410b322c1",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -204,8 +214,18 @@
         "selected_value": 2,
         "armed_value": 3
       },
-      "bytes": 1447848,
-      "sha256": "2404040764d0282b0458b6ee28b6871b48f0b90ed1e334e0b085770a498eaf34",
+      "duel": {
+        "select_modal": 6575,
+        "confirm_modal": 6412,
+        "win_modal": 6733,
+        "select_accept": 6674,
+        "confirm_accept": 6520,
+        "select_partner": 6671,
+        "select_status": 6684,
+        "confirm_status": 6571
+      },
+      "bytes": 1448078,
+      "sha256": "9e7336807bd8756d86dc52568eb009520696b1b3ba4ac7066b9c997c6ad8f380",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

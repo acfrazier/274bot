@@ -200,7 +200,7 @@ export const Game = new Proxy(
             return typeof snap().scene_state === 'number' ? snap().scene_state : 0;
         },
         attackedByPlayer() {
-            throw notImpl('Game.attackedByPlayer');
+            return snap().attacked_by_player === true;
         },
         async castOnNpc() {
             throw notImpl('Game.castOnNpc');

@@ -58084,5 +58084,15 @@
     "magic_varp": 108,
     "selected_value": 2,
     "armed_value": 3
+  },
+  "duel": {
+    "select_modal": 6575,
+    "confirm_modal": 6412,
+    "win_modal": 6733,
+    "select_accept": 6674,
+    "confirm_accept": 6520,
+    "select_partner": 6671,
+    "select_status": 6684,
+    "confirm_status": 6571
   }
 }

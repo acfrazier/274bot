@@ -154,6 +154,12 @@ const VT_SNAP_WITHDRAW_LOAD_RESULT: VOffsetT = 128;
 const VT_SNAP_BANK_OP_RESULT_SEQ: VOffsetT = 130;
 const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
 const VT_SNAP_REACH: VOffsetT = 134;
+const VT_SNAP_ATTACKED_BY_PLAYER: VOffsetT = 136;
+const VT_SNAP_WIDGETS: VOffsetT = 138;
+
+// WidgetText: { component_id, text }
+const VT_WT_COMPONENT: VOffsetT = 4;
+const VT_WT_TEXT: VOffsetT = 6;
 
 // Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj, step }
 const VT_REACH_AVAILABLE: VOffsetT = 4;
@@ -505,6 +511,17 @@ pub struct SnapshotInput<'a> {
     /// Compact native reach query view. Always present on a keyframe;
     /// unavailable when `here` is missing or the scene is not available.
     pub reach: ReachViewInput<'a>,
+    /// Local `Game.attackedByPlayer`: `face_entity >= PLAYER_FACE_BASE`.
+    pub attacked_by_player: bool,
+    /// Selected-world widget text rows. Absent id is not a stale IfType label.
+    pub widgets: &'a [WidgetTextInput<'a>],
+}
+
+/// One currently posted widget text row (`reader.ifText`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct WidgetTextInput<'a> {
+    pub component_id: i32,
+    pub text: &'a str,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -1023,6 +1040,12 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<u64>("bank_op_result_seq", VT_SNAP_BANK_OP_RESULT_SEQ, false)?
             .visit_field::<bool>("bank_op_result", VT_SNAP_BANK_OP_RESULT, false)?
             .visit_field::<ForwardsUOffset<ReachReader>>("reach", VT_SNAP_REACH, false)?
+            .visit_field::<bool>("attacked_by_player", VT_SNAP_ATTACKED_BY_PLAYER, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<WidgetTextReader>>>>(
+                "widgets",
+                VT_SNAP_WIDGETS,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1329,6 +1352,22 @@ impl SnapshotReader<'_> {
             self.tab
                 .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
         }
+    }
+    pub fn has_attacked_by_player(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None)
+                .is_some()
+        }
+    }
+    pub fn attacked_by_player(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None) }.unwrap_or(false)
+    }
+    pub fn has_widgets(&self) -> bool {
+        rows_present::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
+    }
+    pub fn widgets(&self) -> Vec<WidgetTextReader<'_>> {
+        rows::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1741,6 +1780,8 @@ pub struct SnapshotFingerprint {
     pub shop_open: bool,
     pub shop_stock: Vec<ItemRowFp>,
     pub reach: ReachViewFp,
+    pub attacked_by_player: bool,
+    pub widgets: Vec<(i32, String)>,
 }
 
 impl SnapshotFingerprint {
@@ -1918,6 +1959,12 @@ impl SnapshotFingerprint {
                 reachable_adj: input.reach.reachable_adj.to_vec(),
                 step: input.reach.step.to_vec(),
             },
+            attacked_by_player: input.attacked_by_player,
+            widgets: input
+                .widgets
+                .iter()
+                .map(|w| (w.component_id, w.text.to_string()))
+                .collect(),
         }
     }
 }
@@ -1994,6 +2041,8 @@ pub struct DeltaMask {
     pub shop_open: bool,
     pub shop_stock: bool,
     pub reach: bool,
+    pub attacked_by_player: bool,
+    pub widgets: bool,
 }
 
 impl DeltaMask {
@@ -2065,6 +2114,8 @@ impl DeltaMask {
             shop_open: true,
             shop_stock: true,
             reach: true,
+            attacked_by_player: true,
+            widgets: true,
         }
     }
 
@@ -2146,6 +2197,8 @@ impl DeltaMask {
             shop_open: next.shop_open != last.shop_open,
             shop_stock: next.shop_stock != last.shop_stock,
             reach: next.reach != last.reach,
+            attacked_by_player: next.attacked_by_player != last.attacked_by_player,
+            widgets: next.widgets != last.widgets,
         }
     }
 }
@@ -2488,6 +2541,16 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let widgets_off = if mask.widgets {
+        let offs = input
+            .widgets
+            .iter()
+            .map(|w| widget_text_off(b, w))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2713,6 +2776,12 @@ fn encode_snapshot_masked_into(
     if mask.reach {
         b.push_slot_always(VT_SNAP_REACH, reach_table_off.expect("mask checked"));
     }
+    if mask.attacked_by_player {
+        b.push_slot_always(VT_SNAP_ATTACKED_BY_PLAYER, input.attacked_by_player);
+    }
+    if mask.widgets {
+        b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -2826,6 +2895,17 @@ fn chat_line_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_CL_SEQ, l.seq);
     b.push_slot_always(VT_CL_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn widget_text_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    w: &WidgetTextInput<'_>,
+) -> WIPOffset<WidgetTextReader<'b>> {
+    let text_off = b.create_string(w.text);
+    let tab = b.start_table();
+    b.push_slot_always(VT_WT_COMPONENT, w.component_id);
+    b.push_slot_always(VT_WT_TEXT, text_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3120,6 +3200,39 @@ impl Verifiable for ChatLineReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("seq", VT_CL_SEQ, false)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CL_TEXT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct WidgetTextReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for WidgetTextReader<'a> {
+    type Inner = WidgetTextReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl WidgetTextReader<'_> {
+    pub fn component_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_WT_COMPONENT, None) }.unwrap_or(0)
+    }
+    pub fn text(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_WT_TEXT, None) }.unwrap_or("")
+    }
+}
+
+impl Verifiable for WidgetTextReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("component_id", VT_WT_COMPONENT, false)?
+            .visit_field::<ForwardsUOffset<&str>>("text", VT_WT_TEXT, false)?
             .finish();
         Ok(())
     }
@@ -4137,6 +4250,8 @@ pub(crate) mod tests {
             shop_open: false,
             shop_stock: &[],
             reach: ReachViewInput::UNAVAILABLE,
+            attacked_by_player: false,
+            widgets: &[],
         }
     }
 

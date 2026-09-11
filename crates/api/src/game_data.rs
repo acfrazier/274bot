@@ -106,6 +106,32 @@ impl AutocastControls {
     }
 }
 
+/// Packed Duel Arena modal roots and partner/waiting/accept controls.
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct DuelControls {
+    pub select_modal: i32,
+    pub confirm_modal: i32,
+    pub win_modal: i32,
+    pub select_accept: i32,
+    pub confirm_accept: i32,
+    pub select_partner: i32,
+    pub select_status: i32,
+    pub confirm_status: i32,
+}
+
+impl DuelControls {
+    pub fn available(&self) -> bool {
+        self.select_modal >= 0
+            && self.confirm_modal >= 0
+            && self.win_modal >= 0
+            && self.select_accept >= 0
+            && self.confirm_accept >= 0
+            && self.select_partner >= 0
+            && self.select_status >= 0
+            && self.confirm_status >= 0
+    }
+}
+
 /// One generated per-cast rune cost.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SpellRune {
@@ -164,6 +190,8 @@ pub struct SelectedGameData {
     staves: Vec<StaffFact>,
     #[serde(default)]
     autocast: Option<AutocastControls>,
+    #[serde(default)]
+    duel: Option<DuelControls>,
 }
 
 impl SelectedGameData {
@@ -256,6 +284,10 @@ impl SelectedGameData {
         self.autocast
             .as_ref()
             .filter(|controls| controls.available())
+    }
+
+    pub fn duel_controls(&self) -> Option<&DuelControls> {
+        self.duel.as_ref().filter(|controls| controls.available())
     }
 
     pub fn spell(&self, name: &str) -> Option<&SpellFact> {

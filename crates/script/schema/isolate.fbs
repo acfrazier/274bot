@@ -146,6 +146,13 @@ table Reach {
   step: [ubyte];
 }
 
+// One selected-world widget text row. Absent from the posted list is not
+// a global IfType label — reader.ifText returns null.
+table WidgetText {
+  component_id: int;
+  text: string;
+}
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -225,6 +232,8 @@ table Snapshot {
   bank_op_result_seq: ulong;
   bank_op_result: bool;
   reach: Reach;
+  attacked_by_player: bool;
+  widgets: [WidgetText];
 }
 
 // One shim interact request, tagged by `op`:

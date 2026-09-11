@@ -1714,6 +1714,51 @@ mod isolate {
             })
             .map_err(|e| format!("register autocast: {e}"))?;
         runtime
+            .register_function(
+                "__rs2b0t_is_hostile_attacker",
+                |args: &[serde_json::Value]| {
+                    let payload = args.first().unwrap_or(&serde_json::Value::Null);
+                    let as_i32 = |v: Option<&serde_json::Value>| {
+                        v.and_then(|value| {
+                            value
+                                .as_i64()
+                                .or_else(|| {
+                                    value.as_f64().and_then(|n| {
+                                        (n.is_finite() && n.fract() == 0.0).then_some(n as i64)
+                                    })
+                                })
+                                .and_then(|n| i32::try_from(n).ok())
+                        })
+                    };
+                    let Some(distance) = as_i32(payload.get("distance")) else {
+                        return Ok(serde_json::Value::Bool(false));
+                    };
+                    let Some(max_distance) = as_i32(payload.get("maxDistance")) else {
+                        return Ok(serde_json::Value::Bool(false));
+                    };
+                    let actions: Vec<&str> = payload
+                        .get("actions")
+                        .and_then(|v| v.as_array())
+                        .map(|rows| rows.iter().filter_map(|row| row.as_str()).collect())
+                        .unwrap_or_default();
+                    Ok(serde_json::Value::Bool(api::content::is_hostile_attacker(
+                        payload.get("name").and_then(|v| v.as_str()),
+                        payload
+                            .get("inCombat")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                        payload
+                            .get("targetsAnotherPlayer")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                        distance,
+                        &actions,
+                        max_distance,
+                    )))
+                },
+            )
+            .map_err(|e| format!("register hostile attacker: {e}"))?;
+        runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
         let content = format!(
@@ -2174,6 +2219,18 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             let reach = unavailable_reach(&mut scope)?;
             set(&mut scope, obj, "reach", reach)?;
+        }
+        if snap.has_attacked_by_player() {
+            let attacked = v8::Boolean::new(&mut scope, snap.attacked_by_player());
+            set(&mut scope, obj, "attacked_by_player", attacked.into())?;
+        } else if !had {
+            set(&mut scope, obj, "attacked_by_player", falsy)?;
+        }
+        if snap.has_widgets() {
+            let widgets = widget_text_array(&mut scope, &snap.widgets())?;
+            set(&mut scope, obj, "widgets", widgets)?;
+        } else if !had {
+            set(&mut scope, obj, "widgets", empty_rows)?;
         }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
@@ -2787,6 +2844,23 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             let seq = num(scope, line.seq() as f64);
             set(scope, o, "seq", seq)?;
             let text = js_string(scope, line.text())?;
+            set(scope, o, "text", text)?;
+            arr.set_index(scope, i as u32, o.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn widget_text_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        rows: &[crate::isolate_fb::WidgetTextReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, rows.len() as i32);
+        for (i, row) in rows.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let component_id = num(scope, row.component_id() as f64);
+            set(scope, o, "component_id", component_id)?;
+            let text = js_string(scope, row.text())?;
             set(scope, o, "text", text)?;
             arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;

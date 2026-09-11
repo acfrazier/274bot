@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractMagicFacts, extractAutocastControls, parsePack, parseRows } from './generate.ts';
+import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, parsePack, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -97,7 +97,7 @@ const lava = magicFacts.staves.find((staff) => staff.name === 'Lava battlestaff'
 assert.deepEqual(lava?.runes.map((rune) => rune.name).sort(), ['Earth rune', 'Fire rune']);
 assert.equal(magicFacts.staves.find((staff) => staff.name === 'Staff of air')?.runes.length, 1);
 fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
-fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n`);
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n6575=duel_select_type\n6412=duel_confirm\n6733=duel_win\n6674=duel_select_type:accept\n6520=duel_confirm:accept\n6671=duel_select_type:otherplayer\n6684=duel_select_type:status\n6571=duel_confirm:status\n`);
 fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n`);
 const autocast = extractAutocastControls(content);
 assert.equal(autocast.staff_tab_root, 328);
@@ -106,5 +106,14 @@ assert.equal(autocast.spell_panel_root, 1829);
 assert.equal(autocast.spell_grid_base, 1830);
 assert.equal(autocast.toggle_com, 349);
 assert.equal(autocast.magic_varp, 108);
+const duel = extractDuelControls(content);
+assert.equal(duel.select_modal, 6575);
+assert.equal(duel.confirm_modal, 6412);
+assert.equal(duel.win_modal, 6733);
+assert.equal(duel.select_accept, 6674);
+assert.equal(duel.confirm_accept, 6520);
+assert.equal(duel.select_partner, 6671);
+assert.equal(duel.select_status, 6684);
+assert.equal(duel.confirm_status, 6571);
 assert.equal(parsePack('328=combat_staff_2\n').get('combat_staff_2'), 328);
 console.log('generate fixture passed');

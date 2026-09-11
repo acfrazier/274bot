@@ -140,6 +140,13 @@ export const reader = proxy('reader', {
     bankComId() {
         throw notImpl('reader.bankComId');
     },
+    ifText(comId) {
+        const id = Number(comId);
+        if (!Number.isInteger(id)) return null;
+        const row = (snap().widgets || []).find((w) => w && w.component_id === id);
+        if (!row || typeof row.text !== 'string') return null;
+        return row.text;
+    },
     makeProducts() {
         return (snap().make_products || []).map((p) => ({
             name: p.name,

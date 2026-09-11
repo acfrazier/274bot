@@ -2367,7 +2367,7 @@ fn with_script_snapshot_input<R>(
     use script::isolate_fb::{
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
         MakeButtonInput, MakeProductInput, NearestBoothInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
+        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput, WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -2951,6 +2951,8 @@ fn with_script_snapshot_input<R>(
     let local = snapshot.and_then(|s| s.local_player());
     let my_name = local.and_then(|lp| lp.player.actor.name.as_deref());
     let in_combat = local.is_some_and(|lp| lp.player.actor.in_combat);
+    let attacked_by_player =
+        local.is_some_and(|lp| api::snapshot::attacked_by_player(lp.player.actor.face_entity));
     let animating =
         local.is_some_and(|lp| lp.player.actor.moving || lp.player.actor.animation != -1);
     let modals = snapshot.map(|s| s.modals());
@@ -3088,6 +3090,21 @@ fn with_script_snapshot_input<R>(
                 .collect()
         })
         .unwrap_or_default();
+    let widget_store: Vec<(i32, String)> = snapshot
+        .map(|s| {
+            s.widgets()
+                .iter()
+                .filter_map(|w| w.text.as_ref().map(|text| (w.component_id, text.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let widgets: Vec<WidgetTextInput<'_>> = widget_store
+        .iter()
+        .map(|(component_id, text)| WidgetTextInput {
+            component_id: *component_id,
+            text,
+        })
+        .collect();
     let input = SnapshotInput {
         tick,
         here,
@@ -3172,6 +3189,8 @@ fn with_script_snapshot_input<R>(
         shop_open: snapshot.is_some_and(|s| s.shop().open),
         shop_stock: &shop_stock,
         reach,
+        attacked_by_player,
+        widgets: &widgets,
     };
     f(&input)
 }
@@ -10285,6 +10304,13 @@ export default class T extends LoopingBot {
         assert!(view.bank_side().is_empty());
         assert!(view.hold());
         assert!(!view.ours());
+        assert!(
+            view.has_attacked_by_player(),
+            "keyframe carries attacked_by_player"
+        );
+        assert!(!view.attacked_by_player());
+        assert!(view.has_widgets(), "keyframe carries widgets vector");
+        assert!(view.widgets().is_empty());
 
         // No tile / no snapshot: fail-closed nulls and flags.
         let (bare_bytes, _) = script_snapshot_fb(
@@ -10296,6 +10322,70 @@ export default class T extends LoopingBot {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    #[test]
+    fn script_snapshot_posts_attacked_by_player_from_local_face() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.self_slot = 0;
+        let mut lp = client::dash3d::ClientPlayer::at(0, 0);
+        lp.name = Some("Bot".into());
+        lp.entity.face_entity = 32768;
+        c.local_player = Some(lp);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            3,
+            Some((3200, 3200, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        assert!(view.attacked_by_player(), "player face >= 32768");
+
+        c.local_player.as_mut().unwrap().entity.face_entity = 3;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        snap.rebuild(&c);
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            4,
+            Some((3200, 3200, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("npc face decodes");
+        assert!(
+            !view.attacked_by_player(),
+            "NPC face is not attackedByPlayer"
+        );
     }
 
     /// Tab 0 combat IF (274 unarmed layout) round-trips through the isolate

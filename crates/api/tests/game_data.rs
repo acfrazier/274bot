@@ -105,6 +105,15 @@ fn generated_spell_and_staff_facts_match_selected_content() {
         assert_eq!(autocast.magic_varp, 108);
         assert_eq!(autocast.selected_value, 2);
         assert_eq!(autocast.armed_value, 3);
+        let duel = data.duel_controls().expect("duel controls");
+        assert_eq!(duel.select_modal, 6575);
+        assert_eq!(duel.confirm_modal, 6412);
+        assert_eq!(duel.win_modal, 6733);
+        assert_eq!(duel.select_accept, 6674);
+        assert_eq!(duel.confirm_accept, 6520);
+        assert_eq!(duel.select_partner, 6671);
+        assert_eq!(duel.select_status, 6684);
+        assert_eq!(duel.confirm_status, 6571);
         let fire: Vec<_> = data
             .staves()
             .iter()
