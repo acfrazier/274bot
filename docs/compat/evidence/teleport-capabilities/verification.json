@@ -3,6 +3,7 @@
   "brief": "docs/compat/briefs/37-spellbook-teleport.md",
   "brief_sha256": "7d112106ede7c34aee14144df1b9abf34fe1e314a9f830ea8e62bf2cfddf7cf1",
   "source_commit": "cfb36cba592f1ca68ae1225d393e35c571334475",
+  "commit": "8cc11180acf593eb842c6e1f9c8c17353e80d372",
   "client": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
   "cargo_target_dir": ".superpowers/review-exports/spellbook-teleport-t_1bf9a22e-target",
   "isolated_build": true,
