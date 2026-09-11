@@ -624,6 +624,20 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
         "pickpocket_spots": pickpocket_spots,
         "spell_db": spell_db,
         "staff_runes": staff_runes,
+        "autocast": game_data.and_then(|data| {
+            data.autocast_controls().map(|controls| {
+                serde_json::json!({
+                    "staff_tab_root": controls.staff_tab_root,
+                    "spell_panel_root": controls.spell_panel_root,
+                    "choose_com": controls.choose_com,
+                    "toggle_com": controls.toggle_com,
+                    "spell_grid_base": controls.spell_grid_base,
+                    "magic_varp": controls.magic_varp,
+                    "selected_value": controls.selected_value,
+                    "armed_value": controls.armed_value,
+                })
+            })
+        }),
     })
     .to_string()
 }

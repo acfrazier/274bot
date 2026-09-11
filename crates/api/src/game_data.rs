@@ -79,7 +79,32 @@ struct PickpocketFact {
 
 /// Frozen staff_spells grid base: component id 1830 + ssb.
 /// Inventory-target casts use posted magic-tab buttons, not this base.
+/// Autocast uses the selected-cache `AutocastControls.spell_grid_base` when present.
 pub const STAFF_SPELLS_COM0: i32 = 1830;
+
+/// Packed combat-tab autocast controls from the selected interface/varp archives.
+#[derive(Debug, Deserialize, Clone, Copy)]
+pub struct AutocastControls {
+    pub staff_tab_root: i32,
+    pub spell_panel_root: i32,
+    pub choose_com: i32,
+    pub toggle_com: i32,
+    pub spell_grid_base: i32,
+    pub magic_varp: i32,
+    pub selected_value: i32,
+    pub armed_value: i32,
+}
+
+impl AutocastControls {
+    pub fn available(&self) -> bool {
+        self.staff_tab_root >= 0
+            && self.spell_panel_root >= 0
+            && self.choose_com >= 0
+            && self.toggle_com >= 0
+            && self.spell_grid_base >= 0
+            && self.magic_varp >= 0
+    }
+}
 
 /// One generated per-cast rune cost.
 #[derive(Debug, Deserialize, Clone)]
@@ -137,6 +162,8 @@ pub struct SelectedGameData {
     spells: Vec<SpellFact>,
     #[serde(default)]
     staves: Vec<StaffFact>,
+    #[serde(default)]
+    autocast: Option<AutocastControls>,
 }
 
 impl SelectedGameData {
@@ -224,6 +251,13 @@ impl SelectedGameData {
         &self.staves
     }
 
+    /// Packed choose/grid/toggle identities from the selected cache.
+    pub fn autocast_controls(&self) -> Option<&AutocastControls> {
+        self.autocast
+            .as_ref()
+            .filter(|controls| controls.available())
+    }
+
     pub fn spell(&self, name: &str) -> Option<&SpellFact> {
         self.spells
             .iter()
@@ -282,10 +316,16 @@ impl SelectedGameData {
         )
     }
 
-    /// `1830 + ssb` for a known autocast spell, otherwise -1.
+    /// Staff-spell grid component for a known autocast spell, otherwise -1.
+    /// Posted selected-cache `spell_grid_base` wins over the frozen 1830 audit.
     pub fn spell_button_com(&self, spell_name: &str) -> i32 {
+        let base = self
+            .autocast
+            .as_ref()
+            .map(|controls| controls.spell_grid_base)
+            .unwrap_or(STAFF_SPELLS_COM0);
         self.spell(spell_name)
-            .map(|spell| STAFF_SPELLS_COM0 + spell.ssb)
+            .map(|spell| base + spell.ssb)
             .unwrap_or(-1)
     }
 

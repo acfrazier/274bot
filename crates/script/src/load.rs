@@ -1704,6 +1704,15 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register spell button: {e}"))?;
+        let selected_autocast = game_data.clone();
+        runtime
+            .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
+                Ok(crate::autocast::dispatch(
+                    selected_autocast.as_deref(),
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register autocast: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
@@ -2904,6 +2913,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
                                 crate::death_recovery::on_hold(host_hold);
+                                crate::autocast::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -3155,17 +3165,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 IsolateCmd::ResetSession => {
                     crate::periodic_bank::on_reset();
                     crate::death_recovery::on_reset();
+                    crate::autocast::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 }
                 IsolateCmd::Pause => {
                     paused = true;
                     crate::periodic_bank::on_pause();
                     crate::death_recovery::on_pause();
+                    crate::autocast::on_pause();
                 }
                 IsolateCmd::Resume => {
                     paused = false;
                     crate::periodic_bank::on_resume();
                     crate::death_recovery::on_resume();
+                    crate::autocast::on_resume();
                 }
                 IsolateCmd::Probe(expr, reply) => {
                     let value: Result<serde_json::Value, String> =

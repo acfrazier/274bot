@@ -2874,15 +2874,25 @@ fn with_script_snapshot_input<R>(
             .collect::<Vec<_>>()
     });
     let varps = snapshot.map(|s| {
-        s.varps()
-            .iter()
-            .filter(|v| v.value != 0)
-            .take(32)
-            .map(|v| VarpInput {
-                index: v.index,
-                value: v.value,
-            })
-            .collect::<Vec<_>>()
+        let magic = api::snapshot::ReadContext::new(s).varp(108);
+        // attackstyle_magic is packed as varp 108 on both selected caches.
+        // Always post it, including 0, so Autocast.armed/selected can observe
+        // the real staff-spell state instead of a missing-row default.
+        let mut rows: Vec<VarpInput> = vec![VarpInput {
+            index: 108,
+            value: magic,
+        }];
+        rows.extend(
+            s.varps()
+                .iter()
+                .filter(|v| v.value != 0 && v.index != 108)
+                .take(31)
+                .map(|v| VarpInput {
+                    index: v.index,
+                    value: v.value,
+                }),
+        );
+        rows
     });
     let combat_style_store = snapshot.map(|s| {
         let root = s

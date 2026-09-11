@@ -17,6 +17,16 @@
         "Mystic lava staff",
         "Staff of fire"
       ],
+      "autocast": {
+        "staff_tab_root": 328,
+        "spell_panel_root": 1829,
+        "choose_com": 353,
+        "toggle_com": 349,
+        "spell_grid_base": 1830,
+        "magic_varp": 108,
+        "selected_value": 2,
+        "armed_value": 3
+      },
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -126,7 +136,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
+      "output_sha256": "e08bcf585d3f310381e2fc12bc1a99d3345b3799e1e2807b9ab01d711e4bc87d",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,
@@ -151,6 +161,16 @@
         "Mystic lava staff",
         "Staff of fire"
       ],
+      "autocast": {
+        "staff_tab_root": 328,
+        "spell_panel_root": 1829,
+        "choose_com": 353,
+        "toggle_com": 349,
+        "spell_grid_base": 1830,
+        "magic_varp": 108,
+        "selected_value": 2,
+        "armed_value": 3
+      },
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -260,7 +280,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9",
+      "output_sha256": "2404040764d0282b0458b6ee28b6871b48f0b90ed1e334e0b085770a498eaf34",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,

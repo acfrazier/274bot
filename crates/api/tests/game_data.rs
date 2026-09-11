@@ -96,6 +96,15 @@ fn generated_spell_and_staff_facts_match_selected_content() {
         assert_eq!(fire_wave[1].rune, "Air rune");
         assert_eq!(data.spell_button_com("Wind Strike"), 1830);
         assert_eq!(data.spell_button_com("unknown"), -1);
+        let autocast = data.autocast_controls().expect("autocast controls");
+        assert_eq!(autocast.staff_tab_root, 328);
+        assert_eq!(autocast.choose_com, 353);
+        assert_eq!(autocast.spell_panel_root, 1829);
+        assert_eq!(autocast.toggle_com, 349);
+        assert_eq!(autocast.spell_grid_base, 1830);
+        assert_eq!(autocast.magic_varp, 108);
+        assert_eq!(autocast.selected_value, 2);
+        assert_eq!(autocast.armed_value, 3);
         let fire: Vec<_> = data
             .staves()
             .iter()
