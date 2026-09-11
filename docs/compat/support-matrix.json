@@ -34301,13 +34301,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "requires the single Fire staff identity",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-100adccc-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-100adccc-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-100adccc-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-100adccc-6d750e65.log",
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+      ]
     },
     {
       "display_name": "Superheater",
@@ -34509,13 +34516,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "requires the single Fire staff identity",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-100adccc-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-100adccc-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-100adccc-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-100adccc-6d750e65.log",
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+      ]
     },
     {
       "display_name": "Alcher",
@@ -69006,13 +69020,22 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "accepts multiple fire-rune staff identities, selects an available one, and verifies Wield after bank close",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-fire-battlestaff-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-fire-battlestaff-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+      ]
     },
     {
       "display_name": "Superheater",
@@ -69215,13 +69238,22 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "accepts multiple fire-rune staff identities, selects an available one, and verifies Wield after bank close",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-fire-battlestaff-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-fire-battlestaff-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-8e7d965b-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-8e7d965b-6d750e65.log",
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+      ]
     },
     {
       "display_name": "Alcher",

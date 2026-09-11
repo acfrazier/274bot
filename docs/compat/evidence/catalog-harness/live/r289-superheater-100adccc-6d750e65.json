@@ -1,0 +1,37 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-6d750e65",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T03:39:51.389901+00:00",
+  "host_commit": "6d750e65a227aa8a39f2bb6fdc1e5ceb5a452338",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "binary_sha256": "a0b9927e16387e981c40df98d7ea419f3e7951d375a49e5290a8a139036d36d7",
+  "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "revision": "289",
+  "case": "superheater",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "289",
+    "CATALOG_SCENARIO": "superheater",
+    "CATALOG_COMMIT": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+    "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 26862,
+  "finished_at": "2026-09-11T03:41:07.976736+00:00",
+  "elapsed_seconds": 76.587,
+  "exit_code": 0,
+  "log_sha256": "8016fb94038ebb34c97042acaca4b2c51763a6cdd525c3b8a1f938c1b235de8f",
+  "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+  "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75"
+}
