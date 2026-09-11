@@ -3253,5 +3253,117 @@
       },
       "crafted_after_withdrawal": true
     }
+  },
+  {
+    "host_commit": "1a2f2dcf047de80e8793cb430c8044134163c7ac",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_ordered",
+    "exit_code": 0,
+    "elapsed_seconds": 79.696,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.log",
+    "revision": 274,
+    "scope": "Ordered selection and exhaustion fallback through both actual casts; other Alcher options and frontend acceptance remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 130
+    },
+    "latest_items": {
+      "Coins": 30000
+    },
+    "max_items": {
+      "Coins": 39000,
+      "Nature rune": 1,
+      "Rune chainbody": 1,
+      "Rune platebody": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 845,
+    "ordered_first_exhausted": true
+  },
+  {
+    "host_commit": "1a2f2dcf047de80e8793cb430c8044134163c7ac",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_ordered",
+    "exit_code": 0,
+    "elapsed_seconds": 77.127,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.log",
+    "revision": 274,
+    "scope": "Ordered selection and exhaustion fallback through both actual casts; other Alcher options and frontend acceptance remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 130
+    },
+    "latest_items": {
+      "Coins": 30000
+    },
+    "max_items": {
+      "Coins": 39000,
+      "Nature rune": 1,
+      "Rune chainbody": 1,
+      "Rune platebody": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 815,
+    "ordered_first_exhausted": true
+  },
+  {
+    "host_commit": "1a2f2dcf047de80e8793cb430c8044134163c7ac",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_ordered",
+    "exit_code": 0,
+    "elapsed_seconds": 80.196,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.log",
+    "revision": 289,
+    "scope": "Ordered selection and exhaustion fallback through both actual casts; other Alcher options and frontend acceptance remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 130
+    },
+    "latest_items": {
+      "Coins": 30000
+    },
+    "max_items": {
+      "Coins": 39000,
+      "Nature rune": 1,
+      "Rune chainbody": 1,
+      "Rune platebody": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 839,
+    "ordered_first_exhausted": true
+  },
+  {
+    "host_commit": "1a2f2dcf047de80e8793cb430c8044134163c7ac",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_ordered",
+    "exit_code": 0,
+    "elapsed_seconds": 77.516,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.log",
+    "revision": 289,
+    "scope": "Ordered selection and exhaustion fallback through both actual casts; other Alcher options and frontend acceptance remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 130
+    },
+    "latest_items": {
+      "Coins": 30000
+    },
+    "max_items": {
+      "Coins": 39000,
+      "Nature rune": 1,
+      "Rune chainbody": 1,
+      "Rune platebody": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 866,
+    "ordered_first_exhausted": true
   }
 ]

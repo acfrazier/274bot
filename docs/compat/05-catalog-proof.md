@@ -144,3 +144,23 @@ Native Windows 6c6bb2d5 Alcher completed 30 casts and banking and supplied an
 internal full-window PNG. Startup samples, responsiveness probe limits, copied-
 resource refusal and exact capture paths are in 06f-panel-startup-native-proof.md.
 These results do not qualify every option or the remaining frontend/fleet gates.
+
+### 2026-09-11 01:10 UTC ordered Alcher follow-up
+
+Selected-data source 7852b5a0 passed actual Grok 4.5 corrective review 1175
+(report 8c6689c1). Root built frozen host 1a2f2dcf/client 56d8027 and verified
+all 1,452 exported files plus both executable hashes. All four ordered Alcher
+cells now pass: both revisions and both frozen catalog versions. Each observed
+Rune platebody first, exhaustion and restocking of Rune chainbody, then the
+second actual cast, for +130 Magic XP. The independent witness includes
+ordered_first_exhausted=true and both targets' acquisition/consumption.
+All receipt/log hashes were reverified; raw artifacts and full witnesses are
+retained. core-results.json now records 32 PASS, three FAIL and one PARTIAL;
+these are historical cells, not 36 completed matrix rows.
+
+The old 41d7a1e3 ordered failure remains in the ledger. These new results close
+that selected-metadata ordering failure. Earlier custom cells still used only
+Rune chainbody; brief 51 scopes a separate selected-data custom-item witness
+for Adamant scimitar by alias and display name. No arbitrary custom-item LIVE
+acceptance is claimed yet. All Alcher matrix rows remain PARTIAL pending the
+remaining option and integrated/frontend gates.

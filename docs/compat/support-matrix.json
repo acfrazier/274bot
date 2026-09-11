@@ -34701,12 +34701,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-100adccc-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-41d7a1e3.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.json"
       ]
     },
     {
@@ -34962,12 +34963,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-100adccc-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-41d7a1e3.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.json"
       ]
     },
     {
@@ -69263,12 +69265,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-8e7d965b-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-41d7a1e3.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.json"
       ]
     },
     {
@@ -69524,12 +69527,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-8e7d965b-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-41d7a1e3.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.json"
       ]
     },
     {
