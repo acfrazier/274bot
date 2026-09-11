@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "kind": "resource_start_preparation_static_verification",
+  "generated_at": "2026-09-11T17:42:41Z",
+  "task": "t_1847ba05",
+  "live_run": false,
+  "provenance": {
+    "branch": "codex/rs2b0t-multirevision",
+    "host_head": "ead4d5f5d57f4018b8857880c3daf8c2ddd1990b",
+    "client_head": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
+    "preserved_root_fix": "df2ba846a",
+    "source_pair": [
+      "100adccc037d9f6898080e1cad58fcfc43364775",
+      "8e7d965be2071d6ec65c3265e12af797082d720a"
+    ],
+    "tools": {
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+      "node": "v24.20.0",
+      "npm": "11.19.0"
+    }
+  },
+  "revision_exports": [
+    {
+      "revision": 274,
+      "records": 3894,
+      "output_sha256": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+      "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+      "source_pins": true,
+      "input_hashes": true,
+      "content_hashes": true,
+      "dirty_gate": true
+    },
+    {
+      "revision": 289,
+      "records": 4089,
+      "output_sha256": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
+      "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+      "source_pins": true,
+      "input_hashes": true,
+      "content_hashes": true,
+      "dirty_gate": true
+    }
+  ],
+  "static_facts": {
+    "edgeville_seed_bank": {
+      "loc_id": 2213,
+      "tile": [3096, 3493, 0],
+      "action": "Use-quickly",
+      "bank_item_id": 379
+    },
+    "gnome_magic_tree": {
+      "loc_id": 1306,
+      "tile": [2432, 3410, 0],
+      "stand": [2433, 3409, 0],
+      "action": "Chop down"
+    },
+    "rock_crab": {
+      "safe_stand": [2712, 3688, 0],
+      "dormant_name": "Rocks",
+      "active_name": "Rock Crab"
+    },
+    "equipment_ack_ids": [1540, 1387],
+    "coal_trucks": {
+      "mining_base_min": 60,
+      "mining_effective_min": 60,
+      "pickaxe_id": 1275,
+      "knife_count": 26
+    }
+  },
+  "checks": [
+    {
+      "command": "cargo test -p scenario --lib",
+      "status": "pass",
+      "passed": 107,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p host-play --features memory-profile --test catalog_boundary_live",
+      "status": "pass",
+      "passed": 49,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "command": "npm exec --yes tsx tools/game-data/verify.ts",
+      "status": "pass",
+      "revisions": [274, 289]
+    }
+  ]
+}

@@ -25,7 +25,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use api::interact::{
-    cheat, close_modal, op_loc, tele_args, Driver, Interactions, SendResult, MAXME_SETSTATS,
+    cheat, close_modal, op_loc, tele_args, Driver, Interactions, SendReason, SendResult,
+    MAXME_SETSTATS,
 };
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
@@ -4729,6 +4730,7 @@ fn wildy_agility_scenario() -> Scenario {
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "advancestat agility 52");
+                cheat(c, "setstat hitpoints 40");
                 cheat(c, "give lobster 5");
                 cheat(
                     c,
@@ -4755,6 +4757,13 @@ fn wildy_agility_scenario() -> Scenario {
         },
     ));
     steps.push(drain_advancestat());
+    steps.push(bank_fletcher_watch(
+        "confirm Hitpoints 40 before the wilderness course",
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 40,
+        },
+    ));
     steps.push(start_catalog_step());
     for (name, arm) in [
         (
@@ -6937,6 +6946,7 @@ fn rune_craft_variant(spec: RuneCraftSpec) -> Scenario {
 
 const THIEVING_STAT: i32 = 17;
 const HITPOINTS_STAT: i32 = 3;
+const ARDY_CAKES_BALLAST_KNIVES: i32 = 22;
 const CAKE_ID: i32 = 1891;
 const BREAD_ID: i32 = 2309;
 const CHOCOLATE_SLICE_ID: i32 = 1901;
@@ -7018,7 +7028,7 @@ const ARDY_THIEVER_KNIGHT_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// Empty pack at the Baker's stall stand. Flee, clues off. Script steals
+/// Six free slots at the Baker's stall stand. Flee, clues off. Script steals
 /// cake/bread/chocolate slice with Thieving XP, deposits the acquired stock
 /// when the pack is full, returns to STAND and steals again. Fight stays
 /// pending. Cake 1891 is the sequential identity; chocolate cake 1897 is not
@@ -7035,12 +7045,13 @@ fn ardy_cakes_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed thieving, hitpoints, empty pack and Baker's stall stand before Start",
+        name: "seed thieving, hitpoints, 22-Knife ballast and Baker's stall stand before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "setstat thieving 5");
                 cheat(c, "setstat hitpoints 40");
+                cheat(c, &format!("give knife {ARDY_CAKES_BALLAST_KNIVES}"));
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
@@ -7068,6 +7079,20 @@ fn ardy_cakes_scenario() -> Scenario {
             Proof::Stat {
                 id: HITPOINTS_STAT,
                 min: 40,
+            },
+        ),
+        (
+            "confirm 22 retained nonproduct Knives before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: ARDY_CAKES_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm exactly 22 retained nonproduct Knives before Start",
+            Proof::ItemIdAtMost {
+                id: KNIFE_ID,
+                count: ARDY_CAKES_BALLAST_KNIVES,
             },
         ),
         (
@@ -7328,21 +7353,27 @@ const NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 73;
 const NOTED_UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 71;
 const KNIFE_ID: i32 = 946;
 const RUNE_AXE_ID: i32 = 1359;
+const MAGIC_TREE_ID: i32 = 1306;
 /// One Rune axe plus 26 unstackable Knives leaves one product slot. The
 /// frozen Gnome script preserves Knife as a tool during gear prep and bank trips.
 const GNOME_BALLAST_KNIVES: i32 = 26;
-const STEEL_PICKAXE_ID: i32 = 1269;
+const RUNE_PICKAXE_ID: i32 = 1275;
 const NOTED_COAL_ID: i32 = 454;
-/// A steel pickaxe plus 26 unstackable Knives leaves one slot for Coal.
+/// A Rune pickaxe plus 26 unstackable Knives leaves one slot for Coal.
 /// CoalTrucks keeps non-coal items when it empties the pack into a truck.
 const COAL_BALLAST_KNIVES: i32 = 26;
 /// With the ordinary prayer/ranged/magic defaults, 48 in each melee/HP stat
 /// yields native combat level 55 without over-leveling the fixture.
 const COAL_MELEE_LEVEL: i32 = 48;
 
-const GNOME_WEST_MAGICS: WorldTile = WorldTile {
-    x: 2372,
-    z: 3425,
+const GNOME_SOUTH_BANK_MAGIC_STAND: WorldTile = WorldTile {
+    x: 2433,
+    z: 3409,
+    level: 0,
+};
+const GNOME_SOUTH_BANK_MAGIC_TREE: WorldTile = WorldTile {
+    x: 2432,
+    z: 3410,
     level: 0,
 };
 const GNOME_BANK_STAND: WorldTile = WorldTile {
@@ -7376,13 +7407,13 @@ const GNOME_FLETCH_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     value: ScriptInjectValue::Bool(true),
 }];
 
-/// One free product slot at west magics. fletchLogs off. Seed WC 75, Rune
+/// One free product slot at the south-bank Magic tree. fletchLogs off. Seed WC 75, Rune
 /// axe 1359, and retained nonproduct Knife ballast. The script chops one
 /// magic log 1513 with Woodcutting XP, deposits it at the upstairs gnome
 /// booth, returns to ground and chops again. This qualifies the resource
 /// cycle, not ordinary 28-slot throughput. Death recovery stays out.
 fn gnome_chop_scenario() -> Scenario {
-    let stand = GNOME_WEST_MAGICS;
+    let stand = GNOME_SOUTH_BANK_MAGIC_STAND;
     let first_xp = Proof::StatXpGain {
         id: WOODCUTTING_STAT,
         min: 1,
@@ -7393,7 +7424,7 @@ fn gnome_chop_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed woodcutting, rune axe, 26-Knife ballast and west magics before Start",
+        name: "seed woodcutting, rune axe, 26-Knife ballast and the south-bank Magic tree before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
@@ -7409,7 +7440,7 @@ fn gnome_chop_scenario() -> Scenario {
                 x: stand.x,
                 z: stand.z,
                 level: stand.level,
-                radius: 8,
+                radius: 1,
             },
             budget_ticks: 200,
         },
@@ -7434,6 +7465,18 @@ fn gnome_chop_scenario() -> Scenario {
             Proof::ItemIdAtMost {
                 id: RUNE_AXE_ID,
                 count: 1,
+            },
+        ),
+        (
+            "confirm exact south-bank Magic tree and Chop down action before Start",
+            Proof::LocActionNear {
+                id: MAGIC_TREE_ID,
+                x: GNOME_SOUTH_BANK_MAGIC_TREE.x,
+                z: GNOME_SOUTH_BANK_MAGIC_TREE.z,
+                level: GNOME_SOUTH_BANK_MAGIC_TREE.level,
+                radius: 0,
+                action: "Chop down",
+                present: true,
             },
         ),
         (
@@ -7602,7 +7645,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
         fletching_max,
         product_id,
     } = spec;
-    let stand = GNOME_WEST_MAGICS;
+    let stand = GNOME_SOUTH_BANK_MAGIC_STAND;
     let first_wc = Proof::StatXpGain {
         id: WOODCUTTING_STAT,
         min: 1,
@@ -7622,7 +7665,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name:
-            "seed woodcutting, fletching, rune axe, 26-Knife ballast and west magics before Start",
+            "seed woodcutting, fletching, rune axe, 26-Knife ballast and the south-bank Magic tree before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
@@ -7639,7 +7682,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
                 x: stand.x,
                 z: stand.z,
                 level: stand.level,
-                radius: 8,
+                radius: 1,
             },
             budget_ticks: 200,
         },
@@ -7671,6 +7714,18 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
             Proof::ItemIdAtMost {
                 id: RUNE_AXE_ID,
                 count: 1,
+            },
+        ),
+        (
+            "confirm exact south-bank Magic tree and Chop down action before Start",
+            Proof::LocActionNear {
+                id: MAGIC_TREE_ID,
+                x: GNOME_SOUTH_BANK_MAGIC_TREE.x,
+                z: GNOME_SOUTH_BANK_MAGIC_TREE.z,
+                level: GNOME_SOUTH_BANK_MAGIC_TREE.level,
+                radius: 0,
+                action: "Chop down",
+                present: true,
             },
         ),
         (
@@ -7796,7 +7851,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     }
 }
 
-/// Seed Mining 30, ordinary combat-55 melee stats, steel pickaxe 1269, and
+/// Seed Mining 60, ordinary combat-55 melee stats, Rune pickaxe 1275, and
 /// 26 retained nonproduct Knives on the safe initial tile. The one free slot
 /// makes the first mined Coal fill the pack. Observe real mining XP and exact
 /// coal 453, then a mine-truck deposit (pack empty of coal at the truck stand,
@@ -7816,16 +7871,16 @@ fn coal_trucks_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed mining, combat-safe melee stats, steel pickaxe and 26-Knife ballast",
+        name: "seed mining 60, combat-safe melee stats, Rune pickaxe and 26-Knife ballast",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "setstat mining 30");
+                cheat(c, "setstat mining 60");
                 cheat(c, &format!("setstat attack {COAL_MELEE_LEVEL}"));
                 cheat(c, &format!("setstat strength {COAL_MELEE_LEVEL}"));
                 cheat(c, &format!("setstat defence {COAL_MELEE_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COAL_MELEE_LEVEL}"));
-                cheat(c, "give steel_pickaxe 1");
+                cheat(c, "give rune_pickaxe 1");
                 cheat(c, &format!("give knife {COAL_BALLAST_KNIVES}"));
                 true
             }),
@@ -7868,16 +7923,16 @@ fn coal_trucks_scenario() -> Scenario {
             },
         ),
         (
-            "confirm Mining 30 before Start",
+            "confirm Mining 60 before Start",
             Proof::Stat {
                 id: MINING_STAT,
-                min: 30,
+                min: 60,
             },
         ),
         (
-            "confirm steel pickaxe 1269 before Start",
+            "confirm Rune pickaxe 1275 before Start",
             Proof::ItemId {
-                id: STEEL_PICKAXE_ID,
+                id: RUNE_PICKAXE_ID,
                 count: 1,
             },
         ),
@@ -8162,6 +8217,13 @@ const ROCK_CRAB_SPOT: WorldTile = WorldTile {
     z: 3726,
     level: 0,
 };
+/// Default source-script reset tile: outside the wake radius but in the
+/// loaded rock-crab field, so dormant `Rocks` can be observed before Start.
+const ROCK_CRAB_SAFE_STAND: WorldTile = WorldTile {
+    x: 2712,
+    z: 3688,
+    level: 0,
+};
 const GREEN_DRAGON_FIELD: WorldTile = WorldTile {
     x: 3096,
     z: 3814,
@@ -8377,6 +8439,10 @@ const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "bankStrategy",
         value: ScriptInjectValue::Str("Off"),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
     },
 ];
 const CHAOS_DRUID_LOOT_EMPTY: &[i32] = &[
@@ -9561,11 +9627,22 @@ fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
         name,
         kind: StepKind::Repeat {
             send: Box::new(|c, snapshot| {
-                matches!(
-                    Interactions::new(snapshot, c)
-                        .open_booth_at(EDGEVILLE_BANK_BOOTH, EDGEVILLE_BANK_BOOTH_ID),
-                    SendResult::Sent { .. }
-                )
+                match Interactions::new(snapshot, c)
+                    .open_booth_at(EDGEVILLE_BANK_BOOTH, EDGEVILLE_BANK_BOOTH_ID)
+                {
+                    SendResult::Sent { .. } => true,
+                    SendResult::Refused {
+                        reason:
+                            SendReason::SceneUnavailable
+                            | SendReason::OffScene
+                            | SendReason::StaleTarget,
+                        ..
+                    } => true,
+                    SendResult::Refused { reason, .. } => {
+                        eprintln!("[scenario] exact Edgeville booth send refused: {reason:?}");
+                        false
+                    }
+                }
             }),
         },
         wait: Wait {
@@ -9573,6 +9650,21 @@ fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
             budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
         },
     }
+}
+
+fn herblore_seed_bank_readiness() -> Step {
+    bank_fletcher_watch(
+        "acknowledge exact Edgeville booth identity and Use-quickly action before bank send",
+        Proof::LocActionNear {
+            id: EDGEVILLE_BANK_BOOTH_ID,
+            x: EDGEVILLE_BANK_BOOTH.x,
+            z: EDGEVILLE_BANK_BOOTH.z,
+            level: EDGEVILLE_BANK_BOOTH.level,
+            radius: 0,
+            action: "Use-quickly",
+            present: true,
+        },
+    )
 }
 
 /// HerbloreSecondaries default Red spiders' eggs. Empty pack at the
@@ -9606,6 +9698,7 @@ fn herblore_secondaries_scenario() -> Scenario {
             budget_ticks: 200,
         },
     });
+    steps.push(herblore_seed_bank_readiness());
     steps.push(herblore_open_seed_bank(
         "open and acknowledge the exact lobster food seed bank",
         Proof::BankItemId {
@@ -10052,7 +10145,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 }),
             },
             wait: Wait {
-                arm: Proof::ItemIdAtMost { id, count: 0 },
+                arm: Proof::EquipmentId { id },
                 budget_ticks: 200,
             },
         });
@@ -10279,9 +10372,8 @@ fn auto_fighter_mage_scenario() -> Scenario {
             }),
         },
         wait: Wait {
-            arm: Proof::ItemIdAtMost {
+            arm: Proof::EquipmentId {
                 id: STAFF_OF_FIRE_ID,
-                count: 0,
             },
             budget_ticks: 200,
         },
@@ -10360,11 +10452,11 @@ fn auto_fighter_mage_scenario() -> Scenario {
 /// Catalog requires native Rocks activation into Rock Crab. Banking is not
 /// this cell. SolveClue stays injected off.
 fn rock_crab_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "rock_crab",
         card: "RockCrab",
-        tele: ROCK_CRAB_SPOT,
-        radius: 4,
+        tele: ROCK_CRAB_SAFE_STAND,
+        radius: 2,
         food_alias: "lobster",
         food_id: LOBSTER_ID,
         food_count: ROCK_CRAB_FOOD,
@@ -10376,7 +10468,26 @@ fn rock_crab_scenario() -> Scenario {
         inject: ROCK_CRAB_INJECT,
         complete_quest: None,
         thieving: 0,
-    })
+    });
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat core has a Start step");
+    scenario.steps.insert(
+        start,
+        bank_fletcher_watch(
+            "acknowledge dormant Rocks in the supported field before Start",
+            Proof::NpcNameNear {
+                name: "Rocks",
+                x: ROCK_CRAB_SPOT.x,
+                z: ROCK_CRAB_SPOT.z,
+                level: ROCK_CRAB_SPOT.level,
+                radius: 50,
+            },
+        ),
+    );
+    scenario
 }
 
 /// GreenDragon melee in the wilderness field. Shield 1540 is worn with the
@@ -11626,10 +11737,10 @@ mod tests {
             Proof::Stat { id: 3, min: 48 },
             Proof::Stat {
                 id: MINING_STAT,
-                min: 30,
+                min: 60,
             },
             Proof::ItemId {
-                id: STEEL_PICKAXE_ID,
+                id: RUNE_PICKAXE_ID,
                 count: 1,
             },
             Proof::ItemIdAtMost {
@@ -12233,6 +12344,10 @@ mod tests {
         assert!(wildy.steps[..start]
             .iter()
             .any(|step| step.name.contains("Agility 52")));
+        assert!(seed.contains(&Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 40,
+        }));
         assert!(seed.contains(&Proof::ItemId { id: 379, count: 5 }));
         assert!(seed.contains(&Proof::ArrivedNear {
             x: 2998,
@@ -13424,6 +13539,14 @@ mod tests {
             id: CHOCOLATE_CAKE_ID,
             count: 0,
         }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: 22,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: KNIFE_ID,
+            count: 22,
+        }));
         let watch = cakes.steps[start + 1..]
             .iter()
             .map(|step| step.wait.arm)
@@ -13630,10 +13753,19 @@ mod tests {
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
         assert!(seed.contains(&Proof::ArrivedNear {
-            x: 2372,
-            z: 3425,
+            x: 2433,
+            z: 3409,
             level: 0,
-            radius: 8,
+            radius: 1,
+        }));
+        assert!(seed.contains(&Proof::LocActionNear {
+            id: 1306,
+            x: 2432,
+            z: 3410,
+            level: 0,
+            radius: 0,
+            action: "Chop down",
+            present: true,
         }));
         assert!(seed.contains(&Proof::Stat {
             id: WOODCUTTING_STAT,
@@ -13871,12 +14003,9 @@ mod tests {
         }));
         assert!(coal_seed.contains(&Proof::Stat {
             id: MINING_STAT,
-            min: 30,
+            min: 60,
         }));
-        assert!(coal_seed.contains(&Proof::ItemId {
-            id: STEEL_PICKAXE_ID,
-            count: 1,
-        }));
+        assert!(coal_seed.contains(&Proof::ItemId { id: 1275, count: 1 }));
         assert!(coal_seed.contains(&Proof::ItemId {
             id: KNIFE_ID,
             count: COAL_BALLAST_KNIVES,
@@ -14416,6 +14545,19 @@ mod tests {
         );
         assert_eq!(EDGEVILLE_BANK_BOOTH_ID, 2213);
         assert_eq!(seed_bank.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+        assert!(eggs_seed.contains(&Proof::LocActionNear {
+            id: EDGEVILLE_BANK_BOOTH_ID,
+            x: EDGEVILLE_BANK_BOOTH.x,
+            z: EDGEVILLE_BANK_BOOTH.z,
+            level: EDGEVILLE_BANK_BOOTH.level,
+            radius: 0,
+            action: "Use-quickly",
+            present: true,
+        }));
+        assert!(eggs.steps[..eggs_start]
+            .iter()
+            .any(|step| step.name
+                == "acknowledge exact Edgeville booth identity and Use-quickly action before bank send"));
 
         assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
             id: RED_SPIDERS_EGGS_ID,
@@ -14719,11 +14861,14 @@ mod tests {
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
         assert!(seed.contains(&Proof::ArrivedNear {
-            x: 2704,
-            z: 3726,
+            x: 2712,
+            z: 3688,
             level: 0,
-            radius: 4,
+            radius: 2,
         }));
+        assert!(rock.steps[..start].iter().any(
+            |step| step.name == "acknowledge dormant Rocks in the supported field before Start"
+        ));
         assert!(seed.contains(&Proof::ItemId {
             id: LOBSTER_ID,
             count: ROCK_CRAB_FOOD,
@@ -14771,12 +14916,12 @@ mod tests {
             id: RUNE_SCIMITAR_ID,
             count: 1,
         }));
-        assert!(seed.contains(&Proof::ItemIdAtMost {
+        assert!(seed.contains(&Proof::EquipmentId {
             id: DRAGONFIRE_SHIELD_ID,
-            count: 0,
         }));
         assert!(dragon.steps[..start].iter().any(|step| step.name
             == "wear and acknowledge Dragonfire shield before hostile-field teleport"));
+
         assert!(seed.contains(&Proof::ItemIdAtMost {
             id: DRAGON_BONES_ID,
             count: 0,
@@ -14843,6 +14988,7 @@ mod tests {
             inject.get("bankStrategy"),
             Some(&Value::String("Off".into()))
         );
+        assert_eq!(inject.get("foodTarget"), Some(&Value::from(1.0)));
         let start = ardy
             .steps
             .iter()
@@ -14926,7 +15072,7 @@ mod tests {
             id: 556,
             count: 300,
         }));
-        assert!(before.contains(&Proof::ItemIdAtMost { id: 1387, count: 0 }));
+        assert!(before.contains(&Proof::EquipmentId { id: 1387 }));
         assert!(before.contains(&Proof::ArrivedNear {
             x: 2661,
             z: 3306,

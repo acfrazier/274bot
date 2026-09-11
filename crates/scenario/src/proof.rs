@@ -21,6 +21,8 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// An exact object `id` is present in a worn-equipment slot.
+    EquipmentId { id: i32 },
     /// A fresh, open bank contains at least `count` of the named item.
     BankItem { name: &'static str, count: i32 },
     /// A fresh, open bank contains at most `count` of the named item.
@@ -87,6 +89,14 @@ pub enum Proof {
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
     /// the player on the player's level.
     NpcNear { r#type: usize, radius: i32 },
+    /// An NPC with exact `name` stands within a bounded world area.
+    NpcNameNear {
+        name: &'static str,
+        x: i32,
+        z: i32,
+        level: i32,
+        radius: i32,
+    },
     /// A placed loc of exact `id` stands within chebyshev `radius` of
     /// `(x, z, level)` on the snapshot loc sweep.
     LocIdNear {
@@ -118,6 +128,7 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
             Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
             Proof::BankItemId { id, count } => format!("fresh_bank_item_id({id})>={count}"),
@@ -148,6 +159,13 @@ impl Proof {
             }
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
+            Proof::NpcNameNear {
+                name,
+                x,
+                z,
+                level,
+                radius,
+            } => format!("npc_name({name})@({x},{z},{level},r{radius})"),
             Proof::LocIdNear {
                 id,
                 x,
@@ -230,6 +248,7 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::EquipmentId { id } => snap.equipment().iter().any(|item| item.def.id == *id),
             Proof::BankItem { name, count } | Proof::BankItemAtMost { name, count } => {
                 if !snap.ingame()
                     || snap.scene_state() != 2
@@ -377,6 +396,17 @@ impl Proof {
                         ) <= *radius
                 })
             }),
+            Proof::NpcNameNear {
+                name,
+                x,
+                z,
+                level,
+                radius,
+            } => snap.npcs().iter().any(|npc| {
+                npc.name.as_deref() == Some(*name)
+                    && npc.tile.level == *level
+                    && (npc.tile.x - *x).abs().max((npc.tile.z - *z).abs()) <= *radius
+            }),
             Proof::LocIdNear {
                 id,
                 x,
@@ -468,7 +498,7 @@ mod tests {
     use api::snapshot::GameSnapshot;
     use client::client::{Client, ClientConfig, ClientNpc};
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
-    use client::config::{Cache, ObjType, VarpType};
+    use client::config::{Cache, NpcType, ObjType, VarpType};
     use client::dash3d::ClientPlayer;
     use client::io::ServerProt;
     use std::sync::Arc;
@@ -646,6 +676,22 @@ mod tests {
         assert_eq!(
             Proof::ItemIdAtMost { id: 849, count: 1 }.name(),
             "has_item_id(849)<=1"
+        );
+    }
+
+    #[test]
+    fn equipment_id_reads_the_worn_items_tab_not_inventory_consumption() {
+        let mut c = seeded();
+        let inv_id = c
+            .iface_id(|f| f.r#type == ComponentType::TYPE_INV)
+            .expect("synthetic inventory component");
+        c.side_icon[4] = inv_id as i32;
+        let s = snap(&mut c);
+        assert!(Proof::EquipmentId { id: 526 }.check(&s, None));
+        assert!(!Proof::EquipmentId { id: 1540 }.check(&s, None));
+        assert_eq!(
+            Proof::EquipmentId { id: 526 }.name(),
+            "has_equipment_id(526)"
         );
     }
 
@@ -1027,6 +1073,43 @@ mod tests {
             .name(),
             "npc_near(708,2)"
         );
+    }
+
+    #[test]
+    fn npc_name_near_matches_a_dormant_resource_in_a_bounded_world_area() {
+        let mut c = seeded();
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Rocks".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        assert!(Proof::NpcNameNear {
+            name: "Rocks",
+            x: 3220,
+            z: 3212,
+            level: 0,
+            radius: 2,
+        }
+        .check(&s, None));
+        assert!(!Proof::NpcNameNear {
+            name: "Rock Crab",
+            x: 3220,
+            z: 3212,
+            level: 0,
+            radius: 2,
+        }
+        .check(&s, None));
     }
 
     #[test]

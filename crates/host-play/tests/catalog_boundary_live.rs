@@ -130,6 +130,7 @@ const CHOCOLATE_CAKE_ID: i32 = 1897;
 const NOTED_CAKE_ID: i32 = 1892;
 const NOTED_BREAD_ID: i32 = 2310;
 const NOTED_CHOCOLATE_SLICE_ID: i32 = 1902;
+const ARDY_CAKES_BALLAST_KNIVES: i32 = 22;
 const ARDY_CAKES_STAND: (i32, i32, i32) = (2668, 3312, 0);
 const ARDY_THIEVER_STAND: (i32, i32, i32) = (2661, 3306, 0);
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
@@ -150,10 +151,16 @@ const KNIFE_ID: i32 = 946;
 const STEEL_AXE_ID: i32 = 1353;
 const RUNE_AXE_ID: i32 = 1359;
 const GNOME_BALLAST_KNIVES: i32 = 26;
-const STEEL_PICKAXE_ID: i32 = 1269;
+const MAGIC_TREE_ID: i32 = 1306;
+const RUNE_PICKAXE_ID: i32 = 1275;
 const NOTED_COAL_ID: i32 = 454;
 const COAL_BALLAST_KNIVES: i32 = 26;
-const GNOME_WEST_MAGICS: (i32, i32, i32) = (2372, 3425, 0);
+const GNOME_SOUTH_BANK_MAGIC_STAND: (i32, i32, i32) = (2433, 3409, 0);
+const GNOME_SOUTH_BANK_MAGIC_TREE: (i32, i32, i32) = (2432, 3410, 0);
+#[cfg(test)]
+const GNOME_WEST_MAGICS: (i32, i32, i32) = GNOME_SOUTH_BANK_MAGIC_STAND;
+#[cfg(test)]
+const STEEL_PICKAXE_ID: i32 = RUNE_PICKAXE_ID;
 const GNOME_BANK_STAND: (i32, i32, i32) = (2445, 3425, 1);
 const GNOME_BANK_STAIR_SOUTH: (i32, i32, i32) = (2444, 3416, 0);
 const COAL_MINE: (i32, i32, i32) = (2582, 3481, 0);
@@ -227,6 +234,7 @@ const BLUE_DRAGONHIDE_ID: i32 = 1751;
 const GLARIALS_AMULET_ID: i32 = 295;
 const ROPE_ID: i32 = 954;
 const ROCK_CRAB_SPOT: (i32, i32, i32) = (2704, 3726, 0);
+const ROCK_CRAB_SAFE_STAND: (i32, i32, i32) = (2712, 3688, 0);
 const GREEN_DRAGON_FIELD: (i32, i32, i32) = (3096, 3814, 0);
 const FIRE_GIANT_ROOM: (i32, i32, i32) = (2575, 9893, 0);
 const WILDERNESS_MIN_Z: i32 = 3520;
@@ -683,6 +691,8 @@ struct Observation {
     chat: Vec<(i32, String)>,
     loc_facts: Vec<BoundedLoc>,
     npc_facts: Vec<BoundedNpc>,
+    magic_tree_ready: bool,
+    dormant_rocks_seen: bool,
     ground_loot: Vec<BoundedGround>,
     local_in_combat: bool,
     local_target_npc: Option<usize>,
@@ -921,6 +931,15 @@ impl Observation {
                     .any(|op| op.trim().to_ascii_lowercase().starts_with("open")),
             })
             .collect();
+        let magic_tree_ready = snapshot.locs().iter().any(|loc| {
+            loc.id == MAGIC_TREE_ID
+                && (loc.tile.x, loc.tile.z, loc.tile.level) == GNOME_SOUTH_BANK_MAGIC_TREE
+                && loc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.trim().eq_ignore_ascii_case("Chop down"))
+        });
         let mut equipment_ids = BTreeMap::new();
         for item in snapshot.equipment() {
             if item.count > 0 && item.def.id >= 0 {
@@ -968,6 +987,14 @@ impl Observation {
                 distance: npc.distance,
             })
             .collect();
+        let dormant_rocks_seen = snapshot.npcs().iter().any(|npc| {
+            npc.name.as_deref() == Some("Rocks")
+                && npc.tile.level == ROCK_CRAB_SPOT.2
+                && (npc.tile.x - ROCK_CRAB_SPOT.0)
+                    .abs()
+                    .max((npc.tile.z - ROCK_CRAB_SPOT.1).abs())
+                    <= 50
+        });
         let ground_loot = snapshot
             .ground_items()
             .iter()
@@ -1004,6 +1031,8 @@ impl Observation {
             chat,
             loc_facts,
             npc_facts,
+            magic_tree_ready,
+            dormant_rocks_seen,
             ground_loot,
             local_in_combat,
             local_target_npc,
@@ -1191,7 +1220,8 @@ fn gnome_resource_tools(observation: &Observation) -> bool {
 }
 
 fn gnome_chop_baseline_ready(baseline: &Observation) -> bool {
-    near(baseline.tile, GNOME_WEST_MAGICS, 8)
+    near(baseline.tile, GNOME_SOUTH_BANK_MAGIC_STAND, 1)
+        && baseline.magic_tree_ready
         && baseline.level("woodcutting") >= 75
         && gnome_resource_tools(baseline)
         && baseline.item_id(MAGIC_LOGS_ID) == 0
@@ -1211,8 +1241,9 @@ fn gnome_fletch_baseline_ready(baseline: &Observation, fletching: i32, max: Opti
 
 fn coal_trucks_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, COAL_MINE, 8)
-        && baseline.level("mining") >= 30
-        && baseline.item_id(STEEL_PICKAXE_ID) == 1
+        && baseline.level("mining") >= 60
+        && baseline.effective_level("mining") >= 60
+        && baseline.item_id(RUNE_PICKAXE_ID) == 1
         && baseline.item_id(KNIFE_ID) == COAL_BALLAST_KNIVES
         && baseline.item_ids.values().copied().sum::<i32>() == 27
         && baseline.item_id(COAL_ID) == 0
@@ -1535,6 +1566,8 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::WildyAgility => {
             near(baseline.tile, WILDY_START, 2)
                 && baseline.level("agility") >= 52
+                && baseline.level("hitpoints") >= 40
+                && baseline.effective_level("hitpoints") >= 40
                 && baseline.item_id(LOBSTER_ID) >= 5
         }
         CoreCase::BrimhavenAgility => {
@@ -1640,6 +1673,8 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::ArdyCakes => {
             near(baseline.tile, ARDY_CAKES_STAND, 6)
                 && baseline.level("thieving") >= 5
+                && baseline.item_id(KNIFE_ID) == ARDY_CAKES_BALLAST_KNIVES
+                && baseline.item_ids.values().copied().sum::<i32>() == ARDY_CAKES_BALLAST_KNIVES
                 && stall_food(baseline) == 0
                 && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
                 && noted_stall_food(baseline) == 0
@@ -1760,7 +1795,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Gnome Stronghold start (2474,3436,0)"
         }
         CoreCase::WildyAgility => {
-            "south ridge stand (2998,3916,0), Agility 52, and five Lobsters 379"
+            "south ridge stand (2998,3916,0), Agility 52, base/effective Hitpoints 40, and five Lobsters 379"
         }
         CoreCase::BrimhavenAgility => {
             "surface entrance (2809,3194,0), Agility 52, at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
@@ -1794,7 +1829,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Falador East bank (3013,3355,0), Runecraft 1, blank partner, and empty pack of 1436/1437/556/557"
         }
         CoreCase::ArdyCakes => {
-            "Baker's stall stand (2668,3312,0), Thieving 5, and empty pack of 1891/2309/1901/1897"
+            "Baker's stall stand (2668,3312,0), Thieving 5, exactly 22 Knives 946, and no 1891/2309/1901/1897"
         }
         CoreCase::ArdyThiever => {
             "Ardougne Guard stand (2661,3306,0), Thieving 40, and empty pack of 995/1891"
@@ -1803,16 +1838,16 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
         }
         CoreCase::GnomeChop => {
-            "west magics (2372,3425,0), Woodcutting 75, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72/70"
+            "south-bank Magic tree stand (2433,3409,0), exact Chop-down tree 1306 at (2432,3410,0), Woodcutting 75, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72/70"
         }
         CoreCase::GnomeFletchShort => {
-            "west magics, Woodcutting 75, Fletching 80-84, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72"
+            "south-bank Magic tree, Woodcutting 75, Fletching 80-84, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72"
         }
         CoreCase::GnomeFletchLong => {
-            "west magics, Woodcutting 75, Fletching 85, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/70"
+            "south-bank Magic tree, Woodcutting 75, Fletching 85, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/70"
         }
         CoreCase::CoalTrucks => {
-            "coal mine (2582,3481,0), native combat level >=55, Mining 30, steel pickaxe 1269, exactly 26 nonproduct Knives 946 (one free slot), and zero 453/454"
+            "coal mine (2582,3481,0), native combat level >=55, base/effective Mining 60, Rune pickaxe 1275, exactly 26 nonproduct Knives 946 (one free slot), and zero 453/454"
         }
         CoreCase::CookBot => {
             "Catherby bank (2809,3441,0), Cooking 80, empty pack of 331/329"
@@ -1860,7 +1895,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Ardougne Guard (2661,3306,0), Magic 13, Hitpoints 40, trout 8, worn Staff of fire 1387, exact Mind rune 558x150 and Air rune 556x300, banking None"
         }
         CoreCase::RockCrab => {
-            "Rock crab spot (2704,3726,0), Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
+            "safe stand (2712,3688,0), dormant Rocks observed in the supported field, Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
         }
         CoreCase::GreenDragon => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 12, rune scimitar 1333, worn shield 1540, empty 536/1753"
@@ -3074,8 +3109,8 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         }),
         CoreCase::RockCrab => Some(CombatSpec {
             target: "Rock Crab",
-            stand: ROCK_CRAB_SPOT,
-            radius: 4,
+            stand: ROCK_CRAB_SAFE_STAND,
+            radius: 2,
             food_id: LOBSTER_ID,
             food_count: ROCK_CRAB_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
@@ -3191,7 +3226,8 @@ fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
         }
     };
     let extra_ok = match spec.extra {
-        CombatExtra::None | CombatExtra::RockActivation => true,
+        CombatExtra::None => true,
+        CombatExtra::RockActivation => baseline.dormant_rocks_seen,
         CombatExtra::DungeonKey => baseline.item_id(BRASS_KEY_ID) == 1,
         CombatExtra::WornShield => {
             baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
@@ -4025,9 +4061,9 @@ impl RuneCrafterCycle {
     }
 }
 
-/// Steal cake/bread/chocolate slice with Thieving XP, deposit acquired stock
-/// in a fresh bank, return to STAND, steal again. Chocolate cake 1897 and
-/// noted stall food fail.
+/// Start with exact 22-Knife ballast, steal six cake/bread/chocolate slices,
+/// deposit both product and ballast in a fresh bank, return to STAND, steal
+/// again. Chocolate cake 1897 and noted stall food fail.
 #[derive(Debug, Clone, Default, Serialize)]
 struct ArdyCakesCycle {
     stolen: Option<Observation>,
@@ -4059,6 +4095,9 @@ impl ArdyCakesCycle {
             && now.bank_generation > baseline.bank_generation
             && stall_food(now) == 0
             && bank_stall_food(now) >= 1
+            && now.item_id(KNIFE_ID) == 0
+            && now.bank_item_id(KNIFE_ID)
+                >= baseline.bank_item_id(KNIFE_ID) + ARDY_CAKES_BALLAST_KNIVES
         {
             self.deposited = Some(now.clone());
         }
@@ -4292,7 +4331,7 @@ impl CoalTrucksCycle {
         self.noted |= now.item_id(NOTED_COAL_ID) > 0 || now.bank_item_id(NOTED_COAL_ID) > 0;
         self.banked |= now.bank_item_id(COAL_ID) > baseline.bank_item_id(COAL_ID);
         self.fixture_changed |=
-            now.item_id(STEEL_PICKAXE_ID) != 1 || now.item_id(KNIFE_ID) != COAL_BALLAST_KNIVES;
+            now.item_id(RUNE_PICKAXE_ID) != 1 || now.item_id(KNIFE_ID) != COAL_BALLAST_KNIVES;
         if self.mined.is_none()
             && now.item_id(COAL_ID) >= 1
             && baseline.item_id(COAL_ID) == 0
@@ -5681,6 +5720,8 @@ mod tests {
                 .collect(),
             loc_facts: Vec::new(),
             npc_facts: Vec::new(),
+            magic_tree_ready: false,
+            dormant_rocks_seen: false,
             ground_loot: Vec::new(),
             local_in_combat: false,
             local_target_npc: None,
@@ -6452,11 +6493,24 @@ mod tests {
             0,
         );
         baseline.tile = Some(COAL_MINE);
-        baseline.levels.insert("mining".into(), 30);
+        baseline.levels.insert("mining".into(), 60);
+        baseline.effective_levels.insert("mining".into(), 60);
         baseline.combat_level = 54;
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &baseline).is_err());
         baseline.combat_level = 55;
         validate_case_baseline(CoreCase::CoalTrucks, &baseline).unwrap();
+        let mut low_base_mining = baseline.clone();
+        low_base_mining.levels.insert("mining".into(), 59);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &low_base_mining).is_err());
+        let mut low_effective_mining = baseline.clone();
+        low_effective_mining
+            .effective_levels
+            .insert("mining".into(), 59);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &low_effective_mining).is_err());
+        let mut steel_pickaxe = baseline.clone();
+        steel_pickaxe.item_ids.remove(&RUNE_PICKAXE_ID);
+        steel_pickaxe.item_ids.insert(1269, 1);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &steel_pickaxe).is_err());
     }
 
     fn alcher_generated_obs(item_ids: &[(i32, i32)], magic_xp: i32) -> Observation {
@@ -6886,6 +6940,14 @@ mod tests {
         let mut under_food = baseline.clone();
         under_food.item_ids.insert(LOBSTER_ID, 4);
         assert!(validate_case_baseline(CoreCase::WildyAgility, &under_food).is_err());
+        let mut low_base_hp = baseline.clone();
+        low_base_hp.levels.insert("hitpoints".into(), 39);
+        assert!(validate_case_baseline(CoreCase::WildyAgility, &low_base_hp).is_err());
+        let mut low_effective_hp = baseline.clone();
+        low_effective_hp
+            .effective_levels
+            .insert("hitpoints".into(), 39);
+        assert!(validate_case_baseline(CoreCase::WildyAgility, &low_effective_hp).is_err());
 
         let ridge = wildy_obs((2998, 3933, 0), 1_015);
         let pipe = wildy_obs((3004, 3947, 0), 1_027);
@@ -8289,11 +8351,37 @@ mod tests {
 
     #[test]
     fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal() {
-        let baseline = ardy_obs(ARDY_CAKES_STAND, &[], &[], 0, 5);
+        let baseline = ardy_obs(
+            ARDY_CAKES_STAND,
+            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
+            &[],
+            0,
+            5,
+        );
         validate_case_baseline(CoreCase::ArdyCakes, &baseline).unwrap();
 
-        let stolen = ardy_obs(ARDY_CAKES_STAND, &[(CAKE_ID, 4), (BREAD_ID, 2)], &[], 64, 5);
-        let mut deposited = ardy_obs(ARDY_BANK, &[], &[(CAKE_ID, 4), (BREAD_ID, 2)], 64, 5);
+        let stolen = ardy_obs(
+            ARDY_CAKES_STAND,
+            &[
+                (KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES),
+                (CAKE_ID, 4),
+                (BREAD_ID, 2),
+            ],
+            &[],
+            64,
+            5,
+        );
+        let mut deposited = ardy_obs(
+            ARDY_BANK,
+            &[],
+            &[
+                (KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES),
+                (CAKE_ID, 4),
+                (BREAD_ID, 2),
+            ],
+            64,
+            5,
+        );
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
@@ -8397,6 +8485,20 @@ mod tests {
         let mut seeded = baseline.clone();
         seeded.item_ids.insert(CAKE_ID, 1);
         assert!(validate_case_baseline(CoreCase::ArdyCakes, &seeded).is_err());
+        let mut wrong_ballast = baseline.clone();
+        wrong_ballast
+            .item_ids
+            .insert(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES - 1);
+        assert!(validate_case_baseline(CoreCase::ArdyCakes, &wrong_ballast).is_err());
+        let mut missing_banked_ballast = deposited.clone();
+        missing_banked_ballast.bank_ids.remove(&KNIFE_ID);
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &missing_banked_ballast, &returned, &further]
+        )
+        .qualify()
+        .is_err());
         let market = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 5);
         assert!(validate_case_baseline(CoreCase::ArdyCakes, &market).is_err());
     }
@@ -8550,8 +8652,10 @@ mod tests {
         observation.item_ids = item_ids.iter().copied().collect();
         observation.bank_ids = bank_ids.iter().copied().collect();
         observation.equipment_ids = equipment_ids.iter().copied().collect();
+        observation.magic_tree_ready = tile == GNOME_SOUTH_BANK_MAGIC_STAND;
         for (name, level) in levels {
             observation.levels.insert((*name).into(), *level);
+            observation.effective_levels.insert((*name).into(), *level);
         }
         observation
     }
@@ -8646,6 +8750,9 @@ mod tests {
             &levels,
         );
         validate_case_baseline(CoreCase::GnomeChop, &baseline).unwrap();
+        let mut missing_magic_tree = baseline.clone();
+        missing_magic_tree.magic_tree_ready = false;
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &missing_magic_tree).is_err());
 
         let chopped = resource_obs(
             GNOME_WEST_MAGICS,
@@ -9037,7 +9144,7 @@ mod tests {
 
     #[test]
     fn coal_trucks_requires_mining_xp_truck_deposit_not_bank_and_further_mine() {
-        let levels = [("mining", 30)];
+        let levels = [("mining", 60)];
         let mut baseline = resource_obs(
             COAL_MINE,
             &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26)],
@@ -11084,8 +11191,8 @@ mod tests {
         .qualify()
         .is_ok());
 
-        let rock_base = combat_obs(
-            ROCK_CRAB_SPOT,
+        let mut rock_base = combat_obs(
+            ROCK_CRAB_SAFE_STAND,
             &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
             &[("strength", 40)],
             &levels,
@@ -11093,7 +11200,11 @@ mod tests {
             false,
             None,
         );
+        rock_base.dormant_rocks_seen = true;
         validate_case_baseline(CoreCase::RockCrab, &rock_base).unwrap();
+        let mut awake_only = rock_base.clone();
+        awake_only.dormant_rocks_seen = false;
+        assert!(validate_case_baseline(CoreCase::RockCrab, &awake_only).is_err());
         let rocks = combat_obs(
             ROCK_CRAB_SPOT,
             &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
