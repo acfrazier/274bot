@@ -1,0 +1,21 @@
+export=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t32400aa2-tui-params
+target=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t32400aa2-tui-params-target
+host=bca3429ed36dfb5b8e35fcfff0a0880c55d768a6
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+files_exported=2830
+target_existed_before_checks=false
+
+=== rustfmt --check crates/tui/src/script_params.rs crates/tui/src/app.rs ===
+passed
+
+=== cargo test -p tui --lib --offline -- --test-threads=1 ===
+test result: ok. 106 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+=== cargo clippy -p tui --lib --tests --offline -- -D warnings ===
+error: clippy::type_complexity at crates/tui/src/bin.rs:177,188,201 (publish/reset frontend helpers) and 1633 (frontend_fixture)
+error: could not compile `tui` (lib) due to 3 previous errors
+error: could not compile `tui` (lib test) due to 4 previous errors
+
+=== cargo clippy -p tui --lib --tests --offline -- -D warnings -A clippy::type_complexity ===
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.48s
+passed

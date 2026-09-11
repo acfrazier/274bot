@@ -403,6 +403,9 @@ impl TuiApp {
         if self.quit {
             return AppAction::None;
         }
+        if self.params_state.open {
+            return AppAction::None;
+        }
         // The script pane's text inputs capture keys before the global
         // shortcuts (typing a load path must not quit on `q`).
         if self.script_load_open {
@@ -536,8 +539,11 @@ impl TuiApp {
             return;
         }
         self.params_bag = store.merged_bag(source, &name, &self.params_schema, None);
-        self.params_state.open = true;
-        self.params_state.cursor = 0;
+        self.params_state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
     }
 
     /// The merged settings bag Start would post for the selected card.
@@ -988,7 +994,7 @@ impl TuiApp {
             name: &name,
             state: &mut self.params_state,
         };
-        frame.render_widget(&pane, frame.area());
+        frame.render_widget(pane, frame.area());
     }
 
     fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1802,6 +1808,71 @@ mod tests {
             text.contains("parameters"),
             "params overlay paints: {text:?}"
         );
+    }
+
+    #[test]
+    fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-app-alcher-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = script::ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = script::LoadoutsStore::at(dir.join("loadouts.json"));
+        let schema = vec![script::SettingDef {
+            id: "alchs".into(),
+            ty: "number".into(),
+            default: Some("27".into()),
+            label: Some("Alchs per trip".into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+        }];
+        let mut app = TuiApp::new("274bot headless");
+        app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
+        app.params_schema = schema;
+        app.open_script_params(&store);
+        assert!(app.params_state.open);
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::None);
+        assert!(!app.quit, "params overlay must consume q");
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        assert!(app.params_state.editing);
+        while !app.params_state.scratch.is_empty() {
+            app.params_on_key(&mut store, &loadouts, key(KeyCode::Backspace));
+        }
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char('5')));
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Esc));
+        assert!(!app.params_state.editing);
+        assert_eq!(
+            app.params_bag.get("alchs").and_then(|v| v.as_f64()),
+            Some(27.0)
+        );
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        while !app.params_state.scratch.is_empty() {
+            app.params_on_key(&mut store, &loadouts, key(KeyCode::Backspace));
+        }
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char('5')));
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        assert_eq!(
+            app.params_bag.get("alchs").and_then(|v| v.as_f64()),
+            Some(5.0)
+        );
+        let start_bag = app.merged_script_settings_bag(&store).expect("merged bag");
+        assert_eq!(start_bag.get("alchs").and_then(|v| v.as_f64()), Some(5.0));
+        app.params_on_key(&mut store, &loadouts, key(KeyCode::Esc));
+        assert!(!app.params_state.open);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Task 13: while the focused slot's script paints, the chat pane
