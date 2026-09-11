@@ -26,10 +26,13 @@ Guam leaf 249, Eye of newt 221, unfinished `guamvial` 91, Attack potion(3)
 VialFiller core seeds an empty pack, 56 banked empty vials, no water vials,
 and tele to the selected Falador stand. The script must withdraw empties,
 fill at the fountain (exact 229→227 while standing there), deposit those
-script-created water vials into a fresh bank generation, restock empties,
-close, return to the fountain and fill again. Queued useOn, name-only vials,
-seeded water, or a fill away from the fountain fail. `buyVials=true` / Jatix
-`Shop.buy` remains pending on the already queued shop capability.
+script-created water vials into a fresh bank generation, empty the pack of
+water vials (`ItemIdAtMost` 227 at 0), restock empties, close, return to
+the fountain and fill again. The pack-empty watch sits between bank water
+and further water so the first fill cannot satisfy the terminal arm.
+Queued useOn, name-only vials, seeded water, or a fill away from the
+fountain fail. `buyVials=true` / Jatix `Shop.buy` remains pending on the
+already queued shop capability.
 
 PotionMaker uses `nearestBank`, so these cells reuse the accepted Varrock West
 booth (3185,3440,0). Seed before Start: empty pack, Herblore 3 (default) or 38
@@ -51,15 +54,20 @@ unchanged.
 
 ## Verification
 
-Implementation baseline: host `141f9ccece0d4944d035f53805873c714b91cdc2`,
-client `56d80272bcbda3eb1e22db096c1c5e21d3497de4`, plus these owned files.
-Frozen export: `/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-src-24432659`
-(git archive of `244326594` + client archive + owned overlay; frozen catalog
-inputs linked read-only). Isolated empty target:
-`/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-target-24432659`
-(`isolated_build=true`). Shared campaign target was not used.
+Round-2 pack-empty correction. Export:
+`/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-src-r2`
+(git archive of `7d1d43869` plus client `9d090ed049` plus owned scenario/docs
+overlay; frozen catalog inputs linked read-only). Isolated empty target:
+`/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-target-r2`
+(`isolated_build=true`). Shared campaign target and frozen 8fd caches were
+not used. This commit is scenario/docs only; catalog source is not staged.
 
-- `cargo test -p scenario` — 89 passed.
+- `cargo test -p scenario` — 88 passed, 1 failed:
+  `gold_scripts_start_the_catalog_after_the_last_seed_wait` still expects
+  chicken_killer_bank `i-2` to be the Falador tele. Root melee fixture
+  `8fd0f138` inserted Attack/Strength 30 acks, so `i-2` is Strength 30.
+  Preserved as a separate root check failure.
+- `vial_filler_cases_register_fountain_fill_and_bank_cycles` — passed.
 - `cargo test -p host-play --features memory-profile --test catalog_boundary_live`
   — 23 passed, 1 ignored (`LIVE` cell).
 - `cargo clippy -p scenario -- -D warnings` — passed.
