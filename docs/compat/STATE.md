@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 14:48 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 14:56 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -28,18 +28,21 @@ primary and active campaign worktrees remain. See10-worktree-cleanup.md.
 Native hint117, Agility118 R2, preparation120, native sequencing123,
 retaliate128 and TUI130 have completed verified reviews. Exact21446414 batch
 is complete:19 raw PASS and19 FAIL, with18 newer-catalog cells held after
-older-catalog failure. Four additional15e Wildy FAILs remain retained. The381-row
+older-catalog failure. Four additional15e Wildy FAILs remain retained. The392-row
 ledger is append-only. Current combat PASSs
 are diagnostic pending corrected observer136; do not promote them as final
 acceptance. Bone/default Alcher/shaft/headless fletching cycles passed across
 four cells with real work. ArdyCakes214 fails after isolate termination.
 
-Fixture lane: resource125 reviewed (Grok4.5 run1361); root20-cell resource batch
-is running on exact2d589c7ba. Trained Brimhaven131 active -> Wildy plane135
--> combat observer/Coal bounded preparation136 -> mage132 -> Mule bootstrap127.
+Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
+newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 active -> Wildy plane135
+-> combat observer/Coal bounded preparation136 -> mage132 -> resource
+start preparation139 -> Mule bootstrap127.
 Native lane: observation projection134 active after audit133/retaliate128 ->
 quest status transport137 -> teleport -> shop -> Make-X -> fire -> trade126.
-Existing parent gates remain.
+Existing parent gates remain. Independent bounded reachability audit138
+is running: Flax requests maxSteps400 but shim uses unrestricted flood bits.
+No foreign-controller workaround or dim decision has been made.
 No new main publication beyond76b2016b7 yet; stage2 needs native correction
 and reviewed/live-qualified scope.
 
