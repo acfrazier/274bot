@@ -1,0 +1,12 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-root-7d1d4386/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.11s
+     Running tests/snapshot.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-root-7d1d4386-target/debug/deps/snapshot-1efd032a72efef7c)
+
+running 4 tests
+test loc_view_reads_all_four_layers ... ok
+test loc_view_rebuild_reads_world_locs ... ok
+test loc_view_unknown_id_reads_defaults ... ok
+test loc_view_is_always_fresh_without_a_gen_bump ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.42s
+

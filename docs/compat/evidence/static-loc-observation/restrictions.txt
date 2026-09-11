@@ -1,0 +1,9 @@
+Preserved export/check restrictions for t_192feefa. No approval or config changes.
+
+1. Root automatic rejection: archive extraction to a potentially sensitive location and unparsed nested executable body. Host/client tarballs in .check-t192feefa were written and not extracted. Prior empty-target under that dir was not deleted.
+
+2. Root safer export: Git-blob helper rejected non-regular modes and unsafe paths, created exclusive-write regular files only. Source .superpowers/review-exports/static-loc-root-7d1d4386 with sibling manifest. No tar extraction, no recursive deletion.
+
+3. Single-query rejection of python3 -c during orientation. Direct git/ls/shasum used instead of that form.
+
+4. Single-query rejection of executable heredoc before focused checks. No alternate shell. Direct mkdir/ls, rustfmt, and cargo with literal absolute CARGO_TARGET_DIR and ordinary output redirection. Cargo populated the previously absent target directory.
