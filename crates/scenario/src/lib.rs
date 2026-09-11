@@ -7331,6 +7331,9 @@ const RUNE_AXE_ID: i32 = 1359;
 const GNOME_BALLAST_KNIVES: i32 = 26;
 const STEEL_PICKAXE_ID: i32 = 1269;
 const NOTED_COAL_ID: i32 = 454;
+/// A steel pickaxe plus 26 unstackable Knives leaves one slot for Coal.
+/// CoalTrucks keeps non-coal items when it empties the pack into a truck.
+const COAL_BALLAST_KNIVES: i32 = 26;
 /// With the ordinary prayer/ranged/magic defaults, 48 in each melee/HP stat
 /// yields native combat level 55 without over-leveling the fixture.
 const COAL_MELEE_LEVEL: i32 = 48;
@@ -7791,10 +7794,11 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     }
 }
 
-/// Seed Mining 30, ordinary combat-55 melee stats, and steel pickaxe 1269 on
-/// the safe initial tile before entering the bat mine. Observe real
-/// mining XP and exact coal 453, then a mine-truck deposit (pack empty of
-/// coal at the truck stand, not a Seers bank), then further mining.
+/// Seed Mining 30, ordinary combat-55 melee stats, steel pickaxe 1269, and
+/// 26 retained nonproduct Knives on the safe initial tile. The one free slot
+/// makes the first mined Coal fill the pack. Observe real mining XP and exact
+/// coal 453, then a mine-truck deposit (pack empty of coal at the truck stand,
+/// not a Seers bank), then further mining.
 /// Filling truck 120 then Seers haul/bank/return cannot fit
 /// SCRIPT_GOLD_DEADLINE 180s from an empty truck; no truck-content seed
 /// primitive exists. Death/combat recovery is not this core.
@@ -7810,7 +7814,7 @@ fn coal_trucks_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed mining, combat-safe melee stats and steel pickaxe before the mine tele",
+        name: "seed mining, combat-safe melee stats, steel pickaxe and 26-Knife ballast",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "~clearinv");
@@ -7820,6 +7824,7 @@ fn coal_trucks_scenario() -> Scenario {
                 cheat(c, &format!("setstat defence {COAL_MELEE_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COAL_MELEE_LEVEL}"));
                 cheat(c, "give steel_pickaxe 1");
+                cheat(c, &format!("give knife {COAL_BALLAST_KNIVES}"));
                 true
             }),
         },
@@ -7872,6 +7877,20 @@ fn coal_trucks_scenario() -> Scenario {
             Proof::ItemId {
                 id: STEEL_PICKAXE_ID,
                 count: 1,
+            },
+        ),
+        (
+            "confirm 26 retained nonproduct Knives before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: COAL_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm exactly 26 retained nonproduct Knives and one available slot before Start",
+            Proof::ItemIdAtMost {
+                id: KNIFE_ID,
+                count: COAL_BALLAST_KNIVES,
             },
         ),
         (
@@ -8104,6 +8123,7 @@ const FIRE_GIANT_FOOD: i32 = 12;
 const COMBAT_ATTACK_LEVEL: i32 = 40;
 const RUNE_SCIMITAR_ID: i32 = 1333;
 const DRAGONFIRE_SHIELD_ID: i32 = 1540;
+const BRASS_KEY_ID: i32 = 983;
 const DRAGON_BONES_ID: i32 = 536;
 const NOTED_DRAGON_BONES_ID: i32 = 537;
 const GREEN_DRAGONHIDE_ID: i32 = 1753;
@@ -9832,6 +9852,7 @@ struct CombatCorePlan {
     weapon_alias: &'static str,
     weapon_id: i32,
     extra_give: &'static [(&'static str, i32, i32)],
+    wear_id: Option<i32>,
     loot_empty: &'static [i32],
     inject: &'static [ScriptSettingInject],
     complete_quest: Option<&'static str>,
@@ -9850,6 +9871,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         weapon_alias,
         weapon_id,
         extra_give,
+        wear_id,
         loot_empty,
         inject,
         complete_quest,
@@ -9964,6 +9986,23 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             Proof::ItemId { id, count },
         ));
     }
+    if let Some(id) = wear_id {
+        steps.push(Step {
+            name: "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            kind: StepKind::Repeat {
+                send: Box::new(move |c, snapshot| {
+                    matches!(
+                        Interactions::new(snapshot, c).wear(id),
+                        SendResult::Sent { .. }
+                    )
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ItemIdAtMost { id, count: 0 },
+                budget_ticks: 200,
+            },
+        });
+    }
     for &id in loot_empty {
         steps.push(bank_fletcher_watch(
             "confirm no seeded combat loot in pack before Start",
@@ -10029,6 +10068,7 @@ fn chaos_druid_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
+        wear_id: None,
         loot_empty: CHAOS_DRUID_LOOT_EMPTY,
         inject: CHAOS_DRUID_INJECT,
         complete_quest: None,
@@ -10050,6 +10090,7 @@ fn moss_giant_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
+        wear_id: None,
         loot_empty: MOSS_GIANT_LOOT_EMPTY,
         inject: MOSS_GIANT_INJECT,
         complete_quest: None,
@@ -10057,8 +10098,9 @@ fn moss_giant_scenario() -> Scenario {
     })
 }
 
-/// HillGiant default melee in the pit. Target display is Giant. Blank weapon.
-/// DeathRecovery walkBack stays idle. Banking is not this cell.
+/// HillGiant default melee in the pit. Target display is Giant. The Brass key
+/// is prepared because this inside-pit cell does not qualify the key-fetch or
+/// entrance branch. Blank weapon. DeathRecovery and banking stay idle.
 fn hill_giant_scenario() -> Scenario {
     combat_core_scenario(CombatCorePlan {
         name: "hill_giant",
@@ -10070,7 +10112,8 @@ fn hill_giant_scenario() -> Scenario {
         food_count: HILL_GIANT_FOOD,
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
-        extra_give: &[],
+        extra_give: &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
+        wear_id: None,
         loot_empty: HILL_GIANT_LOOT_EMPTY,
         inject: HILL_GIANT_INJECT,
         complete_quest: None,
@@ -10092,6 +10135,7 @@ fn auto_fighter_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
+        wear_id: None,
         loot_empty: AUTO_FIGHTER_LOOT_EMPTY,
         inject: AUTO_FIGHTER_INJECT,
         complete_quest: None,
@@ -10114,6 +10158,7 @@ fn rock_crab_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
+        wear_id: None,
         loot_empty: ROCK_CRAB_LOOT_EMPTY,
         inject: ROCK_CRAB_INJECT,
         complete_quest: None,
@@ -10121,10 +10166,11 @@ fn rock_crab_scenario() -> Scenario {
     })
 }
 
-/// GreenDragon melee in the wilderness field. Shield 1540 is prepared in
-/// pack before Start; frozen GearEquip wears it after Start. Catalog Start
-/// baseline is held 1540; cycle `shield_worn` is the real worn proof plus
-/// dragon bones 536 or green hide 1753. Escape/bank is not this cell.
+/// GreenDragon melee in the wilderness field. Shield 1540 is worn with the
+/// native fixture operation on the safe tile before hostile-field teleport;
+/// this does not qualify the frozen GearEquip branch. Catalog Start baseline
+/// and cycle both require worn 1540 plus real dragon combat and exact bones 536
+/// or green hide 1753. Escape/bank is not this cell.
 fn green_dragon_scenario() -> Scenario {
     combat_core_scenario(CombatCorePlan {
         name: "green_dragon",
@@ -10137,6 +10183,7 @@ fn green_dragon_scenario() -> Scenario {
         weapon_alias: "rune_scimitar",
         weapon_id: RUNE_SCIMITAR_ID,
         extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        wear_id: Some(DRAGONFIRE_SHIELD_ID),
         loot_empty: GREEN_DRAGON_LOOT_EMPTY,
         inject: GREEN_DRAGON_INJECT,
         complete_quest: None,
@@ -10162,6 +10209,7 @@ fn fire_giant_scenario() -> Scenario {
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
         ],
+        wear_id: None,
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some("Waterfall Quest"),
@@ -10183,6 +10231,7 @@ fn ardy_fighter_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
+        wear_id: None,
         loot_empty: ARDY_FIGHTER_LOOT_EMPTY,
         inject: ARDY_FIGHTER_INJECT,
         complete_quest: None,
@@ -13614,6 +13663,14 @@ mod tests {
             id: STEEL_PICKAXE_ID,
             count: 1,
         }));
+        assert!(coal_seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: COAL_BALLAST_KNIVES,
+        }));
+        assert!(coal_seed.contains(&Proof::ItemIdAtMost {
+            id: KNIFE_ID,
+            count: COAL_BALLAST_KNIVES,
+        }));
         assert!(coal_seed.contains(&Proof::ItemIdAtMost {
             id: COAL_ID,
             count: 0,
@@ -14357,6 +14414,10 @@ mod tests {
             id: LIMPWURT_ROOT_ID,
             count: 0,
         }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: BRASS_KEY_ID,
+            count: 1,
+        }));
         assert_eq!(hill.proof, strength);
 
         let auto = get("auto_fighter").expect("auto_fighter");
@@ -14496,10 +14557,12 @@ mod tests {
             id: RUNE_SCIMITAR_ID,
             count: 1,
         }));
-        assert!(seed.contains(&Proof::ItemId {
+        assert!(seed.contains(&Proof::ItemIdAtMost {
             id: DRAGONFIRE_SHIELD_ID,
-            count: 1,
+            count: 0,
         }));
+        assert!(dragon.steps[..start].iter().any(|step| step.name
+            == "wear and acknowledge Dragonfire shield before hostile-field teleport"));
         assert!(seed.contains(&Proof::ItemIdAtMost {
             id: DRAGON_BONES_ID,
             count: 0,
