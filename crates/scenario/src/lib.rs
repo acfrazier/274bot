@@ -441,6 +441,10 @@ pub fn get(name: &str) -> Option<Scenario> {
         "moss_giant" => Some(moss_giant_scenario()),
         "hill_giant" => Some(hill_giant_scenario()),
         "auto_fighter" => Some(auto_fighter_scenario()),
+        "rock_crab" => Some(rock_crab_scenario()),
+        "green_dragon" => Some(green_dragon_scenario()),
+        "fire_giant" => Some(fire_giant_scenario()),
+        "ardy_fighter" => Some(ardy_fighter_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -517,6 +521,10 @@ pub fn names() -> Vec<&'static str> {
         "moss_giant",
         "hill_giant",
         "auto_fighter",
+        "rock_crab",
+        "green_dragon",
+        "fire_giant",
+        "ardy_fighter",
         "script_trade",
     ]
 }
@@ -7098,7 +7106,21 @@ const CHAOS_DRUID_FOOD: i32 = 12;
 const MOSS_GIANT_FOOD: i32 = 10;
 const HILL_GIANT_FOOD: i32 = 8;
 const AUTO_FIGHTER_FOOD: i32 = 8;
+const ROCK_CRAB_FOOD: i32 = 8;
+const GREEN_DRAGON_FOOD: i32 = 12;
+const FIRE_GIANT_FOOD: i32 = 12;
 const COMBAT_ATTACK_LEVEL: i32 = 40;
+const RUNE_SCIMITAR_ID: i32 = 1333;
+const DRAGONFIRE_SHIELD_ID: i32 = 1540;
+const DRAGON_BONES_ID: i32 = 536;
+const NOTED_DRAGON_BONES_ID: i32 = 537;
+const GREEN_DRAGONHIDE_ID: i32 = 1753;
+const NOTED_GREEN_DRAGONHIDE_ID: i32 = 1754;
+const GLARIALS_AMULET_ID: i32 = 295;
+const ROPE_ID: i32 = 954;
+const CASKET_ID: i32 = 405;
+const NOTED_CASKET_ID: i32 = 406;
+const NOTED_UNCUT_SAPPHIRE_ID: i32 = 1624;
 
 const CHAOS_DRUID_FIELD: WorldTile = WorldTile {
     x: 3110,
@@ -7113,6 +7135,21 @@ const MOSS_GIANT_SAFESPOT: WorldTile = WorldTile {
 const HILL_GIANT_PIT: WorldTile = WorldTile {
     x: 3110,
     z: 9832,
+    level: 0,
+};
+const ROCK_CRAB_SPOT: WorldTile = WorldTile {
+    x: 2704,
+    z: 3726,
+    level: 0,
+};
+const GREEN_DRAGON_FIELD: WorldTile = WorldTile {
+    x: 3096,
+    z: 3814,
+    level: 0,
+};
+const FIRE_GIANT_ROOM: WorldTile = WorldTile {
+    x: 2575,
+    z: 9893,
     level: 0,
 };
 
@@ -7184,6 +7221,98 @@ const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Bool(false),
     },
 ];
+const ROCK_CRAB_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Off"),
+    },
+];
+const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
+const FIRE_GIANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "escapeTele",
+        value: ScriptInjectValue::Str("Barrel (free)"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Off"),
+    },
+];
 const CHAOS_DRUID_LOOT_EMPTY: &[i32] = &[
     UNIDENTIFIED_GUAM_ID,
     NATURE_RUNE_ID,
@@ -7198,6 +7327,20 @@ const HILL_GIANT_LOOT_EMPTY: &[i32] = &[
     NOTED_LIMPWURT_ROOT_ID,
 ];
 const AUTO_FIGHTER_LOOT_EMPTY: &[i32] = &[BONES_ID, NOTED_BONES_ID];
+const ROCK_CRAB_LOOT_EMPTY: &[i32] = &[
+    UNCUT_SAPPHIRE_ID,
+    NOTED_UNCUT_SAPPHIRE_ID,
+    CASKET_ID,
+    NOTED_CASKET_ID,
+];
+const GREEN_DRAGON_LOOT_EMPTY: &[i32] = &[
+    DRAGON_BONES_ID,
+    NOTED_DRAGON_BONES_ID,
+    GREEN_DRAGONHIDE_ID,
+    NOTED_GREEN_DRAGONHIDE_ID,
+];
+const FIRE_GIANT_LOOT_EMPTY: &[i32] = &[BIG_BONES_ID, NOTED_BIG_BONES_ID];
+const ARDY_FIGHTER_LOOT_EMPTY: &[i32] = &[CAKE_ID, BREAD_ID, CHOCOLATE_SLICE_ID, CHOCOLATE_CAKE_ID];
 
 const COOK_BOT_SALMON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -8663,7 +8806,7 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
     }
 }
 
-/// Shared melee-core seed: legal stats, food, ordinary scimitar, empty loot,
+/// Shared melee-core seed: legal stats, food, ordinary weapon, empty loot,
 /// then Start. Banking policy is explicit in the inject; these cells are not
 /// bank-roundtrip proof. Scenario watch is selected-style XP; catalog adds
 /// two engagements, a verified defeat, and exact loot where required.
@@ -8675,8 +8818,13 @@ struct CombatCorePlan {
     food_alias: &'static str,
     food_id: i32,
     food_count: i32,
+    weapon_alias: &'static str,
+    weapon_id: i32,
+    extra_give: &'static [(&'static str, i32, i32)],
     loot_empty: &'static [i32],
     inject: &'static [ScriptSettingInject],
+    complete_quest: Option<&'static str>,
+    thieving: i32,
 }
 
 fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
@@ -8688,14 +8836,42 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         food_alias,
         food_id,
         food_count,
+        weapon_alias,
+        weapon_id,
+        extra_give,
         loot_empty,
         inject,
+        complete_quest,
+        thieving,
     } = plan;
     let xp = Proof::StatXpGain {
         id: STRENGTH_STAT,
         min: 1,
     };
     let mut steps = script_live_seed_steps();
+    if let Some(quest) = complete_quest {
+        steps.push(Step {
+            name: "complete required quests before Start",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, "~completequests");
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ChatChoice,
+                budget_ticks: 20,
+            },
+        });
+        steps.push(Step {
+            name: "answer the quest-seed dialogs until the journal is green",
+            kind: StepKind::DrainDialogs { choice: 1 },
+            wait: Wait {
+                arm: Proof::QuestDone { name: quest },
+                budget_ticks: 600,
+            },
+        });
+    }
     steps.push(Step {
         name: "prepare melee stats, food, gear and field before Start",
         kind: StepKind::Perform {
@@ -8703,9 +8879,17 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                if thieving > 0 {
+                    cheat(c, &format!("setstat thieving {thieving}"));
+                }
                 cheat(c, "~clearinv");
-                cheat(c, "give adamant_scimitar 1");
-                cheat(c, &format!("give {food_alias} {food_count}"));
+                cheat(c, &format!("give {weapon_alias} 1"));
+                if food_count > 0 {
+                    cheat(c, &format!("give {food_alias} {food_count}"));
+                }
+                for &(alias, _, count) in extra_give {
+                    cheat(c, &format!("give {alias} {count}"));
+                }
                 cheat(c, &tele_args(tele.level, tele.x, tele.z));
                 true
             }),
@@ -8741,20 +8925,37 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             min: COMBAT_ATTACK_LEVEL,
         },
     ));
+    if thieving > 0 {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared Thieving before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: thieving,
+            },
+        ));
+    }
+    if food_count > 0 {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared food in pack before Start",
+            Proof::ItemId {
+                id: food_id,
+                count: food_count,
+            },
+        ));
+    }
     steps.push(bank_fletcher_watch(
-        "acknowledge prepared food in pack before Start",
+        "acknowledge prepared weapon before Start",
         Proof::ItemId {
-            id: food_id,
-            count: food_count,
-        },
-    ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge prepared Adamant scimitar 1331 before Start",
-        Proof::ItemId {
-            id: COMBAT_SCIMITAR_ID,
+            id: weapon_id,
             count: 1,
         },
     ));
+    for &(_, id, count) in extra_give {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared extra gear before Start",
+            Proof::ItemId { id, count },
+        ));
+    }
     for &id in loot_empty {
         steps.push(bank_fletcher_watch(
             "confirm no seeded combat loot in pack before Start",
@@ -8799,8 +9000,13 @@ fn chaos_druid_scenario() -> Scenario {
         food_alias: "lobster",
         food_id: LOBSTER_ID,
         food_count: CHAOS_DRUID_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
         loot_empty: CHAOS_DRUID_LOOT_EMPTY,
         inject: CHAOS_DRUID_INJECT,
+        complete_quest: None,
+        thieving: 0,
     })
 }
 
@@ -8815,8 +9021,13 @@ fn moss_giant_scenario() -> Scenario {
         food_alias: "lobster",
         food_id: LOBSTER_ID,
         food_count: MOSS_GIANT_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
         loot_empty: MOSS_GIANT_LOOT_EMPTY,
         inject: MOSS_GIANT_INJECT,
+        complete_quest: None,
+        thieving: 0,
     })
 }
 
@@ -8831,8 +9042,13 @@ fn hill_giant_scenario() -> Scenario {
         food_alias: "trout",
         food_id: TROUT_ID,
         food_count: HILL_GIANT_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
         loot_empty: HILL_GIANT_LOOT_EMPTY,
         inject: HILL_GIANT_INJECT,
+        complete_quest: None,
+        thieving: 0,
     })
 }
 
@@ -8847,8 +9063,103 @@ fn auto_fighter_scenario() -> Scenario {
         food_alias: "trout",
         food_id: TROUT_ID,
         food_count: AUTO_FIGHTER_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
         loot_empty: AUTO_FIGHTER_LOOT_EMPTY,
         inject: AUTO_FIGHTER_INJECT,
+        complete_quest: None,
+        thieving: 0,
+    })
+}
+
+/// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
+/// Catalog requires native Rocks activation into Rock Crab. Banking is not
+/// this cell. SolveClue stays injected off.
+fn rock_crab_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "rock_crab",
+        card: "RockCrab",
+        tele: ROCK_CRAB_SPOT,
+        radius: 4,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: ROCK_CRAB_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
+        loot_empty: ROCK_CRAB_LOOT_EMPTY,
+        inject: ROCK_CRAB_INJECT,
+        complete_quest: None,
+        thieving: 0,
+    })
+}
+
+/// GreenDragon melee in the wilderness field. Shield 1540 is prepared;
+/// special and potions stay off. Catalog requires worn 1540 and dragon
+/// bones 536 or green hide 1753. Escape/bank is not this cell.
+fn green_dragon_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "green_dragon",
+        card: "GreenDragon",
+        tele: GREEN_DRAGON_FIELD,
+        radius: 22,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: GREEN_DRAGON_FOOD,
+        weapon_alias: "rune_scimitar",
+        weapon_id: RUNE_SCIMITAR_ID,
+        extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        loot_empty: GREEN_DRAGON_LOOT_EMPTY,
+        inject: GREEN_DRAGON_INJECT,
+        complete_quest: None,
+        thieving: 0,
+    })
+}
+
+/// FireGiant melee already inside the east dungeon room. Approach, barrel
+/// escape and bank are unqualified. Waterfall Quest plus amulet 295 and
+/// rope 954 use existing allowed preparation.
+fn fire_giant_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "fire_giant",
+        card: "FireGiant",
+        tele: FIRE_GIANT_ROOM,
+        radius: 10,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: FIRE_GIANT_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[
+            ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+            ("rope", ROPE_ID, 1),
+        ],
+        loot_empty: FIRE_GIANT_LOOT_EMPTY,
+        inject: FIRE_GIANT_INJECT,
+        complete_quest: Some("Waterfall Quest"),
+        thieving: 0,
+    })
+}
+
+/// ArdyFighter default Guard/strength. No fabricated cakes; the script
+/// must steal cake/bread/chocolate slice after Start. PeriodicBank Off.
+fn ardy_fighter_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "ardy_fighter",
+        card: "ArdyFighter",
+        tele: ARDOUGNE_GUARD,
+        radius: 12,
+        food_alias: "cake",
+        food_id: CAKE_ID,
+        food_count: 0,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
+        loot_empty: ARDY_FIGHTER_LOOT_EMPTY,
+        inject: ARDY_FIGHTER_INJECT,
+        complete_quest: None,
+        thieving: 5,
     })
 }
 
@@ -9408,6 +9719,10 @@ mod tests {
                 "moss_giant",
                 "hill_giant",
                 "auto_fighter",
+                "rock_crab",
+                "green_dragon",
+                "fire_giant",
+                "ardy_fighter",
                 "script_trade",
             ]
         );
@@ -12604,7 +12919,16 @@ mod tests {
         }));
         assert_eq!(auto.proof, strength);
 
-        for name in ["chaos_druid", "moss_giant", "hill_giant", "auto_fighter"] {
+        for name in [
+            "chaos_druid",
+            "moss_giant",
+            "hill_giant",
+            "auto_fighter",
+            "rock_crab",
+            "green_dragon",
+            "fire_giant",
+            "ardy_fighter",
+        ] {
             assert!(names().contains(&name));
             let scenario = get(name).unwrap();
             assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
@@ -12613,6 +12937,199 @@ mod tests {
                 .iter()
                 .any(|step| matches!(step.wait.arm, Proof::BankItemId { .. })));
         }
+    }
+
+    #[test]
+    fn remaining_fighter_core_cases_register_melee_cycles() {
+        let strength = Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1,
+        };
+        let rock = get("rock_crab").expect("rock_crab");
+        assert_eq!(rock.settings.start_script, Some("RockCrab"));
+        assert_eq!(rock.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("combatStyle"),
+            Some(&Value::String("melee".into()))
+        );
+        assert_eq!(
+            inject.get("meleeStyle"),
+            Some(&Value::String("strength".into()))
+        );
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert_eq!(
+            inject.get("bankStrategy"),
+            Some(&Value::String("Off".into()))
+        );
+        let start = rock
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = rock.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2704,
+            z: 3726,
+            level: 0,
+            radius: 4,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: ROCK_CRAB_FOOD,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: COMBAT_SCIMITAR_ID,
+            count: 1,
+        }));
+        assert_eq!(rock.steps[start + 1].wait.arm, strength);
+        assert_eq!(rock.proof, strength);
+
+        let dragon = get("green_dragon").expect("green_dragon");
+        assert_eq!(dragon.settings.start_script, Some("GreenDragon"));
+        let inject = settings_inject_map(dragon.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("useSpecial"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("usePotions"), Some(&Value::Bool(false)));
+        assert_eq!(
+            inject.get("escape"),
+            Some(&Value::String("Flee to bank".into()))
+        );
+        assert_eq!(
+            inject.get("weapon"),
+            Some(&Value::String("Rune scimitar".into()))
+        );
+        assert_eq!(
+            inject.get("shield"),
+            Some(&Value::String("Dragonfire shield".into()))
+        );
+        let start = dragon
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = dragon.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 3096,
+            z: 3814,
+            level: 0,
+            radius: 22,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: RUNE_SCIMITAR_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: DRAGONFIRE_SHIELD_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: DRAGON_BONES_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: GREEN_DRAGONHIDE_ID,
+            count: 0,
+        }));
+        assert_eq!(dragon.proof, strength);
+
+        let giant = get("fire_giant").expect("fire_giant");
+        assert_eq!(giant.settings.start_script, Some("FireGiant"));
+        let inject = settings_inject_map(giant.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("escapeTele"),
+            Some(&Value::String("Barrel (free)".into()))
+        );
+        assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
+        assert!(giant.steps.iter().any(|step| matches!(
+            step.wait.arm,
+            Proof::QuestDone {
+                name: "Waterfall Quest"
+            }
+        )));
+        let start = giant
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = giant.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2575,
+            z: 9893,
+            level: 0,
+            radius: 10,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: GLARIALS_AMULET_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: ROPE_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        }));
+        assert_eq!(giant.proof, strength);
+
+        let ardy = get("ardy_fighter").expect("ardy_fighter");
+        assert_eq!(ardy.settings.start_script, Some("ArdyFighter"));
+        let inject = settings_inject_map(ardy.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
+        assert_eq!(
+            inject.get("combatStyle"),
+            Some(&Value::String("strength".into()))
+        );
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert_eq!(
+            inject.get("bankStrategy"),
+            Some(&Value::String("Off".into()))
+        );
+        let start = ardy
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = ardy.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2661,
+            z: 3306,
+            level: 0,
+            radius: 12,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 5,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: CAKE_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BREAD_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: CHOCOLATE_SLICE_ID,
+            count: 0,
+        }));
+        assert!(!seed.contains(&Proof::ItemId {
+            id: CAKE_ID,
+            count: 1,
+        }));
+        assert_eq!(ardy.proof, strength);
     }
 
     #[test]
@@ -12715,6 +13232,10 @@ mod tests {
             "moss_giant",
             "hill_giant",
             "auto_fighter",
+            "rock_crab",
+            "green_dragon",
+            "fire_giant",
+            "ardy_fighter",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
