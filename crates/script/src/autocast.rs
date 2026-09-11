@@ -1,33 +1,209 @@
-//! Selected-world autocast control facts. JS keeps the frozen Autocast ABI
-//! and the 3000 ms three-press sequence. Rust owns the packed choose/grid/
-//! toggle identities so the shim never hardcodes 328/353/1829/349/108.
+//! Selected-world autocast control facts and Rust-owned arm sequencing.
+//! JS keeps the frozen Autocast ABI, dispatches returned buttons and logs the
+//! final reason. Rust owns the packed identities, phase order and deadlines.
 
 use api::game_data::{AutocastControls, SelectedGameData};
 use serde_json::{json, Value};
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
+const COMBAT_TAB: i32 = 0;
+const TAB_WAIT_MS: u64 = 2_000;
+const STEP_MS: u64 = 3_000;
 
 thread_local! {
-    static TOKEN: Cell<u64> = const { Cell::new(0) };
+    static RUNTIME: RefCell<AutocastRuntime> = const { RefCell::new(AutocastRuntime::new()) };
 }
 
-pub fn on_pause() {}
-pub fn on_resume() {}
-pub fn on_hold(_held: bool) {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Idle,
+    WaitTab,
+    WaitPanel,
+    WaitSelected,
+    WaitArmed,
+}
+
+struct ArmObservation {
+    ingame: bool,
+    active_side_tab: i32,
+    combat_tab_root: i32,
+    magic_varp_value: i32,
+}
+
+struct AutocastRuntime {
+    paused: bool,
+    held: bool,
+    frozen_at: Option<Instant>,
+    token: u64,
+    phase: Phase,
+    spell_com: i32,
+    deadline: Option<Instant>,
+}
+
+impl AutocastRuntime {
+    const fn new() -> Self {
+        Self {
+            paused: false,
+            held: false,
+            frozen_at: None,
+            token: 0,
+            phase: Phase::Idle,
+            spell_com: -1,
+            deadline: None,
+        }
+    }
+
+    fn frozen(&self) -> bool {
+        self.paused || self.held
+    }
+
+    fn now(&self) -> Instant {
+        self.frozen_at.unwrap_or_else(Instant::now)
+    }
+
+    fn set_freeze(&mut self, paused: bool, held: bool) {
+        let was_frozen = self.frozen();
+        self.paused = paused;
+        self.held = held;
+        let frozen = self.frozen();
+        if !was_frozen && frozen {
+            self.frozen_at = Some(Instant::now());
+        } else if was_frozen && !frozen {
+            if let Some(at) = self.frozen_at.take() {
+                if let Some(deadline) = self.deadline.as_mut() {
+                    *deadline += Instant::now().saturating_duration_since(at);
+                }
+            }
+        }
+    }
+
+    fn abort(&mut self) {
+        self.token = self.token.wrapping_add(1);
+        self.phase = Phase::Idle;
+        self.spell_com = -1;
+        self.deadline = None;
+    }
+
+    fn command(&mut self, phase: Phase, component_id: i32, timeout_ms: u64) -> Value {
+        self.phase = phase;
+        self.deadline = Some(self.now() + Duration::from_millis(timeout_ms));
+        json!({
+            "kind": "if-button",
+            "token": self.token,
+            "component_id": component_id,
+        })
+    }
+
+    fn done(&mut self, ok: bool, reason: &str) -> Value {
+        self.phase = Phase::Idle;
+        self.deadline = None;
+        json!({
+            "kind": "done",
+            "token": self.token,
+            "ok": ok,
+            "reason": reason,
+        })
+    }
+
+    fn begin(
+        &mut self,
+        controls: Option<&AutocastControls>,
+        spell_com: i32,
+        obs: &ArmObservation,
+    ) -> Value {
+        self.abort();
+        let Some(controls) = controls.filter(|controls| controls.available()) else {
+            return self.done(false, "missing-controls");
+        };
+        if spell_com < 0 {
+            return self.done(false, "unknown-spell");
+        }
+        if !obs.ingame {
+            return self.done(false, "missing-facts");
+        }
+        if obs.combat_tab_root != controls.staff_tab_root {
+            return self.done(false, "staff-missing");
+        }
+        self.spell_com = spell_com;
+        if obs.active_side_tab != COMBAT_TAB {
+            self.phase = Phase::WaitTab;
+            self.deadline = Some(self.now() + Duration::from_millis(TAB_WAIT_MS));
+            return json!({"kind": "side-tab", "token": self.token, "tab": COMBAT_TAB});
+        }
+        self.command(Phase::WaitPanel, controls.choose_com, STEP_MS)
+    }
+
+    fn next(
+        &mut self,
+        token: u64,
+        controls: Option<&AutocastControls>,
+        obs: &ArmObservation,
+    ) -> Value {
+        if token != self.token || self.phase == Phase::Idle {
+            return json!({"kind": "aborted", "token": self.token});
+        }
+        if self.frozen() {
+            return json!({"kind": "wait", "token": self.token});
+        }
+        if !obs.ingame {
+            return self.done(false, "aborted");
+        }
+        let Some(controls) = controls.filter(|controls| controls.available()) else {
+            return self.done(false, "missing-controls");
+        };
+        match self.phase {
+            Phase::Idle => json!({"kind": "aborted", "token": self.token}),
+            Phase::WaitTab if obs.active_side_tab == COMBAT_TAB => {
+                self.command(Phase::WaitPanel, controls.choose_com, STEP_MS)
+            }
+            Phase::WaitPanel if obs.combat_tab_root == controls.spell_panel_root => {
+                self.command(Phase::WaitSelected, self.spell_com, STEP_MS)
+            }
+            Phase::WaitSelected if obs.magic_varp_value == controls.selected_value => {
+                self.command(Phase::WaitArmed, controls.toggle_com, STEP_MS)
+            }
+            Phase::WaitArmed if obs.magic_varp_value == controls.armed_value => {
+                self.done(true, "armed")
+            }
+            phase if self.deadline.is_some_and(|deadline| self.now() >= deadline) => {
+                let reason = match phase {
+                    Phase::WaitTab => "open-tab",
+                    Phase::WaitPanel => "chooser",
+                    Phase::WaitSelected => "select",
+                    Phase::WaitArmed => "toggle",
+                    Phase::Idle => "aborted",
+                };
+                self.done(false, reason)
+            }
+            _ => json!({"kind": "wait", "token": self.token}),
+        }
+    }
+}
+
+pub fn on_pause() {
+    RUNTIME.with(|runtime| {
+        let held = runtime.borrow().held;
+        runtime.borrow_mut().set_freeze(true, held);
+    });
+}
+
+pub fn on_resume() {
+    RUNTIME.with(|runtime| {
+        let held = runtime.borrow().held;
+        runtime.borrow_mut().set_freeze(false, held);
+    });
+}
+
+pub fn on_hold(held: bool) {
+    RUNTIME.with(|runtime| {
+        let paused = runtime.borrow().paused;
+        runtime.borrow_mut().set_freeze(paused, held);
+    });
+}
 
 pub fn on_reset() {
-    TOKEN.with(|token| token.set(token.get().wrapping_add(1)));
-}
-
-fn bump_token() -> u64 {
-    TOKEN.with(|token| {
-        let next = token.get().wrapping_add(1);
-        token.set(next);
-        next
-    })
-}
-
-fn current_token() -> u64 {
-    TOKEN.with(Cell::get)
+    RUNTIME.with(|runtime| runtime.borrow_mut().abort());
 }
 
 pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
@@ -108,9 +284,44 @@ pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
                 .and_then(Value::as_i64)
                 .unwrap_or(0) as i32,
         ),
-        "begin" => json!({ "token": bump_token() }),
-        "current_token" => json!(current_token()),
+        "begin" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().begin(
+                data.and_then(SelectedGameData::autocast_controls),
+                input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
+                &read_arm_observation(input.get("observation")),
+            )
+        }),
+        "next" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().next(
+                input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                data.and_then(SelectedGameData::autocast_controls),
+                &read_arm_observation(input.get("observation")),
+            )
+        }),
+        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
         _ => controls_json(data),
+    }
+}
+
+fn read_arm_observation(value: Option<&Value>) -> ArmObservation {
+    let value = value.unwrap_or(&Value::Null);
+    ArmObservation {
+        ingame: value
+            .get("ingame")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        active_side_tab: value
+            .get("active_side_tab")
+            .and_then(Value::as_i64)
+            .unwrap_or(-1) as i32,
+        combat_tab_root: value
+            .get("combat_tab_root")
+            .and_then(Value::as_i64)
+            .unwrap_or(-1) as i32,
+        magic_varp_value: value
+            .get("magic_varp_value")
+            .and_then(Value::as_i64)
+            .unwrap_or(0) as i32,
     }
 }
 
@@ -164,5 +375,87 @@ mod tests {
         let armed = observe(Some(data.as_ref()), 328, 3);
         assert_eq!(armed["armed"], true);
         assert_eq!(armed["staff_attached"], true);
+    }
+
+    #[test]
+    fn missing_arm_observation_fails_closed() {
+        let data = data(ClientRevision::R274);
+        let result = dispatch(
+            Some(data.as_ref()),
+            &json!({"op": "begin", "spell_com": 1830}),
+        );
+        assert_eq!(result["kind"], "done");
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["reason"], "missing-facts");
+    }
+
+    #[test]
+    fn native_arm_next_owns_choose_spell_toggle_order() {
+        on_reset();
+        let data = data(ClientRevision::R274);
+        let begin = dispatch(
+            Some(data.as_ref()),
+            &json!({
+                "op": "begin",
+                "spell_com": 1830,
+                "observation": {
+                    "ingame": true,
+                    "active_side_tab": 0,
+                    "combat_tab_root": 328,
+                    "magic_varp_value": 0,
+                },
+            }),
+        );
+        let token = begin["token"].as_u64().expect("native arm token");
+        assert_eq!(begin["kind"], "if-button");
+        assert_eq!(begin["component_id"], 353);
+
+        let spell = dispatch(
+            Some(data.as_ref()),
+            &json!({
+                "op": "next",
+                "token": token,
+                "observation": {
+                    "ingame": true,
+                    "active_side_tab": 0,
+                    "combat_tab_root": 1829,
+                    "magic_varp_value": 0,
+                },
+            }),
+        );
+        assert_eq!(spell["kind"], "if-button");
+        assert_eq!(spell["component_id"], 1830);
+
+        let toggle = dispatch(
+            Some(data.as_ref()),
+            &json!({
+                "op": "next",
+                "token": token,
+                "observation": {
+                    "ingame": true,
+                    "active_side_tab": 0,
+                    "combat_tab_root": 1829,
+                    "magic_varp_value": 2,
+                },
+            }),
+        );
+        assert_eq!(toggle["kind"], "if-button");
+        assert_eq!(toggle["component_id"], 349);
+
+        let done = dispatch(
+            Some(data.as_ref()),
+            &json!({
+                "op": "next",
+                "token": token,
+                "observation": {
+                    "ingame": true,
+                    "active_side_tab": 0,
+                    "combat_tab_root": 328,
+                    "magic_varp_value": 3,
+                },
+            }),
+        );
+        assert_eq!(done["kind"], "done");
+        assert_eq!(done["ok"], true);
     }
 }

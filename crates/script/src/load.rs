@@ -1666,6 +1666,20 @@ mod isolate {
             })
             .map_err(|e| format!("register periodic bank: {e}"))?;
         runtime
+            .register_function("__rs2b0t_bank_open", |args: &[serde_json::Value]| {
+                Ok(crate::bank_open::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register bank open: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_cake_stall", |args: &[serde_json::Value]| {
+                Ok(crate::cake_stall::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register cake stall: {e}"))?;
+        runtime
             .register_function("__rs2b0t_death_recovery", |args: &[serde_json::Value]| {
                 Ok(crate::death_recovery::dispatch(
                     args.first().unwrap_or(&serde_json::Value::Null),
@@ -3113,6 +3127,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
+                                crate::bank_open::on_hold(host_hold);
+                                crate::cake_stall::on_hold(host_hold);
                                 crate::death_recovery::on_hold(host_hold);
                                 crate::autocast::on_hold(host_hold);
                                 crate::special::on_hold(host_hold);
@@ -3368,6 +3384,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 }
                 IsolateCmd::ResetSession => {
                     crate::periodic_bank::on_reset();
+                    crate::bank_open::on_reset();
+                    crate::cake_stall::on_reset();
                     crate::death_recovery::on_reset();
                     crate::autocast::on_reset();
                     crate::special::on_reset();
@@ -3377,6 +3395,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 IsolateCmd::Pause => {
                     paused = true;
                     crate::periodic_bank::on_pause();
+                    crate::bank_open::on_pause();
+                    crate::cake_stall::on_pause();
                     crate::death_recovery::on_pause();
                     crate::autocast::on_pause();
                     crate::special::on_pause();
@@ -3385,6 +3405,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 IsolateCmd::Resume => {
                     paused = false;
                     crate::periodic_bank::on_resume();
+                    crate::bank_open::on_resume();
+                    crate::cake_stall::on_resume();
                     crate::death_recovery::on_resume();
                     crate::autocast::on_resume();
                     crate::special::on_resume();

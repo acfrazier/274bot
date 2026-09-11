@@ -58,7 +58,11 @@ pub use load::{transpile_ts, LoadIsolate};
 #[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
+mod bank_open;
+#[cfg(feature = "load")]
 mod bank_withdraw;
+#[cfg(feature = "load")]
+mod cake_stall;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
