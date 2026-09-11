@@ -1,0 +1,82 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.log
+bytes=10668
+sha256=8d59602d6a5ccf51c0161aa9a09eb91c33f51b81c55fda47e16b5b99a63b4ddd
+lines=85
+===INTERESTING===
+3|{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"10
+4|[host-play] slot live349d3s_0: thread up
+14|{"phase":"baseline-after-preparation","scenario":"flax_picker","account":"live349d3s_0","observation":{"ingame":true,"scene_state":2,"player":"Live349d3s 0","tile":[2741,3444,0],"tick":13,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishin
+18|[script live349d3s_0] FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+20|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+22|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+24|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+26|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+28|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+30|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+33|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+34|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+36|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+38|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+40|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+43|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+45|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+48|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+49|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+51|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+53|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+55|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+59|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+61|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+63|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+65|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+66|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+68|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+70|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+72|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+75|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+77|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+79|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+81|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+84|[script live349d3s_0] tick 88: not impl: reader.toLocal
+85|FAIL: catalog_boundary_live: script error: tick 88: not impl: reader.toLocal
+===TAIL===
+46|[host] slot live349d3s_0: d_loop_us=730 d_raster_us=0 d_observe_us=74140 max_observe_us=14139 d_paints=0 d_skips=50 d_ticks=3 window_ms=1298
+47|[host] hitch live349d3s_0: observe_us=18356 paints=0 skips=721 ticks=42
+48|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+49|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+50|[host] slot live349d3s_0: d_loop_us=743 d_raster_us=0 d_observe_us=67948 max_observe_us=18356 d_paints=0 d_skips=50 d_ticks=2 window_ms=1293
+51|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+52|[host] slot live349d3s_0: d_loop_us=752 d_raster_us=0 d_observe_us=61936 max_observe_us=10642 d_paints=0 d_skips=50 d_ticks=2 window_ms=1315
+53|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+54|[host] slot live349d3s_0: d_loop_us=718 d_raster_us=0 d_observe_us=60372 max_observe_us=11899 d_paints=0 d_skips=50 d_ticks=2 window_ms=1304
+55|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+56|[host] slot live349d3s_0: d_loop_us=681 d_raster_us=0 d_observe_us=63130 max_observe_us=12665 d_paints=0 d_skips=50 d_ticks=2 window_ms=1275
+57|[host] hitch live349d3s_0: observe_us=16223 paints=0 skips=930 ticks=51
+58|[host] slot live349d3s_0: d_loop_us=669 d_raster_us=0 d_observe_us=64954 max_observe_us=16223 d_paints=0 d_skips=50 d_ticks=2 window_ms=1291
+59|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+60|[host] slot live349d3s_0: d_loop_us=718 d_raster_us=0 d_observe_us=61465 max_observe_us=10955 d_paints=0 d_skips=50 d_ticks=3 window_ms=1284
+61|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+62|[host] hitch live349d3s_0: observe_us=18412 paints=0 skips=1045 ticks=56
+63|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+64|[host] slot live349d3s_0: d_loop_us=740 d_raster_us=0 d_observe_us=83086 max_observe_us=18412 d_paints=0 d_skips=50 d_ticks=2 window_ms=1321
+65|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+66|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+67|[host] slot live349d3s_0: d_loop_us=775 d_raster_us=0 d_observe_us=62595 max_observe_us=12845 d_paints=0 d_skips=50 d_ticks=2 window_ms=1327
+68|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+69|[host] slot live349d3s_0: d_loop_us=672 d_raster_us=0 d_observe_us=62161 max_observe_us=13457 d_paints=0 d_skips=50 d_ticks=2 window_ms=1297
+70|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+71|[host] slot live349d3s_0: d_loop_us=731 d_raster_us=0 d_observe_us=66993 max_observe_us=12590 d_paints=0 d_skips=50 d_ticks=2 window_ms=1257
+72|[script live349d3s_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+73|[host] slot live349d3s_0: d_loop_us=726 d_raster_us=0 d_observe_us=68886 max_observe_us=13247 d_paints=0 d_skips=50 d_ticks=2 window_ms=1283
+74|[host] hitch live349d3s_0: observe_us=19329 paints=0 skips=1254 ticks=65
+75|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+76|[host] slot live349d3s_0: d_loop_us=753 d_raster_us=0 d_observe_us=74161 max_observe_us=19329 d_paints=0 d_skips=50 d_ticks=3 window_ms=1309
+77|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+78|[host] slot live349d3s_0: d_loop_us=657 d_raster_us=0 d_observe_us=67060 max_observe_us=11110 d_paints=0 d_skips=50 d_ticks=2 window_ms=1327
+79|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+80|[host] slot live349d3s_0: d_loop_us=659 d_raster_us=0 d_observe_us=62340 max_observe_us=13335 d_paints=0 d_skips=50 d_ticks=2 window_ms=1331
+81|[script live349d3s_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+82|test catalog_boundary_live has been running for over 60 seconds
+83|[host] slot live349d3s_0: d_loop_us=685 d_raster_us=0 d_observe_us=61571 max_observe_us=14531 d_paints=0 d_skips=50 d_ticks=2 window_ms=1355
+84|[script live349d3s_0] tick 88: not impl: reader.toLocal
+85|FAIL: catalog_boundary_live: script error: tick 88: not impl: reader.toLocal

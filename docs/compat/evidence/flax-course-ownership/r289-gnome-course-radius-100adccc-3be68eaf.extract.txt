@@ -1,0 +1,65 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r289-gnome-course-radius-100adccc-3be68eaf.log
+bytes=20914
+sha256=9a5a4320fcd776dd898c8f60703b037554beae78e3c5d1f452a9521a8d5866e9
+lines=140
+===INTERESTING===
+3|{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"10
+4|[host-play] slot liveokpx5p_0: thread up
+14|{"phase":"baseline-after-preparation","scenario":"gnome_course_radius","account":"liveokpx5p_0","observation":{"ingame":true,"scene_state":2,"player":"Liveokpx5p 0","tile":[2474,3436,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1
+18|[script liveokpx5p_0] running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 8 tiles
+19|[script liveokpx5p_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+30|[script liveokpx5p_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+35|[script liveokpx5p_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+39|[script liveokpx5p_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+47|[script liveokpx5p_0] interact Loc { x: 2486, z: 3419, level: 2, action: "Climb-down" }
+52|[script liveokpx5p_0] interact Loc { x: 2483, z: 3426, level: 0, action: "Climb-over" }
+57|[script liveokpx5p_0] interact Loc { x: 2484, z: 3431, level: 0, action: "Squeeze-through" }
+70|[script liveokpx5p_0] lap 1 complete
+73|[script liveokpx5p_0] course re-sync: step 0 (log balance) -> 6 (obstacle pipe)
+74|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+90|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+106|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+121|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+135|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+140|FAIL: catalog_boundary_live: scenario failed: step 9 (watch further Agility XP at the start of a second lap): stat_xp_gain(16)>=94 not seen within 150 ticks; evidence=Some(Evidence { scenario: "gnome_course_radius", outcome: "FAIL", predicate: "stat_xp_gain(16)>=94", ticks: 252, elapsed_ms: 135846, message: Some("step 9 (watch further Agility XP at the start of a second lap): stat_xp_gain(16)>=94 
+===TAIL===
+101|[host] slot liveokpx5p_0: d_loop_us=1038 d_raster_us=0 d_observe_us=60158 max_observe_us=8548 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+102|[host] slot liveokpx5p_0: d_loop_us=1090 d_raster_us=0 d_observe_us=64836 max_observe_us=14857 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+103|[host] slot liveokpx5p_0: d_loop_us=1425 d_raster_us=0 d_observe_us=62812 max_observe_us=12662 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+104|[host] hitch liveokpx5p_0: observe_us=17202 paints=0 skips=3275 ticks=143
+105|[host] slot liveokpx5p_0: d_loop_us=4550 d_raster_us=0 d_observe_us=88511 max_observe_us=17202 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+106|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+107|[host] slot liveokpx5p_0: d_loop_us=1123 d_raster_us=0 d_observe_us=84947 max_observe_us=11162 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+108|[host] slot liveokpx5p_0: d_loop_us=1081 d_raster_us=0 d_observe_us=71524 max_observe_us=10807 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+109|[host] slot liveokpx5p_0: d_loop_us=962 d_raster_us=0 d_observe_us=71290 max_observe_us=10650 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+110|[host] slot liveokpx5p_0: d_loop_us=1121 d_raster_us=0 d_observe_us=65118 max_observe_us=14512 d_paints=0 d_skips=50 d_ticks=2 window_ms=1210
+111|[host] slot liveokpx5p_0: d_loop_us=1153 d_raster_us=0 d_observe_us=70983 max_observe_us=14417 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+112|[host] slot liveokpx5p_0: d_loop_us=1156 d_raster_us=0 d_observe_us=74536 max_observe_us=13935 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+113|[host] slot liveokpx5p_0: d_loop_us=1283 d_raster_us=0 d_observe_us=75269 max_observe_us=12838 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+114|[host] slot liveokpx5p_0: d_loop_us=1143 d_raster_us=0 d_observe_us=69818 max_observe_us=12689 d_paints=0 d_skips=50 d_ticks=1 window_ms=1185
+115|[host] slot liveokpx5p_0: d_loop_us=1187 d_raster_us=0 d_observe_us=74469 max_observe_us=13344 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+116|[host] slot liveokpx5p_0: d_loop_us=1209 d_raster_us=0 d_observe_us=77459 max_observe_us=15064 d_paints=0 d_skips=50 d_ticks=3 window_ms=1214
+117|[host] slot liveokpx5p_0: d_loop_us=1113 d_raster_us=0 d_observe_us=85476 max_observe_us=12953 d_paints=0 d_skips=50 d_ticks=1 window_ms=1191
+118|[host] slot liveokpx5p_0: d_loop_us=1031 d_raster_us=0 d_observe_us=74493 max_observe_us=9694 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+119|[host] slot liveokpx5p_0: d_loop_us=1002 d_raster_us=0 d_observe_us=67615 max_observe_us=9119 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+120|[host] slot liveokpx5p_0: d_loop_us=848 d_raster_us=0 d_observe_us=62639 max_observe_us=8630 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+121|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+122|[host] slot liveokpx5p_0: d_loop_us=1064 d_raster_us=0 d_observe_us=74449 max_observe_us=11258 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+123|[host] slot liveokpx5p_0: d_loop_us=945 d_raster_us=0 d_observe_us=70458 max_observe_us=9298 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+124|[host] slot liveokpx5p_0: d_loop_us=955 d_raster_us=0 d_observe_us=73482 max_observe_us=12386 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+125|[host] slot liveokpx5p_0: d_loop_us=1235 d_raster_us=0 d_observe_us=79223 max_observe_us=8210 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+126|[host] slot liveokpx5p_0: d_loop_us=1373 d_raster_us=0 d_observe_us=75021 max_observe_us=13503 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+127|[host] slot liveokpx5p_0: d_loop_us=1223 d_raster_us=0 d_observe_us=75839 max_observe_us=14562 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+128|[host] slot liveokpx5p_0: d_loop_us=1221 d_raster_us=0 d_observe_us=74135 max_observe_us=14461 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+129|[host] slot liveokpx5p_0: d_loop_us=1039 d_raster_us=0 d_observe_us=57369 max_observe_us=10752 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+130|[host] slot liveokpx5p_0: d_loop_us=953 d_raster_us=0 d_observe_us=73805 max_observe_us=13202 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+131|[host] slot liveokpx5p_0: d_loop_us=2168 d_raster_us=0 d_observe_us=71157 max_observe_us=7921 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+132|[host] slot liveokpx5p_0: d_loop_us=933 d_raster_us=0 d_observe_us=47494 max_observe_us=8492 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+133|[host] slot liveokpx5p_0: d_loop_us=839 d_raster_us=0 d_observe_us=46536 max_observe_us=8164 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+134|[host] slot liveokpx5p_0: d_loop_us=1016 d_raster_us=0 d_observe_us=76505 max_observe_us=12348 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+135|[script liveokpx5p_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+136|[host] slot liveokpx5p_0: d_loop_us=1187 d_raster_us=0 d_observe_us=77808 max_observe_us=15288 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+137|[host] hitch liveokpx5p_0: observe_us=16575 paints=0 skips=4728 ticks=201
+138|[host] slot liveokpx5p_0: d_loop_us=1653 d_raster_us=0 d_observe_us=80669 max_observe_us=16575 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+139|[host] slot liveokpx5p_0: d_loop_us=1258 d_raster_us=0 d_observe_us=65925 max_observe_us=13964 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+140|FAIL: catalog_boundary_live: scenario failed: step 9 (watch further Agility XP at the start of a second lap): stat_xp_gain(16)>=94 not seen within 150 ticks; evidence=Some(Evidence { scenario: "gnome_course_radius", outcome: "FAIL", predicate: "stat_xp_gain(16)>=94", ticks: 252, elapsed_ms: 135846, message: Some("step 9 (watch further Agility XP at the start of a second lap): stat_xp_gain(16)>=94 not seen within 150 ticks"), tile: Some([2484, 3437, 0]), inv: [], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: "You can't enter the pipe from this side.", username: None }, ChatRow { text: "You can't enter the pipe from this side.", username: None }, ChatRow { text: "You can't enter the pipe from this side.", username: None }, ChatRow { text: "You can't enter the pipe from this side.", username: None }, ChatRow { text: "You can't enter the pipe from this side.", username: None }, ChatRow { text: "Congratulations, you just advanced an agility level.", username: None }, ChatRow { text: "You climb the netting...", username: None }, ChatRow { text: "You land on the ground.", username: None }, ChatRow { text: "You climb down the tree...", username: None }, ChatRow { text: "You carefully cross the tightrope.", username: None }, ChatRow { text: "...To the platform above.", username: None }, ChatRow { text: "You climb the tree..", username: None }, ChatRow { text: "You climb the netting...", username: None }, ChatRow { text: "...You make it safely to the other side.", username: None }, ChatRow { text: "You walk carefully across the slippery log...", username: None }, ChatRow { text: "set tutorial: to 1000", username: None }, ChatRow { text: "Welcome to RuneScape.", username: None }], scene: 2 })

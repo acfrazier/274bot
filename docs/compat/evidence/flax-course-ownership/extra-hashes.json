@@ -1,0 +1,27 @@
+[
+  {
+    "path": "vendor/fr-client-rust/crates/client/src/core/world.rs",
+    "sha256": "eb8520694e4d4b7f38dbc1176b8d5079dee650ecfafe84b8d35f07d93a0468fd",
+    "bytes": 47397
+  },
+  {
+    "path": ".superpowers/review-exports/catalog-root-b1cff8a7/crates/api/src/interact.rs",
+    "sha256": "7e2e23fabdcf29d82181c14e0b3f9399e21f0f16ae2c3126b0749ca9141deb06",
+    "bytes": 55244
+  },
+  {
+    "path": ".superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/mod.rs",
+    "sha256": "a40ab0a02bfef6b426f2f8b1d17a40d13ebf4dca3d64151e876df7191d99cbc6",
+    "bytes": 30167
+  },
+  {
+    "path": "docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-b1cff8a7-gpu-diagnostic/shots/2026-09-11T06-21-11_29226/2026-09-11T06-22-46_flax_picker.png",
+    "sha256": "36499950540d621ef7dd3d56b23e8a51238288411ec27d1ba02ebe4e795bda62",
+    "bytes": 1004818
+  },
+  {
+    "path": "docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-b1cff8a7-gpu-diagnostic/shots/2026-09-11T06-21-11_29226/2026-09-11T06-22-46_flax_picker.json",
+    "sha256": "23ef181e8c0ba70c46e60348904a7d0fd3f0f89635798a235d31625dec7eab98",
+    "bytes": 3437484
+  }
+]

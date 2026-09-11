@@ -1,0 +1,72 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-b1cff8a7.log
+bytes=19744
+sha256=21814df4787d556ac68558891e11250cb5e9a84c980bb3f325add1eacde635cd
+lines=154
+===INTERESTING===
+3|{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"10
+4|[host-play] slot live3g38yq_0: thread up
+14|{"phase":"baseline-after-preparation","scenario":"flax_picker","account":"live3g38yq_0","observation":{"ingame":true,"scene_state":2,"player":"Live3g38yq 0","tile":[2741,3444,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishin
+18|[script live3g38yq_0] FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+21|[script live3g38yq_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+25|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+28|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+31|[script live3g38yq_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick" }
+33|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+39|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+50|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+62|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+66|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+78|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+87|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+99|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+103|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+105|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+114|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+120|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+128|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+131|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+137|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+143|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+151|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+154|FAIL: catalog_boundary_live: scenario failed: step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks; evidence=Some(Evidence { scenario: "flax_picker", outcome: "FAIL", predicate: "has_item_id(1779)>=28", ticks: 161, elapsed_ms: 104662, message: Some("step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks"), tile: Some
+===TAIL===
+115|[host] slot live3g38yq_0: d_loop_us=555 d_raster_us=0 d_observe_us=41208 max_observe_us=7834 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+116|[host] slot live3g38yq_0: d_loop_us=568 d_raster_us=0 d_observe_us=45931 max_observe_us=8273 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+117|[host] slot live3g38yq_0: d_loop_us=584 d_raster_us=0 d_observe_us=43490 max_observe_us=7863 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+118|[host] slot live3g38yq_0: d_loop_us=578 d_raster_us=0 d_observe_us=44058 max_observe_us=7861 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+119|[host] slot live3g38yq_0: d_loop_us=673 d_raster_us=0 d_observe_us=46781 max_observe_us=7885 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+120|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+121|[host] slot live3g38yq_0: d_loop_us=665 d_raster_us=0 d_observe_us=46941 max_observe_us=7884 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+122|[host] hitch live3g38yq_0: observe_us=18397 paints=0 skips=2454 ticks=110
+123|[host] slot live3g38yq_0: d_loop_us=659 d_raster_us=0 d_observe_us=62456 max_observe_us=18397 d_paints=0 d_skips=50 d_ticks=2 window_ms=1157
+124|[host] slot live3g38yq_0: d_loop_us=784 d_raster_us=0 d_observe_us=60409 max_observe_us=12608 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+125|[host] slot live3g38yq_0: d_loop_us=738 d_raster_us=0 d_observe_us=63132 max_observe_us=11071 d_paints=0 d_skips=50 d_ticks=2 window_ms=1158
+126|[host] slot live3g38yq_0: d_loop_us=715 d_raster_us=0 d_observe_us=54145 max_observe_us=10603 d_paints=0 d_skips=50 d_ticks=2 window_ms=1170
+127|[host] slot live3g38yq_0: d_loop_us=692 d_raster_us=0 d_observe_us=55816 max_observe_us=10233 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+128|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+129|[host] slot live3g38yq_0: d_loop_us=775 d_raster_us=0 d_observe_us=51846 max_observe_us=9765 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+130|[host] hitch live3g38yq_0: observe_us=21545 paints=0 skips=2761 ticks=122
+131|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+132|[host] slot live3g38yq_0: d_loop_us=839 d_raster_us=0 d_observe_us=68646 max_observe_us=21545 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+133|[host] slot live3g38yq_0: d_loop_us=777 d_raster_us=0 d_observe_us=56226 max_observe_us=9530 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+134|[host] slot live3g38yq_0: d_loop_us=713 d_raster_us=0 d_observe_us=55852 max_observe_us=9619 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+135|[host] slot live3g38yq_0: d_loop_us=738 d_raster_us=0 d_observe_us=55485 max_observe_us=9609 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+136|[host] slot live3g38yq_0: d_loop_us=750 d_raster_us=0 d_observe_us=56593 max_observe_us=9520 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+137|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+138|[host] slot live3g38yq_0: d_loop_us=714 d_raster_us=0 d_observe_us=59957 max_observe_us=10395 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+139|[host] slot live3g38yq_0: d_loop_us=794 d_raster_us=0 d_observe_us=54142 max_observe_us=8860 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+140|[host] slot live3g38yq_0: d_loop_us=681 d_raster_us=0 d_observe_us=55615 max_observe_us=10502 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+141|[host] slot live3g38yq_0: d_loop_us=739 d_raster_us=0 d_observe_us=53382 max_observe_us=9434 d_paints=0 d_skips=50 d_ticks=2 window_ms=1163
+142|[host] slot live3g38yq_0: d_loop_us=800 d_raster_us=0 d_observe_us=52911 max_observe_us=9387 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+143|[script live3g38yq_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+144|[host] slot live3g38yq_0: d_loop_us=795 d_raster_us=0 d_observe_us=55788 max_observe_us=9184 d_paints=0 d_skips=50 d_ticks=2 window_ms=1162
+145|[host] slot live3g38yq_0: d_loop_us=714 d_raster_us=0 d_observe_us=49065 max_observe_us=8027 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+146|[host] hitch live3g38yq_0: observe_us=17221 paints=0 skips=3373 ticks=146
+147|[host] slot live3g38yq_0: d_loop_us=715 d_raster_us=0 d_observe_us=57167 max_observe_us=17221 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+148|[host] slot live3g38yq_0: d_loop_us=779 d_raster_us=0 d_observe_us=52221 max_observe_us=8723 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+149|[host] slot live3g38yq_0: d_loop_us=749 d_raster_us=0 d_observe_us=51091 max_observe_us=8959 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+150|[host] slot live3g38yq_0: d_loop_us=761 d_raster_us=0 d_observe_us=44915 max_observe_us=10163 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+151|[script live3g38yq_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+152|[host] slot live3g38yq_0: d_loop_us=824 d_raster_us=0 d_observe_us=61446 max_observe_us=9442 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+153|[host] hitch live3g38yq_0: observe_us=18053 paints=0 skips=3625 ticks=156
+154|FAIL: catalog_boundary_live: scenario failed: step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks; evidence=Some(Evidence { scenario: "flax_picker", outcome: "FAIL", predicate: "has_item_id(1779)>=28", ticks: 161, elapsed_ms: 104662, message: Some("step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks"), tile: Some([2738, 3441, 0]), inv: [InvRow { id: 1779, name: Some("Flax"), count: 1 }, InvRow { id: 1779, name: Some("Flax"), count: 1 }, InvRow { id: 1779, name: Some("Flax"), count: 1 }, InvRow { id: 1779, name: Some("Flax"), count: 1 }, InvRow { id: 1779, name: Some("Flax"), count: 1 }, InvRow { id: 1779, name: Some("Flax"), count: 1 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "You pick some flax.", username: None }, ChatRow { text: "Inventory wiped.", username: None }, ChatRow { text: "set tutorial: to 1000", username: None }, ChatRow { text: "Welcome to RuneScape.", username: None }], scene: 2 })

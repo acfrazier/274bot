@@ -1,0 +1,38 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/api/src/query.rs
+sha256=84158080adc1a00d4ba710083f27ad43d746b1a817cdc4c0257491baf9f7f0b9
+1638|/// Options for `SceneQuery::can_reach` (the m8aq `SceneReachOptions`).
+1722|fn can_reach_adjacent_tile(
+1747|fn can_reach_local(
+1770|            && can_reach_adjacent_tile(flags, to.0, to.1, to.0 - cur.0, to.1 - cur.1)
+1873|    pub fn walkable(&self, tile: WorldTile) -> bool {
+1910|    pub fn can_reach(&self, destination: WorldTile, options: &SceneReachOptions) -> bool {
+1921|        can_reach_local(
+1931|    /// `reachable` / `reachable_adj` bits use this — not N× [`Self::can_reach`].
+1933|    pub fn flood_reach(&self) -> Option<ReachFlood> {
+1950|        let mut reachable_adj = vec![0u64; words];
+1979|        reachable_adj.copy_from_slice(&reachable);
+1988|                if can_reach_adjacent_tile(&flags, nx, nz, dx, dz) {
+1989|                    set(&mut reachable_adj, idx(nx, nz));
+2000|            reachable_adj,
+2005|/// Bitsets from [`SceneQuery::flood_reach`]: O(1) per entity after one BFS.
+2014|    reachable_adj: Vec<u64>,
+2018|    /// `(reachable, reachable_adj)` for a world tile; both false if off-scene.
+2030|        (bit(&self.reachable), bit(&self.reachable_adj))
+2039|            pack_u64_bitset_to_u32(&self.reachable_adj, n),
+2045|/// scene retain and not a second flood: walkable bits come from the same
+2055|    pub walkable: Vec<u32>,
+2057|    pub reachable_adj: Vec<u32>,
+2075|            walkable: Vec::new(),
+2077|            reachable_adj: Vec::new(),
+2082|    /// Bitset bytes for one posted view (walkable + reachable + adj).
+2084|        self.walkable
+2087|            .saturating_add(self.reachable_adj.len())
+2147|/// Pack walkable bits from a borrowed scene (`SQ_BLOCKED == 0`, same
+2150|pub fn pack_walkable_u32(scene: &SceneView) -> Vec<u32> {
+2161|            let walkable = scene
+2165|            if walkable {
+2174|/// `DIRS[i]`. Same borrowed [`SceneView`] as walkable packing; no
+2222|    let (reachable, reachable_adj) = flood.pack_u32();
+2230|        walkable: pack_walkable_u32(scene),
+2232|        reachable_adj,
+2548|    /// Every walkable tile from which `loc` can be operated; `None` when
