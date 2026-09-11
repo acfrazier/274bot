@@ -1913,16 +1913,18 @@ const CHICKEN_KILLER_BANK_INJECT: &[ScriptSettingInject] = &[
 /// ChickenKiller loot-count trip: melee, `bankEveryItems=1`, Feather 314.
 /// Bones stay the bury keep-list default; melee `afterDeposit` is a no-op.
 /// Prepare only before Start. Proof is combat, exact loot, fresh deposit,
-/// return to the original anchor, then further Strength XP.
+/// return to the original anchor, then new exact feathers after the pack
+/// was emptied. Same-id `StatXpGain { min: 1 }` cannot witness further
+/// work: the runner keeps the first XP baseline per skill id.
 fn chicken_killer_bank_scenario() -> Scenario {
     let tele = FALADOR_CHICKENS;
     let first_strength = Proof::StatXpGain {
         id: STRENGTH_STAT,
         min: 1,
     };
-    let further_strength = Proof::StatXpGain {
-        id: STRENGTH_STAT,
-        min: 1,
+    let further_feathers = Proof::ItemId {
+        id: FEATHER_ID,
+        count: 1,
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
@@ -1991,7 +1993,7 @@ fn chicken_killer_bank_scenario() -> Scenario {
             "watch the periodic bank close after deposit",
             Proof::BankClosed,
         ),
-        ("watch further Strength XP after return", further_strength),
+        ("watch new exact Feather 314 after return", further_feathers),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
@@ -2002,7 +2004,7 @@ fn chicken_killer_bank_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: further_strength,
+        proof: further_feathers,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
@@ -5447,7 +5449,7 @@ mod tests {
         assert!(chickens.settings.require_mainland_base);
 
         // chicken_killer_bank: Falador pen after seed, loot-count inject, then
-        // combat / exact feather / fresh deposit / return r6 / further XP.
+        // combat / exact feather / fresh deposit / return r6 / new feathers.
         let bank = get("chicken_killer_bank").unwrap();
         let i = start_idx("chicken_killer_bank");
         assert_eq!(
@@ -6440,17 +6442,17 @@ mod tests {
                     radius: 6,
                 },
                 Proof::BankClosed,
-                Proof::StatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1
+                Proof::ItemId {
+                    id: FEATHER_ID,
+                    count: 1
                 },
             ]
         );
         assert_eq!(
             bank.proof,
-            Proof::StatXpGain {
-                id: STRENGTH_STAT,
-                min: 1
+            Proof::ItemId {
+                id: FEATHER_ID,
+                count: 1
             }
         );
         let core = get("chicken_killer").unwrap();
