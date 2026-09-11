@@ -1,0 +1,27 @@
+{
+  "mode": "native",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "catalog_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T17:13:02.323244+00:00",
+  "elapsed_seconds": 11.874,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Exclusive root compiler cache reused after completed Wildy and loader checks; source hashes and binary identity reverified; not empty-started",
+  "host_commit": "df2ba846a51e5010fe8dc8aa104222955b3b0cba",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-geardf2",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-geardf2",
+  "binary_sha256": "c6264375984ce6e0aabcea5b8bc95e217370ebe867919042f690297c08bed6b7",
+  "binary_bytes": 190432960,
+  "source_files_verified": 5111,
+  "elapsed_is_not_performance_measurement": true
+}

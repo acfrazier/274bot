@@ -9,7 +9,9 @@
     "script_suitability": "Script loading and starting are revision agnostic. Users determine suitability for their chosen revision and platform; host/client boundaries refuse unsupported operations. This evidence ledger is not a loading or starting allowlist.",
     "foreign_script_defects": "Operator clarified 2026-09-11: preserve host behavior; dim a demonstrably broken imported script with source identity, failure evidence and a clear reason. Keep the original inventory/history. Do not dim a host/shim bug or alter host semantics to accommodate foreign-script defects.",
     "ancillary_feature_stubs": "Ancillary dependencies such as clue solving remain honest stubs for separate future native host feature projects; integrate through the shim when those host features exist. Such unavailable ancillary scope alone does not dim an otherwise working card. Preserve the deferred branch refusal policy; no imported foreign planners or fabricated completion.",
-    "build_provenance": "Historical shared-target runs remain binary observations. Root detected compiled dependency reuse on 2026-09-11; exact-source acceptance requires isolated-build receipts and fresh qualification. See docs/compat/evidence/build-isolation/README.md."
+    "build_provenance": "Historical shared-target runs remain binary observations. Root detected compiled dependency reuse on 2026-09-11; exact-source acceptance requires isolated-build receipts and fresh qualification. See docs/compat/evidence/build-isolation/README.md.",
+    "headed_live": "Operator requires remaining LIVE qualification to use visible headed clients. Panel scenario PASS alone is not full catalog CoreWitness acceptance; reuse of full observer is tracked by151.",
+    "bank_sorter": "Operator explicitly chose unavailable on2026-09-11; no native sorting implementation in this campaign, no category-planner import and no value/ID replacement. Preserve existing sortBank refusal and original catalog inventory."
   },
   "catalogs": [
     {
@@ -17902,7 +17904,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Preparation failed before Start; no gameplay acceptance.",
+      "fixture_readiness": "Exact df2 older catalog shield preparation reached Start; full gameplay remains unqualified.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -17916,7 +17918,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 FAIL. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
+      "status_detail": "Exact df2 older catalog on both revisions failed the selected Strength XP watch after Start. Shield equipped, Attack/Strength/HP40, Defence1; rune scimitar still held. Newer cells held. Headed diagnosis151 pending; original repeat-wear failures retained.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -17930,7 +17932,8 @@
         "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-21446414.json",
         "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-geardf2.json"
       ]
     },
     {
@@ -18844,7 +18847,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Preparation failed before Start; no gameplay acceptance.",
+      "fixture_readiness": "Exact df2 older catalog shield preparation reached Start; full gameplay remains unqualified.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -18858,7 +18861,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 FAIL. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
+      "status_detail": "Exact df2 older catalog on both revisions failed the selected Strength XP watch after Start. Shield equipped, Attack/Strength/HP40, Defence1; rune scimitar still held. Newer cells held. Headed diagnosis151 pending; original repeat-wear failures retained.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -18872,7 +18875,8 @@
         "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-21446414.json",
         "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-geardf2.json"
       ]
     },
     {
@@ -24099,7 +24103,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
+      "status_detail": "Exact df2 mage core PASS for this revision/catalog after one-shot staff preparation; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.json",
@@ -24108,7 +24112,9 @@
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-21446414.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-mage-100adccc-stage2324.json",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-mage-100adccc-geardf2.json"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -25067,7 +25073,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
+      "status_detail": "Exact df2 mage core PASS for this revision/catalog after one-shot staff preparation; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.json",
@@ -25076,7 +25082,9 @@
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-21446414.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-mage-100adccc-stage2324.json",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-mage-100adccc-geardf2.json"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -31718,13 +31726,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-274",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "BankSorter",
@@ -31937,13 +31946,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-289",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "DartFletcher",
@@ -37862,12 +37872,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
+      "status_detail": "Exact324 FlaxAIO pick core PASS for this revision/catalog after native bounded reachability; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-stage2324.json"
       ],
       "resource2d589_results": [
         {
@@ -38036,12 +38047,13 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
+      "status_detail": "Exact324 FlaxAIO pick core PASS for this revision/catalog after native bounded reachability; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-stage2324.json"
       ],
       "resource2d589_results": [
         {
@@ -53406,7 +53418,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact df2 older catalog shield preparation reached Start; full gameplay remains unqualified.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -53420,7 +53432,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
+      "status_detail": "Exact df2 older catalog on both revisions failed the selected Strength XP watch after Start. Shield equipped, Attack/Strength/HP40, Defence1; rune scimitar still held. Newer cells held. Headed diagnosis151 pending; original repeat-wear failures retained.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "proof_refs": [
@@ -54339,7 +54351,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact df2 older catalog shield preparation reached Start; full gameplay remains unqualified.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -54353,7 +54365,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
+      "status_detail": "Exact df2 older catalog on both revisions failed the selected Strength XP watch after Start. Shield equipped, Attack/Strength/HP40, Defence1; rune scimitar still held. Newer cells held. Headed diagnosis151 pending; original repeat-wear failures retained.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "proof_refs": [
@@ -59549,13 +59561,14 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
+      "status_detail": "Exact df2 mage core PASS for this revision/catalog after one-shot staff preparation; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-8e7d965b-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-8e7d965b-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-mage-8e7d965b-geardf2.json"
       ]
     },
     {
@@ -60506,13 +60519,14 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
+      "status_detail": "Exact df2 mage core PASS for this revision/catalog after one-shot staff preparation; remaining card option and bank branches remain open. Historical failures retained.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-8e7d965b-combatcff.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-8e7d965b-combatcff.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-mage-8e7d965b-geardf2.json"
       ]
     },
     {
@@ -67024,13 +67038,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-274",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "BankSorter",
@@ -67243,13 +67258,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-289",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "DartFletcher",
@@ -73134,9 +73150,12 @@
       "observable_proof_requirement": "configured pick/spin branch inventory transitions, XP, and banking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact324 FlaxAIO pick core PASS for this revision/catalog after native bounded reachability; remaining card option and bank branches remain open. Historical failures retained.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-8e7d965b-stage2324.json"
+      ]
     },
     {
       "display_name": "FlaxAIO",
@@ -73294,9 +73313,12 @@
       "observable_proof_requirement": "configured pick/spin branch inventory transitions, XP, and banking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact324 FlaxAIO pick core PASS for this revision/catalog after native bounded reachability; remaining card option and bank branches remain open. Historical failures retained.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-8e7d965b-stage2324.json"
+      ]
     },
     {
       "display_name": "GemCutter",
@@ -81213,6 +81235,10 @@
         },
         "receipt": "docs/compat/evidence/brimhaven-source-dim/8e7d965b.json"
       }
-    ]
+    ],
+    "operator_unavailable_rows": 4,
+    "core_qualification_required_cards": 43,
+    "core_qualification_required_rows": 172,
+    "operator_unavailable_note": "BankSorter remains in original inventory; native sorting explicitly deferred. Loader counts above describe actual loader snapshot, not qualified support."
   }
 }

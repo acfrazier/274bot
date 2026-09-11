@@ -32,3 +32,16 @@ exposed an evidence serializer panic; see06an. Its fresh qualification, later
 capability work and the required whole-branch review remain separate. Main is
 still published through76b2016b7; this preflight is not a merge, complete catalog
 acceptance, Alpha2 release or performance result.
+
+## Current candidate checks
+
+Exact324d7b594, code-equivalent to original candidate9b3dc71c0, passed workspace
+formatting, strict all-target Clippy, full script517PASS/3existing ignored and
+catalog49PASS/1LIVE ignored.5030 source files were reverified. Evidence is in
+stage-2-preflight-324. Both native140 and mage132 actualG4.5 reviews approved.
+FlaxAIO pick now passes all four cells; both initial mage cells failed pre-Start
+on Repeat-wear and remain FAIL. Rootdf2 changes only two existing gear steps
+to Perform, preserving waits and generic runner semantics.105 scenario tests
+pass on exactdf2; fresh mage/Green qualification is running. Whole-branch
+review146 owns source/evidence approval before root integrates the candidate.
+This is an incremental milestone, not complete card/option or release acceptance.

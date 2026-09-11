@@ -92,3 +92,13 @@ Verify native identities/requirements on both caches and update the existing
 scenario/core baseline checks, comments and test fixtures together. Do not add
 mirrored metadata tests; existing exact-ID/fixture-invariant tests should suffice.
 Root runs the changed fixture once after review; any further failure stays FAIL.
+
+## Root ownership update17:09: two gear send kinds
+
+Fresh324 mage fails before Start on both revisions with the same Repeat-wear
+refusal as GreenDragon. Root now owns only changing these two existing gear
+steps from Repeat to Perform (send once, then wait), with isolated checks and
+fresh mage qualification for the stage2 milestone. Preserve that root change
+and do not duplicate/revert it. Continue your scoped stronger gear readiness/
+fixture work as appropriate, including real equipment ack before hostile teleport;
+the generic runner remains unchanged. All other139 preparation scope is yours.
