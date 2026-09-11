@@ -1,0 +1,54 @@
+{
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-tanner-arrival-78diag",
+  "source_manifest": "docs/compat/evidence/tanner-arrival-contract-audit/source-diagnostic-78.json",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/tanner-arrival-78diag",
+  "binary_sha256": "b9c09f7b73e0483e652fe60fd2c2f0f0cfb841f5079b46dfaf4d0bf6771d66e5",
+  "binary_bytes": 178802280,
+  "isolated_build": true,
+  "target_started_empty": false,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38",
+  "cache_reuse": "Completed root28/7c functional compiler cache; new exact78 source with one documented diagnostic-only overlay. No independent empty-start claim.",
+  "diagnostic_only": true,
+  "acceptance_eligible": false,
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.369,
+      "log": "docs/compat/evidence/tanner-arrival-contract-audit/diagnostic-build.log",
+      "log_sha256": "f57c1357b13de93aeb119d654fb5ed60cbc49ff614586fe897c5f5f642d189a8"
+    },
+    {
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--lib",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.628,
+      "log": "docs/compat/evidence/tanner-arrival-contract-audit/diagnostic-clippy.log",
+      "log_sha256": "bc0cf9203442c89a11bc10fef3e1e2e1227f263a268f6b304176d9c6f27ba2d4"
+    }
+  ]
+}

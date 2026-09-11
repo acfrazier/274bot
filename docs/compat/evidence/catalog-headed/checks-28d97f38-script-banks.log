@@ -1,0 +1,18 @@
+   Compiling image v0.25.10
+   Compiling deno_web v0.244.0
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-28d97f38/vendor/fr-client-rust/crates/client)
+   Compiling deno_crypto v0.227.0
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-28d97f38/crates/api)
+   Compiling rustyscript v0.12.3
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-28d97f38/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.59s
+     Running tests/named_bank_locations.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38/debug/deps/named_bank_locations-fa4ddcbb556cd62e)
+
+running 4 tests
+test absent_world_facts_leave_bank_locations_empty ... ok
+test import_time_find_sees_falador_without_a_snapshot ... ok
+test independent_isolates_do_not_share_named_bank_facts ... ok
+test nearest_bank_follows_posted_booth_not_the_alias_list ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+

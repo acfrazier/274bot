@@ -1,0 +1,20 @@
+{
+  "revision": 274,
+  "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "b9c09f7b73e0483e652fe60fd2c2f0f0cfb841f5079b46dfaf4d0bf6771d66e5",
+  "diagnostic_only": true,
+  "acceptance_eligible": false,
+  "source_manifest": "docs/compat/evidence/tanner-arrival-contract-audit/source-diagnostic-78.json",
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/tanner-arrival-78diag",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T10:02:33.563983+00:00",
+  "runner_sha256": "852da456ede144cc72728adb02e120dc67cc0590ba5e13429b99141bfe1a311e",
+  "pid": 14153
+}

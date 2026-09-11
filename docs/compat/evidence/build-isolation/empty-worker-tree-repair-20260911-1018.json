@@ -1,0 +1,10 @@
+{
+  "utc": "2026-09-11T10:17:56.028413+00:00",
+  "bad_commit": "de70706cbcc63ce7d52f3a624cf8c35d33f23fdd",
+  "bad_tree_path_count": 0,
+  "restored_parent": "fc5c9a49d9a4792251fd1c7bfdb5be4cc730c2aa",
+  "root_action": "Aborted before mutation after worker reset restored parent.",
+  "reflog": "fc5c9a49d HEAD@{2026-09-11 06:17:15 -0400}: reset: moving to fc5c9a49d9a4792251fd1c7bfdb5be4cc730c2aa\nde70706cb HEAD@{2026-09-11 06:16:31 -0400}: commit: Map native Baker stall selection and bounded cake attempt.\nfc5c9a49d HEAD@{2026-09-11 06:11:36 -0400}: commit: Add cooking smelting and spinning production-cycle fixtures.\n9cc6adb1f HEAD@{2026-09-11 06:09:11 -0400}: commit: Map ClientAdapter inventory onto posted native inv rows.\n9da99a6d5 HEAD@{2026-09-11 06:06:06 -0400}: commit: Resolve selected-item choices from borrowed game data.\n7c2eef6eb HEAD@{2026-09-11 05:44:42 -0400}: commit: Prepare paired NatureCrafter Air and Duel Arena fixtures.\n",
+  "working_files_present": true,
+  "followup": "Worker notified: no further resets; scoped commit diff must contain only owned paths."
+}

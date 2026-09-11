@@ -1,0 +1,31 @@
+{
+  "case": "air",
+  "revision": 274,
+  "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "ec99ecd1137d19f5e25228ce34105afd8fc7c389e98d60e5f0c8d209498f809e",
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/paired-catalog-7c2eef6e",
+    "paired_catalog_air_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T09:55:30.856769+00:00",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "PAIRED_CATALOG_REVISION": "274",
+    "PAIRED_CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "PAIRED_CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+    "PAIRED_CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+    "PAIRED_CATALOG_COMMIT": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "PAIRED_CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine"
+  },
+  "runner_sha256": "8c611e67113a6e3aae602a259beda56fb5f3d6d16e82242710a8198c7b62c5a2",
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 1749
+}

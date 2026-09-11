@@ -1,0 +1,238 @@
+
+running 1 test
+{"phase":"identity","case":"air","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"NatureCrafter","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/NatureCrafter/NatureCrafter.ts","source_sha256":"025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a","compiled_sha256":"0b3e4f6062041de83568da1b970960ca7b9023bb7ae33d1974054d2951a4b2ff","siblings":[{"module":"/rs2b0t/bot/scripts/bot/NatureRunnerLogic.js","compiled_sha256":"be4333d9c5b6aa95fb21de8ca896bfa5c2701060d96ce6f256d5ecb41bf6ba9c"}]},"accounts":["livexjql4i_0","livexjql4i_1"],"gold_deadline_secs":180,"gold_watch_ticks":150}
+[host-play] slot livexjql4i_0: thread up
+[host-play] slot livexjql4i_1: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot livexjql4i_1: handshake begin reconnect=false
+[host-play] slot livexjql4i_0: handshake begin reconnect=false
+[host-play] slot livexjql4i_1: handshake ok
+[host-play] slot livexjql4i_0: handshake ok
+[host-play] slot livexjql4i_1: queued mainland tele+setvar (scene 2)
+[host-play] slot livexjql4i_0: queued mainland tele+setvar (scene 2)
+[host] slot livexjql4i_1: d_loop_us=9934 d_raster_us=0 d_observe_us=19738 max_observe_us=1261 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host] slot livexjql4i_0: d_loop_us=8638 d_raster_us=0 d_observe_us=21338 max_observe_us=1780 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+{"phase":"before-relog","account":"livexjql4i_0"}
+{"phase":"before-relog","account":"livexjql4i_1"}
+[host-play] slot livexjql4i_0: handshake begin reconnect=true
+[host-play] slot livexjql4i_1: handshake begin reconnect=true
+[host-play] slot livexjql4i_0: handshake ok
+[host-play] slot livexjql4i_1: handshake ok
+[host] slot livexjql4i_0: d_loop_us=5381 d_raster_us=0 d_observe_us=27948 max_observe_us=2161 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot livexjql4i_1: d_loop_us=5491 d_raster_us=0 d_observe_us=26191 max_observe_us=1793 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"after-relog","account":"livexjql4i_0"}
+[host-play] slot livexjql4i_0: queued mainland tele+setvar (scene 2)
+{"phase":"seed-mutations-acknowledged","account":"livexjql4i_0","kind":"air_master_talisman_at_ruins","note":"seeded first supplies are distinct from later script-caused bank withdrawal/return/transfer"}
+{"phase":"after-relog","account":"livexjql4i_1"}
+[host-play] slot livexjql4i_1: queued mainland tele+setvar (scene 2)
+{"phase":"seed-mutations-acknowledged","account":"livexjql4i_1","kind":"air_runner_seeded_first_load_and_bank_at_ruins","note":"seeded first supplies are distinct from later script-caused bank withdrawal/return/transfer"}
+{"phase":"baseline-after-preparation","account":"livexjql4i_0","role":"master","seeded_first_supplies":false,"observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Livexjql4i 0","tile":[2983,3288,0],"tick":6,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false}}
+[script livexjql4i_0] start load
+{"phase":"start","account":"livexjql4i_0","kind":"air_master","settings":{"rune":"Air runes","mode":"Master","partner":"Livexjql4i 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false}}
+[host] hitch livexjql4i_1: observe_us=90090 paints=0 skips=74 ticks=6
+[host] hitch livexjql4i_0: observe_us=105313 paints=0 skips=71 ticks=6
+[script livexjql4i_0] NatureCrafter master starting — Air runes at (2983, 3288, 0), accepting essence from [Livexjql4i 1], banking everything every 60min
+[host] slot livexjql4i_0: d_loop_us=24040 d_raster_us=0 d_observe_us=191780 max_observe_us=105313 d_paints=0 d_skips=50 d_ticks=7 window_ms=4287
+[host] hitch livexjql4i_0: observe_us=16134 paints=0 skips=119 ticks=9
+[host] slot livexjql4i_0: d_loop_us=940 d_raster_us=0 d_observe_us=61438 max_observe_us=16134 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[host] slot livexjql4i_0: d_loop_us=884 d_raster_us=0 d_observe_us=67556 max_observe_us=15470 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[host] slot livexjql4i_0: d_loop_us=875 d_raster_us=0 d_observe_us=57955 max_observe_us=15564 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+[host] slot livexjql4i_0: d_loop_us=819 d_raster_us=0 d_observe_us=60837 max_observe_us=11151 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[host] slot livexjql4i_0: d_loop_us=924 d_raster_us=0 d_observe_us=64872 max_observe_us=15598 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[host] slot livexjql4i_0: d_loop_us=835 d_raster_us=0 d_observe_us=53834 max_observe_us=13947 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] hitch livexjql4i_0: observe_us=16776 paints=0 skips=419 ticks=21
+[host] slot livexjql4i_0: d_loop_us=912 d_raster_us=0 d_observe_us=72237 max_observe_us=16776 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] hitch livexjql4i_0: observe_us=16172 paints=0 skips=469 ticks=23
+[host] slot livexjql4i_0: d_loop_us=963 d_raster_us=0 d_observe_us=70216 max_observe_us=16172 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[host] hitch livexjql4i_0: observe_us=16381 paints=0 skips=544 ticks=26
+[host] slot livexjql4i_0: d_loop_us=1001 d_raster_us=0 d_observe_us=69398 max_observe_us=16381 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] slot livexjql4i_0: d_loop_us=936 d_raster_us=0 d_observe_us=66664 max_observe_us=15561 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] slot livexjql4i_1: d_loop_us=24627 d_raster_us=0 d_observe_us=155489 max_observe_us=90090 d_paints=0 d_skips=50 d_ticks=28 window_ms=16734
+[host] slot livexjql4i_0: d_loop_us=836 d_raster_us=0 d_observe_us=57269 max_observe_us=15217 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot livexjql4i_0: d_loop_us=948 d_raster_us=0 d_observe_us=64976 max_observe_us=15424 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot livexjql4i_0: d_loop_us=867 d_raster_us=0 d_observe_us=68942 max_observe_us=14959 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot livexjql4i_0: d_loop_us=708 d_raster_us=0 d_observe_us=47705 max_observe_us=12292 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+[host] slot livexjql4i_0: d_loop_us=687 d_raster_us=0 d_observe_us=50345 max_observe_us=15561 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] slot livexjql4i_0: d_loop_us=892 d_raster_us=0 d_observe_us=55803 max_observe_us=15443 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] slot livexjql4i_0: d_loop_us=872 d_raster_us=0 d_observe_us=57786 max_observe_us=15114 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch livexjql4i_0: observe_us=16896 paints=0 skips=992 ticks=44
+[host] slot livexjql4i_0: d_loop_us=862 d_raster_us=0 d_observe_us=65255 max_observe_us=16896 d_paints=0 d_skips=50 d_ticks=2 window_ms=1309
+[host] hitch livexjql4i_0: observe_us=16173 paints=0 skips=1038 ticks=46
+[host] slot livexjql4i_0: d_loop_us=912 d_raster_us=0 d_observe_us=66314 max_observe_us=16173 d_paints=0 d_skips=50 d_ticks=2 window_ms=1334
+[host] hitch livexjql4i_0: observe_us=16389 paints=0 skips=1059 ticks=47
+[host] slot livexjql4i_0: d_loop_us=922 d_raster_us=0 d_observe_us=65692 max_observe_us=16389 d_paints=0 d_skips=50 d_ticks=2 window_ms=1380
+[host] hitch livexjql4i_0: observe_us=16140 paints=0 skips=1126 ticks=50
+[host] slot livexjql4i_0: d_loop_us=919 d_raster_us=0 d_observe_us=83836 max_observe_us=16140 d_paints=0 d_skips=50 d_ticks=3 window_ms=1345
+[host] hitch livexjql4i_0: observe_us=16080 paints=0 skips=1171 ticks=52
+[host] slot livexjql4i_0: d_loop_us=890 d_raster_us=0 d_observe_us=70885 max_observe_us=16080 d_paints=0 d_skips=50 d_ticks=2 window_ms=1297
+[host] slot livexjql4i_0: d_loop_us=758 d_raster_us=0 d_observe_us=53002 max_observe_us=10679 d_paints=0 d_skips=50 d_ticks=2 window_ms=1366
+[host] slot livexjql4i_0: d_loop_us=654 d_raster_us=0 d_observe_us=39851 max_observe_us=8120 d_paints=0 d_skips=50 d_ticks=2 window_ms=1341
+[host] hitch livexjql4i_0: observe_us=17102 paints=0 skips=1349 ticks=60
+[host] slot livexjql4i_0: d_loop_us=862 d_raster_us=0 d_observe_us=79252 max_observe_us=17102 d_paints=0 d_skips=50 d_ticks=3 window_ms=1369
+[host] hitch livexjql4i_0: observe_us=17311 paints=0 skips=1394 ticks=62
+[host] slot livexjql4i_0: d_loop_us=984 d_raster_us=0 d_observe_us=66208 max_observe_us=17311 d_paints=0 d_skips=50 d_ticks=2 window_ms=1319
+[host] hitch livexjql4i_0: observe_us=17032 paints=0 skips=1417 ticks=63
+[host] slot livexjql4i_0: d_loop_us=892 d_raster_us=0 d_observe_us=75191 max_observe_us=17032 d_paints=0 d_skips=50 d_ticks=2 window_ms=1305
+[host] hitch livexjql4i_0: observe_us=16740 paints=0 skips=1485 ticks=66
+[host] slot livexjql4i_0: d_loop_us=833 d_raster_us=0 d_observe_us=61233 max_observe_us=16740 d_paints=0 d_skips=50 d_ticks=2 window_ms=1353
+[host] slot livexjql4i_1: d_loop_us=2112 d_raster_us=0 d_observe_us=28781 max_observe_us=1467 d_paints=0 d_skips=50 d_ticks=39 window_ms=23401
+[host] slot livexjql4i_0: d_loop_us=917 d_raster_us=0 d_observe_us=75798 max_observe_us=14934 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] hitch livexjql4i_0: observe_us=20223 paints=0 skips=1552 ticks=69
+[host] slot livexjql4i_0: d_loop_us=897 d_raster_us=0 d_observe_us=81115 max_observe_us=20223 d_paints=0 d_skips=50 d_ticks=3 window_ms=1326
+[host] slot livexjql4i_0: d_loop_us=855 d_raster_us=0 d_observe_us=71608 max_observe_us=15700 d_paints=0 d_skips=50 d_ticks=2 window_ms=1340
+[host] hitch livexjql4i_0: observe_us=16053 paints=0 skips=1664 ticks=74
+[host] slot livexjql4i_0: d_loop_us=871 d_raster_us=0 d_observe_us=73361 max_observe_us=16053 d_paints=0 d_skips=50 d_ticks=2 window_ms=1334
+[host] slot livexjql4i_0: d_loop_us=779 d_raster_us=0 d_observe_us=64185 max_observe_us=15017 d_paints=0 d_skips=50 d_ticks=2 window_ms=1355
+[host] slot livexjql4i_0: d_loop_us=1024 d_raster_us=0 d_observe_us=71486 max_observe_us=15855 d_paints=0 d_skips=50 d_ticks=3 window_ms=1296
+[host] slot livexjql4i_0: d_loop_us=862 d_raster_us=0 d_observe_us=77251 max_observe_us=15260 d_paints=0 d_skips=50 d_ticks=2 window_ms=1344
+test paired_catalog_air_live has been running for over 60 seconds
+[host] slot livexjql4i_0: d_loop_us=877 d_raster_us=0 d_observe_us=71707 max_observe_us=15060 d_paints=0 d_skips=50 d_ticks=2 window_ms=1356
+[host] hitch livexjql4i_0: observe_us=16201 paints=0 skips=1934 ticks=86
+[host] slot livexjql4i_0: d_loop_us=881 d_raster_us=0 d_observe_us=73256 max_observe_us=16201 d_paints=0 d_skips=50 d_ticks=2 window_ms=1313
+[host] slot livexjql4i_0: d_loop_us=936 d_raster_us=0 d_observe_us=72238 max_observe_us=15925 d_paints=0 d_skips=50 d_ticks=3 window_ms=1375
+[host] hitch livexjql4i_0: observe_us=18823 paints=0 skips=2000 ticks=89
+[host] hitch livexjql4i_0: observe_us=16124 paints=0 skips=2023 ticks=90
+[host] hitch livexjql4i_0: observe_us=16001 paints=0 skips=2046 ticks=91
+[host] slot livexjql4i_0: d_loop_us=929 d_raster_us=0 d_observe_us=95232 max_observe_us=18823 d_paints=0 d_skips=50 d_ticks=2 window_ms=1299
+[host] hitch livexjql4i_0: observe_us=16300 paints=0 skips=2092 ticks=93
+[host] slot livexjql4i_0: d_loop_us=870 d_raster_us=0 d_observe_us=72949 max_observe_us=16300 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[host] slot livexjql4i_0: d_loop_us=966 d_raster_us=0 d_observe_us=67018 max_observe_us=13704 d_paints=0 d_skips=50 d_ticks=2 window_ms=1366
+[host] slot livexjql4i_0: d_loop_us=929 d_raster_us=0 d_observe_us=65912 max_observe_us=15650 d_paints=0 d_skips=50 d_ticks=2 window_ms=1315
+[host] hitch livexjql4i_0: observe_us=17021 paints=0 skips=2225 ticks=99
+[host] hitch livexjql4i_0: observe_us=16197 paints=0 skips=2248 ticks=100
+[host] slot livexjql4i_0: d_loop_us=906 d_raster_us=0 d_observe_us=90497 max_observe_us=17021 d_paints=0 d_skips=50 d_ticks=3 window_ms=1326
+[host] slot livexjql4i_0: d_loop_us=977 d_raster_us=0 d_observe_us=73500 max_observe_us=15976 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] slot livexjql4i_0: d_loop_us=788 d_raster_us=0 d_observe_us=54820 max_observe_us=14514 d_paints=0 d_skips=50 d_ticks=2 window_ms=1328
+[host] hitch livexjql4i_0: observe_us=16978 paints=0 skips=2361 ticks=105
+[host] slot livexjql4i_0: d_loop_us=969 d_raster_us=0 d_observe_us=68221 max_observe_us=16978 d_paints=0 d_skips=50 d_ticks=2 window_ms=1344
+[host] slot livexjql4i_1: d_loop_us=2659 d_raster_us=0 d_observe_us=32458 max_observe_us=1417 d_paints=0 d_skips=50 d_ticks=41 window_ms=24606
+[host] slot livexjql4i_0: d_loop_us=874 d_raster_us=0 d_observe_us=59262 max_observe_us=15404 d_paints=0 d_skips=50 d_ticks=3 window_ms=1342
+[host] hitch livexjql4i_0: observe_us=16082 paints=0 skips=2496 ticks=111
+[host] slot livexjql4i_0: d_loop_us=936 d_raster_us=0 d_observe_us=79172 max_observe_us=16082 d_paints=0 d_skips=50 d_ticks=2 window_ms=1323
+[host] slot livexjql4i_0: d_loop_us=944 d_raster_us=0 d_observe_us=71401 max_observe_us=13416 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] hitch livexjql4i_0: observe_us=16628 paints=0 skips=2562 ticks=114
+[host] slot livexjql4i_0: d_loop_us=1071 d_raster_us=0 d_observe_us=71617 max_observe_us=16628 d_paints=0 d_skips=50 d_ticks=2 window_ms=1348
+[host] slot livexjql4i_0: d_loop_us=916 d_raster_us=0 d_observe_us=66386 max_observe_us=12345 d_paints=0 d_skips=50 d_ticks=2 window_ms=1349
+[host] hitch livexjql4i_0: observe_us=16431 paints=0 skips=2652 ticks=118
+[host] hitch livexjql4i_0: observe_us=16130 paints=0 skips=2696 ticks=120
+[host] slot livexjql4i_0: d_loop_us=1002 d_raster_us=0 d_observe_us=84206 max_observe_us=16431 d_paints=0 d_skips=50 d_ticks=3 window_ms=1335
+[host] hitch livexjql4i_0: observe_us=16329 paints=0 skips=2719 ticks=121
+[host] hitch livexjql4i_0: observe_us=16772 paints=0 skips=2742 ticks=122
+[host] slot livexjql4i_0: d_loop_us=934 d_raster_us=0 d_observe_us=71247 max_observe_us=16772 d_paints=0 d_skips=50 d_ticks=2 window_ms=1331
+[host] hitch livexjql4i_0: observe_us=16020 paints=0 skips=2787 ticks=124
+[host] slot livexjql4i_0: d_loop_us=939 d_raster_us=0 d_observe_us=72328 max_observe_us=16020 d_paints=0 d_skips=50 d_ticks=2 window_ms=1319
+[host] slot livexjql4i_0: d_loop_us=955 d_raster_us=0 d_observe_us=65483 max_observe_us=15274 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[host] slot livexjql4i_0: d_loop_us=807 d_raster_us=0 d_observe_us=67421 max_observe_us=13235 d_paints=0 d_skips=50 d_ticks=3 window_ms=1335
+[host] slot livexjql4i_0: d_loop_us=914 d_raster_us=0 d_observe_us=80506 max_observe_us=15147 d_paints=0 d_skips=50 d_ticks=2 window_ms=1318
+[host] slot livexjql4i_0: d_loop_us=888 d_raster_us=0 d_observe_us=68534 max_observe_us=15886 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[host] hitch livexjql4i_0: observe_us=18028 paints=0 skips=3012 ticks=134
+[host] slot livexjql4i_0: d_loop_us=847 d_raster_us=0 d_observe_us=67727 max_observe_us=18028 d_paints=0 d_skips=50 d_ticks=2 window_ms=1391
+[host] hitch livexjql4i_0: observe_us=16122 paints=0 skips=3056 ticks=136
+[host] slot livexjql4i_0: d_loop_us=921 d_raster_us=0 d_observe_us=67394 max_observe_us=16122 d_paints=0 d_skips=50 d_ticks=2 window_ms=1328
+[host] hitch livexjql4i_0: observe_us=18215 paints=0 skips=3101 ticks=138
+[host] hitch livexjql4i_0: observe_us=16020 paints=0 skips=3123 ticks=139
+[host] slot livexjql4i_0: d_loop_us=927 d_raster_us=0 d_observe_us=87680 max_observe_us=18215 d_paints=0 d_skips=50 d_ticks=3 window_ms=1337
+[host] slot livexjql4i_0: d_loop_us=934 d_raster_us=0 d_observe_us=64808 max_observe_us=14787 d_paints=0 d_skips=50 d_ticks=2 window_ms=1368
+[host] slot livexjql4i_0: d_loop_us=917 d_raster_us=0 d_observe_us=68784 max_observe_us=15316 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] hitch livexjql4i_0: observe_us=16497 paints=0 skips=3257 ticks=145
+[host] slot livexjql4i_0: d_loop_us=918 d_raster_us=0 d_observe_us=66210 max_observe_us=16497 d_paints=0 d_skips=50 d_ticks=2 window_ms=1329
+[host] hitch livexjql4i_0: observe_us=16386 paints=0 skips=3324 ticks=148
+[host] slot livexjql4i_0: d_loop_us=907 d_raster_us=0 d_observe_us=84921 max_observe_us=16386 d_paints=0 d_skips=50 d_ticks=3 window_ms=1314
+[host] slot livexjql4i_1: d_loop_us=2271 d_raster_us=0 d_observe_us=35271 max_observe_us=3478 d_paints=0 d_skips=50 d_ticks=41 window_ms=24597
+[host] slot livexjql4i_0: d_loop_us=871 d_raster_us=0 d_observe_us=71538 max_observe_us=14836 d_paints=0 d_skips=50 d_ticks=2 window_ms=1334
+[host] hitch livexjql4i_0: observe_us=16719 paints=0 skips=3439 ticks=153
+[host] slot livexjql4i_0: d_loop_us=871 d_raster_us=0 d_observe_us=70102 max_observe_us=16719 d_paints=0 d_skips=50 d_ticks=2 window_ms=1283
+[host] slot livexjql4i_0: d_loop_us=915 d_raster_us=0 d_observe_us=64267 max_observe_us=15911 d_paints=0 d_skips=50 d_ticks=2 window_ms=1340
+[host] hitch livexjql4i_0: observe_us=16186 paints=0 skips=3529 ticks=157
+[host] slot livexjql4i_0: d_loop_us=810 d_raster_us=0 d_observe_us=62734 max_observe_us=16186 d_paints=0 d_skips=50 d_ticks=2 window_ms=1338
+[host] slot livexjql4i_0: d_loop_us=658 d_raster_us=0 d_observe_us=69410 max_observe_us=15187 d_paints=0 d_skips=50 d_ticks=3 window_ms=1332
+[host] slot livexjql4i_0: d_loop_us=616 d_raster_us=0 d_observe_us=35546 max_observe_us=7866 d_paints=0 d_skips=50 d_ticks=2 window_ms=1317
+[host] slot livexjql4i_0: d_loop_us=641 d_raster_us=0 d_observe_us=36843 max_observe_us=8519 d_paints=0 d_skips=50 d_ticks=2 window_ms=1374
+[host] slot livexjql4i_0: d_loop_us=640 d_raster_us=0 d_observe_us=36658 max_observe_us=7764 d_paints=0 d_skips=50 d_ticks=2 window_ms=1357
+[host] slot livexjql4i_0: d_loop_us=676 d_raster_us=0 d_observe_us=43336 max_observe_us=7724 d_paints=0 d_skips=50 d_ticks=3 window_ms=1353
+[host] slot livexjql4i_0: d_loop_us=586 d_raster_us=0 d_observe_us=37148 max_observe_us=7888 d_paints=0 d_skips=50 d_ticks=2 window_ms=1329
+[host] slot livexjql4i_0: d_loop_us=612 d_raster_us=0 d_observe_us=35527 max_observe_us=8025 d_paints=0 d_skips=50 d_ticks=2 window_ms=1352
+[host] slot livexjql4i_0: d_loop_us=750 d_raster_us=0 d_observe_us=58689 max_observe_us=13811 d_paints=0 d_skips=50 d_ticks=2 window_ms=1312
+[host] slot livexjql4i_0: d_loop_us=986 d_raster_us=0 d_observe_us=64334 max_observe_us=15208 d_paints=0 d_skips=50 d_ticks=3 window_ms=1303
+[host] slot livexjql4i_0: d_loop_us=949 d_raster_us=0 d_observe_us=78203 max_observe_us=15591 d_paints=0 d_skips=50 d_ticks=2 window_ms=1359
+[host] hitch livexjql4i_0: observe_us=16612 paints=0 skips=4066 ticks=181
+[host] slot livexjql4i_0: d_loop_us=921 d_raster_us=0 d_observe_us=66908 max_observe_us=16612 d_paints=0 d_skips=50 d_ticks=2 window_ms=1353
+[host] hitch livexjql4i_0: observe_us=18992 paints=0 skips=4133 ticks=184
+[host] slot livexjql4i_0: d_loop_us=903 d_raster_us=0 d_observe_us=74964 max_observe_us=18992 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] slot livexjql4i_0: d_loop_us=992 d_raster_us=0 d_observe_us=63206 max_observe_us=14847 d_paints=0 d_skips=50 d_ticks=3 window_ms=1342
+[host] hitch livexjql4i_0: observe_us=17091 paints=0 skips=4200 ticks=187
+[host] slot livexjql4i_1: d_loop_us=1832 d_raster_us=0 d_observe_us=24940 max_observe_us=1147 d_paints=0 d_skips=50 d_ticks=38 window_ms=23397
+[host] slot livexjql4i_0: d_loop_us=875 d_raster_us=0 d_observe_us=80748 max_observe_us=17091 d_paints=0 d_skips=50 d_ticks=2 window_ms=1346
+[host] hitch livexjql4i_0: observe_us=16848 paints=0 skips=4267 ticks=190
+[host] slot livexjql4i_0: d_loop_us=827 d_raster_us=0 d_observe_us=62176 max_observe_us=16848 d_paints=0 d_skips=50 d_ticks=2 window_ms=1341
+[host] slot livexjql4i_0: d_loop_us=813 d_raster_us=0 d_observe_us=72517 max_observe_us=14630 d_paints=0 d_skips=50 d_ticks=2 window_ms=1338
+[host] hitch livexjql4i_0: observe_us=16051 paints=0 skips=4357 ticks=194
+[host] hitch livexjql4i_0: observe_us=16167 paints=0 skips=4379 ticks=195
+[host] slot livexjql4i_0: d_loop_us=918 d_raster_us=0 d_observe_us=75575 max_observe_us=16167 d_paints=0 d_skips=50 d_ticks=2 window_ms=1342
+[host] slot livexjql4i_0: d_loop_us=1005 d_raster_us=0 d_observe_us=85226 max_observe_us=15313 d_paints=0 d_skips=50 d_ticks=3 window_ms=1381
+[host] hitch livexjql4i_0: observe_us=17027 paints=0 skips=4466 ticks=199
+[host] hitch livexjql4i_0: observe_us=16985 paints=0 skips=4489 ticks=200
+[host] slot livexjql4i_0: d_loop_us=906 d_raster_us=0 d_observe_us=77540 max_observe_us=17027 d_paints=0 d_skips=50 d_ticks=2 window_ms=1346
+[host] slot livexjql4i_0: d_loop_us=915 d_raster_us=0 d_observe_us=65767 max_observe_us=15587 d_paints=0 d_skips=50 d_ticks=2 window_ms=1384
+[host] slot livexjql4i_0: d_loop_us=895 d_raster_us=0 d_observe_us=74157 max_observe_us=15997 d_paints=0 d_skips=50 d_ticks=3 window_ms=1355
+[host] hitch livexjql4i_0: observe_us=16768 paints=0 skips=4620 ticks=206
+[host] slot livexjql4i_0: d_loop_us=1229 d_raster_us=0 d_observe_us=77898 max_observe_us=16768 d_paints=0 d_skips=50 d_ticks=2 window_ms=1357
+[host] hitch livexjql4i_0: observe_us=16338 paints=0 skips=4665 ticks=208
+[host] slot livexjql4i_0: d_loop_us=916 d_raster_us=0 d_observe_us=68800 max_observe_us=16338 d_paints=0 d_skips=50 d_ticks=2 window_ms=1336
+[host] slot livexjql4i_0: d_loop_us=924 d_raster_us=0 d_observe_us=76727 max_observe_us=15985 d_paints=0 d_skips=50 d_ticks=2 window_ms=1324
+[host] slot livexjql4i_0: d_loop_us=871 d_raster_us=0 d_observe_us=67136 max_observe_us=15953 d_paints=0 d_skips=50 d_ticks=3 window_ms=1334
+[host] slot livexjql4i_0: d_loop_us=889 d_raster_us=0 d_observe_us=66866 max_observe_us=12051 d_paints=0 d_skips=50 d_ticks=2 window_ms=1320
+[host] slot livexjql4i_0: d_loop_us=955 d_raster_us=0 d_observe_us=68485 max_observe_us=13684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1345
+[host] slot livexjql4i_0: d_loop_us=847 d_raster_us=0 d_observe_us=70730 max_observe_us=15409 d_paints=0 d_skips=50 d_ticks=2 window_ms=1353
+[host] hitch livexjql4i_0: observe_us=16827 paints=0 skips=4979 ticks=222
+[host] slot livexjql4i_0: d_loop_us=960 d_raster_us=0 d_observe_us=70972 max_observe_us=16827 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[host] hitch livexjql4i_0: observe_us=17936 paints=0 skips=5002 ticks=223
+[host] slot livexjql4i_0: d_loop_us=981 d_raster_us=0 d_observe_us=83980 max_observe_us=17936 d_paints=0 d_skips=50 d_ticks=3 window_ms=1332
+[host] hitch livexjql4i_0: observe_us=18979 paints=0 skips=5091 ticks=227
+[host] slot livexjql4i_0: d_loop_us=862 d_raster_us=0 d_observe_us=74541 max_observe_us=18979 d_paints=0 d_skips=50 d_ticks=2 window_ms=1348
+[host] hitch livexjql4i_0: observe_us=16212 paints=0 skips=5136 ticks=229
+[host] slot livexjql4i_0: d_loop_us=894 d_raster_us=0 d_observe_us=65546 max_observe_us=16212 d_paints=0 d_skips=50 d_ticks=2 window_ms=1345
+[host] slot livexjql4i_1: d_loop_us=2466 d_raster_us=0 d_observe_us=33391 max_observe_us=1835 d_paints=0 d_skips=50 d_ticks=41 window_ms=24598
+[host] slot livexjql4i_0: d_loop_us=952 d_raster_us=0 d_observe_us=67586 max_observe_us=15920 d_paints=0 d_skips=50 d_ticks=2 window_ms=1351
+[host] hitch livexjql4i_0: observe_us=17075 paints=0 skips=5203 ticks=232
+[host] slot livexjql4i_0: d_loop_us=872 d_raster_us=0 d_observe_us=76749 max_observe_us=17075 d_paints=0 d_skips=50 d_ticks=3 window_ms=1345
+[host] slot livexjql4i_0: d_loop_us=920 d_raster_us=0 d_observe_us=57613 max_observe_us=15383 d_paints=0 d_skips=50 d_ticks=2 window_ms=1357
+[host] hitch livexjql4i_0: observe_us=16872 paints=0 skips=5315 ticks=237
+[host] slot livexjql4i_0: d_loop_us=895 d_raster_us=0 d_observe_us=69809 max_observe_us=16872 d_paints=0 d_skips=50 d_ticks=2 window_ms=1287
+[host] hitch livexjql4i_0: observe_us=16055 paints=0 skips=5360 ticks=239
+[host] slot livexjql4i_0: d_loop_us=863 d_raster_us=0 d_observe_us=74398 max_observe_us=16055 d_paints=0 d_skips=50 d_ticks=2 window_ms=1355
+[host] hitch livexjql4i_0: observe_us=16310 paints=0 skips=5427 ticks=242
+[host] slot livexjql4i_0: d_loop_us=933 d_raster_us=0 d_observe_us=73888 max_observe_us=16310 d_paints=0 d_skips=50 d_ticks=2 window_ms=1300
+[host] slot livexjql4i_0: d_loop_us=952 d_raster_us=0 d_observe_us=71001 max_observe_us=14696 d_paints=0 d_skips=50 d_ticks=3 window_ms=1369
+[host] slot livexjql4i_0: d_loop_us=967 d_raster_us=0 d_observe_us=77257 max_observe_us=15778 d_paints=0 d_skips=50 d_ticks=2 window_ms=1336
+[host] slot livexjql4i_0: d_loop_us=1034 d_raster_us=0 d_observe_us=71732 max_observe_us=14024 d_paints=0 d_skips=50 d_ticks=2 window_ms=1350
+[host] slot livexjql4i_0: d_loop_us=856 d_raster_us=0 d_observe_us=69541 max_observe_us=14618 d_paints=0 d_skips=50 d_ticks=2 window_ms=1312
+[host] hitch livexjql4i_0: observe_us=16882 paints=0 skips=5698 ticks=254
+[host] slot livexjql4i_0: d_loop_us=799 d_raster_us=0 d_observe_us=90585 max_observe_us=16882 d_paints=0 d_skips=50 d_ticks=3 window_ms=1309
+[host] slot livexjql4i_0: d_loop_us=922 d_raster_us=0 d_observe_us=63697 max_observe_us=14718 d_paints=0 d_skips=50 d_ticks=2 window_ms=1311
+[host] slot livexjql4i_0: d_loop_us=811 d_raster_us=0 d_observe_us=54628 max_observe_us=12748 d_paints=0 d_skips=50 d_ticks=2 window_ms=1325
+[host] hitch livexjql4i_0: observe_us=18090 paints=0 skips=5811 ticks=259
+[host] hitch livexjql4i_0: observe_us=16908 paints=0 skips=5833 ticks=260
+[host] slot livexjql4i_0: d_loop_us=918 d_raster_us=0 d_observe_us=73189 max_observe_us=18090 d_paints=0 d_skips=50 d_ticks=2 window_ms=1362
+[host] hitch livexjql4i_0: observe_us=16359 paints=0 skips=5878 ticks=262
+[host] slot livexjql4i_0: d_loop_us=998 d_raster_us=0 d_observe_us=73544 max_observe_us=16359 d_paints=0 d_skips=50 d_ticks=3 window_ms=1356
+[host] hitch livexjql4i_0: observe_us=17886 paints=0 skips=5900 ticks=263
+[host] slot livexjql4i_0: d_loop_us=799 d_raster_us=0 d_observe_us=78186 max_observe_us=17886 d_paints=0 d_skips=50 d_ticks=2 window_ms=1320
+[host] hitch livexjql4i_0: observe_us=16238 paints=0 skips=5990 ticks=267
+[host] slot livexjql4i_0: d_loop_us=727 d_raster_us=0 d_observe_us=67714 max_observe_us=16238 d_paints=0 d_skips=50 d_ticks=2 window_ms=1339
+[host] slot livexjql4i_0: d_loop_us=861 d_raster_us=0 d_observe_us=70764 max_observe_us=15860 d_paints=0 d_skips=50 d_ticks=2 window_ms=1340
+[host] slot livexjql4i_1: d_loop_us=2338 d_raster_us=0 d_observe_us=34849 max_observe_us=2428 d_paints=0 d_skips=50 d_ticks=41 window_ms=23998
+[host] hitch livexjql4i_0: observe_us=16005 paints=0 skips=6056 ticks=270
+[host] slot livexjql4i_0: d_loop_us=856 d_raster_us=0 d_observe_us=64206 max_observe_us=16005 d_paints=0 d_skips=50 d_ticks=2 window_ms=1336
+[host] slot livexjql4i_0: d_loop_us=876 d_raster_us=0 d_observe_us=78423 max_observe_us=14840 d_paints=0 d_skips=50 d_ticks=3 window_ms=1336
+[host] slot livexjql4i_0: d_loop_us=824 d_raster_us=0 d_observe_us=68651 max_observe_us=12645 d_paints=0 d_skips=50 d_ticks=2 window_ms=1342
+[host] slot livexjql4i_0: d_loop_us=886 d_raster_us=0 d_observe_us=58812 max_observe_us=10007 d_paints=0 d_skips=50 d_ticks=2 window_ms=1299
+[host] slot livexjql4i_0: d_loop_us=758 d_raster_us=0 d_observe_us=65891 max_observe_us=11532 d_paints=0 d_skips=50 d_ticks=2 window_ms=1346
+[host] slot livexjql4i_0: d_loop_us=781 d_raster_us=0 d_observe_us=74136 max_observe_us=9806 d_paints=0 d_skips=50 d_ticks=3 window_ms=1319
+[host] hitch livexjql4i_0: observe_us=16796 paints=0 skips=6395 ticks=285
+[host] slot livexjql4i_0: d_loop_us=712 d_raster_us=0 d_observe_us=78513 max_observe_us=16796 d_paints=0 d_skips=50 d_ticks=2 window_ms=1324
+[host] slot livexjql4i_0: d_loop_us=772 d_raster_us=0 d_observe_us=59538 max_observe_us=11869 d_paints=0 d_skips=50 d_ticks=2 window_ms=1326
+[host] slot livexjql4i_0: d_loop_us=759 d_raster_us=0 d_observe_us=66613 max_observe_us=10059 d_paints=0 d_skips=50 d_ticks=2 window_ms=1342
+[host] slot livexjql4i_0: d_loop_us=692 d_raster_us=0 d_observe_us=59056 max_observe_us=9217 d_paints=0 d_skips=50 d_ticks=2 window_ms=1329
+{"phase":"witness","air_a":{"role":"master","account":"livexjql4i_0","expected_player":"Livexjql4i 0","partner":"Livexjql4i 1","settings":{"rune":"Air runes","mode":"Master","partner":"Livexjql4i 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Livexjql4i 0","tile":[2983,3288,0],"tick":6,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Livexjql4i 0","tile":[2983,3288,0],"tick":292,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"post_start":6503,"mixed_identity":false,"saw_offer_with_partner":false,"saw_confirm_with_partner":false,"saw_wrong_partner":false,"peak_essence":0,"min_essence_after_start":0,"transferred_out":0,"transferred_in":0,"saw_bank_open_loaded":false,"saw_bank_at_falador":false,"restock_withdraw":false,"returned_to_ruins":false,"air_from_script":0,"xp_from_script":0},"air_b":null,"duel_a":null,"duel_b":null}
+FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false

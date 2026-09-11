@@ -1,0 +1,224 @@
+{
+  "at": "2026-09-11T09:34:09.099265+00:00",
+  "scope": "Eleven completed implementation/review compiler targets only. Actual latest reviews approved in live Kanban DB. Source exports, root copied native/headless binaries and all source/evidence/logs retained. No active/root shared target selected.",
+  "rows": [
+    {
+      "task": {
+        "id": "t_79dfc132",
+        "title": "Complete selected-world autocast controls",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1249,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/autocast-review-t_79dfc132-r1249-target",
+      "no_open_references": true,
+      "bytes_before": 5067710464,
+      "method": "Explicit removal of completed untracked compiler target without marker; no marker synthesized."
+    },
+    {
+      "task": {
+        "id": "t_79dfc132",
+        "title": "Complete selected-world autocast controls",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1249,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/autocast-t_79dfc132-target",
+      "no_open_references": true,
+      "bytes_before": 5067608064,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 12276 files, 4.9GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_c35281b3",
+        "title": "Preserve selected loc identity when scene layers share a tile",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1254,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/loc-identity-review-t_c35281b3-r1254-target",
+      "no_open_references": true,
+      "bytes_before": 4096987136,
+      "method": "Explicit removal of completed untracked compiler target without marker; no marker synthesized."
+    },
+    {
+      "task": {
+        "id": "t_c35281b3",
+        "title": "Preserve selected loc identity when scene layers share a tile",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1254,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/loc-identity-t_c35281b3-target",
+      "no_open_references": true,
+      "bytes_before": 4096954368,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 11046 files, 3.9GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_af045121",
+        "title": "Map exact selected component-item Input invButton operations",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1261,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-review-t_af045121-r1261-target",
+      "no_open_references": true,
+      "bytes_before": 4100222976,
+      "method": "Explicit removal of completed untracked compiler target without marker; no marker synthesized."
+    },
+    {
+      "task": {
+        "id": "t_af045121",
+        "title": "Map exact selected component-item Input invButton operations",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1261,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-t_af045121-target",
+      "no_open_references": true,
+      "bytes_before": 4100136960,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 11058 files, 4.0GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_32400aa2",
+        "title": "Complete TUI editors for existing supported catalog parameters",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1265,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t32400aa2-reviewer-r1-target",
+      "no_open_references": true,
+      "bytes_before": 4272050176,
+      "method": "Explicit removal of completed untracked compiler target without marker; no marker synthesized."
+    },
+    {
+      "task": {
+        "id": "t_32400aa2",
+        "title": "Complete TUI editors for existing supported catalog parameters",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1265,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t32400aa2-tui-params-target",
+      "no_open_references": true,
+      "bytes_before": 4249853952,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 11949 files, 4.1GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_35ee61ac",
+        "title": "Keep live proof reports from corrupting the active TUI",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1252,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t35ee61ac-tui-proof-target",
+      "no_open_references": true,
+      "bytes_before": 4245336064,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 11934 files, 4.1GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_35ee61ac",
+        "title": "Keep live proof reports from corrupting the active TUI",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1252,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t35ee61ac-tui-proof-reviewer-target",
+      "no_open_references": true,
+      "bytes_before": 4110991360,
+      "method": "Explicit removal of completed untracked compiler target without marker; no marker synthesized."
+    },
+    {
+      "task": {
+        "id": "t_7dd2b216",
+        "title": "Add TannerBot conversion and bank-cycle fixtures",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1246,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t7dd2b216-tanner-target",
+      "no_open_references": true,
+      "bytes_before": 5187153920,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 14373 files, 5.1GiB total\n"
+    }
+  ],
+  "bytes_removed": 48595005440,
+  "finished_at": "2026-09-11T09:34:45.964761+00:00"
+}

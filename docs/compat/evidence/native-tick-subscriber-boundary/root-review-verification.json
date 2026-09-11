@@ -1,0 +1,84 @@
+{
+  "run": {
+    "id": 1300,
+    "profile": "grok46",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Read-only grok46 design: Duel bothrev FAIL is missing BotHost.addTickListener, not a missing tick publisher. Thin map is a JS Set fired after existing snapshot+Tick on normal __rs_tick (before onStart) and parked __rs2b0t_pump (before settle); pause/hold/stale skips stay frozen. No foreign attach, opcode, or frame poll. Report 04aa plus evidence; Root owns implementation and LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "design",
+      "kind": "bounded-read-only-design",
+      "report": "docs/compat/04aa-native-tick-subscriber-boundary.md",
+      "evidence": "docs/compat/evidence/native-tick-subscriber-boundary/",
+      "paired_duel_fail_host": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+      "campaign_head": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+      "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "verdict": "map addTickListener onto existing posted IsolateCmd::Tick; do not invent opcode/attach/frame poll",
+      "owned_implementation_files": [
+        "crates/script/src/shim/bot_host.js",
+        "crates/script/src/shim/execution.js",
+        "crates/script/src/load.rs"
+      ],
+      "hotspot": "crates/script/src/load.rs \u2014 COMPAT_RUNNER fire site only",
+      "do_not_touch": [
+        "crates/script/src/shim/client_adapter.js",
+        "registry/UI",
+        "paired catalog tests"
+      ],
+      "tests_proposed": "crates/script/tests/tick_subscriber.rs",
+      "compiler": false,
+      "live": false,
+      "source_edits": false,
+      "sha256_04aa": "b8e9cf3401b183ed13032077f4723fd99b2e559b097c356c8344503184ab45ca",
+      "artifacts": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/04aa-native-tick-subscriber-boundary.md",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/native-tick-subscriber-boundary/refs.json",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/native-tick-subscriber-boundary/hypotheses.json"
+      ],
+      "worker_session_id": "20260911_060155_ddad86"
+    },
+    "worker_pid": null,
+    "started_at": 1789120911,
+    "ended_at": 1789121608
+  },
+  "metadata": {
+    "review_outcome": "design",
+    "kind": "bounded-read-only-design",
+    "report": "docs/compat/04aa-native-tick-subscriber-boundary.md",
+    "evidence": "docs/compat/evidence/native-tick-subscriber-boundary/",
+    "paired_duel_fail_host": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "campaign_head": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+    "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "verdict": "map addTickListener onto existing posted IsolateCmd::Tick; do not invent opcode/attach/frame poll",
+    "owned_implementation_files": [
+      "crates/script/src/shim/bot_host.js",
+      "crates/script/src/shim/execution.js",
+      "crates/script/src/load.rs"
+    ],
+    "hotspot": "crates/script/src/load.rs \u2014 COMPAT_RUNNER fire site only",
+    "do_not_touch": [
+      "crates/script/src/shim/client_adapter.js",
+      "registry/UI",
+      "paired catalog tests"
+    ],
+    "tests_proposed": "crates/script/tests/tick_subscriber.rs",
+    "compiler": false,
+    "live": false,
+    "source_edits": false,
+    "sha256_04aa": "b8e9cf3401b183ed13032077f4723fd99b2e559b097c356c8344503184ab45ca",
+    "artifacts": [
+      "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/04aa-native-tick-subscriber-boundary.md",
+      "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/native-tick-subscriber-boundary/refs.json",
+      "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/native-tick-subscriber-boundary/hypotheses.json"
+    ],
+    "worker_session_id": "20260911_060155_ddad86"
+  },
+  "actual_model": "grok-4.6",
+  "actual_provider": "xai-oauth",
+  "actual_api_calls": 28,
+  "first_api_call": "2026-09-11 06:02:14,212 INFO [20260911_060155_ddad86] agent.conversation_loop: API call #1: model=grok-4.6 provider=xai-oauth in=22241 out=173 total=22414 latency=7.5s cache=1152/22241 (5%) id=53a359d5-4df2-9d7b-93bd-952369cdd823",
+  "last_api_call": "2026-09-11 06:13:28,192 INFO [20260911_060155_ddad86] agent.conversation_loop: API call #28: model=grok-4.6 provider=xai-oauth in=138698 out=969 total=139667 latency=17.1s cache=137856/138698 (99%) id=02a7d97a-7635-9de5-b68e-70d71b5d0407",
+  "verified_at": "2026-09-11T10:20:57.751150+00:00"
+}

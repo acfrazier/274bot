@@ -1,0 +1,123 @@
+{
+  "host_commit": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3536,
+  "checks": [
+    {
+      "label": "inventory",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "client_adapter_inventory"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 8.281,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-inventory.log",
+      "log_sha256": "15a17afe48ba3dbad820953a902fa4c8fbea7c18585cc90ce442cf6e26698a83"
+    },
+    {
+      "label": "registry",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "rs2b0t_registry"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.78,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-registry.log",
+      "log_sha256": "f28c18524af8d733bea0505c810ecbf8e69a7dafc17d496914769ea01bbd0fa6"
+    },
+    {
+      "label": "resolver",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--lib",
+        "resolve_item_options"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 3.043,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-resolver.log",
+      "log_sha256": "001023e8e8c706b5ffecc584fe133c9facbb467e136057345bcc6095dc8d8c80"
+    },
+    {
+      "label": "tui-params",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "tui",
+        "--lib",
+        "script_params"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.895,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-tui-params.log",
+      "log_sha256": "705994a72765664156612acba5d5915fea64e1672b4de925a0828225a1725226"
+    },
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.282,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-catalog.log",
+      "log_sha256": "837d0c56e897fa5440361a604fe709a66b11022f907112147723150fbce36b53"
+    },
+    {
+      "label": "clippy-inventory",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--test",
+        "client_adapter_inventory",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.362,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-clippy-inventory.log",
+      "log_sha256": "5c1d38b65c3beac823fb2dbce902e4c57ad39e7ea09b8c358c09deca470630a0"
+    },
+    {
+      "label": "clippy-script",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--lib",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.258,
+      "log": "docs/compat/evidence/catalog-headed/checks-9cc6adb1-clippy-script.log",
+      "log_sha256": "d7dae192715495fa89ccbe279af3efb9792c1dae1768228e369035e68a1df673"
+    }
+  ],
+  "all_passed": true,
+  "isolated_build": true,
+  "target_started_empty": false,
+  "cache_reuse": "Completed exclusive root28 target; exact9cc source"
+}

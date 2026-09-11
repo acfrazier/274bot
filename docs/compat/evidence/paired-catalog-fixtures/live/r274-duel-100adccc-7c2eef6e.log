@@ -1,0 +1,43 @@
+
+running 1 test
+{"phase":"identity","case":"duel","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"Duel Arena Combat Trainer","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/DuelArena/DuelArena.ts","source_sha256":"5656dabb30a47aac590fa1afadba19e689dd792d70da8dc4851e18d62e52d090","compiled_sha256":"15ef9a6f8fbc8fe49a75235bb81edd0d0557cc47c12b97bc1c1b7ffc960d176c","siblings":[{"module":"/rs2b0t/bot/scripts/bot/DuelArenaLogic.js","compiled_sha256":"eabc4391e3d45a79cfc139bb14fc02a6d6d67e8014fbb544b044563c7cd492bb"},{"module":"/rs2b0t/bot/scripts/bot/DuelInterface.js","compiled_sha256":"6b66ebc3e6851614d44aeeb2816a6410268d2fb826f50677dee027c63105dfd0"}]},"accounts":["liveu35qcr_0","liveu35qcr_1"],"gold_deadline_secs":180,"gold_watch_ticks":150}
+[host-play] slot liveu35qcr_1: thread up
+[host-play] slot liveu35qcr_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot liveu35qcr_1: handshake begin reconnect=false
+[host-play] slot liveu35qcr_0: handshake begin reconnect=false
+[host-play] slot liveu35qcr_1: handshake ok
+[host-play] slot liveu35qcr_0: handshake ok
+[host-play] slot liveu35qcr_1: queued mainland tele+setvar (scene 2)
+[host-play] slot liveu35qcr_0: queued mainland tele+setvar (scene 2)
+[host] slot liveu35qcr_1: d_loop_us=9515 d_raster_us=0 d_observe_us=20049 max_observe_us=1402 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host] slot liveu35qcr_0: d_loop_us=7741 d_raster_us=0 d_observe_us=22402 max_observe_us=1698 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+{"phase":"before-relog","account":"liveu35qcr_1"}
+{"phase":"before-relog","account":"liveu35qcr_0"}
+[host-play] slot liveu35qcr_1: handshake begin reconnect=true
+[host-play] slot liveu35qcr_0: handshake begin reconnect=true
+[host-play] slot liveu35qcr_1: handshake ok
+[host-play] slot liveu35qcr_0: handshake ok
+[host] slot liveu35qcr_1: d_loop_us=702 d_raster_us=0 d_observe_us=16515 max_observe_us=1723 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot liveu35qcr_0: d_loop_us=692 d_raster_us=0 d_observe_us=19163 max_observe_us=1733 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"after-relog","account":"liveu35qcr_1"}
+[host-play] slot liveu35qcr_1: queued mainland tele+setvar (scene 2)
+{"phase":"after-relog","account":"liveu35qcr_0"}
+[host-play] slot liveu35qcr_0: queued mainland tele+setvar (scene 2)
+{"phase":"seed-mutations-acknowledged","account":"liveu35qcr_1","kind":"duel_bronze_scimitar_at_challenge_anchor","note":"seeded first supplies are distinct from later script-caused bank withdrawal/return/transfer"}
+{"phase":"seed-mutations-acknowledged","account":"liveu35qcr_0","kind":"duel_bronze_scimitar_at_challenge_anchor","note":"seeded first supplies are distinct from later script-caused bank withdrawal/return/transfer"}
+{"phase":"baseline-after-preparation","account":"liveu35qcr_0","observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 0","tile":[3368,3274,0],"tick":11,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true}}
+[script liveu35qcr_0] start load
+{"phase":"start","account":"liveu35qcr_0","kind":"duel","settings":{"targetAttack":99.0,"targetStrength":99.0,"targetDefence":1.0}}
+[host] hitch liveu35qcr_0: observe_us=83431 paints=0 skips=83 ticks=11
+[host] slot liveu35qcr_0: d_loop_us=24587 d_raster_us=0 d_observe_us=178686 max_observe_us=83431 d_paints=0 d_skips=50 d_ticks=11 window_ms=7035
+{"phase":"baseline-after-preparation","account":"liveu35qcr_1","observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 1","tile":[3368,3274,0],"tick":12,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true}}
+[script liveu35qcr_1] start load
+{"phase":"start","account":"liveu35qcr_1","kind":"duel","settings":{"targetAttack":99.0,"targetStrength":99.0,"targetDefence":1.0}}
+{"phase":"both-started"}
+[host] hitch liveu35qcr_0: observe_us=75900 paints=0 skips=104 ticks=12
+[host] hitch liveu35qcr_1: observe_us=93218 paints=0 skips=83 ticks=12
+[script liveu35qcr_0] tick 19: not impl: BotHost.addTickListener
+[script liveu35qcr_0] Duel Arena trainer starting — melee only; targets Attack 99, Strength 99, Defence 1; challenges every 5s
+{"phase":"witness","air_a":null,"air_b":null,"duel_a":{"account":"liveu35qcr_0","expected_player":"Liveu35qcr 0","partner":"Liveu35qcr 1","settings":{"targetAttack":99.0,"targetStrength":99.0,"targetDefence":1.0},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 0","tile":[3368,3274,0],"tick":11,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 0","tile":[3368,3274,0],"tick":13,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true},"post_start":23,"mixed_identity":false,"saw_offer":false,"saw_confirm":false,"saw_wrong_partner":false,"saw_pen":false,"saw_combat":false,"saw_win_or_lobby_return":false,"melee_xp_from_script":0,"further_combat":false},"duel_b":{"account":"liveu35qcr_1","expected_player":"Liveu35qcr 1","partner":"Liveu35qcr 0","settings":{"targetAttack":99.0,"targetStrength":99.0,"targetDefence":1.0},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 1","tile":[3368,3274,0],"tick":12,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveu35qcr 1","tile":[3368,3274,0],"tick":13,"attack_xp":0,"strength_xp":0,"defence_xp":0,"hitpoints_xp":1154,"in_combat":false,"in_challenge_area":true,"in_fight_pen":false,"main_modal":-1,"duel_offer_open":false,"duel_confirm_open":false,"duel_win_open":false,"duel_partner":null,"waiting_for_other":false,"weapon_equipped":true,"peer_visible":true},"post_start":1,"mixed_identity":false,"saw_offer":false,"saw_confirm":false,"saw_wrong_partner":false,"saw_pen":false,"saw_combat":false,"saw_win_or_lobby_return":false,"melee_xp_from_script":0,"further_combat":false}}
+FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener

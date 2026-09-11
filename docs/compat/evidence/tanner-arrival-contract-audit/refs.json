@@ -1,0 +1,58 @@
+{
+  "task": "t_bcf07b82",
+  "brief": "docs/compat/briefs/100-tanner-arrival-contract-audit.md",
+  "report": "docs/compat/04x-tanner-arrival-contract-audit.md",
+  "kind": "bounded-read-only-corrective-audit-of-04v",
+  "branch": "codex/rs2b0t-multirevision",
+  "frozen_host": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "campaign_head_at_writeup": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "export": ".superpowers/review-exports/catalog-root-78cc99d0",
+  "sha256": {
+    "brief_100": "24f5a04d15b38644ab41061e09594537c7bfc2c19e98b5c7830374d2fcebc7bf",
+    "04x": "c82567f6453caafb5c321bce48a303601605c0d3930f05bf18544b5082bf6671",
+    "04v": "d43b1477b6b42364ef7920e1449699726dbbaed831a2d0a80ff77a4d235c212a",
+    "TannerBot_ts_both_catalogs": "b8038b17ac72eec3cf7b2e84f8323e4cd898f1975de7d210cfba333e552b8d7f",
+    "Traversal_ts_both": "984fda1becb12276c46e61e8588f4bd5d51085f968849ff202034b49c44f5d6d",
+    "arrival_ts_both": "f65ded68a962c2a62c772b6c6817827e6174ef05b9127c931025d519d59e8540",
+    "Reachability_ts_both": "4388d15d919249dd4468aa740345168fcf0d7e2068b13a08a38c87cc8a3b36ec",
+    "Npc_ts_both": "241f23f2fb83edf27f1166c40dd23cfd5d6c34d72301abefe356993d2151c2d3",
+    "Input_ts_both": "90d83a09b0469e02c3b351b60b9577349164a3605d7d638ee6edc42af8e55bff",
+    "traversal_js_78_and_current": "5b272833520f908b02e1aae3c75577829ab1c8ad843082659aca0b6148980274",
+    "input_js_78_and_current": "29e9532361b45019f78e2a94b907d79c1c0f297492abacff7e6c2c8eb7ff4a11",
+    "reachability_js_78_and_current": "ee4127f41dc18b3a8cdc773b962733e1b41afa8eca21319d6ef6479a711b230c",
+    "host_play_lib_rs_78": "826a920437f1ae5953755f15601fbeb48c3f61773174bfd3018a8642435a2612",
+    "interact_rs_78": "7e2e23fabdcf29d82181c14e0b3f9399e21f0f16ae2c3126b0749ca9141deb06",
+    "query_rs_78": "84158080adc1a00d4ba710083f27ad43d746b1a817cdc4c0257491baf9f7f0b9",
+    "r274_soft_log": "6e0b0d644e61fff5fd9547e69fedf0bc0786ad121e9f6f146c0d960b89e797cb",
+    "r289_soft_log": "ddc2bb829c6e0d87053c57ae648f1bcce6d5c8ffc6603c259e45bbd6e1c8741c",
+    "r274_hard_log": "49b5da54dd7cd3b8e8131c1aed585194b72b466febef2938a78aff60c7c3dc6a",
+    "r289_hard_log": "4e819678e8b5b30f8d744b223a3f27d48c7c7903dd03767cf1a92c87133a4c6f",
+    "headed_log": "5381f2099e13af901e453624a576a7ccdf727dc0adf133728758461cab82ea8b",
+    "tanner_78cc99d0_json": "59eb4950bac7d8266f94390a42df4d928e8851b5167bac8763abfc00b9452ffa",
+    "04v_sequence": "561d40f4572793ab68bf4170a3a29a686415ea0db796573976dd655c475b8a6d"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "TannerBot_ts_byte_identical": true,
+    "Traversal_arrival_Reachability_Npc_Input_byte_identical": true
+  },
+  "nav": {
+    "274": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4"
+  },
+  "binary": {
+    "headless": "c334aae122661a235af1fd13c8028819a42e8e479f7dd4604fe160f399ee0816"
+  },
+  "native_walknear": {
+    "request": [3277, 3191, 0],
+    "radius": 3,
+    "from_bank": [3269, 3166, 0],
+    "selected_terminal": [3274, 3188, 0],
+    "chebyshev_terminal_to_dest": 3,
+    "chebyshev_from_bank_to_terminal": 22,
+    "chebyshev_from_bank_to_dest": 25,
+    "traveller_last_hop_radius": 0,
+    "note": "last-hop radius 0 is exact stand on the selected approach tile, not WalkNear radius 0"
+  }
+}

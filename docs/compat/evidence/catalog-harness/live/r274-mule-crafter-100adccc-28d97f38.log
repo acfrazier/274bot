@@ -1,0 +1,23 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"MuleCrafter","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/MuleCrafter/MuleCrafter.ts","source_sha256":"bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9","compiled_sha256":"902f30df8c95ce03033d4d7850ab8bce75aeb9e358584e0b4961c976e1bfcc85","siblings":[{"module":"/rs2b0t/bot/scripts/bot/MuleCrafterLogic.js","compiled_sha256":"335aeaf8bde18493fa90036dd68d88472ef5353af9852fb119048ec171d5f499"}],"settings":{"mode":"Crafter","partner":"","bankFill":true,"rune":"Air rune"}},"account":"livepyq8lf_0","engine_speed_ms":null}
+[host-play] slot livepyq8lf_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot livepyq8lf_0: handshake begin reconnect=false
+[host-play] slot livepyq8lf_0: handshake ok
+[host-play] slot livepyq8lf_0: queued mainland tele+setvar (scene 2)
+[host] slot livepyq8lf_0: d_loop_us=9998 d_raster_us=0 d_observe_us=38460 max_observe_us=3135 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot livepyq8lf_0: handshake begin reconnect=true
+[host-play] slot livepyq8lf_0: handshake ok
+[host] slot livepyq8lf_0: d_loop_us=1336 d_raster_us=0 d_observe_us=39918 max_observe_us=3391 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livepyq8lf_0: queued mainland tele+setvar (scene 2)
+[host] slot livepyq8lf_0: d_loop_us=22355 d_raster_us=0 d_observe_us=88443 max_observe_us=10076 d_paints=0 d_skips=50 d_ticks=27 window_ms=16131
+{"phase":"baseline-after-preparation","scenario":"mule_crafter","account":"livepyq8lf_0","observation":{"ingame":true,"scene_state":2,"player":"Livepyq8lf 0","tile":[3012,3355,0],"tick":32,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script livepyq8lf_0] start load
+{"phase":"start","account":"livepyq8lf_0","count":1}
+[host] hitch livepyq8lf_0: observe_us=106047 paints=0 skips=105 ticks=32
+[script livepyq8lf_0] tick 46: not impl: reader.inventory
+[script livepyq8lf_0] MuleCrafter: No partners configured. Running in Solo Crafter mode.
+[script livepyq8lf_0] Crafter inventory contains unauthorized items or missing talisman. Opening bank to clean inventory...
+[script livepyq8lf_0] interact OpenBooth { x: 3011, z: 3354, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+FAIL: catalog_boundary_live: script error: tick 46: not impl: reader.inventory
