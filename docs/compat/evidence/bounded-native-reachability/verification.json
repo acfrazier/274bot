@@ -4,6 +4,7 @@
   "brief": "docs/compat/briefs/140-bounded-native-reachability.md",
   "brief_sha256": "63778485b398d45ea09ac3b6cc6d44d07533e3b95c894bc5bc46468695b6e001",
   "base_commit": "f0249f96283c4c4540b7fe308b46972fc24516dc",
+  "implementation_commit": "bebd2fe8b056b3680f240d5c1bfd66490cb5cf14",
   "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
   "cargo_target_dir": ".superpowers/task-targets/bounded-reachability-t_25797d04",
   "live": false,
