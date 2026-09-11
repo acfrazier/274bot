@@ -1,0 +1,24 @@
+{
+  "run_id": 1344,
+  "worker_session_id": "20260911_085653_4bcf32",
+  "actual_models": [
+    "grok-4.5"
+  ],
+  "api_call_count": 13,
+  "matching_model_log_lines": [
+    "2026-09-11 08:56:57,273 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23257 out=56 total=23313 latency=2.8s cache=1280/23257 (6%) id=59ffa5d5-fc80-90f6-b4a3-75e42b6dc3e7",
+    "2026-09-11 08:57:03,524 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=29308 out=409 total=29717 latency=6.0s cache=23168/29308 (79%) id=a80d4424-187a-9a0f-ae3a-6c10336409bb",
+    "2026-09-11 08:57:11,941 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=33638 out=604 total=34242 latency=8.1s cache=29184/33638 (87%) id=4a8c7f1c-77b4-907e-8b5b-4aa482b08581",
+    "2026-09-11 08:57:22,630 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=46727 out=683 total=47410 latency=10.0s cache=33536/46727 (72%) id=94446954-d66e-940b-859e-47addc9fd22e",
+    "2026-09-11 08:57:28,946 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=49688 out=336 total=50024 latency=6.0s cache=46720/49688 (94%) id=21693b2d-7f7c-96d1-8318-be01af02b53b",
+    "2026-09-11 08:57:42,925 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=56391 out=926 total=57317 latency=13.7s cache=49664/56391 (88%) id=c83cd4cd-6621-9973-89e1-4af68abff4dc",
+    "2026-09-11 08:57:49,560 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=59683 out=452 total=60135 latency=6.4s cache=56320/59683 (94%) id=ee4a467a-c37d-953a-bc72-d33c71123b5c",
+    "2026-09-11 08:57:55,716 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=61597 out=380 total=61977 latency=5.8s cache=59648/61597 (97%) id=275d72cb-4ab4-97d2-b577-b2005a6b7f42",
+    "2026-09-11 08:58:01,468 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=62814 out=308 total=63122 latency=4.4s cache=61568/62814 (98%) id=70652717-b7d4-9fbb-b67f-083323bf2ca6",
+    "2026-09-11 08:58:21,601 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=66481 out=794 total=67275 latency=11.3s cache=62720/66481 (94%) id=5dafe524-b34e-9656-825e-3d0d761c2925",
+    "2026-09-11 08:58:28,523 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #11: model=grok-4.5 provider=xai-oauth in=74458 out=441 total=74899 latency=6.7s cache=66432/74458 (89%) id=a6f5cd1b-9173-95e7-96d8-d454b39ef319",
+    "2026-09-11 08:58:36,347 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #12: model=grok-4.5 provider=xai-oauth in=77048 out=418 total=77466 latency=7.2s cache=74368/77048 (97%) id=97cbaf41-f122-9e16-b68f-b4ae46877e07",
+    "2026-09-11 08:59:00,444 INFO [20260911_085653_4bcf32] agent.conversation_loop: API call #13: model=grok-4.5 provider=xai-oauth in=77828 out=1765 total=79593 latency=23.7s cache=76928/77828 (99%) id=b8b7cf29-bbe7-9d5a-8706-7f93e2311a04"
+  ],
+  "verdict": "Reviewed and approved 99073acf8 (evidence 8603a45eb) for brief 117 native hint and local overhead facts (R1 artifact cold read + independent exclusive-target re-run). selfChat posts local actor overhead only (not chat ring/other players), null on expiry/logout/absent; hintTile posts type-2 coordinate {x,z} only; thin ordered setRun onto existing set-run. FlatBuffer append + delta clear; no LIVE."
+}

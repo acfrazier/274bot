@@ -1,0 +1,9 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/vendor/fr-client-rust/crates/client)
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/vault)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/nav)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/script)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/host)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-cd49e147/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.95s

@@ -1,0 +1,41 @@
+{
+  "task": "t_434c2f2b",
+  "brief": "docs/compat/briefs/129-brimhaven-failure-audit.md",
+  "report": "docs/compat/06ad-brimhaven-failure-audit.md",
+  "kind": "bounded-read-only-audit",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "c0da29753c4bbf89da67df8411c708a84bd57a4d",
+  "live_host": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+  "client_gitlink": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "catalog_boundary_binary_sha256": "b36f1ace35790395f2df6d72162a3d98a50c3cb39535569412d7936ee2cd877e",
+  "isolated_export": ".superpowers/review-exports/catalog-root-cd49e147",
+  "sha256": {
+    "brief_129": "89cef2666e0de0a195e86a4e4ee28bb5e73610e300baa53bb8bc445ac5f6a15f",
+    "06ad": "a94cfde3b25e97089acf633e29b2eaed667cef6b8fa8f28a54abe4f181e22943",
+    "r274_old_log": "62d3b85ad4938a3257eb7102b2efe99723257491de053436f608e8740b6fe04f",
+    "r274_newer_log": "09430a1034dcfb934e90123aca0c8447b3347e5a5b0d929ca3f23cbedcf9965f",
+    "r289_old_log": "3aa4d842316397a4673e9bdb80dcba87cfffa391fb28461b4e07f1fb5a380a8a",
+    "r289_newer_log": "df204bc7575833f44c068b3808aeb85ccba7c814ef389b1858e0b07b8684a4a1",
+    "BrimhavenAgility_ts_both": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+    "BrimhavenAgilityLogic_ts_both": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d",
+    "agilityarena_rs2_274": "c33bf541b9e5e557dd607b27bfe7e065d5c9bfe2c949a242585a6dde787335d5",
+    "agilityarena_rs2_289": "dadc3599740ced8b9cd9db5feb4314163c0c63fbdc300fec60f10d99bdf1a9a7",
+    "agilityarena_zones_rs2_both": "459895b3961bef9f4baf9baeb2f8e7179aab4cb17474d7ca87cb2e5303267f58"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "named_scripts_byte_identical": true
+  },
+  "engines": {
+    "274_receipt": "4c95f87efe00b068cadbd229d94736626907bd1a",
+    "289": "cc359656b4acd216ca452495874b6beba9a0ac75",
+    "274_object_not_in_current_server_git": true
+  },
+  "do_not_touch": [
+    "crates/scenario/src/lib.rs",
+    "crates/host-play/tests/catalog_boundary_live.rs",
+    "frozen catalogs",
+    "STATE/matrix/ledger"
+  ]
+}

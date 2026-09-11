@@ -1,0 +1,55 @@
+   Compiling mio v1.2.2
+   Compiling bindgen v0.71.1
+   Compiling swc_common v9.2.0
+   Compiling naga v29.0.4
+   Compiling tungstenite v0.24.0
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/vault)
+   Compiling tokio v1.53.1
+   Compiling signal-hook-mio v0.2.5
+   Compiling crossterm v0.29.0
+   Compiling ratatui-crossterm v0.1.2
+   Compiling swc_ecma_ast v9.0.0
+   Compiling swc_ecma_loader v9.0.0
+   Compiling ratatui v0.30.0
+   Compiling v8 v137.2.1
+   Compiling deno_error v0.7.0
+   Compiling deno_unsync v0.4.4
+   Compiling tokio-util v0.7.19
+   Compiling deno_path_util v0.6.1
+   Compiling wasm_dep_analyzer v0.4.0
+   Compiling deno_permissions v0.72.0
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling serde_v8 v0.264.0
+   Compiling deno_core v0.355.0
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling swc_ecma_lexer v12.0.0
+   Compiling swc_ecma_visit v9.0.0
+   Compiling swc_ecma_codegen v11.0.0
+   Compiling swc_ecma_parser v12.0.0
+   Compiling deno_web v0.244.0
+   Compiling deno_features v0.10.0
+   Compiling deno_webidl v0.213.0
+   Compiling deno_url v0.213.0
+   Compiling deno_console v0.213.0
+   Compiling swc_ecma_utils v13.1.0
+   Compiling wgpu v29.0.4
+   Compiling swc_ecma_transforms_base v13.0.0
+   Compiling dprint-swc-ext v0.24.0
+   Compiling swc_ecma_transforms_react v15.0.0
+   Compiling swc_ecma_transforms_classes v13.0.0
+   Compiling swc_ecma_transforms_proposal v13.0.0
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/vendor/fr-client-rust/crates/client)
+   Compiling swc_ecma_transforms_typescript v15.0.0
+   Compiling deno_crypto v0.227.0
+   Compiling deno_ast v0.49.0
+   Compiling rustyscript v0.12.3
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/script)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/host-play)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/scenario)
+   Compiling tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.99s

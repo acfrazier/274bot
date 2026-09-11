@@ -38901,7 +38901,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -38910,9 +38910,13 @@
           "source_evidence": "src/bot/scripts/WildyAgility/WildyAgility.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "WildyAgility",
@@ -39338,7 +39342,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 39: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -39347,9 +39351,13 @@
           "source_evidence": "src/bot/scripts/WildyAgility/WildyAgility.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 39: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "BrimhavenAgility",
@@ -39775,13 +39783,17 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "BrimhavenAgility",
@@ -40207,13 +40219,17 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "MuleCrafter",
@@ -73829,7 +73845,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -73838,9 +73854,13 @@
           "source_evidence": "src/bot/scripts/WildyAgility/WildyAgility.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "WildyAgility",
@@ -74266,7 +74286,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 41: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -74275,9 +74295,13 @@
           "source_evidence": "src/bot/scripts/WildyAgility/WildyAgility.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: script error: tick 41: not impl: reader.retaliateControls. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "BrimhavenAgility",
@@ -74703,13 +74727,17 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-8e7d965b-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "BrimhavenAgility",
@@ -75135,13 +75163,17 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 12 (watch the first Tag prompt for the next pillar): chat(contains \"tag the next\") not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 12 (watch the first Tag prompt for the next pillar): chat(contains \"tag the next\") not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-8e7d965b-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+      ]
     },
     {
       "display_name": "MuleCrafter",
