@@ -162,10 +162,17 @@ pub fn window(ui: &Ui, session: &mut Session) {
         return;
     }
     let mut open = true;
+    let viewport = ui.main_viewport();
+    let position = viewport.pos();
+    let height = (viewport.size()[1] - 40.0).clamp(240.0, 560.0);
     ui.window("Loadouts")
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE)
-        .size([520.0, 560.0], Condition::FirstUseEver)
+        .position(
+            [position[0] + 20.0, position[1] + 20.0],
+            Condition::FirstUseEver,
+        )
+        .size([520.0, height], Condition::FirstUseEver)
         .build(|| {
             ui.text("Presets");
             let names: Vec<String> = session.loadouts.names();
@@ -307,6 +314,7 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
         }
         ui.same_line();
         let mut qty_text = qty.to_string();
+        ui.set_next_item_width(72.0);
         if ui
             .input_text(format!("##supply-qty-{i}"), &mut qty_text)
             .build()
@@ -352,6 +360,7 @@ fn search_popup(ui: &Ui, session: &mut Session) {
             "Search items".into()
         };
         ui.text(heading);
+        ui.set_next_item_width(460.0);
         ui.input_text("##loadout-search", &mut session.loadouts_search)
             .build();
         let data = session.selected_game_data();
@@ -371,16 +380,19 @@ fn search_popup(ui: &Ui, session: &mut Session) {
         }
         let mut picked: Option<(String, i32)> = None;
         ui.child_window("##loadout-search-hits")
-            .size([0.0, 180.0])
+            .size([460.0, 180.0])
             .build(ui, || {
                 for hit in &hits {
                     let label = if hit.alias.is_empty() {
-                        format!("{}  #{}", hit.name, hit.id)
+                        format!("#{}  {}", hit.id, hit.name)
                     } else {
-                        format!("{}  {} #{}", hit.name, hit.alias, hit.id)
+                        format!("#{}  {}  {}", hit.id, hit.name, hit.alias)
                     };
                     if ui.selectable_config(&label).build() {
                         picked = Some((hit.name.clone(), hit.id));
+                    }
+                    if ui.is_item_hovered() {
+                        ui.tooltip_text(&label);
                     }
                 }
             });
