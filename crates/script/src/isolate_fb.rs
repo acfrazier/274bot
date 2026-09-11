@@ -161,6 +161,8 @@ const VT_SNAP_WIDGETS: VOffsetT = 138;
 const VT_SNAP_SELF_CHAT: VOffsetT = 140;
 const VT_SNAP_HINT_TILE_X: VOffsetT = 142;
 const VT_SNAP_HINT_TILE_Z: VOffsetT = 144;
+const VT_SNAP_RETALIATE_ON_COM_ID: VOffsetT = 146;
+const VT_SNAP_RETALIATE_OFF_COM_ID: VOffsetT = 148;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -533,6 +535,7 @@ pub struct SnapshotInput<'a> {
 pub struct NativeFactsInput<'a> {
     pub self_chat: Option<&'a str>,
     pub hint_tile: Option<(i32, i32)>,
+    pub retaliate_controls: Option<(i32, i32)>,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1067,6 +1070,8 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<ForwardsUOffset<&str>>("self_chat", VT_SNAP_SELF_CHAT, false)?
             .visit_field::<i32>("hint_tile_x", VT_SNAP_HINT_TILE_X, false)?
             .visit_field::<i32>("hint_tile_z", VT_SNAP_HINT_TILE_Z, false)?
+            .visit_field::<i32>("retaliate_on_com_id", VT_SNAP_RETALIATE_ON_COM_ID, false)?
+            .visit_field::<i32>("retaliate_off_com_id", VT_SNAP_RETALIATE_OFF_COM_ID, false)?
             .finish();
         Ok(())
     }
@@ -1413,6 +1418,22 @@ impl SnapshotReader<'_> {
         let x = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_X, None) }.unwrap_or(-1);
         let z = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_Z, None) }.unwrap_or(-1);
         (x >= 0 && z >= 0).then_some((x, z))
+    }
+    pub fn has_retaliate_controls(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_RETALIATE_ON_COM_ID, None)
+                .is_some()
+                || self
+                    .tab
+                    .get::<i32>(VT_SNAP_RETALIATE_OFF_COM_ID, None)
+                    .is_some()
+        }
+    }
+    pub fn retaliate_controls(&self) -> Option<(i32, i32)> {
+        let on = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_ON_COM_ID, None) }.unwrap_or(-1);
+        let off = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_OFF_COM_ID, None) }.unwrap_or(-1);
+        (on >= 0 && off >= 0).then_some((on, off))
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1829,6 +1850,7 @@ pub struct SnapshotFingerprint {
     pub widgets: Vec<(i32, String)>,
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
+    pub retaliate_controls: Option<(i32, i32)>,
 }
 
 impl SnapshotFingerprint {
@@ -2021,6 +2043,7 @@ impl SnapshotFingerprint {
                 .collect(),
             self_chat: native.self_chat.map(str::to_string),
             hint_tile: native.hint_tile,
+            retaliate_controls: native.retaliate_controls,
         }
     }
 }
@@ -2101,6 +2124,7 @@ pub struct DeltaMask {
     pub widgets: bool,
     pub self_chat: bool,
     pub hint_tile: bool,
+    pub retaliate_controls: bool,
 }
 
 impl DeltaMask {
@@ -2176,6 +2200,7 @@ impl DeltaMask {
             widgets: true,
             self_chat: true,
             hint_tile: true,
+            retaliate_controls: true,
         }
     }
 
@@ -2261,6 +2286,7 @@ impl DeltaMask {
             widgets: next.widgets != last.widgets,
             self_chat: next.self_chat != last.self_chat,
             hint_tile: next.hint_tile != last.hint_tile,
+            retaliate_controls: next.retaliate_controls != last.retaliate_controls,
         }
     }
 }
@@ -2896,6 +2922,11 @@ fn encode_snapshot_masked_into(
         let (x, z) = native.hint_tile.unwrap_or((-1, -1));
         b.push_slot_always(VT_SNAP_HINT_TILE_X, x);
         b.push_slot_always(VT_SNAP_HINT_TILE_Z, z);
+    }
+    if mask.retaliate_controls {
+        let (on, off) = native.retaliate_controls.unwrap_or((-1, -1));
+        b.push_slot_always(VT_SNAP_RETALIATE_ON_COM_ID, on);
+        b.push_slot_always(VT_SNAP_RETALIATE_OFF_COM_ID, off);
     }
     let root = b.end_table(tab);
     b.finish(root, None);

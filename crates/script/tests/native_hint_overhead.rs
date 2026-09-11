@@ -110,6 +110,7 @@ fn reader_returns_posted_local_overhead_and_coordinate_hint_unchanged() {
     let facts = NativeFactsInput {
         self_chat: Some("FIGHT!"),
         hint_tile: Some((2761, 9546)),
+        ..Default::default()
     };
 
     let value = tick(&iso, encode_snapshot_with_native(&snap, facts), 1);
@@ -129,6 +130,7 @@ fn successive_snapshot_clears_overhead_and_hint_without_stale_retention() {
     let first_facts = NativeFactsInput {
         self_chat: Some("3"),
         hint_tile: Some((2800, 9500)),
+        ..Default::default()
     };
     let mut buffer = IsolateBuf::new();
     let (keyframe, fingerprint) =

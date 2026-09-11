@@ -77,6 +77,12 @@ export interface ChatOption {
   text: string;
 }
 
+/** Native on/off component identity for one toggle. */
+export interface ToggleControls {
+  onComId: number;
+  offComId: number;
+}
+
 export interface VarpRow {
   index: number;
   value: number;
@@ -204,6 +210,7 @@ export interface Snapshot {
   run_energy: number;
   run_enabled: boolean;
   retaliate_enabled: boolean;
+  retaliate_controls: ToggleControls | null;
   my_name: string | null;
   in_combat: boolean;
   animating: boolean;
