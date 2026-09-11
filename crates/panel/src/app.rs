@@ -4935,6 +4935,26 @@ mod tests {
     }
 
     #[test]
+    fn loading_text_names_bundled_decode_and_custom_verify_passes() {
+        use host_play::progress::{ProfileProgress, ProfileProgressStage};
+
+        let bundled = loading_text(
+            ProgressPhase::Preparing,
+            &ProfileProgress::steps(ProfileProgressStage::PreparingNavigation, 1, 1),
+        );
+        assert_eq!(bundled.description, "Loading navigation");
+        assert_eq!(bundled.percent, 100);
+
+        let custom = loading_text(
+            ProgressPhase::Preparing,
+            &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 10, 100),
+        );
+        assert_eq!(custom.description, "Verifying custom navigation");
+        assert_eq!(custom.percent, 10);
+        assert!(custom.caption.contains("bytes checked"));
+    }
+
+    #[test]
     fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
         assert!(log_follow_bottom(0.0, 0.0), "empty / first frame follows");
         assert!(log_follow_bottom(99.0, 100.0), "within 1 px of the bottom");
