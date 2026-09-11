@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/paired_catalog_live.rs (target/debug/deps/paired_catalog_live-a24a53ad9cc32cea)
+
+running 1 test
+test paired_catalog_air_live ... ignored, requires LIVE=1, PAIRED_CATALOG_REVISION/NAV_PACK/ROOT/COMMIT, and local engine
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 26 filtered out; finished in 0.00s
+

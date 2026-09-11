@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::{self, WEARPOS_RIGHTHAND};
 use api::interact::{self, Interactions, SendResult};
-use api::snapshot::GameSnapshot;
+use api::snapshot::{GameSnapshot, WorldTile};
 use client::io::ClientRevision;
 use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
@@ -20,11 +20,13 @@ use serde_json::json;
 use vault::{Profile, ProfileSettings};
 
 use paired_catalog::{
-    air_operation_gates, air_settings, card_row, catalog_ledger, duel_operation_gates,
-    duel_settings, frozen_card_hashes_match, hash_file, near, prepare_card,
-    verify_generated_duel_controls, verify_registry_identity, AirClaim, AirObservation,
-    AirPairWitness, AirRole, AirSlotRecord, DuelClaim, DuelObservation, DuelPairWitness,
-    DuelSlotRecord, GateKind, PairCase, PreparedCard, AIR_RUINS, CATALOG_COMMIT_A,
+    air_operation_gates, air_prepared_current, air_settings, bank_ack_target_absence,
+    bank_seed_acknowledged, card_row, catalog_ledger, duel_operation_gates, duel_prepared_current,
+    duel_settings, frozen_card_hashes_match, hash_file, near, prepare_card, relog_admission,
+    shared_start_barrier, verify_generated_duel_controls, verify_registry_identity, AirClaim,
+    AirObservation, AirPairWitness, AirRole, AirSlotRecord, DuelClaim, DuelObservation,
+    DuelPairWitness, DuelSlotRecord, GateKind, PairCase, PreparedCard, RelogAdmission,
+    StartBarrier, StartBarrierInput, AIR_RUINS, BANK_SEED_ESSENCE, CATALOG_COMMIT_A,
     CATALOG_COMMIT_B, DUEL_ARENA, DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256,
     DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, NATURECRAFTER,
     NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256, PREP_DEADLINE_SECS,
@@ -77,6 +79,9 @@ struct SlotLive {
     latest_air: Option<AirObservation>,
     latest_duel: Option<DuelObservation>,
     weapon_id: i32,
+    saw_logout: bool,
+    bank_ack_done: bool,
+    bank_ack_generation: Option<u64>,
 }
 
 impl SlotLive {
@@ -104,7 +109,66 @@ impl SlotLive {
                 .any(|text| text.to_ascii_lowercase().contains(needle))
     }
 
+    fn air_role(&self) -> AirRole {
+        match self.kind {
+            SlotKind::AirMaster => AirRole::Master,
+            _ => AirRole::Runner,
+        }
+    }
+
+    fn has_baseline(&self) -> bool {
+        match self.kind {
+            SlotKind::AirMaster | SlotKind::AirRunner => self.air.is_some(),
+            SlotKind::Duel => self.duel.is_some(),
+        }
+    }
+
+    fn prepared_unstarted(&self) -> bool {
+        self.prep == Prep::Ready && self.has_baseline() && !self.started
+    }
+
+    fn current_ok(&self) -> bool {
+        match self.kind {
+            SlotKind::AirMaster | SlotKind::AirRunner => {
+                self.latest_air.as_ref().is_some_and(|observation| {
+                    air_prepared_current(self.air_role(), &self.expected_player, observation)
+                        .is_ok()
+                })
+            }
+            SlotKind::Duel => self.latest_duel.as_ref().is_some_and(|observation| {
+                duel_prepared_current(&self.expected_player, observation).is_ok()
+            }),
+        }
+    }
+
+    fn falador_east_booth(snapshot: &GameSnapshot) -> Option<(WorldTile, i32)> {
+        snapshot
+            .locs()
+            .iter()
+            .filter(|loc| {
+                loc.tile.level == FALADOR_EAST.2
+                    && loc.actions.iter().any(|action| {
+                        action
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case("Use-quickly"))
+                    })
+                    && (loc.tile.x - FALADOR_EAST.0)
+                        .abs()
+                        .max((loc.tile.z - FALADOR_EAST.1).abs())
+                        <= 2
+            })
+            .min_by_key(|loc| {
+                (loc.tile.x - FALADOR_EAST.0)
+                    .abs()
+                    .max((loc.tile.z - FALADOR_EAST.1).abs())
+            })
+            .map(|loc| (loc.tile, loc.id))
+    }
+
     fn start_script(&mut self) -> Result<(), String> {
+        if self.started {
+            return Err("Start invoked more than once".into());
+        }
         let Some(handle) = self.start_handle.as_ref() else {
             return Err("Start reached before ScriptStartHandle install".into());
         };
@@ -165,62 +229,13 @@ impl SlotLive {
     }
 
     fn capture_air_baseline(&mut self, observation: &AirObservation) -> Result<(), String> {
-        if !observation.ingame || observation.scene_state != 2 {
-            return Err(format!(
-                "Start baseline is not attached ingame scene2: {observation:?}"
-            ));
-        }
-        if !observation.inventory_tab_available {
-            return Err("Start baseline inventory tab is not bound after relog".into());
-        }
-        let player = observation
-            .player
-            .as_deref()
-            .ok_or_else(|| "Start baseline has no local player".to_string())?;
-        if !player.eq_ignore_ascii_case(&self.expected_player) {
-            return Err(format!(
-                "Start baseline player {player:?} is not fresh account {:?}",
-                self.account
-            ));
-        }
-        if !near(observation.tile, AIR_RUINS, 8) {
-            return Err(format!(
-                "Start baseline is not at Air ruins: {:?}",
-                observation.tile
-            ));
-        }
-        if observation.air_runes > 0 {
-            return Err("Start baseline already has Air 556".into());
-        }
-        if observation.essence_noted > 0 {
-            return Err("Start baseline has noted essence 1437; Air does not accept noting".into());
-        }
-        if observation.trade_active() {
-            return Err("Start baseline already has a trade window".into());
-        }
-        match self.kind {
-            SlotKind::AirMaster => {
-                if observation.air_talisman <= 0 {
-                    return Err("master baseline has no Air talisman".into());
-                }
-                if observation.essence_unnoted > 0 {
-                    return Err("master baseline already holds unnoted essence".into());
-                }
-            }
-            SlotKind::AirRunner => {
-                if observation.essence_unnoted <= 0 {
-                    return Err(
-                        "runner baseline has no seeded unnoted 1436 for the first load".into(),
-                    );
-                }
-            }
-            SlotKind::Duel => {}
+        air_prepared_current(self.air_role(), &self.expected_player, observation)?;
+        let modals = self.snapshot.modals();
+        if modals.main != -1 || modals.chat != -1 {
+            return Err("Start baseline still has an open modal".into());
         }
         self.air = Some(AirSlotRecord::new(
-            match self.kind {
-                SlotKind::AirMaster => AirRole::Master,
-                _ => AirRole::Runner,
-            },
+            self.air_role(),
             self.account.clone(),
             self.expected_player.clone(),
             self.partner.clone(),
@@ -244,35 +259,10 @@ impl SlotLive {
     }
 
     fn capture_duel_baseline(&mut self, observation: &DuelObservation) -> Result<(), String> {
-        if !observation.ingame || observation.scene_state != 2 {
-            return Err(format!(
-                "Start baseline is not attached ingame scene2: {observation:?}"
-            ));
-        }
-        if !observation.inventory_tab_available {
-            return Err("Start baseline inventory tab is not bound after relog".into());
-        }
-        let player = observation
-            .player
-            .as_deref()
-            .ok_or_else(|| "Start baseline has no local player".to_string())?;
-        if !player.eq_ignore_ascii_case(&self.expected_player) {
-            return Err(format!(
-                "Start baseline player {player:?} is not fresh account {:?}",
-                self.account
-            ));
-        }
-        if !observation.in_challenge_area {
-            return Err(format!(
-                "Start baseline is not in the Duel Arena challenge area: {:?}",
-                observation.tile
-            ));
-        }
-        if observation.duel_active() || observation.duel_win_open {
-            return Err("seeded modal is not a duel: baseline already has a duel interface".into());
-        }
-        if !observation.weapon_equipped {
-            return Err("Start baseline has no 1-handed melee weapon equipped".into());
+        duel_prepared_current(&self.expected_player, observation)?;
+        let modals = self.snapshot.modals();
+        if modals.main != -1 || modals.chat != -1 {
+            return Err("Start baseline still has an open modal".into());
         }
         self.duel = Some(DuelSlotRecord::new(
             self.account.clone(),
@@ -341,41 +331,73 @@ impl SlotLive {
                 self.prep = Prep::WaitRelog;
             }
             Prep::WaitRelog => {
-                let ready = air
-                    .is_some_and(|o| o.ingame && o.scene_state == 2 && o.inventory_tab_available)
-                    || duel.is_some_and(|o| {
-                        o.ingame && o.scene_state == 2 && o.inventory_tab_available
-                    });
-                if ready {
-                    println!(
-                        "{}",
-                        json!({
-                            "phase": "after-relog",
-                            "account": self.account,
-                        })
-                    );
-                    self.prep = Prep::Seed;
+                let (ingame, scene_state, inventory_tab) = if let Some(observation) = air {
+                    (
+                        observation.ingame,
+                        observation.scene_state,
+                        observation.inventory_tab_available,
+                    )
+                } else if let Some(observation) = duel {
+                    (
+                        observation.ingame,
+                        observation.scene_state,
+                        observation.inventory_tab_available,
+                    )
+                } else {
+                    return Ok(());
+                };
+                match relog_admission(self.saw_logout, ingame, scene_state, inventory_tab) {
+                    RelogAdmission::WaitLogout | RelogAdmission::WaitLogin => {}
+                    RelogAdmission::LoggedOut => {
+                        self.saw_logout = true;
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "relog-observed-logout",
+                                "account": self.account,
+                            })
+                        );
+                    }
+                    RelogAdmission::Ready => {
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "after-relog",
+                                "account": self.account,
+                            })
+                        );
+                        self.prep = Prep::Seed;
+                    }
                 }
             }
             Prep::Seed => {
                 if !Self::send_ok(hold) {
                     return Ok(());
                 }
-                match self.kind {
+                let kind = match self.kind {
                     SlotKind::AirMaster => {
                         interact::cheat(client, "give air_talisman 1");
                         interact::cheat(
                             client,
                             &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
                         );
+                        "air_master_talisman_noessence_at_ruins"
+                    }
+                    SlotKind::AirRunner if !self.bank_ack_done => {
+                        interact::cheat(client, &format!("givebank blankrune {BANK_SEED_ESSENCE}"));
+                        interact::cheat(
+                            client,
+                            &interact::tele_args(FALADOR_EAST.2, FALADOR_EAST.0, FALADOR_EAST.1),
+                        );
+                        "air_runner_bank200_at_falador_east"
                     }
                     SlotKind::AirRunner => {
-                        interact::cheat(client, "givebank blankrune 200");
                         interact::cheat(client, &format!("give blankrune {TRADE_CAP}"));
                         interact::cheat(
                             client,
                             &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
                         );
+                        "air_runner_firstload25_at_ruins"
                     }
                     SlotKind::Duel => {
                         interact::cheat(client, "give bronze_scimitar 1");
@@ -387,19 +409,16 @@ impl SlotLive {
                                 DUEL_CHALLENGE_ANCHOR.1,
                             ),
                         );
+                        "duel_bronze_scimitar_at_challenge_anchor"
                     }
-                }
+                };
                 println!(
                     "{}",
                     json!({
-                        "phase": "seed-mutations-acknowledged",
+                        "phase": "seed-queued",
                         "account": self.account,
-                        "kind": match self.kind {
-                            SlotKind::AirMaster => "air_master_talisman_at_ruins",
-                            SlotKind::AirRunner => "air_runner_seeded_first_load_and_bank_at_ruins",
-                            SlotKind::Duel => "duel_bronze_scimitar_at_challenge_anchor",
-                        },
-                        "note": "seeded first supplies are distinct from later script-caused bank withdrawal/return/transfer",
+                        "kind": kind,
+                        "note": "queued seed is not bank acknowledgement or script restock",
                     })
                 );
                 self.last_action = now;
@@ -412,18 +431,30 @@ impl SlotLive {
                             && o.scene_state == 2
                             && near(o.tile, AIR_RUINS, 8)
                             && o.air_talisman >= 1
+                            && o.essence_unnoted == 0
+                    }),
+                    SlotKind::AirRunner if !self.bank_ack_done => air.is_some_and(|o| {
+                        o.ingame && o.scene_state == 2 && near(o.tile, FALADOR_EAST, 8)
                     }),
                     SlotKind::AirRunner => air.is_some_and(|o| {
                         o.ingame
                             && o.scene_state == 2
                             && near(o.tile, AIR_RUINS, 8)
-                            && o.essence_unnoted >= 1
+                            && o.essence_unnoted >= TRADE_CAP
                     }),
                     SlotKind::Duel => duel.is_some_and(|o| {
                         o.ingame && o.scene_state == 2 && near(o.tile, DUEL_CHALLENGE_ANCHOR, 8)
                     }),
                 };
                 if ready {
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "seed-observed",
+                            "account": self.account,
+                            "bank_ack_done": self.bank_ack_done,
+                        })
+                    );
                     self.prep = Prep::DrainDialogs;
                 }
             }
@@ -431,9 +462,9 @@ impl SlotLive {
                 let modals = self.snapshot.modals();
                 if modals.main == -1 && modals.chat == -1 {
                     self.prep = match self.kind {
-                        SlotKind::AirRunner => Prep::AckBank,
+                        SlotKind::AirRunner if !self.bank_ack_done => Prep::AckBank,
                         SlotKind::Duel => Prep::Wear,
-                        SlotKind::AirMaster => Prep::Ready,
+                        SlotKind::AirMaster | SlotKind::AirRunner => Prep::Ready,
                     };
                 } else if Self::send_ok(hold) {
                     let _ = interact::close_modal(client);
@@ -443,19 +474,66 @@ impl SlotLive {
                 let Some(observation) = air else {
                     return Ok(());
                 };
-                if observation.bank_open && observation.bank_loaded {
+                if !near(observation.tile, FALADOR_EAST, 8) {
+                    return Err(bank_ack_target_absence(observation.tile, false).unwrap_or_else(
+                        || {
+                            format!(
+                                "AckBank refused: runner stand {:?} is not Falador East {FALADOR_EAST:?}",
+                                observation.tile
+                            )
+                        },
+                    ));
+                }
+                if bank_seed_acknowledged(observation, BANK_SEED_ESSENCE) {
                     self.prep = Prep::WaitAck;
                     return Ok(());
                 }
                 if !Self::send_ok(hold) {
                     return Ok(());
                 }
-                if now.duration_since(self.last_action) >= Duration::from_millis(400) {
-                    match Interactions::new(&self.snapshot, client).open_nearest_booth() {
-                        SendResult::Sent { .. } | SendResult::Refused { .. } => {
-                            self.last_action = now;
-                            self.prep = Prep::WaitAck;
-                        }
+                if now.duration_since(self.last_action) < Duration::from_millis(400) {
+                    return Ok(());
+                }
+                let booth = Self::falador_east_booth(&self.snapshot);
+                if let Some(reason) = bank_ack_target_absence(observation.tile, booth.is_some()) {
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "ack-bank-target-absent",
+                            "account": self.account,
+                            "detail": reason,
+                            "stand": FALADOR_EAST,
+                            "tile": observation.tile,
+                        })
+                    );
+                    self.last_action = now;
+                    return Ok(());
+                }
+                let Some((tile, id)) = booth else {
+                    return Ok(());
+                };
+                match Interactions::new(&self.snapshot, client).open_booth_at(tile, id) {
+                    SendResult::Sent { .. } => {
+                        self.last_action = now;
+                        self.prep = Prep::WaitAck;
+                    }
+                    SendResult::Refused { reason, .. } => {
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "ack-bank-refused",
+                                "account": self.account,
+                                "reason": format!("{reason:?}"),
+                                "target_absence": bank_ack_target_absence(
+                                    observation.tile,
+                                    Self::falador_east_booth(&self.snapshot).is_some(),
+                                ),
+                                "stand": FALADOR_EAST,
+                                "tile": observation.tile,
+                                "booth": [tile.x, tile.z, tile.level],
+                            })
+                        );
+                        self.last_action = now;
                     }
                 }
             }
@@ -463,18 +541,28 @@ impl SlotLive {
                 let Some(observation) = air else {
                     return Ok(());
                 };
-                if observation.bank_open
-                    && observation.bank_loaded
-                    && observation.bank_essence_unnoted >= 1
-                {
+                if !near(observation.tile, FALADOR_EAST, 8) {
+                    return Err(bank_ack_target_absence(observation.tile, false).unwrap_or_else(
+                        || {
+                            format!(
+                                "WaitAck refused: runner stand {:?} is not Falador East {FALADOR_EAST:?}",
+                                observation.tile
+                            )
+                        },
+                    ));
+                }
+                if bank_seed_acknowledged(observation, BANK_SEED_ESSENCE) {
+                    self.bank_ack_generation = Some(observation.bank_session_generation);
                     println!(
                         "{}",
                         json!({
                             "phase": "acknowledged-bank",
                             "account": self.account,
                             "bank_essence_unnoted": observation.bank_essence_unnoted,
+                            "bank_session_generation": observation.bank_session_generation,
                             "stand": FALADOR_EAST,
-                            "note": "givebank blankrune is seed, not the script restock",
+                            "tile": observation.tile,
+                            "note": "givebank blankrune 200 observed open+loaded at Falador East; not the script restock",
                         })
                     );
                     self.prep = Prep::CloseBank;
@@ -482,8 +570,40 @@ impl SlotLive {
                     && Self::send_ok(hold)
                     && now.duration_since(self.last_action) >= Duration::from_millis(400)
                 {
-                    let _ = Interactions::new(&self.snapshot, client).open_nearest_booth();
-                    self.last_action = now;
+                    let booth = Self::falador_east_booth(&self.snapshot);
+                    if let Some(reason) = bank_ack_target_absence(observation.tile, booth.is_some())
+                    {
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "ack-bank-target-absent",
+                                "account": self.account,
+                                "detail": reason,
+                                "stand": FALADOR_EAST,
+                                "tile": observation.tile,
+                            })
+                        );
+                        self.last_action = now;
+                    } else if let Some((tile, id)) = booth {
+                        match Interactions::new(&self.snapshot, client).open_booth_at(tile, id) {
+                            SendResult::Sent { .. } => {
+                                self.last_action = now;
+                            }
+                            SendResult::Refused { reason, .. } => {
+                                println!(
+                                    "{}",
+                                    json!({
+                                        "phase": "ack-bank-refused",
+                                        "account": self.account,
+                                        "reason": format!("{reason:?}"),
+                                        "stand": FALADOR_EAST,
+                                        "tile": observation.tile,
+                                    })
+                                );
+                                self.last_action = now;
+                            }
+                        }
+                    }
                 }
             }
             Prep::CloseBank => {
@@ -499,7 +619,20 @@ impl SlotLive {
                     return Ok(());
                 };
                 if !observation.bank_open {
-                    self.prep = Prep::Ready;
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "closed-bank",
+                            "account": self.account,
+                            "bank_session_generation": observation.bank_session_generation,
+                            "ack_generation": self.bank_ack_generation,
+                            "generation_moved": self.bank_ack_generation
+                                .map(|generation| generation != observation.bank_session_generation),
+                            "stand": FALADOR_EAST,
+                        })
+                    );
+                    self.bank_ack_done = true;
+                    self.prep = Prep::Seed;
                 } else if Self::send_ok(hold)
                     && now.duration_since(self.last_action) > Duration::from_millis(400)
                 {
@@ -531,27 +664,44 @@ impl SlotLive {
                     self.last_action = now;
                 }
             }
-            Prep::Ready => {
-                match self.kind {
-                    SlotKind::AirMaster | SlotKind::AirRunner => {
-                        if self.air.is_none() {
-                            let Some(observation) = air else {
-                                return Ok(());
-                            };
-                            self.capture_air_baseline(observation)?;
-                        }
-                    }
-                    SlotKind::Duel => {
-                        if self.duel.is_none() {
-                            let Some(observation) = duel else {
-                                return Ok(());
-                            };
-                            self.capture_duel_baseline(observation)?;
-                        }
+            Prep::Ready => match self.kind {
+                SlotKind::AirMaster | SlotKind::AirRunner => {
+                    if self.air.is_none() {
+                        let Some(observation) = air else {
+                            return Ok(());
+                        };
+                        self.capture_air_baseline(observation)?;
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "prepared",
+                                "account": self.account,
+                                "role": match self.air_role() {
+                                    AirRole::Master => "master",
+                                    AirRole::Runner => "runner",
+                                },
+                                "note": "waiting for shared start barrier; not Start",
+                            })
+                        );
                     }
                 }
-                self.start_script()?;
-            }
+                SlotKind::Duel => {
+                    if self.duel.is_none() {
+                        let Some(observation) = duel else {
+                            return Ok(());
+                        };
+                        self.capture_duel_baseline(observation)?;
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "prepared",
+                                "account": self.account,
+                                "note": "waiting for shared start barrier; not Start",
+                            })
+                        );
+                    }
+                }
+            },
         }
         Ok(())
     }
@@ -685,6 +835,9 @@ fn new_slot(
         latest_air: None,
         latest_duel: None,
         weapon_id,
+        saw_logout: false,
+        bank_ack_done: false,
+        bank_ack_generation: None,
     })
 }
 
@@ -845,19 +998,57 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             if let Some(error) = pair.1.start_error.take() {
                 break Err(format!("slot {}: {error}", pair.1.account));
             }
-            (pair.0.started, pair.1.started, pair.0.prep, pair.1.prep)
+            let decision = shared_start_barrier(StartBarrierInput {
+                a_prepared: pair.0.prepared_unstarted(),
+                b_prepared: pair.1.prepared_unstarted(),
+                a_started: pair.0.started,
+                b_started: pair.1.started,
+                a_wait_ack: pair.0.prep == Prep::WaitAck,
+                b_wait_ack: pair.1.prep == Prep::WaitAck,
+                a_current_ok: pair.0.current_ok(),
+                b_current_ok: pair.1.current_ok(),
+            });
+            if decision == StartBarrier::StartBoth {
+                pair.0.start_script()?;
+                pair.1.start_script()?;
+            }
+            (
+                decision,
+                pair.0.started,
+                pair.1.started,
+                pair.0.prep,
+                pair.1.prep,
+            )
         };
         let timed_out = Instant::now() >= deadline;
         if phase == 0 {
-            if snapshot.0 && snapshot.1 {
-                println!("{}", json!({"phase": "both-started"}));
-                phase = 1;
-                deadline = Instant::now() + Duration::from_secs(SCRIPT_GOLD_DEADLINE_SECS);
-            } else if timed_out {
-                break Err(format!(
-                    "preparation timeout; a_prep={:?} b_prep={:?} a_started={} b_started={}",
-                    snapshot.2, snapshot.3, snapshot.0, snapshot.1
-                ));
+            match snapshot.0 {
+                StartBarrier::StartBoth => {
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "both-started",
+                            "gold_clock": "begin",
+                            "note": "gold clock starts only after both Start; preparation is not counted",
+                        })
+                    );
+                    phase = 1;
+                    deadline = Instant::now() + Duration::from_secs(SCRIPT_GOLD_DEADLINE_SECS);
+                }
+                StartBarrier::RejectStartedWhileUnready => {
+                    break Err(format!(
+                        "start while the other actor was not prepared; a_prep={:?} b_prep={:?} a_started={} b_started={}",
+                        snapshot.3, snapshot.4, snapshot.1, snapshot.2
+                    ));
+                }
+                StartBarrier::Wait => {
+                    if timed_out {
+                        break Err(format!(
+                            "preparation timeout; a_prep={:?} b_prep={:?} a_started={} b_started={}",
+                            snapshot.3, snapshot.4, snapshot.1, snapshot.2
+                        ));
+                    }
+                }
             }
         } else {
             let pair = state.lock().unwrap();
@@ -989,6 +1180,7 @@ mod tests {
             air_talisman: if player == "alice" { 1 } else { 0 },
             bank_open: false,
             bank_loaded: false,
+            bank_session_generation: 0,
             bank_essence_unnoted: 0,
             trade_offer_open: false,
             trade_confirm_open: false,
@@ -1171,6 +1363,9 @@ mod tests {
             .any(|gate| gate.kind == GateKind::UnusedByCase && gate.owner.contains("t_68de6f48")));
         assert_eq!(SCRIPT_GOLD_DEADLINE_SECS, 180);
         assert_eq!(SCRIPT_GOLD_WATCH_TICKS, 150);
+        assert_eq!(PREP_DEADLINE_SECS, 180);
+        assert_eq!(BANK_SEED_ESSENCE, 200);
+        assert_eq!(TRADE_CAP, 25);
     }
 
     #[test]
@@ -1309,5 +1504,199 @@ mod tests {
             assert!(duel[slot].get("baseline").is_some());
             assert!(duel[slot].get("account").is_some());
         }
+    }
+
+    #[test]
+    fn stale_pre_logout_scene2_is_not_relog_admission() {
+        assert_eq!(
+            relog_admission(false, true, 2, true),
+            RelogAdmission::WaitLogout
+        );
+        assert_eq!(
+            relog_admission(false, false, 0, false),
+            RelogAdmission::LoggedOut
+        );
+        assert_eq!(
+            relog_admission(true, false, 0, false),
+            RelogAdmission::WaitLogin
+        );
+        assert_eq!(relog_admission(true, true, 2, true), RelogAdmission::Ready);
+        assert_ne!(relog_admission(false, true, 2, true), RelogAdmission::Ready);
+    }
+
+    #[test]
+    fn bank_seed_is_not_acknowledgement_without_open_loaded_count_at_falador() {
+        let mut ruins = air_obs("bob", 25, 0, 0);
+        ruins.tile = Some(AIR_RUINS);
+        ruins.bank_open = false;
+        ruins.bank_loaded = false;
+        ruins.bank_essence_unnoted = 0;
+        assert!(!bank_seed_acknowledged(&ruins, BANK_SEED_ESSENCE));
+
+        let mut queued = air_obs("bob", 0, 0, 0);
+        queued.tile = Some(FALADOR_EAST);
+        queued.bank_open = false;
+        queued.bank_loaded = false;
+        queued.bank_essence_unnoted = 0;
+        assert!(!bank_seed_acknowledged(&queued, BANK_SEED_ESSENCE));
+
+        let mut short = queued.clone();
+        short.bank_open = true;
+        short.bank_loaded = true;
+        short.bank_essence_unnoted = 1;
+        assert!(!bank_seed_acknowledged(&short, BANK_SEED_ESSENCE));
+
+        let mut ruins_open = ruins.clone();
+        ruins_open.bank_open = true;
+        ruins_open.bank_loaded = true;
+        ruins_open.bank_essence_unnoted = BANK_SEED_ESSENCE;
+        assert!(!bank_seed_acknowledged(&ruins_open, BANK_SEED_ESSENCE));
+
+        let mut ack = queued;
+        ack.bank_open = true;
+        ack.bank_loaded = true;
+        ack.bank_essence_unnoted = BANK_SEED_ESSENCE;
+        assert!(bank_seed_acknowledged(&ack, BANK_SEED_ESSENCE));
+    }
+
+    #[test]
+    fn missing_booth_at_ruins_reports_target_absence() {
+        let absence = bank_ack_target_absence(Some(AIR_RUINS), false).unwrap();
+        assert!(absence.contains("Falador East"), "{absence}");
+        assert!(absence.contains("2983"), "{absence}");
+        assert!(bank_ack_target_absence(Some(FALADOR_EAST), false)
+            .unwrap()
+            .contains("Use-quickly"));
+        assert!(bank_ack_target_absence(Some(FALADOR_EAST), true).is_none());
+    }
+
+    #[test]
+    fn mismatched_readiness_does_not_start() {
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: false,
+                a_started: false,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: true,
+                a_current_ok: true,
+                b_current_ok: false,
+            }),
+            StartBarrier::Wait
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: true,
+                a_started: false,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: true,
+                a_current_ok: true,
+                b_current_ok: true,
+            }),
+            StartBarrier::Wait
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: true,
+                a_started: false,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: false,
+                a_current_ok: true,
+                b_current_ok: false,
+            }),
+            StartBarrier::Wait
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: false,
+                a_started: false,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: false,
+                a_current_ok: true,
+                b_current_ok: false,
+            }),
+            StartBarrier::Wait
+        );
+    }
+
+    #[test]
+    fn one_barrier_starts_both_only_when_prepared() {
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: true,
+                a_started: false,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: false,
+                a_current_ok: true,
+                b_current_ok: true,
+            }),
+            StartBarrier::StartBoth
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: true,
+                a_started: true,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: false,
+                a_current_ok: true,
+                b_current_ok: true,
+            }),
+            StartBarrier::RejectStartedWhileUnready
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: false,
+                a_started: true,
+                b_started: false,
+                a_wait_ack: false,
+                b_wait_ack: true,
+                a_current_ok: true,
+                b_current_ok: false,
+            }),
+            StartBarrier::RejectStartedWhileUnready
+        );
+        assert_eq!(
+            shared_start_barrier(StartBarrierInput {
+                a_prepared: true,
+                b_prepared: true,
+                a_started: true,
+                b_started: true,
+                a_wait_ack: false,
+                b_wait_ack: false,
+                a_current_ok: true,
+                b_current_ok: true,
+            }),
+            StartBarrier::Wait
+        );
+    }
+
+    #[test]
+    fn air_prepared_current_rejects_master_essence_and_runner_short_load() {
+        let master = air_obs("alice", 0, 0, 0);
+        air_prepared_current(AirRole::Master, "alice", &master).unwrap();
+        let mut with_essence = master.clone();
+        with_essence.essence_unnoted = 1;
+        assert!(air_prepared_current(AirRole::Master, "alice", &with_essence).is_err());
+
+        let runner = air_obs("bob", 25, 0, 0);
+        air_prepared_current(AirRole::Runner, "bob", &runner).unwrap();
+        let mut short = runner.clone();
+        short.essence_unnoted = 1;
+        assert!(air_prepared_current(AirRole::Runner, "bob", &short).is_err());
+        let mut at_bank = runner;
+        at_bank.tile = Some(FALADOR_EAST);
+        assert!(air_prepared_current(AirRole::Runner, "bob", &at_bank).is_err());
     }
 }
