@@ -92,3 +92,19 @@ Additional required inputs: generated game-data tooling/assets (t_48d33ff0,
 brief 44) and serde selected-profile metadata integration (t_f1572cf0, brief 43),
 per operator instruction. Check server fidelity, source/cache binding, startup
 publication and shared ownership before accepting ordered/custom Alcher proof.
+
+Root follow-up before dispatch: include 6c6bb2d5 full BankFletcher witness and
+terminal-shot settings. It requires first-pack deposit, fresh same-generation
+withdrawal, then another product and XP; first-product/empty-stock stops do not
+qualify. Nine harness witness tests and strict Clippy passed. Native 289 and
+headless 274 full loops now pass; other cells are being recorded separately.
+Startup source 814e5293 passed corrective Grok 4.5 gate t_4bd3fe69, actual run
+1162/session 20260910_195251_648621, after the implementer skipped review.
+Also include schema-3 consumption/pickpocket generator 91769217+bba5179c and
+report correction 2530891b; final actual Grok 4.5 source review approved it.
+Root capture diagnostics 41cfc85e retain error visibility. Mac missed captures
+were traced to window presentation: the request reached the sink but not the
+readback; raising the same binary in a minimal app bundle produced the PNG.
+Windows 6c6bb2d5 also produced its internal full-window PNG without that trace
+change. Both images and real scene-2 sidecars were read. Screenshot success is
+separate from independent gameplay qualification and all-frontends acceptance.

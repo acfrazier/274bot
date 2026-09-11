@@ -542,7 +542,7 @@ impl AppWindow {
             let mut guard = shots.lock().unwrap();
             let wanted = mem::take(&mut guard.wanted);
             if !wanted.is_empty() {
-                if std::env::var_os("BOT_DEBUG").is_some() {
+                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
                     eprintln!("[panel] capture readback requested: {}", wanted.len());
                 }
                 let source = self.offscreen.as_ref().unwrap_or(&frame.texture);
