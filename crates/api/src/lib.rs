@@ -4,6 +4,7 @@ pub use obj_names::{ItemDefView, LocDefView, LocDefs, ObjNames};
 pub use random::{DetectedRandom, RandomClaim, RandomKind};
 pub use snapshot::{LocalTile, WorldTile};
 
+pub mod cake_stall;
 pub mod content;
 pub mod game_data;
 pub mod interact;
