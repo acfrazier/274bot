@@ -14,17 +14,16 @@ qualification or any performance result. Later banking and catalog capabilities
 remain in the campaign checkout, including native ownership corrections for
 bank/cake/autocast JavaScript sequencing.
 
-Current status: formatting and strict Clippy passed; 2603 workspace tests and
-1007 separate client tests passed. Two unchanged external-catalog failures were
-reproduced on exact main and retained separately. All eight controlled 274/289
-boundary/world/Guardian cells passed after restoring three historical fixture
-corrections; the original failed door run is retained. See validation-ready.json
-for source/proof mapping. Whole-branch Grok 4.6 review t_fd3a8b47 approved exact
-code940531c3f/clientaef3952d (actual model verified). Client/staging publication
-and fresh recursive clone verification are next; main merge/push remain pending.
+Current status: this foundation batch is published on main as 1bce29d43, with
+client aef3952d published to r274-bh-modular. Whole-branch Grok 4.6 approved;
+2603 workspace tests, 1007 separate client tests and all eight controlled 274/289
+boundary/world/Guardian cells passed. Two unchanged external-catalog failures
+were reproduced on exact main and retained. The original failed door fixture
+run and its corrected proofs are retained. A fresh recursive remote clone passed
+the locked workspace/all-targets check; primary unrelated files were preserved.
+See 08-incremental-integration.md and evidence/stage-1/integration.json.
 
-After acceptance, root publishes the client to acfrazier/FR-client-bothost
-r274-bh-modular, verifies a fresh recursive checkout, then merges this ordinary
-history into host main and pushes acfrazier/274bot. No release tag, package or
-announcement is part of this integration. Root preserves unrelated primary
-checkout files and all active campaign work.
+The ongoing campaign remains in `.worktrees/rs2b0t-multirevision`, including
+native ownership corrections and remaining catalog/platform qualification.
+Future batches need their own reviewed evidence. No release tag, package or
+announcement has occurred; full compatibility/Alpha 2 acceptance remains open.

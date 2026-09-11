@@ -6,10 +6,12 @@
   "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
   "code_candidate": "940531c3f7a4fe392f8ee5688702fe1f617d28b0",
   "review_report_commit": "02ee3e51eb45ef11ddb2743e0f28b22400653dcf",
-  "remote_publication_done": false,
+  "remote_publication_done": true,
   "fresh_recursive_clone_checked": true,
-  "main_merged": false,
+  "main_merged": true,
   "client_published": true,
   "staging_branch_published": true,
-  "fresh_recursive_check_receipt": "docs/compat/evidence/stage-1/fresh-remote-check.json"
+  "fresh_recursive_check_receipt": "docs/compat/evidence/stage-1/fresh-remote-check.json",
+  "published_main": "1bce29d439f22a3cf8892da65a1c5a00498580d5",
+  "integration_receipt": "docs/compat/evidence/stage-1/integration.json"
 }

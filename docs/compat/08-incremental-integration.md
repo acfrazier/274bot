@@ -48,21 +48,26 @@ That failed run is retained. Corrected door/lamp cells passed on both revisions;
 and navigation results are retained from 65938065. The exact source/proof mapping
 and verified log hashes are in evidence/stage-1/validation-ready.json.
 
-## Integration gate
+## Published integration
 
-Whole-branch review approved this exact code/client batch in t_fd3a8b47,
-actual Grok 4.6 / xai-oauth run 1346 (30 verified API calls). Report:
-08a-stage1-whole-branch-review.md. No material findings. Root is proceeding
-with client/staging-branch publication and fresh recursive clone verification
-before merging main. The final full-campaign review remains separate.
+Independent whole-branch Grok 4.6 review t_fd3a8b47 approved exact code 940531c3f
+and client aef3952d (actual xai-oauth run 1346, 30 verified API calls). Report:
+08a-stage1-whole-branch-review.md. No material findings.
 
-Publish the client to acfrazier/FR-client-bothost r274-bh-modular
-before publishing the host gitlink. Verify a fresh recursive checkout, merge
-ordinary history into host main and push acfrazier/274bot. Preserve unrelated
-primary checkout files and active campaign work. No tag/package/announcement.
+The batch was fast-forward merged and pushed to acfrazier/274bot main as
+1bce29d439f22a3cf8892da65a1c5a00498580d5 on 2026-09-11. Client
+ aef3952d1cd7bb3b93d39c497f0f476b68021c59 was published first to
+acfrazier/FR-client-bothost r274-bh-modular. Ordinary history was preserved;
+no force push, release tag, package or announcement.
 
-The client and staging branch are published. A fresh recursive GitHub clone
-of cb9d14e83 fetched clientaef3952d with no local object alternates;
-`cargo check --workspace --all-targets --features memory-profile --locked`
-passed. Receipt: evidence/stage-1/fresh-remote-check.json. Only documentation
-and this evidence have changed since that clone. Main integration follows.
+A fresh recursive GitHub clone fetched the exact client with no local object
+alternates and passed `cargo check --workspace --all-targets --features
+memory-profile --locked`. That clone was then fetched to published main and
+remained clean; only report/evidence changes followed its check. Receipts:
+evidence/stage-1/fresh-remote-check.json and integration.json. All 2179 unrelated
+primary untracked file paths were preserved, and the primary tracked checkout
+and client were clean after integration.
+
+The full campaign continues in rs2b0t-multirevision. Later capabilities and
+ownership corrections need their own verification/integration; this foundation
+publication does not complete the 45-card contract or Alpha 2 release.
