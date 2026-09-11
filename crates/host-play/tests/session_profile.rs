@@ -354,6 +354,24 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
             .count()
             >= 2
     );
+    let archive_reads: Vec<_> = updates
+        .iter()
+        .filter(|progress| progress.stage == ProfileProgressStage::ReadingCacheArchives)
+        .collect();
+    assert_eq!(archive_reads.first().unwrap().completed, 0);
+    assert_eq!(archive_reads.last().unwrap().completed, 8);
+    assert!(archive_reads
+        .windows(2)
+        .all(|pair| pair[1].completed >= pair[0].completed));
+    let game_loads: Vec<_> = updates
+        .iter()
+        .filter(|progress| progress.stage == ProfileProgressStage::LoadingGameData)
+        .collect();
+    assert_eq!(game_loads.first().unwrap().completed, 0);
+    assert_eq!(game_loads.last().unwrap().completed, 4);
+    assert!(game_loads
+        .windows(2)
+        .all(|pair| pair[1].completed >= pair[0].completed));
     assert_eq!(
         updates.last(),
         Some(&ProfileProgress::steps(
