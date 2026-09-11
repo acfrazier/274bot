@@ -286,6 +286,14 @@ impl AppWindow {
         let (device, queue) =
             block_on(adapter.request_device(&device_desc)).map_err(PanelError::DeviceRequest)?;
 
+        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+            let info = adapter.get_info();
+            eprintln!(
+                "[panel] adapter name={} backend={:?} device_type={:?} vendor={:#x} device={:#x}",
+                info.name, info.backend, info.device_type, info.vendor, info.device
+            );
+        }
+
         // Surface config. Whole-window shots (the 377 harness pattern)
         // copy the just-rendered frame back before present, so the
         // surface asks for `COPY_SRC`. Some backends reject that on a
