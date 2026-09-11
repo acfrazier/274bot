@@ -62,3 +62,20 @@ overlay did not need a further useOn change.
 
 No LIVE or fixture process was launched. Root owns the twenty catalog x
 revision cells after review.
+
+## Root correction: actual second log (04:45 UTC)
+
+The four isolated 50f2be8a default Gnome passes end at 86 XP and a return
+walk after the complete first lap. Their `second_lap=true` did not prove new
+XP from the next log: the pipe milestone captured pre-pipe XP32, and the
+final scenario arm reused the initial skill baseline. Preserve these raw
+passes as one-lap evidence; the stronger further-work claim is unqualified.
+
+Selected 274/289 content grants 86.5 XP for a lap and 7.5 for the next log.
+Both scenario and independent catalog witness now require at least 94 XP
+above Start; the catalog witness and ordered scenario also require the log
+destination within three tiles. The existing witness regression rejects the
+actual 86-XP first-lap return and a queued next-log position with no new XP,
+then accepts the 94-XP destination. No gameplay source or timeout changed.
+`second-lap-witness-correction.json` preserves source hashes and old receipts.
+Corrected LIVE and focused checks remain pending.
