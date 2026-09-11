@@ -153,6 +153,18 @@ const VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ: VOffsetT = 126;
 const VT_SNAP_WITHDRAW_LOAD_RESULT: VOffsetT = 128;
 const VT_SNAP_BANK_OP_RESULT_SEQ: VOffsetT = 130;
 const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
+const VT_SNAP_REACH: VOffsetT = 134;
+
+// Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj }
+const VT_REACH_AVAILABLE: VOffsetT = 4;
+const VT_REACH_BASE_X: VOffsetT = 6;
+const VT_REACH_BASE_Z: VOffsetT = 8;
+const VT_REACH_LEVEL: VOffsetT = 10;
+const VT_REACH_WIDTH: VOffsetT = 12;
+const VT_REACH_HEIGHT: VOffsetT = 14;
+const VT_REACH_WALKABLE: VOffsetT = 16;
+const VT_REACH_REACHABLE: VOffsetT = 18;
+const VT_REACH_REACHABLE_ADJ: VOffsetT = 20;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -239,6 +251,35 @@ pub struct TileInput {
     pub x: i32,
     pub z: i32,
     pub level: i32,
+}
+
+/// Compact native reach query posted on the isolate snapshot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReachViewInput<'a> {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub walkable: &'a [u32],
+    pub reachable: &'a [u32],
+    pub reachable_adj: &'a [u32],
+}
+
+impl ReachViewInput<'static> {
+    /// Fail-closed view: no scene, empty dims, empty bitsets.
+    pub const UNAVAILABLE: Self = Self {
+        available: false,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 0,
+        height: 0,
+        walkable: &[],
+        reachable: &[],
+        reachable_adj: &[],
+    };
 }
 
 /// One skill row: the snapshot's stat index, name, xp, base, and effective.
@@ -458,6 +499,9 @@ pub struct SnapshotInput<'a> {
     pub trade_decline_id: i32,
     pub shop_open: bool,
     pub shop_stock: &'a [ItemRowInput<'a>],
+    /// Compact native reach query view. Always present on a keyframe;
+    /// unavailable when `here` is missing or the scene is not available.
+    pub reach: ReachViewInput<'a>,
 }
 
 /// A `{x, z, level}` tile as decoded from a buffer.
@@ -494,6 +538,72 @@ impl Verifiable for TileReader<'_> {
             .visit_field::<i32>("x", VT_TILE_X, false)?
             .visit_field::<i32>("z", VT_TILE_Z, false)?
             .visit_field::<i32>("level", VT_TILE_LEVEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// Compact reach query as decoded from a buffer.
+#[derive(Clone, Copy)]
+pub struct ReachReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for ReachReader<'a> {
+    type Inner = ReachReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl ReachReader<'_> {
+    pub fn available(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_REACH_AVAILABLE, None) }.unwrap_or(false)
+    }
+    pub fn base_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_REACH_BASE_X, None) }.unwrap_or(0)
+    }
+    pub fn base_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_REACH_BASE_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_REACH_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn width(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_REACH_WIDTH, None) }.unwrap_or(0)
+    }
+    pub fn height(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_REACH_HEIGHT, None) }.unwrap_or(0)
+    }
+    pub fn walkable(&self) -> Vec<u32> {
+        u32_vec(&self.tab, VT_REACH_WALKABLE)
+    }
+    pub fn reachable(&self) -> Vec<u32> {
+        u32_vec(&self.tab, VT_REACH_REACHABLE)
+    }
+    pub fn reachable_adj(&self) -> Vec<u32> {
+        u32_vec(&self.tab, VT_REACH_REACHABLE_ADJ)
+    }
+}
+
+impl Verifiable for ReachReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<bool>("available", VT_REACH_AVAILABLE, false)?
+            .visit_field::<i32>("base_x", VT_REACH_BASE_X, false)?
+            .visit_field::<i32>("base_z", VT_REACH_BASE_Z, false)?
+            .visit_field::<i32>("level", VT_REACH_LEVEL, false)?
+            .visit_field::<i32>("width", VT_REACH_WIDTH, false)?
+            .visit_field::<i32>("height", VT_REACH_HEIGHT, false)?
+            .visit_field::<ForwardsUOffset<Vector<u32>>>("walkable", VT_REACH_WALKABLE, false)?
+            .visit_field::<ForwardsUOffset<Vector<u32>>>("reachable", VT_REACH_REACHABLE, false)?
+            .visit_field::<ForwardsUOffset<Vector<u32>>>(
+                "reachable_adj",
+                VT_REACH_REACHABLE_ADJ,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -905,6 +1015,7 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<bool>("withdraw_load_result", VT_SNAP_WITHDRAW_LOAD_RESULT, false)?
             .visit_field::<u64>("bank_op_result_seq", VT_SNAP_BANK_OP_RESULT_SEQ, false)?
             .visit_field::<bool>("bank_op_result", VT_SNAP_BANK_OP_RESULT, false)?
+            .visit_field::<ForwardsUOffset<ReachReader>>("reach", VT_SNAP_REACH, false)?
             .finish();
         Ok(())
     }
@@ -1199,6 +1310,19 @@ impl SnapshotReader<'_> {
     pub fn shop_stock(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
     }
+    pub fn has_reach(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
+                .is_some()
+        }
+    }
+    pub fn reach(&self) -> Option<ReachReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
+        }
+    }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
     }
@@ -1399,6 +1523,13 @@ where
     }
 }
 
+fn u32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u32> {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<u32>>>(slot, None) } {
+        Some(v) => v.iter().collect(),
+        None => Vec::new(),
+    }
+}
+
 /// Whether the buffer carries the vector at `slot` — a delta omits an
 /// unchanged table entirely, and absent must stay distinct from empty
 /// (the isolate keeps its last JS rows for an omitted table).
@@ -1511,6 +1642,19 @@ pub struct NearestBoothFp {
     pub op: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ReachViewFp {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub walkable: Vec<u32>,
+    pub reachable: Vec<u32>,
+    pub reachable_adj: Vec<u32>,
+}
+
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
 /// fields the host last posted, compared against the next input to build
 /// the delta. Content equality (not a hash) is fine — the tables are
@@ -1581,6 +1725,7 @@ pub struct SnapshotFingerprint {
     pub trade_decline_id: i32,
     pub shop_open: bool,
     pub shop_stock: Vec<ItemRowFp>,
+    pub reach: ReachViewFp,
 }
 
 impl SnapshotFingerprint {
@@ -1746,6 +1891,17 @@ impl SnapshotFingerprint {
             trade_decline_id: input.trade_decline_id,
             shop_open: input.shop_open,
             shop_stock: input.shop_stock.iter().map(item_row_fp).collect(),
+            reach: ReachViewFp {
+                available: input.reach.available,
+                base_x: input.reach.base_x,
+                base_z: input.reach.base_z,
+                level: input.reach.level,
+                width: input.reach.width,
+                height: input.reach.height,
+                walkable: input.reach.walkable.to_vec(),
+                reachable: input.reach.reachable.to_vec(),
+                reachable_adj: input.reach.reachable_adj.to_vec(),
+            },
         }
     }
 }
@@ -1821,6 +1977,7 @@ pub struct DeltaMask {
     pub trade_decline_id: bool,
     pub shop_open: bool,
     pub shop_stock: bool,
+    pub reach: bool,
 }
 
 impl DeltaMask {
@@ -1891,6 +2048,7 @@ impl DeltaMask {
             trade_decline_id: true,
             shop_open: true,
             shop_stock: true,
+            reach: true,
         }
     }
 
@@ -1971,6 +2129,7 @@ impl DeltaMask {
             trade_decline_id: next.trade_decline_id != last.trade_decline_id,
             shop_open: next.shop_open != last.shop_open,
             shop_stock: next.shop_stock != last.shop_stock,
+            reach: next.reach != last.reach,
         }
     }
 }
@@ -2308,6 +2467,11 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let reach_table_off = if mask.reach {
+        Some(reach_off(b, &input.reach))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2530,6 +2694,9 @@ fn encode_snapshot_masked_into(
     if mask.shop_stock {
         b.push_slot_always(VT_SNAP_SHOP_STOCK, shop_stock_off.expect("mask checked"));
     }
+    if mask.reach {
+        b.push_slot_always(VT_SNAP_REACH, reach_table_off.expect("mask checked"));
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -2539,6 +2706,26 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
     b.push_slot_always(VT_TILE_X, t.x);
     b.push_slot_always(VT_TILE_Z, t.z);
     b.push_slot_always(VT_TILE_LEVEL, t.level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn reach_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    r: &ReachViewInput<'_>,
+) -> WIPOffset<ReachReader<'b>> {
+    let walkable = b.create_vector(r.walkable);
+    let reachable = b.create_vector(r.reachable);
+    let reachable_adj = b.create_vector(r.reachable_adj);
+    let tab = b.start_table();
+    b.push_slot_always(VT_REACH_AVAILABLE, r.available);
+    b.push_slot_always(VT_REACH_BASE_X, r.base_x);
+    b.push_slot_always(VT_REACH_BASE_Z, r.base_z);
+    b.push_slot_always(VT_REACH_LEVEL, r.level);
+    b.push_slot_always(VT_REACH_WIDTH, r.width);
+    b.push_slot_always(VT_REACH_HEIGHT, r.height);
+    b.push_slot_always(VT_REACH_WALKABLE, walkable);
+    b.push_slot_always(VT_REACH_REACHABLE, reachable);
+    b.push_slot_always(VT_REACH_REACHABLE_ADJ, reachable_adj);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3896,6 +4083,7 @@ pub(crate) mod tests {
             trade_decline_id: -1,
             shop_open: false,
             shop_stock: &[],
+            reach: ReachViewInput::UNAVAILABLE,
         }
     }
 
@@ -4143,5 +4331,105 @@ pub(crate) mod tests {
         let bytes = buf.encode_snapshot(&empty_input(2));
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 2);
+    }
+
+    fn reach_words(bits: &[usize]) -> Vec<u32> {
+        let mut words = vec![0u32; 3];
+        for &i in bits {
+            words[i / 32] |= 1u32 << (i % 32);
+        }
+        words
+    }
+
+    #[test]
+    fn encode_decode_reach_view_round_trips() {
+        let walkable = reach_words(&[0, 31, 32, 53, 63, 64]);
+        let reachable = reach_words(&[0, 32, 53]);
+        let adj = reach_words(&[0, 31, 32, 53, 64]);
+        let mut input = empty_input(4);
+        input.reach = ReachViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 9,
+            height: 8,
+            walkable: &walkable,
+            reachable: &reachable,
+            reachable_adj: &adj,
+        };
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(view.has_reach(), "keyframe carries reach");
+        let reach = view.reach().expect("reach table");
+        assert!(reach.available());
+        assert_eq!(
+            (
+                reach.base_x(),
+                reach.base_z(),
+                reach.level(),
+                reach.width(),
+                reach.height()
+            ),
+            (3200, 3200, 0, 9, 8)
+        );
+        assert_eq!(reach.walkable(), walkable);
+        assert_eq!(reach.reachable(), reachable);
+        assert_eq!(reach.reachable_adj(), adj);
+        assert_eq!(reach.walkable()[0] & (1 << 31), 1 << 31, "bit 31 in word 0");
+        assert_eq!(reach.walkable()[1] & 1, 1, "bit 32 in word 1");
+        assert_eq!(reach.walkable()[1] & (1 << 21), 1 << 21, "bit 53 in word 1");
+        assert_eq!(reach.walkable()[1] & (1 << 31), 1 << 31, "bit 63 in word 1");
+        assert_eq!(reach.walkable()[2] & 1, 1, "bit 64 in word 2");
+    }
+
+    #[test]
+    fn omitted_reach_is_absent_when_unchanged() {
+        let mut input = empty_input(1);
+        let walkable = reach_words(&[1]);
+        input.reach = ReachViewInput {
+            available: true,
+            base_x: 1,
+            base_z: 2,
+            level: 0,
+            width: 9,
+            height: 8,
+            walkable: &walkable,
+            reachable: &walkable,
+            reachable_adj: &walkable,
+        };
+        let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert!(kf.has_reach());
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_reach(), "unchanged reach omitted from delta");
+        assert!(view.reach().is_none());
+    }
+
+    #[test]
+    fn unavailable_reach_is_posted_when_cleared() {
+        let walkable = reach_words(&[0]);
+        let mut input = empty_input(1);
+        input.reach = ReachViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 9,
+            height: 8,
+            walkable: &walkable,
+            reachable: &walkable,
+            reachable_adj: &walkable,
+        };
+        let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        input.reach = ReachViewInput::UNAVAILABLE;
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_reach(), "available→unavailable must post reach");
+        let reach = view.reach().expect("cleared view");
+        assert!(!reach.available());
+        assert_eq!(reach.width(), 0);
+        assert!(reach.walkable().is_empty());
     }
 }

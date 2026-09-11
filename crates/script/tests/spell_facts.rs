@@ -76,6 +76,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
     }
 }
 

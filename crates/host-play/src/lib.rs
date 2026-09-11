@@ -2338,8 +2338,8 @@ fn with_script_snapshot_input<R>(
 ) -> R {
     use script::isolate_fb::{
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
-        MakeButtonInput, MakeProductInput, NearestBoothInput, SceneEntityInput, SideTabIfaceInput,
-        SnapshotInput, StatInput, TileInput, VarpInput,
+        MakeButtonInput, MakeProductInput, NearestBoothInput, ReachViewInput, SceneEntityInput,
+        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -2349,6 +2349,20 @@ fn with_script_snapshot_input<R>(
         }
         api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
     });
+    let reach_pack = snapshot
+        .map(|s| api::query::pack_reach_query(s.scene(), flood.as_ref()))
+        .unwrap_or_else(api::query::ReachQueryView::unavailable);
+    let reach = ReachViewInput {
+        available: reach_pack.available,
+        base_x: reach_pack.base_x,
+        base_z: reach_pack.base_z,
+        level: reach_pack.level,
+        width: reach_pack.width,
+        height: reach_pack.height,
+        walkable: &reach_pack.walkable,
+        reachable: &reach_pack.reachable,
+        reachable_adj: &reach_pack.reachable_adj,
+    };
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
         flood
@@ -3118,6 +3132,7 @@ fn with_script_snapshot_input<R>(
             .unwrap_or(-1),
         shop_open: snapshot.is_some_and(|s| s.shop().open),
         shop_stock: &shop_stock,
+        reach,
     };
     f(&input)
 }

@@ -1,4 +1,6 @@
-use script::isolate_fb::{ItemRowInput, NearestBoothInput, SnapshotInput, TileInput};
+use script::isolate_fb::{
+    ItemRowInput, NearestBoothInput, ReachViewInput, SnapshotInput, TileInput,
+};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
@@ -77,6 +79,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
+        reach: ReachViewInput::UNAVAILABLE,
     }
 }
 

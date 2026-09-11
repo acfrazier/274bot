@@ -2025,6 +2025,151 @@ impl ReachFlood {
         let bit = |bits: &[u64]| bits[i / 64] & (1u64 << (i % 64)) != 0;
         (bit(&self.reachable), bit(&self.reachable_adj))
     }
+
+    /// JS-safe u32 words for the posted isolate view. `ReachFlood` keeps
+    /// u64 internally; a u64 through JS `number` would drop bits above 2^53.
+    pub fn pack_u32(&self) -> (Vec<u32>, Vec<u32>) {
+        let n = (self.width as usize).saturating_mul(self.height as usize);
+        (
+            pack_u64_bitset_to_u32(&self.reachable, n),
+            pack_u64_bitset_to_u32(&self.reachable_adj, n),
+        )
+    }
+}
+
+/// Compact derived reach query posted on the isolate snapshot. Not a
+/// scene retain and not a second flood: walkable bits come from the same
+/// borrowed [`SceneView`] the flood already used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachQueryView {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub walkable: Vec<u32>,
+    pub reachable: Vec<u32>,
+    pub reachable_adj: Vec<u32>,
+}
+
+impl ReachQueryView {
+    /// Posted when `here` is missing or `scene.available` is false.
+    /// Explicit unavailable, not an omitted table: omission would keep a
+    /// previous course flood on the isolate.
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            base_x: 0,
+            base_z: 0,
+            level: 0,
+            width: 0,
+            height: 0,
+            walkable: Vec::new(),
+            reachable: Vec::new(),
+            reachable_adj: Vec::new(),
+        }
+    }
+
+    /// Bitset bytes for one posted view (walkable + reachable + adj).
+    pub fn bitset_bytes(&self) -> usize {
+        self.walkable
+            .len()
+            .saturating_add(self.reachable.len())
+            .saturating_add(self.reachable_adj.len())
+            .saturating_mul(4)
+    }
+
+    pub fn bit_at(
+        words: &[u32],
+        width: i32,
+        height: i32,
+        base_x: i32,
+        base_z: i32,
+        level: i32,
+        tile: WorldTile,
+    ) -> bool {
+        if tile.level != level {
+            return false;
+        }
+        let lx = tile.x - base_x;
+        let lz = tile.z - base_z;
+        if lx < 0 || lz < 0 || lx >= width || lz >= height {
+            return false;
+        }
+        let i = (lx as usize) * (height as usize) + (lz as usize);
+        let word = i / 32;
+        let bit = i % 32;
+        words.get(word).is_some_and(|w| w & (1u32 << bit) != 0)
+    }
+}
+
+/// Pack walkable bits from a borrowed scene (`SQ_BLOCKED == 0`, same
+/// `lx * height + lz` index as [`ReachFlood`]). Off-scene / missing
+/// collision entries stay unset.
+pub fn pack_walkable_u32(scene: &SceneView) -> Vec<u32> {
+    if !scene.available || scene.width <= 0 || scene.height <= 0 {
+        return Vec::new();
+    }
+    let width = scene.width as usize;
+    let height = scene.height as usize;
+    let n = width.saturating_mul(height);
+    let mut words = vec![0u32; n.div_ceil(32)];
+    for lx in 0..width {
+        for lz in 0..height {
+            let i = lx * height + lz;
+            let walkable = scene
+                .collision_flags
+                .get(i)
+                .is_some_and(|flags| flags & CollisionFlag::SQ_BLOCKED == 0);
+            if walkable {
+                words[i / 32] |= 1u32 << (i % 32);
+            }
+        }
+    }
+    words
+}
+
+/// One compact query view from the scene + the flood already computed
+/// for entity row bits. `flood == None` posts unavailable / empty dims.
+/// Posted `level` is the flood/scene plane (the same `here.level` observe
+/// already bound, including `minusedlevel`); this is not a new player-plane
+/// decode.
+pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQueryView {
+    let Some(flood) = flood else {
+        return ReachQueryView::unavailable();
+    };
+    if !scene.available {
+        return ReachQueryView::unavailable();
+    }
+    let (reachable, reachable_adj) = flood.pack_u32();
+    ReachQueryView {
+        available: true,
+        base_x: flood.base_x,
+        base_z: flood.base_z,
+        level: flood.level,
+        width: flood.width,
+        height: flood.height,
+        walkable: pack_walkable_u32(scene),
+        reachable,
+        reachable_adj,
+    }
+}
+
+fn pack_u64_bitset_to_u32(words: &[u64], nbits: usize) -> Vec<u32> {
+    let nwords = nbits.div_ceil(32);
+    let mut out = vec![0u32; nwords];
+    for (i, &w) in words.iter().enumerate() {
+        let lo = i * 2;
+        if lo < nwords {
+            out[lo] = w as u32;
+        }
+        let hi = lo + 1;
+        if hi < nwords {
+            out[hi] = (w >> 32) as u32;
+        }
+    }
+    out
 }
 
 // --- widget_search / loc_approach -----------------------------------------
