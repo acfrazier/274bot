@@ -420,6 +420,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "rune_crafter" => Some(rune_crafter_scenario()),
         "rune_crafter_earth" => Some(rune_crafter_earth_scenario()),
         "mule_crafter" => Some(mule_crafter_scenario()),
+        "ardy_cakes" => Some(ardy_cakes_scenario()),
+        "ardy_thiever" => Some(ardy_thiever_scenario()),
+        "ardy_thiever_knight" => Some(ardy_thiever_knight_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -475,6 +478,9 @@ pub fn names() -> Vec<&'static str> {
         "rune_crafter",
         "rune_crafter_earth",
         "mule_crafter",
+        "ardy_cakes",
+        "ardy_thiever",
+        "ardy_thiever_knight",
         "script_trade",
     ]
 }
@@ -5992,6 +5998,387 @@ fn rune_craft_variant(spec: RuneCraftSpec) -> Scenario {
     }
 }
 
+const THIEVING_STAT: i32 = 17;
+const HITPOINTS_STAT: i32 = 3;
+const CAKE_ID: i32 = 1891;
+const BREAD_ID: i32 = 2309;
+const CHOCOLATE_SLICE_ID: i32 = 1901;
+const CHOCOLATE_CAKE_ID: i32 = 1897;
+
+const ARDY_CAKES_STAND: WorldTile = WorldTile {
+    x: 2668,
+    z: 3312,
+    level: 0,
+};
+const ARDY_BANK: WorldTile = WorldTile {
+    x: 2655,
+    z: 3286,
+    level: 0,
+};
+
+const ARDY_CAKES_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "guardResponse",
+        value: ScriptInjectValue::Str("Flee"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
+const ARDY_THIEVER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "thieveTarget",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "guardResponse",
+        value: ScriptInjectValue::Str("Flee"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankAtLootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "restockAtFood",
+        value: ScriptInjectValue::Num(0.0),
+    },
+];
+
+const ARDY_THIEVER_KNIGHT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "thieveTarget",
+        value: ScriptInjectValue::Str("Knight of Ardougne"),
+    },
+    ScriptSettingInject {
+        id: "guardResponse",
+        value: ScriptInjectValue::Str("Flee"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankAtLootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "restockAtFood",
+        value: ScriptInjectValue::Num(0.0),
+    },
+];
+
+/// Empty pack at the Baker's stall stand. Flee, clues off. Script steals
+/// cake/bread/chocolate slice with Thieving XP, deposits the acquired stock
+/// when the pack is full, returns to STAND and steals again. Fight stays
+/// pending. Cake 1891 is the sequential identity; chocolate cake 1897 is not
+/// stall food.
+fn ardy_cakes_scenario() -> Scenario {
+    let stand = ARDY_CAKES_STAND;
+    let first_xp = Proof::StatXpGain {
+        id: THIEVING_STAT,
+        min: 1,
+    };
+    let cake = Proof::ItemId {
+        id: CAKE_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed thieving, hitpoints, empty pack and Baker's stall stand before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat thieving 5");
+                cheat(c, "setstat hitpoints 40");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Thieving 5 before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: 5,
+            },
+        ),
+        (
+            "confirm Hitpoints 40 before Start",
+            Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: 40,
+            },
+        ),
+        (
+            "confirm no seeded cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CAKE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bread in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded chocolate slice in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CHOCOLATE_SLICE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded chocolate cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CHOCOLATE_CAKE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Thieving XP from Baker's stall after Start", first_xp),
+        ("watch exact Cake 1891 stolen after Start", cake),
+        (
+            "watch arrival at the Ardougne bank after the stall fill",
+            Proof::ArrivedNear {
+                x: ARDY_BANK.x,
+                z: ARDY_BANK.z,
+                level: ARDY_BANK.level,
+                radius: 6,
+            },
+        ),
+        (
+            "watch script-stolen cake enter a fresh Ardougne bank",
+            Proof::BankItemId {
+                id: CAKE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of cake after deposit",
+            Proof::ItemIdAtMost {
+                id: CAKE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch return to the Baker's stall stand after deposit",
+            Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+        ),
+        ("watch the cake bank close after deposit", Proof::BankClosed),
+        ("watch another exact Cake 1891 after return", cake),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "ardy_cakes",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: cake,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ArdyCakes"),
+            script_settings_inject: Some(ARDY_CAKES_INJECT),
+            terminal_shot: Some("ardy_cakes"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+struct ArdyThieverSpec {
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    thieving: i32,
+}
+
+fn ardy_thiever_scenario() -> Scenario {
+    ardy_thiever_variant(ArdyThieverSpec {
+        name: "ardy_thiever",
+        inject: ARDY_THIEVER_INJECT,
+        thieving: 40,
+    })
+}
+
+fn ardy_thiever_knight_scenario() -> Scenario {
+    ardy_thiever_variant(ArdyThieverSpec {
+        name: "ardy_thiever_knight",
+        inject: ARDY_THIEVER_KNIGHT_INJECT,
+        thieving: 55,
+    })
+}
+
+/// Empty pack at the Guard/Knight stand. Flee, clues off, loot-count bank
+/// at 1 slot. Script restocks one stall food, pickpockets coins with
+/// Thieving XP, deposits those coins, returns to the stand and pickpockets
+/// again. PeriodicBank Off is not the bank proof. Fight stays pending.
+fn ardy_thiever_variant(spec: ArdyThieverSpec) -> Scenario {
+    let ArdyThieverSpec {
+        name,
+        inject,
+        thieving,
+    } = spec;
+    let stand = ARDOUGNE_GUARD;
+    let first_xp = Proof::StatXpGain {
+        id: THIEVING_STAT,
+        min: 1,
+    };
+    let coins = Proof::ItemId {
+        id: COINS_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed thieving, hitpoints, empty pack and market stand before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat thieving {thieving}"));
+                cheat(c, "setstat hitpoints 40");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm prepared Thieving before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: thieving,
+            },
+        ),
+        (
+            "confirm Hitpoints 40 before Start",
+            Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: 40,
+            },
+        ),
+        (
+            "confirm no seeded coins in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CAKE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Thieving XP after Start", first_xp),
+        ("watch exact Coins 995 pickpocketed after Start", coins),
+        (
+            "watch script-pickpocketed coins enter a fresh Ardougne bank",
+            Proof::BankItemId {
+                id: COINS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of coins after deposit",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch return to the market stand after deposit",
+            Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+        ),
+        (
+            "watch the pickpocket bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch another exact Coins 995 after return", coins),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: coins,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ArdyThiever"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -6527,6 +6914,9 @@ mod tests {
                 "rune_crafter",
                 "rune_crafter_earth",
                 "mule_crafter",
+                "ardy_cakes",
+                "ardy_thiever",
+                "ardy_thiever_knight",
                 "script_trade",
             ]
         );
@@ -8465,6 +8855,246 @@ mod tests {
     }
 
     #[test]
+    fn ardy_thieving_cases_register_stall_guard_knight_and_bank_cycles() {
+        let cakes = get("ardy_cakes").expect("ardy_cakes");
+        assert_eq!(cakes.settings.start_script, Some("ArdyCakes"));
+        assert_eq!(cakes.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(cakes.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("guardResponse"),
+            Some(&Value::String("Flee".into()))
+        );
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert!(inject.get("bankStrategy").is_none());
+        let start = cakes
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = cakes.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2668,
+            z: 3312,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 5,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 40,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: CAKE_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BREAD_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: CHOCOLATE_SLICE_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: CHOCOLATE_CAKE_ID,
+            count: 0,
+        }));
+        let watch = cakes.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let cake = Proof::ItemId {
+            id: CAKE_ID,
+            count: 1,
+        };
+        let pack_empty_cake = Proof::ItemIdAtMost {
+            id: CAKE_ID,
+            count: 0,
+        };
+        let stand = Proof::ArrivedNear {
+            x: 2668,
+            z: 3312,
+            level: 0,
+            radius: 6,
+        };
+        let bank = Proof::ArrivedNear {
+            x: ARDY_BANK.x,
+            z: ARDY_BANK.z,
+            level: ARDY_BANK.level,
+            radius: 6,
+        };
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: THIEVING_STAT,
+                    min: 1
+                },
+                cake,
+                bank,
+                Proof::BankItemId {
+                    id: CAKE_ID,
+                    count: 1
+                },
+                pack_empty_cake,
+                stand,
+                Proof::BankClosed,
+                cake,
+            ]
+        );
+        let first_cake = watch.iter().position(|arm| *arm == cake).unwrap();
+        let bank_cake = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: CAKE_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let pack_empty = watch
+            .iter()
+            .position(|arm| *arm == pack_empty_cake)
+            .unwrap();
+        let further_cake = watch.iter().rposition(|arm| *arm == cake).unwrap();
+        assert!(first_cake < bank_cake);
+        assert!(bank_cake < pack_empty);
+        assert!(pack_empty < further_cake);
+        assert_ne!(first_cake, further_cake);
+        assert_eq!(cakes.proof, cake);
+        assert_eq!(
+            ARDY_BANK,
+            WorldTile {
+                x: 2655,
+                z: 3286,
+                level: 0
+            }
+        );
+
+        let guard = get("ardy_thiever").expect("ardy_thiever");
+        assert_eq!(guard.settings.start_script, Some("ArdyThiever"));
+        let inject = settings_inject_map(guard.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("thieveTarget"),
+            Some(&Value::String("Guard".into()))
+        );
+        assert_eq!(
+            inject.get("guardResponse"),
+            Some(&Value::String("Flee".into()))
+        );
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("bankAtLootSlots"), Some(&Value::from(1.0)));
+        assert_eq!(inject.get("foodTarget"), Some(&Value::from(1.0)));
+        assert_eq!(inject.get("restockAtFood"), Some(&Value::from(0.0)));
+        assert!(inject.get("bankStrategy").is_none());
+        let guard_start = guard
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let guard_seed = guard.steps[..guard_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(guard_seed.contains(&Proof::ArrivedNear {
+            x: 2661,
+            z: 3306,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(guard_seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 40,
+        }));
+        assert!(guard_seed.contains(&Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        }));
+        let guard_watch = guard.steps[guard_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let coins = Proof::ItemId {
+            id: COINS_ID,
+            count: 1,
+        };
+        let pack_empty_coins = Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        };
+        let market = Proof::ArrivedNear {
+            x: 2661,
+            z: 3306,
+            level: 0,
+            radius: 6,
+        };
+        assert_eq!(
+            guard_watch,
+            vec![
+                Proof::StatXpGain {
+                    id: THIEVING_STAT,
+                    min: 1
+                },
+                coins,
+                Proof::BankItemId {
+                    id: COINS_ID,
+                    count: 1
+                },
+                pack_empty_coins,
+                market,
+                Proof::BankClosed,
+                coins,
+            ]
+        );
+        let first_coins = guard_watch.iter().position(|arm| *arm == coins).unwrap();
+        let further_coins = guard_watch.iter().rposition(|arm| *arm == coins).unwrap();
+        assert_ne!(first_coins, further_coins);
+        assert_eq!(guard.proof, coins);
+
+        let knight = get("ardy_thiever_knight").expect("ardy_thiever_knight");
+        assert_eq!(knight.settings.start_script, Some("ArdyThiever"));
+        let inject = settings_inject_map(knight.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("thieveTarget"),
+            Some(&Value::String("Knight of Ardougne".into()))
+        );
+        assert_eq!(inject.get("bankAtLootSlots"), Some(&Value::from(1.0)));
+        let knight_start = knight
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let knight_seed = knight.steps[..knight_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(knight_seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 55,
+        }));
+        assert!(!knight_seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 40,
+        }));
+        let knight_watch = knight.steps[knight_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(knight_watch, guard_watch);
+        assert_eq!(knight.proof, coins);
+
+        for name in ["ardy_cakes", "ardy_thiever", "ardy_thiever_knight"] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -8543,6 +9173,9 @@ mod tests {
             "rune_crafter",
             "rune_crafter_earth",
             "mule_crafter",
+            "ardy_cakes",
+            "ardy_thiever",
+            "ardy_thiever_knight",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
