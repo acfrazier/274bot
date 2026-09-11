@@ -2418,19 +2418,19 @@ fn overlay_spawn_pos(ui: &Ui, session: &Session, win: [f32; 2]) -> [f32; 2] {
 /// (same pattern as Nav config). FirstUseEver sits over the game pane so
 /// it does not spawn as a Game tab; the operator can still dock it later.
 fn browse_window(ui: &Ui, session: &mut Session) {
-    file_dialog_windows(ui, session);
-    if !session.script_browse_open {
-        return;
+    if session.script_browse_open {
+        let mut open = true;
+        let pos = overlay_spawn_pos(ui, session, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
+        ui.window(BROWSE_WINDOW_TITLE)
+            .opened(&mut open)
+            .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
+            .position(pos, Condition::FirstUseEver)
+            .size([SCRIPTS_FIRST_W, SCRIPTS_FIRST_H], Condition::FirstUseEver)
+            .build(|| browse_window_body(ui, session));
+        session.script_browse_open = open;
     }
-    let mut open = true;
-    let pos = overlay_spawn_pos(ui, session, [SCRIPTS_FIRST_W, SCRIPTS_FIRST_H]);
-    ui.window(BROWSE_WINDOW_TITLE)
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_SCROLLBAR)
-        .position(pos, Condition::FirstUseEver)
-        .size([SCRIPTS_FIRST_W, SCRIPTS_FIRST_H], Condition::FirstUseEver)
-        .build(|| browse_window_body(ui, session));
-    session.script_browse_open = open;
+    // A newly opened picker must appear above the Browse window that requested it.
+    file_dialog_windows(ui, session);
 }
 
 fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
@@ -2460,7 +2460,7 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
                 Condition::FirstUseEver,
             )
             .build(|| file_dialog_body(ui, session, DialogMode::File));
-        session.script_load_open = open;
+        session.script_load_open &= open;
     }
     if session.rs2b0t_catalog_open {
         let mut open = true;
@@ -2473,11 +2473,21 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
                 Condition::FirstUseEver,
             )
             .build(|| file_dialog_body(ui, session, DialogMode::Folder));
-        session.rs2b0t_catalog_open = open;
+        session.rs2b0t_catalog_open &= open;
     }
 }
 
 fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
+    match mode {
+        DialogMode::File => ui.text_wrapped("Choose a JavaScript or TypeScript file to load as a script."),
+        DialogMode::Folder if session.rs2b0t_catalog_defer_ok => ui.text_wrapped(
+            "No script catalog is configured. Choose your rs2b0t folder to add its scripts to Browse, or choose Not now.",
+        ),
+        DialogMode::Folder => ui.text_wrapped(
+            "Choose the rs2b0t folder whose scripts you want to add to Browse.",
+        ),
+    }
+    ui.separator();
     let cwd = match mode {
         DialogMode::File => session.script_load_dir.clone(),
         DialogMode::Folder => session.rs2b0t_catalog_dir.clone(),
