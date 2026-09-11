@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -68,6 +68,18 @@ const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
 const GNOME_SECOND_LOG_XP: i32 = 94;
 const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
 const FALADOR_CHICKENS: (i32, i32, i32) = (3029, 3294, 0);
+const EMPTY_VIAL_ID: i32 = 229;
+const VIAL_OF_WATER_ID: i32 = 227;
+const EYE_OF_NEWT_ID: i32 = 221;
+const GUAM_UNF_ID: i32 = 91;
+const ATTACK_POTION_3_ID: i32 = 121;
+const RANARR_WEED_ID: i32 = 257;
+const RANARR_UNF_ID: i32 = 99;
+const SNAPE_GRASS_ID: i32 = 231;
+const PRAYER_POTION_3_ID: i32 = 139;
+const FALADOR_WEST_BANK: (i32, i32, i32) = (2946, 3369, 0);
+const FALADOR_EAST_BANK: (i32, i32, i32) = (3013, 3355, 0);
+const FALADOR_FOUNTAIN: (i32, i32, i32) = (2949, 3381, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,6 +111,10 @@ enum CoreCase {
     Superheater,
     SuperheaterSteel,
     SuperheaterFireBattlestaff,
+    VialFiller,
+    VialFillerEast,
+    PotionMaker,
+    PotionMakerNamed,
 }
 
 impl CoreCase {
@@ -131,6 +147,10 @@ impl CoreCase {
             "superheater" => Ok(Self::Superheater),
             "superheater_steel" => Ok(Self::SuperheaterSteel),
             "superheater_fire_battlestaff" => Ok(Self::SuperheaterFireBattlestaff),
+            "vial_filler" => Ok(Self::VialFiller),
+            "vial_filler_east" => Ok(Self::VialFillerEast),
+            "potion_maker" => Ok(Self::PotionMaker),
+            "potion_maker_named" => Ok(Self::PotionMakerNamed),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -166,6 +186,10 @@ impl CoreCase {
             Self::Superheater => "superheater",
             Self::SuperheaterSteel => "superheater_steel",
             Self::SuperheaterFireBattlestaff => "superheater_fire_battlestaff",
+            Self::VialFiller => "vial_filler",
+            Self::VialFillerEast => "vial_filler_east",
+            Self::PotionMaker => "potion_maker",
+            Self::PotionMakerNamed => "potion_maker_named",
         }
     }
 
@@ -192,6 +216,8 @@ impl CoreCase {
             Self::Superheater | Self::SuperheaterSteel | Self::SuperheaterFireBattlestaff => {
                 "Superheater"
             }
+            Self::VialFiller | Self::VialFillerEast => "VialFiller",
+            Self::PotionMaker | Self::PotionMakerNamed => "PotionMaker",
         }
     }
 }
@@ -701,6 +727,35 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
                 && baseline.level("attack") >= 30
         }
+        CoreCase::VialFiller => {
+            near(baseline.tile, FALADOR_WEST_BANK, 6)
+                && baseline.item_id(EMPTY_VIAL_ID) == 0
+                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+        }
+        CoreCase::VialFillerEast => {
+            near(baseline.tile, FALADOR_EAST_BANK, 6)
+                && baseline.item_id(EMPTY_VIAL_ID) == 0
+                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+        }
+        CoreCase::PotionMaker => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+                && baseline.item_id(EYE_OF_NEWT_ID) == 0
+                && baseline.item_id(GUAM_UNF_ID) == 0
+                && baseline.item_id(ATTACK_POTION_3_ID) == 0
+                && baseline.level("herblore") >= 3
+        }
+        CoreCase::PotionMakerNamed => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(RANARR_WEED_ID) == 0
+                && baseline.item_id(VIAL_OF_WATER_ID) == 0
+                && baseline.item_id(SNAPE_GRASS_ID) == 0
+                && baseline.item_id(RANARR_UNF_ID) == 0
+                && baseline.item_id(PRAYER_POTION_3_ID) == 0
+                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.level("herblore") >= 38
+        }
     };
     if ready {
         return Ok(());
@@ -763,6 +818,12 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::SuperheaterFireBattlestaff => {
             "Varrock West bank, Magic 43, Attack 30, empty pack of 1393 and no 1387"
         }
+        CoreCase::VialFiller => "Falador West bank (2946,3369,0) and empty pack of 229/227",
+        CoreCase::VialFillerEast => "Falador East bank (3013,3355,0) and empty pack of 229/227",
+        CoreCase::PotionMaker => "Varrock West bank, Herblore 3, empty pack of 249/227/221/91/121",
+        CoreCase::PotionMakerNamed => {
+            "Varrock West bank, Herblore 38, empty pack of 257/227/231/99/139/249"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -792,6 +853,8 @@ struct CoreWitness {
     flax_picker_cycle: FlaxPickerCycle,
     superheater_cycle: SuperheaterCycle,
     chicken_killer_bank_cycle: ChickenKillerBankCycle,
+    vial_filler_cycle: VialFillerCycle,
+    potion_maker_cycle: PotionMakerCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1473,6 +1536,166 @@ impl ChickenKillerBankCycle {
     }
 }
 
+/// Fill at the fountain, deposit produced water vials, restock empties, fill again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct VialFillerCycle {
+    filled: Option<Observation>,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    returned: bool,
+    further: bool,
+}
+
+impl VialFillerCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.filled.is_none()
+            && now.item_id(VIAL_OF_WATER_ID) >= 1
+            && baseline.item_id(VIAL_OF_WATER_ID) == 0
+            && near(now.tile, FALADOR_FOUNTAIN, 4)
+        {
+            self.filled = Some(now.clone());
+        }
+        if self.filled.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(VIAL_OF_WATER_ID) == 0
+            && now.bank_item_id(VIAL_OF_WATER_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(EMPTY_VIAL_ID) >= 1
+                && now.bank_item_id(EMPTY_VIAL_ID) < deposited.bank_item_id(EMPTY_VIAL_ID)
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.withdrawn.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && near(now.tile, FALADOR_FOUNTAIN, 4);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(VIAL_OF_WATER_ID) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+    }
+}
+
+/// Staged herb+water to unfinished, secondary to finished, deposit, restock, further product.
+#[derive(Debug, Clone, Default, Serialize)]
+struct PotionMakerCycle {
+    unfinished: Option<Observation>,
+    finished: Option<Observation>,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    further: bool,
+    wrong_product: bool,
+    filter_violated: bool,
+}
+
+struct PotionMakerSpec {
+    herb: i32,
+    unf: i32,
+    secondary: i32,
+    finished: i32,
+    wrong_unf: i32,
+    wrong_finished: i32,
+    named: bool,
+}
+
+impl PotionMakerCycle {
+    fn observe(&mut self, spec: PotionMakerSpec, baseline: &Observation, now: &Observation) {
+        let PotionMakerSpec {
+            herb,
+            unf,
+            secondary,
+            finished,
+            wrong_unf,
+            wrong_finished,
+            named,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong_unf) > 0
+            || now.item_id(wrong_finished) > 0
+            || now.bank_item_id(wrong_unf) > 0
+            || now.bank_item_id(wrong_finished) > 0;
+        if named
+            && (now.item_id(GUAM_LEAF_ID) > 0
+                || (now.bank_open
+                    && now.bank_loaded
+                    && now.bank_generation > baseline.bank_generation
+                    && now.bank_item_id(GUAM_LEAF_ID) < 14))
+        {
+            self.filter_violated = true;
+        }
+        if self.unfinished.is_none()
+            && now.item_id(unf) >= 1
+            && now.item_id(herb) < 14
+            && now.item_id(VIAL_OF_WATER_ID) < 14
+            && now.item_id(finished) == 0
+            && baseline.item_id(unf) == 0
+            && baseline.item_id(finished) == 0
+        {
+            self.unfinished = Some(now.clone());
+        }
+        if let Some(unfinished) = &self.unfinished {
+            if self.finished.is_none()
+                && now.item_id(finished) >= 1
+                && now.item_id(unf) < unfinished.item_id(unf)
+                && now.item_id(secondary) < 14
+                && now.skill_xp("herblore") > baseline.skill_xp("herblore")
+                && !now.bank_open
+            {
+                self.finished = Some(now.clone());
+            }
+        }
+        if self.finished.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(finished) == 0
+            && now.bank_item_id(finished) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(herb) >= 1
+                && now.item_id(VIAL_OF_WATER_ID) >= 1
+                && now.bank_item_id(herb) < deposited.bank_item_id(herb)
+                && now.bank_item_id(VIAL_OF_WATER_ID) < deposited.bank_item_id(VIAL_OF_WATER_ID)
+                && (!named || now.bank_item_id(GUAM_LEAF_ID) == 14)
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.further |= now.item_id(unf) >= 1
+                && now.item_id(herb) < withdrawn.item_id(herb)
+                && now.item_id(VIAL_OF_WATER_ID) < withdrawn.item_id(VIAL_OF_WATER_ID);
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && self.finished.is_some() && !self.wrong_product && !self.filter_violated
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -1496,6 +1719,8 @@ impl CoreWitness {
             flax_picker_cycle: FlaxPickerCycle::default(),
             superheater_cycle: SuperheaterCycle::default(),
             chicken_killer_bank_cycle: ChickenKillerBankCycle::default(),
+            vial_filler_cycle: VialFillerCycle::default(),
+            potion_maker_cycle: PotionMakerCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -1638,6 +1863,39 @@ impl CoreWitness {
             self.chicken_killer_bank_cycle
                 .observe(&self.baseline, observation);
         }
+        if matches!(self.case, CoreCase::VialFiller | CoreCase::VialFillerEast) {
+            self.vial_filler_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::PotionMaker) {
+            self.potion_maker_cycle.observe(
+                PotionMakerSpec {
+                    herb: GUAM_LEAF_ID,
+                    unf: GUAM_UNF_ID,
+                    secondary: EYE_OF_NEWT_ID,
+                    finished: ATTACK_POTION_3_ID,
+                    wrong_unf: RANARR_UNF_ID,
+                    wrong_finished: PRAYER_POTION_3_ID,
+                    named: false,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::PotionMakerNamed) {
+            self.potion_maker_cycle.observe(
+                PotionMakerSpec {
+                    herb: RANARR_WEED_ID,
+                    unf: RANARR_UNF_ID,
+                    secondary: SNAPE_GRASS_ID,
+                    finished: PRAYER_POTION_3_ID,
+                    wrong_unf: GUAM_UNF_ID,
+                    wrong_finished: ATTACK_POTION_3_ID,
+                    named: true,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -1750,6 +2008,10 @@ impl CoreWitness {
             CoreCase::Superheater
             | CoreCase::SuperheaterSteel
             | CoreCase::SuperheaterFireBattlestaff => self.superheater_cycle.qualified(),
+            CoreCase::VialFiller | CoreCase::VialFillerEast => self.vial_filler_cycle.qualified(),
+            CoreCase::PotionMaker | CoreCase::PotionMakerNamed => {
+                self.potion_maker_cycle.qualified()
+            }
         };
         if !ok {
             return Err(format!(
@@ -1778,6 +2040,8 @@ impl CoreWitness {
             "flax_picker_cycle": self.flax_picker_cycle,
             "superheater_cycle": self.superheater_cycle,
             "chicken_killer_bank_cycle": self.chicken_killer_bank_cycle,
+            "vial_filler_cycle": self.vial_filler_cycle,
+            "potion_maker_cycle": self.potion_maker_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -3758,6 +4022,257 @@ mod tests {
         }
     }
 
+    fn vial_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+    ) -> Observation {
+        let mut observation = observation(&[], &[], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn vial_filler_requires_fountain_fill_deposit_restock_and_further_fill() {
+        for (case, bank) in [
+            (CoreCase::VialFiller, FALADOR_WEST_BANK),
+            (CoreCase::VialFillerEast, FALADOR_EAST_BANK),
+        ] {
+            let baseline = vial_obs(bank, &[], &[]);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let filled = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 28)], &[]);
+            let mut deposited = vial_obs(bank, &[], &[(VIAL_OF_WATER_ID, 28), (EMPTY_VIAL_ID, 28)]);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn = vial_obs(bank, &[(EMPTY_VIAL_ID, 28)], &[(VIAL_OF_WATER_ID, 28)]);
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let mut returned = vial_obs(FALADOR_FOUNTAIN, &[(EMPTY_VIAL_ID, 28)], &[]);
+            returned.bank_generation = 1;
+            let further = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 1)], &[]);
+
+            assert!(witness(
+                case,
+                &baseline,
+                [&filled, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&filled]).qualify().is_err());
+            assert!(witness(
+                case,
+                &baseline,
+                [&filled, &deposited, &withdrawn, &returned]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = filled.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Vial of water".into(), 28);
+            assert!(witness(
+                case,
+                &baseline,
+                [&name_only, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&filled, &stale, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut not_fountain = filled.clone();
+            not_fountain.tile = Some(bank);
+            assert!(witness(
+                case,
+                &baseline,
+                [&not_fountain, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(VIAL_OF_WATER_ID, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
+    fn potion_obs(
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        herblore_xp: i32,
+        herblore_level: i32,
+    ) -> Observation {
+        let mut observation = observation(&[], &[("herblore", herblore_xp)], &[]);
+        observation.tile = Some((3185, 3440, 0));
+        observation.levels.insert("herblore".into(), herblore_level);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn potion_maker_requires_staged_unf_finished_deposit_and_further_product() {
+        for (case, herb, unf, secondary, finished, wrong_unf, wrong_finished, named, level) in [
+            (
+                CoreCase::PotionMaker,
+                GUAM_LEAF_ID,
+                GUAM_UNF_ID,
+                EYE_OF_NEWT_ID,
+                ATTACK_POTION_3_ID,
+                RANARR_UNF_ID,
+                PRAYER_POTION_3_ID,
+                false,
+                3,
+            ),
+            (
+                CoreCase::PotionMakerNamed,
+                RANARR_WEED_ID,
+                RANARR_UNF_ID,
+                SNAPE_GRASS_ID,
+                PRAYER_POTION_3_ID,
+                GUAM_UNF_ID,
+                ATTACK_POTION_3_ID,
+                true,
+                38,
+            ),
+        ] {
+            let mut baseline = potion_obs(&[], &[], 1_000, level);
+            if named {
+                baseline.bank_ids.insert(GUAM_LEAF_ID, 14);
+            }
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let unfinished = potion_obs(&[(unf, 14)], &[], 1_000, level);
+            let made = potion_obs(&[(finished, 14)], &[], 1_025, level);
+            let mut deposited_bank = vec![
+                (finished, 14),
+                (herb, 28),
+                (VIAL_OF_WATER_ID, 28),
+                (secondary, 28),
+            ];
+            if named {
+                deposited_bank.push((GUAM_LEAF_ID, 14));
+            }
+            let mut deposited = potion_obs(&[], &deposited_bank, 1_025, level);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn_bank = vec![
+                (finished, 14),
+                (herb, 14),
+                (VIAL_OF_WATER_ID, 14),
+                (secondary, 28),
+            ];
+            if named {
+                withdrawn_bank.push((GUAM_LEAF_ID, 14));
+            }
+            let mut withdrawn = potion_obs(
+                &[(herb, 14), (VIAL_OF_WATER_ID, 14)],
+                &withdrawn_bank,
+                1_025,
+                level,
+            );
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let further = potion_obs(&[(unf, 14), (VIAL_OF_WATER_ID, 0)], &[], 1_025, level);
+
+            assert!(witness(
+                case,
+                &baseline,
+                [&unfinished, &made, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&unfinished]).qualify().is_err());
+            assert!(witness(case, &baseline, [&unfinished, &made])
+                .qualify()
+                .is_err());
+            assert!(witness(
+                case,
+                &baseline,
+                [&unfinished, &made, &deposited, &withdrawn]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = unfinished.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Unfinished potion".into(), 14);
+            assert!(witness(
+                case,
+                &baseline,
+                [&name_only, &made, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&unfinished, &made, &stale, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut wrong = made.clone();
+            wrong.item_ids.insert(wrong_finished, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&unfinished, &wrong, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+            let mut wrong_unfinished = unfinished.clone();
+            wrong_unfinished.item_ids.insert(wrong_unf, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&wrong_unfinished, &made, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            if named {
+                let mut took_guam = withdrawn.clone();
+                took_guam.item_ids.insert(GUAM_LEAF_ID, 14);
+                took_guam.bank_ids.insert(GUAM_LEAF_ID, 0);
+                assert!(witness(
+                    case,
+                    &baseline,
+                    [&unfinished, &made, &deposited, &took_guam, &further]
+                )
+                .qualify()
+                .is_err());
+            }
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(finished, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+            let mut seeded_unf = baseline.clone();
+            seeded_unf.item_ids.insert(unf, 1);
+            assert!(validate_case_baseline(case, &seeded_unf).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -3792,6 +4307,10 @@ mod tests {
             CoreCase::Superheater,
             CoreCase::SuperheaterSteel,
             CoreCase::ChickenKillerBank,
+            CoreCase::VialFiller,
+            CoreCase::VialFillerEast,
+            CoreCase::PotionMaker,
+            CoreCase::PotionMakerNamed,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

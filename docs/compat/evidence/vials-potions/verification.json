@@ -1,0 +1,70 @@
+{
+  "task": "t_534895e5",
+  "brief": "docs/compat/briefs/66-vials-potions-fixtures.md",
+  "brief_sha256": "edf52e663af657a9d7c99131cbe2121e96c452e56bc09a754d91def98d44a641",
+  "host_commit": "141f9ccece0d4944d035f53805873c714b91cdc2",
+  "export_base": "2443265946954be175ade48439ff22a0b9f3c5e8",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "isolated_build": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-src-24432659",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/t_534895e5-target-24432659",
+  "shared_campaign_target": false,
+  "live": false,
+  "scenarios": [
+    "vial_filler",
+    "vial_filler_east",
+    "potion_maker",
+    "potion_maker_named"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "VialFiller.ts": "58f95dca5a65bfc6048c1da6a3eda8a8153b90979c0a30c237e76ed437c8bd4c",
+      "VialFillerLogic.ts": "e704f90e6e6b96a44a408edad53fb45c92f64b682505b0b2637627e90767bfeb",
+      "PotionMaker.ts": "36704aa9951b18bcb27c16d5740577937757847209daa504b0df5ecd9e758beb",
+      "PotionMakerLogic.ts": "0acc3221465d8322ecaf2fb2a14a253b81c0b3adecb19a44675c6832aa18636e"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "VialFiller.ts": "58f95dca5a65bfc6048c1da6a3eda8a8153b90979c0a30c237e76ed437c8bd4c",
+      "VialFillerLogic.ts": "e704f90e6e6b96a44a408edad53fb45c92f64b682505b0b2637627e90767bfeb",
+      "PotionMaker.ts": "36704aa9951b18bcb27c16d5740577937757847209daa504b0df5ecd9e758beb",
+      "PotionMakerLogic.ts": "0acc3221465d8322ecaf2fb2a14a253b81c0b3adecb19a44675c6832aa18636e"
+    }
+  },
+  "selected_ids": {
+    "vial_empty": 229,
+    "vial_water": 227,
+    "guam_leaf": 249,
+    "eye_of_newt": 221,
+    "guamvial": 91,
+    "3dose1attack": 121,
+    "ranarr_weed": 257,
+    "ranarrvial": 99,
+    "snape_grass": 231,
+    "3doseprayerrestore": 139
+  },
+  "game_data": {
+    "274.json": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
+    "289.json": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9"
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "4efa71877420d2a126ab64bfbaeb94515a0f49fd712185ca978760e31120049a",
+    "crates/host-play/tests/catalog_boundary_live.rs": "ae996340d79e35d6438ac0dbb1f9bf667fd95e15f8eaaf51ad24514fccdfb642",
+    "docs/compat/05i-vials-potions-fixtures.md": "fa0a73fddc951ee160f5845f6fb77ed75954793832b1ce0af09ab953e1ea49dc"
+  },
+  "checks": [
+    "cargo test -p scenario: 89 passed",
+    "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 23 passed, 1 ignored",
+    "cargo clippy -p scenario -- -D warnings: pass",
+    "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
+    "cargo fmt --check -p scenario: clean"
+  ],
+  "limits": [
+    "no live client run",
+    "VialFiller shop-buy/Jatix remains pending",
+    "PotionMaker uses nearestBank so Varrock West booth is reused",
+    "source has no herblore level; named cell seeds 38 as fixture-sufficient",
+    "Druidic Ritual via setvar druidquest 4 plus relog; journal green required before Start",
+    "batched useOn policy unchanged; no timeout change",
+    "Superheater Attack-30 6c7075ce preserved"
+  ]
+}
