@@ -2767,6 +2767,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(arr.into())
     }
 
+    fn u16_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        values: &[u16],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, values.len() as i32);
+        for (i, value) in values.iter().enumerate() {
+            let n = num(scope, f64::from(*value));
+            arr.set_index(scope, i as u32, n)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
     fn unavailable_reach<'s>(
         scope: &mut v8::HandleScope<'s>,
     ) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -2785,6 +2798,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "reachable", empty.into())?;
         let empty = v8::Array::new(scope, 0);
         set(scope, o, "reachable_adj", empty.into())?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "exact_rank", empty.into())?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "adjacent_rank", empty.into())?;
         let empty = v8::Array::new(scope, 0);
         set(scope, o, "step", empty.into())?;
         Ok(o.into())
@@ -2816,6 +2833,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "reachable", reachable)?;
         let reachable_adj = u32_array(scope, &r.reachable_adj())?;
         set(scope, o, "reachable_adj", reachable_adj)?;
+        let exact_rank = u16_array(scope, &r.exact_rank())?;
+        set(scope, o, "exact_rank", exact_rank)?;
+        let adjacent_rank = u16_array(scope, &r.adjacent_rank())?;
+        set(scope, o, "adjacent_rank", adjacent_rank)?;
         let step = u8_array(scope, &r.step())?;
         set(scope, o, "step", step)?;
         Ok(o.into())

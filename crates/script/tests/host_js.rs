@@ -25,6 +25,10 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("export interface Camera"));
     assert!(src.contains("orbit_yaw"));
     assert!(src.contains("export interface ShopStockRow"));
+    assert!(src.contains("export interface ReachQueryView"));
+    assert!(src.contains("exact_rank: number[]"));
+    assert!(src.contains("adjacent_rank: number[]"));
+    assert!(src.contains("reach: ReachQueryView"));
     assert!(src.contains("export interface QuestStatusRow"));
     assert!(src.contains("quest_statuses: QuestStatusRow[] | null"));
     assert!(src.contains("slot?: number"));

@@ -1944,18 +1944,28 @@ impl<'a> SceneQuery<'a> {
         flags(from.lx, from.lz)?;
         let width = scene.width;
         let height = scene.height;
-        let n = (width as usize) * (height as usize);
+        let (Ok(width_usize), Ok(height_usize)) = (usize::try_from(width), usize::try_from(height))
+        else {
+            return None;
+        };
+        let n = width_usize.checked_mul(height_usize)?;
+        if n == 0 || n > usize::from(u16::MAX) {
+            return None;
+        }
         let words = n.div_ceil(64);
         let mut reachable = vec![0u64; words];
         let mut reachable_adj = vec![0u64; words];
-        let idx = |lx: i32, lz: i32| (lx as usize) * (height as usize) + (lz as usize);
+        let mut exact_rank = vec![u16::MAX; n];
+        let idx = |lx: i32, lz: i32| (lx as usize) * height_usize + (lz as usize);
         let bit = |bits: &[u64], i: usize| bits[i / 64] & (1u64 << (i % 64)) != 0;
         let set = |bits: &mut [u64], i: usize| {
             bits[i / 64] |= 1u64 << (i % 64);
         };
 
         let mut queue = vec![(from.lx, from.lz)];
-        set(&mut reachable, idx(from.lx, from.lz));
+        let from_idx = idx(from.lx, from.lz);
+        set(&mut reachable, from_idx);
+        exact_rank[from_idx] = 0;
         let mut head = 0usize;
         while head < queue.len() {
             let (lx, lz) = queue[head];
@@ -1972,13 +1982,15 @@ impl<'a> SceneQuery<'a> {
                 }
                 if can_step_local(&flags, lx, lz, dx, dz) {
                     set(&mut reachable, i);
+                    exact_rank[i] = queue.len() as u16;
                     queue.push((nx, nz));
                 }
             }
         }
         reachable_adj.copy_from_slice(&reachable);
+        let mut adjacent_rank = exact_rank.clone();
         const ORTHO: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-        for &(lx, lz) in &queue {
+        for (rank, &(lx, lz)) in queue.iter().enumerate() {
             for (dx, dz) in ORTHO {
                 let nx = lx + dx;
                 let nz = lz + dz;
@@ -1986,7 +1998,9 @@ impl<'a> SceneQuery<'a> {
                     continue;
                 }
                 if can_reach_adjacent_tile(&flags, nx, nz, dx, dz) {
-                    set(&mut reachable_adj, idx(nx, nz));
+                    let i = idx(nx, nz);
+                    set(&mut reachable_adj, i);
+                    adjacent_rank[i] = adjacent_rank[i].min(rank as u16);
                 }
             }
         }
@@ -1998,6 +2012,8 @@ impl<'a> SceneQuery<'a> {
             height,
             reachable,
             reachable_adj,
+            exact_rank,
+            adjacent_rank,
         })
     }
 }
@@ -2012,6 +2028,8 @@ pub struct ReachFlood {
     height: i32,
     reachable: Vec<u64>,
     reachable_adj: Vec<u64>,
+    exact_rank: Vec<u16>,
+    adjacent_rank: Vec<u16>,
 }
 
 impl ReachFlood {
@@ -2039,6 +2057,12 @@ impl ReachFlood {
             pack_u64_bitset_to_u32(&self.reachable_adj, n),
         )
     }
+
+    /// Earliest dequeue ranks for exact and exact-or-adjacent reach.
+    /// `u16::MAX` marks a tile that the corresponding flood cannot reach.
+    pub fn ranks(&self) -> (&[u16], &[u16]) {
+        (&self.exact_rank, &self.adjacent_rank)
+    }
 }
 
 /// Compact derived reach query posted on the isolate snapshot. Not a
@@ -2055,6 +2079,12 @@ pub struct ReachQueryView {
     pub walkable: Vec<u32>,
     pub reachable: Vec<u32>,
     pub reachable_adj: Vec<u32>,
+    /// Earliest native flood dequeue rank for exact reach; `u16::MAX`
+    /// means unreachable. Index is `lx * height + lz`.
+    pub exact_rank: Vec<u16>,
+    /// Earliest exact or wall-valid orthogonal-adjacent dequeue rank;
+    /// `u16::MAX` means unreachable by either rule.
+    pub adjacent_rank: Vec<u16>,
     /// One byte per in-scene tile (`lx * height + lz`); bit `i` is
     /// DIRS[i] from that tile. Empty when unavailable.
     pub step: Vec<u8>,
@@ -2075,6 +2105,8 @@ impl ReachQueryView {
             walkable: Vec::new(),
             reachable: Vec::new(),
             reachable_adj: Vec::new(),
+            exact_rank: Vec::new(),
+            adjacent_rank: Vec::new(),
             step: Vec::new(),
         }
     }
@@ -2093,9 +2125,19 @@ impl ReachQueryView {
         self.step.len()
     }
 
+    /// Exact plus adjacent dequeue-rank bytes (two u16 values per tile).
+    pub fn rank_bytes(&self) -> usize {
+        self.exact_rank
+            .len()
+            .saturating_add(self.adjacent_rank.len())
+            .saturating_mul(2)
+    }
+
     /// Bitsets plus step masks. Design bound, not a measured win.
     pub fn view_bytes(&self) -> usize {
-        self.bitset_bytes().saturating_add(self.step_bytes())
+        self.bitset_bytes()
+            .saturating_add(self.step_bytes())
+            .saturating_add(self.rank_bytes())
     }
 
     pub fn bit_at(
@@ -2141,6 +2183,41 @@ impl ReachQueryView {
         }
         let i = (lx as usize) * (self.height as usize) + (lz as usize);
         self.step.get(i).is_some_and(|m| m & (1u8 << bit) != 0)
+    }
+
+    /// Bounded O(1) coordinate reach using the native flood's dequeue
+    /// order. This matches [`SceneQuery::can_reach`] without running a
+    /// second BFS: exact targets and valid adjacency are checked before
+    /// incrementing the expansion budget, so rank `k` succeeds at `k`.
+    pub fn can_reach(&self, destination: WorldTile, options: &SceneReachOptions) -> bool {
+        if !self.available || self.width <= 0 || self.height <= 0 {
+            return false;
+        }
+        let Some(tile_count) = (self.width as usize).checked_mul(self.height as usize) else {
+            return false;
+        };
+        if self.exact_rank.len() != tile_count || self.adjacent_rank.len() != tile_count {
+            return false;
+        }
+        if destination.level != self.level {
+            return false;
+        }
+        let lx = destination.x - self.base_x;
+        let lz = destination.z - self.base_z;
+        if lx < 0 || lz < 0 || lx >= self.width || lz >= self.height {
+            return false;
+        }
+        let i = (lx as usize) * (self.height as usize) + (lz as usize);
+        let (bits, ranks) = if options.adjacent_ok {
+            (&self.reachable_adj, &self.adjacent_rank)
+        } else {
+            (&self.reachable, &self.exact_rank)
+        };
+        let bit = bits
+            .get(i / 32)
+            .is_some_and(|word| word & (1u32 << (i % 32)) != 0);
+        let rank = ranks.get(i).copied().unwrap_or(u16::MAX);
+        bit && rank != u16::MAX && u32::from(rank) <= options.max_steps.unwrap_or(400)
     }
 }
 
@@ -2220,6 +2297,7 @@ pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQ
         return ReachQueryView::unavailable();
     }
     let (reachable, reachable_adj) = flood.pack_u32();
+    let (exact_rank, adjacent_rank) = flood.ranks();
     ReachQueryView {
         available: true,
         base_x: flood.base_x,
@@ -2230,6 +2308,8 @@ pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQ
         walkable: pack_walkable_u32(scene),
         reachable,
         reachable_adj,
+        exact_rank: exact_rank.to_vec(),
+        adjacent_rank: adjacent_rank.to_vec(),
         step: pack_step_masks(scene),
     }
 }

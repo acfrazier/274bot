@@ -603,6 +603,86 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
         ],
     },
     TsInterface {
+        name: "ReachQueryView",
+        doc: Some("Compact native coordinate reachability with bounded dequeue metadata."),
+        fields: &[
+            TsField {
+                name: "available",
+                ty: "boolean",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "base_x",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "base_z",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "level",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "width",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "height",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "walkable",
+                ty: "number[]",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "reachable",
+                ty: "number[]",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "reachable_adj",
+                ty: "number[]",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "exact_rank",
+                ty: "number[]",
+                optional: false,
+                doc: Some("Earliest exact dequeue rank; 65535 means unreachable."),
+            },
+            TsField {
+                name: "adjacent_rank",
+                ty: "number[]",
+                optional: false,
+                doc: Some(
+                    "Earliest exact-or-valid-adjacent dequeue rank; 65535 means unreachable.",
+                ),
+            },
+            TsField {
+                name: "step",
+                ty: "number[]",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    TsInterface {
         name: "VarpRow",
         doc: None,
         fields: &[
@@ -956,6 +1036,12 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
     TsField {
         name: "shop_stock",
         ty: "ShopStockRow[]",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "reach",
+        ty: "ReachQueryView",
         optional: false,
         doc: None,
     },

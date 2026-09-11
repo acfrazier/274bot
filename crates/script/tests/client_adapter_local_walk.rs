@@ -105,6 +105,8 @@ fn posted_scene(
         walkable: &[],
         reachable: &[],
         reachable_adj: &[],
+        exact_rank: &[],
+        adjacent_rank: &[],
         step: &[],
     }
 }

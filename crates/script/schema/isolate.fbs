@@ -130,9 +130,10 @@ table ChatLine {
 }
 
 // Compact derived reach query: scene origin plus JS-safe u32 bitsets
-// and one adjacent-step byte per tile. Index is lx * height + lz,
-// matching native ReachFlood. Old buffers omit this table or the
-// trailing `step` vector; the isolate treats missing as unavailable.
+// and one adjacent-step byte plus two u16 dequeue ranks per tile. Index
+// is lx * height + lz, matching native ReachFlood. Old buffers omit this
+// table or trailing vectors; bounded reach treats missing ranks as
+// unavailable rather than falling back to unbounded bits.
 table Reach {
   available: bool;
   base_x: int;
@@ -144,6 +145,8 @@ table Reach {
   reachable: [uint];
   reachable_adj: [uint];
   step: [ubyte];
+  exact_rank: [ushort];
+  adjacent_rank: [ushort];
 }
 
 // One selected-world widget text row. Absent from the posted list is not

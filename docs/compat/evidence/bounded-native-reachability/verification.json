@@ -1,0 +1,64 @@
+{
+  "task": "t_25797d04",
+  "date": "2026-09-11",
+  "brief": "docs/compat/briefs/140-bounded-native-reachability.md",
+  "brief_sha256": "63778485b398d45ea09ac3b6cc6d44d07533e3b95c894bc5bc46468695b6e001",
+  "base_commit": "f0249f96283c4c4540b7fe308b46972fc24516dc",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "cargo_target_dir": ".superpowers/task-targets/bounded-reachability-t_25797d04",
+  "live": false,
+  "logical_view_bytes": {
+    "tiles": 10816,
+    "packed_bitsets": 4056,
+    "step_masks": 10816,
+    "rank_maps": 43264,
+    "prior_total": 14872,
+    "new_total": 58136,
+    "increase": 43264
+  },
+  "tests": [
+    {
+      "command": "cargo test --locked --offline -p api -- --test-threads=1",
+      "passed": 206,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --lib -- --test-threads=1",
+      "passed": 83,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test load_isolate reachability_ -- --test-threads=1",
+      "passed": 7,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test client_adapter_local_walk -- --test-threads=1",
+      "passed": 8,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test host_js -- --test-threads=1",
+      "passed": 2,
+      "ignored": 1,
+      "status": "pass"
+    },
+    {
+      "command": "cargo test --locked --offline -p host-play --lib -- --test-threads=1",
+      "passed": 144,
+      "status": "pass"
+    }
+  ],
+  "checks": [
+    "cargo clippy --locked --offline --no-deps -p api --lib --test query -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p script --lib --test load_isolate --test client_adapter_local_walk --test host_js -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+    "rustfmt --edition 2021 --check scoped Rust files",
+    "git diff --check on scoped files"
+  ],
+  "limits": [
+    "No LIVE run or catalog acceptance claim.",
+    "Logical vector byte accounting is not an RSS, heap, V8-array, or serialized FlatBuffer measurement.",
+    "No client, catalog, scenario, fixture, or navigation-controller changes."
+  ]
+}

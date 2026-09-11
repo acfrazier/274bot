@@ -174,7 +174,8 @@ const VT_WT_TEXT: VOffsetT = 6;
 const VT_QUEST_NAME: VOffsetT = 4;
 const VT_QUEST_STATUS: VOffsetT = 6;
 
-// Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj, step }
+// Reach: { available, base_x, base_z, level, width, height, walkable,
+//          reachable, reachable_adj, step, exact_rank, adjacent_rank }
 const VT_REACH_AVAILABLE: VOffsetT = 4;
 const VT_REACH_BASE_X: VOffsetT = 6;
 const VT_REACH_BASE_Z: VOffsetT = 8;
@@ -185,6 +186,8 @@ const VT_REACH_WALKABLE: VOffsetT = 16;
 const VT_REACH_REACHABLE: VOffsetT = 18;
 const VT_REACH_REACHABLE_ADJ: VOffsetT = 20;
 const VT_REACH_STEP: VOffsetT = 22;
+const VT_REACH_EXACT_RANK: VOffsetT = 24;
+const VT_REACH_ADJACENT_RANK: VOffsetT = 26;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -290,6 +293,8 @@ pub struct ReachViewInput<'a> {
     pub walkable: &'a [u32],
     pub reachable: &'a [u32],
     pub reachable_adj: &'a [u32],
+    pub exact_rank: &'a [u16],
+    pub adjacent_rank: &'a [u16],
     pub step: &'a [u8],
 }
 
@@ -305,6 +310,8 @@ impl ReachViewInput<'static> {
         walkable: &[],
         reachable: &[],
         reachable_adj: &[],
+        exact_rank: &[],
+        adjacent_rank: &[],
         step: &[],
     };
 }
@@ -641,6 +648,12 @@ impl ReachReader<'_> {
     pub fn reachable_adj(&self) -> Vec<u32> {
         u32_vec(&self.tab, VT_REACH_REACHABLE_ADJ)
     }
+    pub fn exact_rank(&self) -> Vec<u16> {
+        u16_vec(&self.tab, VT_REACH_EXACT_RANK)
+    }
+    pub fn adjacent_rank(&self) -> Vec<u16> {
+        u16_vec(&self.tab, VT_REACH_ADJACENT_RANK)
+    }
     pub fn step(&self) -> Vec<u8> {
         u8_vec(&self.tab, VT_REACH_STEP)
     }
@@ -663,6 +676,12 @@ impl Verifiable for ReachReader<'_> {
                 false,
             )?
             .visit_field::<ForwardsUOffset<Vector<u8>>>("step", VT_REACH_STEP, false)?
+            .visit_field::<ForwardsUOffset<Vector<u16>>>("exact_rank", VT_REACH_EXACT_RANK, false)?
+            .visit_field::<ForwardsUOffset<Vector<u16>>>(
+                "adjacent_rank",
+                VT_REACH_ADJACENT_RANK,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1686,6 +1705,13 @@ fn u32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u32> {
     }
 }
 
+fn u16_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u16> {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<u16>>>(slot, None) } {
+        Some(v) => v.iter().collect(),
+        None => Vec::new(),
+    }
+}
+
 fn u8_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u8> {
     match unsafe { tab.get::<ForwardsUOffset<Vector<u8>>>(slot, None) } {
         Some(v) => v.iter().collect(),
@@ -1816,6 +1842,8 @@ pub struct ReachViewFp {
     pub walkable: Vec<u32>,
     pub reachable: Vec<u32>,
     pub reachable_adj: Vec<u32>,
+    pub exact_rank: Vec<u16>,
+    pub adjacent_rank: Vec<u16>,
     pub step: Vec<u8>,
 }
 
@@ -2078,6 +2106,8 @@ impl SnapshotFingerprint {
                 walkable: input.reach.walkable.to_vec(),
                 reachable: input.reach.reachable.to_vec(),
                 reachable_adj: input.reach.reachable_adj.to_vec(),
+                exact_rank: input.reach.exact_rank.to_vec(),
+                adjacent_rank: input.reach.adjacent_rank.to_vec(),
                 step: input.reach.step.to_vec(),
             },
             attacked_by_player: input.attacked_by_player,
@@ -3021,6 +3051,8 @@ fn reach_off<'b>(
     let reachable = b.create_vector(r.reachable);
     let reachable_adj = b.create_vector(r.reachable_adj);
     let step = b.create_vector(r.step);
+    let exact_rank = b.create_vector(r.exact_rank);
+    let adjacent_rank = b.create_vector(r.adjacent_rank);
     let tab = b.start_table();
     b.push_slot_always(VT_REACH_AVAILABLE, r.available);
     b.push_slot_always(VT_REACH_BASE_X, r.base_x);
@@ -3032,6 +3064,8 @@ fn reach_off<'b>(
     b.push_slot_always(VT_REACH_REACHABLE, reachable);
     b.push_slot_always(VT_REACH_REACHABLE_ADJ, reachable_adj);
     b.push_slot_always(VT_REACH_STEP, step);
+    b.push_slot_always(VT_REACH_EXACT_RANK, exact_rank);
+    b.push_slot_always(VT_REACH_ADJACENT_RANK, adjacent_rank);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4868,6 +4902,13 @@ pub(crate) mod tests {
         let walkable = reach_words(&[0, 31, 32, 53, 63, 64]);
         let reachable = reach_words(&[0, 32, 53]);
         let adj = reach_words(&[0, 31, 32, 53, 64]);
+        let mut exact_rank = vec![u16::MAX; 9 * 8];
+        exact_rank[0] = 0;
+        exact_rank[32] = 7;
+        exact_rank[53] = 11;
+        let mut adjacent_rank = exact_rank.clone();
+        adjacent_rank[31] = 6;
+        adjacent_rank[64] = 13;
         let mut input = empty_input(4);
         input.reach = ReachViewInput {
             available: true,
@@ -4879,6 +4920,8 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &reachable,
             reachable_adj: &adj,
+            exact_rank: &exact_rank,
+            adjacent_rank: &adjacent_rank,
             step: &[],
         };
         let bytes = encode_snapshot(&input);
@@ -4899,6 +4942,8 @@ pub(crate) mod tests {
         assert_eq!(reach.walkable(), walkable);
         assert_eq!(reach.reachable(), reachable);
         assert_eq!(reach.reachable_adj(), adj);
+        assert_eq!(reach.exact_rank(), exact_rank);
+        assert_eq!(reach.adjacent_rank(), adjacent_rank);
         assert_eq!(reach.step(), Vec::<u8>::new());
         assert_eq!(reach.walkable()[0] & (1 << 31), 1 << 31, "bit 31 in word 0");
         assert_eq!(reach.walkable()[1] & 1, 1, "bit 32 in word 1");
@@ -4912,6 +4957,7 @@ pub(crate) mod tests {
         let mut input = empty_input(1);
         let walkable = reach_words(&[1]);
         let step = vec![0u8, 2, 0];
+        let rank = vec![0u16, 1, u16::MAX];
         input.reach = ReachViewInput {
             available: true,
             base_x: 1,
@@ -4922,6 +4968,8 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &walkable,
             reachable_adj: &walkable,
+            exact_rank: &rank,
+            adjacent_rank: &rank,
             step: &step,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
@@ -4937,6 +4985,7 @@ pub(crate) mod tests {
     #[test]
     fn unavailable_reach_is_posted_when_cleared() {
         let walkable = reach_words(&[0]);
+        let rank = vec![0u16];
         let mut input = empty_input(1);
         input.reach = ReachViewInput {
             available: true,
@@ -4948,6 +4997,8 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &walkable,
             reachable_adj: &walkable,
+            exact_rank: &rank,
+            adjacent_rank: &rank,
             step: &[2],
         };
         let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
@@ -4959,6 +5010,8 @@ pub(crate) mod tests {
         assert!(!reach.available());
         assert_eq!(reach.width(), 0);
         assert!(reach.walkable().is_empty());
+        assert!(reach.exact_rank().is_empty());
+        assert!(reach.adjacent_rank().is_empty());
         assert!(reach.step().is_empty());
     }
 }

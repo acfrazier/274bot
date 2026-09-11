@@ -20,17 +20,6 @@ function resolveTile(target) {
     return null;
 }
 
-function entityOnTile(tile) {
-    const match = (row) =>
-        row &&
-        row.x === tile.x &&
-        row.z === tile.z &&
-        (row.level ?? 0) === tile.level;
-    const npc = (snap().npcs || []).find(match);
-    if (npc) return npc;
-    return (snap().ground || []).find(match) ?? null;
-}
-
 function reachView() {
     const reach = snap().reach;
     if (!reach || reach.available !== true) return null;
@@ -46,6 +35,30 @@ function bitAt(words, reach, tile) {
     const word = words[(i / 32) | 0];
     if (word == null) return false;
     return ((word >>> (i & 31)) & 1) === 1;
+}
+
+function rankMapsAvailable(reach) {
+    const count = reach.width * reach.height;
+    return Number.isSafeInteger(count) &&
+        count > 0 &&
+        Array.isArray(reach.exact_rank) &&
+        Array.isArray(reach.adjacent_rank) &&
+        reach.exact_rank.length === count &&
+        reach.adjacent_rank.length === count;
+}
+
+function boundedReach(reach, tile, adjacentOk, maxSteps) {
+    if (!rankMapsAvailable(reach)) return false;
+    if (!finiteInt(maxSteps) || maxSteps < 0) return false;
+    if (tile.level !== reach.level) return false;
+    const lx = tile.x - reach.base_x;
+    const lz = tile.z - reach.base_z;
+    if (lx < 0 || lz < 0 || lx >= reach.width || lz >= reach.height) return false;
+    const i = lx * reach.height + lz;
+    const words = adjacentOk ? reach.reachable_adj : reach.reachable;
+    const ranks = adjacentOk ? reach.adjacent_rank : reach.exact_rank;
+    const rank = ranks[i];
+    return bitAt(words, reach, tile) && finiteInt(rank) && rank >= 0 && rank < 0xffff && rank <= maxSteps;
 }
 
 // Posted step mask bit i matches native DIRS: W E N S NW NE SW SE.
@@ -72,14 +85,10 @@ export const Reachability = proxy('Reachability', {
     canReach(target, opts = {}) {
         const tile = resolveTile(target);
         if (!tile) return false;
-        const row = entityOnTile(tile);
-        if (row) {
-            return opts.adjacentOk ? row.reachable_adj === true : row.reachable === true;
-        }
         const reach = reachView();
         if (!reach) return false;
-        const words = opts.adjacentOk ? reach.reachable_adj : reach.reachable;
-        return bitAt(words, reach, tile);
+        const maxSteps = opts && opts.maxSteps !== undefined ? opts.maxSteps : 400;
+        return boundedReach(reach, tile, !!(opts && opts.adjacentOk), maxSteps);
     },
     canStep(from, to) {
         const a = resolveTile(from);

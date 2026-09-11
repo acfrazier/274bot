@@ -3813,22 +3813,23 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Hop 2 — Reachability.canReach reads posted reachable / reachable_adj.
+// Bounded Reachability fails closed without the native coordinate ranks,
+// even when a colocated entity row still carries legacy unbounded bits.
 #[test]
-fn isolate_reachability_can_reach_reads_posted_flags() {
+fn isolate_reachability_without_coordinate_ranks_fails_closed() {
     let src = r#"
 import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 export default class T extends LoopingBot {
     loop() {
         const withTile = {
             tile() {
-                return { x: 3220, z: 3220, level: 0 };
+                return { x: 3204, z: 3200, level: 0 };
             },
         };
         globalThis.__probe = {
             exact: Reachability.canReach(withTile, {}),
             adj: Reachability.canReach(withTile, { adjacentOk: true }),
-            tile: Reachability.canReach({ x: 3220, z: 3220, level: 0 }, {}),
+            tile: Reachability.canReach({ x: 3204, z: 3200, level: 0 }, {}),
             missing: Reachability.canReach({ x: 9999, z: 9999, level: 0 }, {}),
         };
     }
@@ -3840,8 +3841,8 @@ export default class T extends LoopingBot {
         index: 1,
         id: 9,
         name: Some("Guard"),
-        x: 3220,
-        z: 3220,
+        x: 3204,
+        z: 3200,
         level: 0,
         distance: 3,
         health: 10,
@@ -3849,23 +3850,32 @@ export default class T extends LoopingBot {
         in_combat: false,
         animating: false,
         actions: &actions,
-        reachable: false,
+        reachable: true,
         reachable_adj: true,
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
     }];
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[], &[], &[]);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(
         value["exact"], false,
-        "reachable false when only adjacent is ok"
+        "legacy exact bit cannot bypass missing ranks"
     );
-    assert_eq!(value["adj"], true, "reachable_adj when adjacentOk");
-    assert_eq!(value["tile"], false, "tile lookup reads the same row");
+    assert_eq!(
+        value["adj"], false,
+        "entity adjacency cannot bypass missing ranks"
+    );
+    assert_eq!(
+        value["tile"], false,
+        "coordinate bit also requires native ranks"
+    );
     assert_eq!(
         value["missing"], false,
         "no row on tile is false, not Chebyshev"
@@ -3919,10 +3929,20 @@ fn reach_words(bits: &[usize]) -> Vec<u32> {
     words
 }
 
+fn reach_ranks(entries: &[(usize, u16)]) -> Vec<u16> {
+    let mut ranks = vec![u16::MAX; 9 * 8];
+    for &(i, rank) in entries {
+        ranks[i] = rank;
+    }
+    ranks
+}
+
 fn posted_reach<'a>(
     walkable: &'a [u32],
     reachable: &'a [u32],
     reachable_adj: &'a [u32],
+    exact_rank: &'a [u16],
+    adjacent_rank: &'a [u16],
     step: &'a [u8],
 ) -> script::isolate_fb::ReachViewInput<'a> {
     script::isolate_fb::ReachViewInput {
@@ -3935,6 +3955,8 @@ fn posted_reach<'a>(
         walkable,
         reachable,
         reachable_adj,
+        exact_rank,
+        adjacent_rank,
         step,
     }
 }
@@ -3954,11 +3976,15 @@ export default class T extends LoopingBot {
             otherPlane: Reachability.walkable(t(3200, 3200, 1)),
             missingLevel: Reachability.walkable({ x: 3200, z: 3200 }),
             nonInt: Reachability.walkable({ x: 3200.5, z: 3200, level: 0 }),
-            emptyFloor: Reachability.canReach(t(3204, 3200, 0), {}),
+            emptyFloorDefault: Reachability.canReach(t(3204, 3200, 0), {}),
+            emptyFloorCapped: Reachability.canReach(t(3204, 3200, 0), { maxSteps: 1 }),
+            exactAtFive: Reachability.canReach(t(3204, 3200, 0), { maxSteps: 5 }),
+            adjacentAtFive: Reachability.canReach(t(3204, 3200, 0), { adjacentOk: true, maxSteps: 5 }),
+            originAtZero: Reachability.canReach(t(3200, 3200, 0), { maxSteps: 0 }),
+            adjacentAtZero: Reachability.canReach(t(3200, 3201, 0), { adjacentOk: true, maxSteps: 0 }),
             pocket: Reachability.canReach(t(3208, 3200, 0), {}),
             wall: Reachability.canReach(t(3203, 3207, 0), {}),
             adj: Reachability.canReach(t(3203, 3207, 0), { adjacentOk: true }),
-            maxStepsIgnored: Reachability.canReach(t(3204, 3200, 0), { maxSteps: 1 }),
             far: Reachability.canReach(t(3300, 3300, 0), {}),
             bit31: Reachability.walkable(t(3203, 3207, 0)),
             bit32: Reachability.walkable(t(3204, 3200, 0)),
@@ -3972,9 +3998,18 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let walkable = reach_words(&[0, 32, 53, 63, 64]);
     let reachable = reach_words(&[0, 32]);
-    let adj = reach_words(&[0, 31, 32]);
+    let adj = reach_words(&[0, 1, 31, 32]);
+    let exact_rank = reach_ranks(&[(0, 0), (32, 6)]);
+    let adjacent_rank = reach_ranks(&[(0, 0), (1, 0), (31, 3), (32, 5)]);
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &adj, &[]);
+    snap.reach = posted_reach(
+        &walkable,
+        &reachable,
+        &adj,
+        &exact_rank,
+        &adjacent_rank,
+        &[],
+    );
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -3984,17 +4019,22 @@ export default class T extends LoopingBot {
     assert_eq!(value["otherPlane"], false);
     assert_eq!(value["missingLevel"], true, "missing level defaults to 0");
     assert_eq!(value["nonInt"], false);
-    assert_eq!(value["emptyFloor"], true);
+    assert_eq!(value["emptyFloorDefault"], true);
+    assert_eq!(value["emptyFloorCapped"], false);
+    assert_eq!(value["exactAtFive"], false);
+    assert_eq!(
+        value["adjacentAtFive"], true,
+        "adjacent reach uses the earliest valid native neighbor rank"
+    );
+    assert_eq!(value["originAtZero"], true);
+    assert_eq!(value["adjacentAtZero"], true);
     assert_eq!(
         value["pocket"], false,
         "walkable isolated pocket is not reachable"
     );
     assert_eq!(value["wall"], false);
     assert_eq!(value["adj"], true, "adjacentOk uses adj bits only");
-    assert_eq!(
-        value["maxStepsIgnored"], true,
-        "maxSteps is not a per-call BFS"
-    );
+
     assert_eq!(value["far"], false, "far empty tile is not Chebyshev-true");
     assert_eq!(value["bit31"], false);
     assert_eq!(value["bit32"], true);
@@ -4025,8 +4065,9 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
+    let rank = reach_ranks(&[(0, 0), (32, 6)]);
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &rank, &rank, &[]);
     let (keyframe, fp) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
     iso.post_snapshot(keyframe);
     iso.on_game_tick(1);
@@ -4054,24 +4095,32 @@ export default class T extends LoopingBot {
     );
     assert_eq!(value["canReach"], false);
     iso.join();
+
+    let replacement = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    replacement.on_game_tick(1);
+    let value = replacement.probe("__probe").unwrap();
+    assert_eq!(value["walkable"], false, "replacement starts unavailable");
+    assert_eq!(
+        value["canReach"], false,
+        "replacement cannot inherit a prior isolate's ranks"
+    );
+    replacement.join();
 }
 
 #[test]
-fn isolate_reachability_row_path_still_wins_over_coordinate_bits() {
+fn isolate_reachability_entity_tiles_use_the_same_coordinate_budget() {
     let src = r#"
 import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 export default class T extends LoopingBot {
     loop() {
-        const withTile = {
-            tile() {
-                return { x: 3220, z: 3220, level: 0 };
-            },
-        };
+        const npc = { tile() { return { x: 3204, z: 3200, level: 0 }; } };
+        const ground = { tile() { return { x: 3200, z: 3201, level: 0 }; } };
         globalThis.__probe = {
-            exact: Reachability.canReach(withTile, {}),
-            adj: Reachability.canReach(withTile, { adjacentOk: true }),
-            tile: Reachability.canReach({ x: 3220, z: 3220, level: 0 }, {}),
-            missing: Reachability.canReach({ x: 9999, z: 9999, level: 0 }, {}),
+            npcCapped: Reachability.canReach(npc, { maxSteps: 1 }),
+            npcLarge: Reachability.canReach(npc, { maxSteps: 20_000 }),
+            npcTileCapped: Reachability.canReach({ x: 3204, z: 3200, level: 0 }, { maxSteps: 1 }),
+            groundExact: Reachability.canReach(ground, { maxSteps: 20_000 }),
+            groundAdjacentZero: Reachability.canReach(ground, { adjacentOk: true, maxSteps: 0 }),
         };
     }
 }
@@ -4082,8 +4131,8 @@ export default class T extends LoopingBot {
         index: 1,
         id: 9,
         name: Some("Guard"),
-        x: 3220,
-        z: 3220,
+        x: 3204,
+        z: 3200,
         level: 0,
         distance: 3,
         health: 10,
@@ -4091,7 +4140,26 @@ export default class T extends LoopingBot {
         in_combat: false,
         animating: false,
         actions: &actions,
-        reachable: false,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let ground = [script::isolate_fb::SceneEntityInput {
+        index: 2,
+        id: 1779,
+        name: Some("Flax"),
+        x: 3200,
+        z: 3201,
+        level: 0,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
         reachable_adj: true,
         combat_level: 0,
         target_kind: 0,
@@ -4099,22 +4167,31 @@ export default class T extends LoopingBot {
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
+    let adjacent = reach_words(&[0, 1, 32]);
+    let exact_rank = reach_ranks(&[(0, 0), (32, 6)]);
+    let adjacent_rank = reach_ranks(&[(0, 0), (1, 0), (32, 5)]);
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
-    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
+    snap.ground = &ground;
+    snap.reach = posted_reach(
+        &walkable,
+        &reachable,
+        &adjacent,
+        &exact_rank,
+        &adjacent_rank,
+        &[],
+    );
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["npcCapped"], false, "npc row cannot bypass maxSteps");
+    assert_eq!(value["npcLarge"], true);
+    assert_eq!(value["npcTileCapped"], false);
     assert_eq!(
-        value["exact"], false,
-        "entity row reachable false still wins over coordinate bits"
+        value["groundExact"], false,
+        "ground row reachable=true cannot override the native exact rank sentinel"
     );
-    assert_eq!(value["adj"], true, "reachable_adj when adjacentOk");
-    assert_eq!(value["tile"], false, "tile lookup reads the same row");
-    assert_eq!(
-        value["missing"], false,
-        "no row and no coordinate bit is false"
-    );
+    assert_eq!(value["groundAdjacentZero"], true);
     iso.join();
 }
 
@@ -4154,7 +4231,7 @@ export default class T extends LoopingBot {
     step[31] = 0x02;
     step[32] = 0x08;
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &reachable, &step);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[], &[], &step);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -4206,7 +4283,7 @@ export default class T extends LoopingBot {
     let mut step = vec![0u8; 9 * 8];
     step[0] = 0x02;
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &reachable, &step);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[], &[], &step);
     let (keyframe, fp) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
     iso.post_snapshot(keyframe);
     iso.on_game_tick(1);
@@ -4236,7 +4313,7 @@ export default class T extends LoopingBot {
 
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[], &[], &[]);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     assert_eq!(
