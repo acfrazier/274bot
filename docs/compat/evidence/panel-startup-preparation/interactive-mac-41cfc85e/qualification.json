@@ -1,0 +1,14 @@
+{
+  "observed_at": "2026-09-11T00:35:04.303812+00:00",
+  "unlock_succeeded": true,
+  "observation": "Passphrase and Unlock controls were replaced by the empty-profile selector (none) and Profiles button; error and Preparing banner cleared",
+  "empty_fixture_vault_unchanged": true,
+  "no_slot_started": true,
+  "shots": {
+    "shots/2026-09-11T00-33-32_58755/2026-09-11T00-33-32_manual-2026-09-11T00-33-32.png": "df243c1a1e7d7e3478ade14dfee61eb82079a7a653c9756ea6102aa9b893427e",
+    "shots/2026-09-11T00-33-32_58755/2026-09-11T00-33-32_manual-2026-09-11T00-33-32.json": "b0c5b60977798e7300805557073277526f73d7dac2b6cd2e59aa4aea0ea20e76",
+    "shots/2026-09-11T00-33-32_58755/2026-09-11T00-34-49_manual-2026-09-11T00-34-48.png": "c8fb8c43c45e9767b0ee92260e00267cd0cb4026ad5c34093b6024f9ff49f9ea",
+    "shots/2026-09-11T00-33-32_58755/2026-09-11T00-34-49_manual-2026-09-11T00-34-48.json": "b0c5b60977798e7300805557073277526f73d7dac2b6cd2e59aa4aea0ea20e76"
+  },
+  "capture_scope": "Manual F12 screenshots prove UI state only; sidecars are default empty snapshots and not gameplay evidence"
+}

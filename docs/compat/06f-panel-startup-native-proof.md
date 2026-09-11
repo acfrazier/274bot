@@ -69,3 +69,32 @@ the consuming final-validation ticket. These native checks cover live auto-boot
 and a pre-bind mismatch. Interactive Unlock and a disk mutation after binding
 were not independently exercised here. Fleet, reconnect, CPU/GPU freeze and
 full frontend acceptance remain separate campaign gates.
+
+
+## Interactive Mac follow-up at 00:36 UTC
+
+An isolated interactive entry was built against frozen host 41cfc85e/client
+56d8027. Its only additional code installs the existing `IsolatedEnv` before
+calling the production panel. No product source changed. The exact entry,
+source manifest and binary SHA a7a808b98c1db8242f3ad2b4381aab27d27bb8240d18a78d49eac4fe448716d5
+are recorded beside the proof. The production panel-play binary also built,
+but was not launched against the operator's stores.
+
+After native preparation completed, root created an empty disposable fixture
+vault with the unchanged vault crate, then flipped one byte in the copied flags
+file. An actual click on Unlock started background final validation. The UI
+reported `navigation flags changed after profile binding; restart required`,
+kept the vault locked, and started no slot. Its vault hash remained unchanged.
+Root restored the original flags bytes and clicked Unlock again. The profile
+selector and Profiles button replaced the passphrase controls, and the error
+and preparation banner cleared. The same empty vault file remained unchanged.
+Closing the window exited 0.
+
+Both 2240x1160 internal F12 PNGs were read; they show refusal and successful
+Unlock, respectively. These images prove UI state only. The current manual-shot
+sidecars serialize default empty snapshots and are not gameplay evidence. Files,
+verified hashes, mutation/restoration timestamps and process receipt are under
+`evidence/panel-startup-preparation/interactive-mac-41cfc85e/`. This closes the
+Mac interactive Unlock and after-bind mutation observations left open above.
+Equivalent Windows interactive coverage remains separate; Windows auto-boot
+and pre-bind refusal are already recorded.

@@ -1,0 +1,14 @@
+{
+  "mutated_at": "2026-09-11T00:32:23.696061+00:00",
+  "original_flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a",
+  "changed_flags_sha256": "bac585563386799d83b5d00e7a0d12c5323749dbcc235669c5d5e45b70162c53",
+  "fixture_vault_sha256": "300c625de5857e85af2a041213e2e67c736cbf8632d8e8df141457d219871416",
+  "observation_before_mutation": "Native window no longer shows Preparing server profile; status no slots; Create vault prompt visible",
+  "scope": "Only the disposable copied navflags file was mutated; the empty fixture vault was created offline using the unchanged vault crate",
+  "refusal_observed_at": "2026-09-11T00:33:52.836997+00:00",
+  "refusal_text": "navigation flags changed after profile binding; restart required",
+  "ui_still_locked": true,
+  "fixture_vault_unchanged": true,
+  "no_slot_started": true,
+  "internal_capture_scope": "UI refusal only; manual F12 sidecar currently serializes an empty default snapshot and is not gameplay evidence"
+}

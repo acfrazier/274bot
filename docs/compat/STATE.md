@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 00:25 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 00:36 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -84,6 +84,10 @@ Catalog and frontend acceptance remain separate.
   Alcher option fixtures t_a384fe64, panel startup t_779f58e5 and generated
   item metadata integration t_f1572cf0. It also
   covers root profile/harness, script Stop and frontend/world changes.
+- BankFletcher option harness t_ac56c0b5 is active in actual Sol run 1171
+  (session 20260910_202755_cb370a). Brief 48 adds ID-preserving stringing and
+  cut+string witnesses; it owns only scenario/proof/harness files and must
+  receive same-card Grok 4.5 review before root LIVE.
 - Loadout t_3737503d waits for integration review, then targeted spell facts
   t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
   Design reports are guidance, not implemented/live acceptance.
@@ -127,7 +131,11 @@ finds hashing on the preparation worker while the main thread renders. Windows
 probes recorded 223 responsive replies and two brief timeouts; no overall
 startup speedup is claimed. Both native platforms reject a changed copied
 navflags file before slot/vault creation. See 06f-panel-startup-native-proof.md
-for the remaining interactive Unlock and after-bind mutation proof limits.
+for exact limits. Mac interactive Unlock now also refuses an after-bind
+resource mutation with the fixture vault unchanged, then succeeds after the
+original bytes are restored. Both internal F12 UI captures were read; their
+empty default sidecars are not gameplay evidence. Windows interactive Unlock
+remains distinct from its already observed auto-boot path.
 
 ## Platforms and fixtures
 
