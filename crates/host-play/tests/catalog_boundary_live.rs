@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -47,6 +47,15 @@ const WOODEN_DOOR_OPEN_ID: i32 = 1531;
 const WOODEN_GATE_CLOSED_ID: i32 = 1551;
 const WOODEN_GATE_OPEN_ID: i32 = 1552;
 const FLAX_ID: i32 = 1779;
+const COPPER_ORE_ID: i32 = 436;
+const TIN_ORE_ID: i32 = 438;
+const IRON_ORE_ID: i32 = 440;
+const COAL_ID: i32 = 453;
+const STAFF_OF_FIRE_ID: i32 = 1387;
+const FIRE_BATTLESTAFF_ID: i32 = 1393;
+const BRONZE_BAR_ID: i32 = 2349;
+const IRON_BAR_ID: i32 = 2351;
+const STEEL_BAR_ID: i32 = 2353;
 const LUMBRIDGE_DOOR: (i32, i32, i32) = (3208, 3211, 0);
 const LUMBRIDGE_DOOR_STAND: (i32, i32, i32) = (3208, 3212, 0);
 const LUMBRIDGE_GATE: (i32, i32, i32) = (3213, 3261, 0);
@@ -83,6 +92,9 @@ enum CoreCase {
     GnomeCourse,
     GnomeCourseRadius,
     FlaxPicker,
+    Superheater,
+    SuperheaterSteel,
+    SuperheaterFireBattlestaff,
 }
 
 impl CoreCase {
@@ -111,6 +123,9 @@ impl CoreCase {
             "gnome_course" => Ok(Self::GnomeCourse),
             "gnome_course_radius" => Ok(Self::GnomeCourseRadius),
             "flax_picker" => Ok(Self::FlaxPicker),
+            "superheater" => Ok(Self::Superheater),
+            "superheater_steel" => Ok(Self::SuperheaterSteel),
+            "superheater_fire_battlestaff" => Ok(Self::SuperheaterFireBattlestaff),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -142,6 +157,9 @@ impl CoreCase {
             Self::GnomeCourse => "gnome_course",
             Self::GnomeCourseRadius => "gnome_course_radius",
             Self::FlaxPicker => "flax_picker",
+            Self::Superheater => "superheater",
+            Self::SuperheaterSteel => "superheater_steel",
+            Self::SuperheaterFireBattlestaff => "superheater_fire_battlestaff",
         }
     }
 
@@ -165,6 +183,9 @@ impl CoreCase {
             Self::DoorOpener | Self::DoorOpenerGate => "DoorOpener",
             Self::GnomeCourse | Self::GnomeCourseRadius => "GnomeCourse",
             Self::FlaxPicker => "FlaxPicker",
+            Self::Superheater | Self::SuperheaterSteel | Self::SuperheaterFireBattlestaff => {
+                "Superheater"
+            }
         }
     }
 }
@@ -173,6 +194,11 @@ fn validate_case_catalog(case: CoreCase, commit: &str) -> Result<(), String> {
     if case == CoreCase::BankFletcherCutString && commit == CATALOG_COMMIT_A {
         return Err(format!(
             "catalog {CATALOG_COMMIT_A} BankFletcher has no mode setting; bank_fletcher_cut_string is supported only by {CATALOG_COMMIT_B}"
+        ));
+    }
+    if case == CoreCase::SuperheaterFireBattlestaff && commit == CATALOG_COMMIT_A {
+        return Err(format!(
+            "catalog {CATALOG_COMMIT_A} Superheater requires Staff of fire; superheater_fire_battlestaff is supported only by {CATALOG_COMMIT_B}"
         ));
     }
     Ok(())
@@ -335,6 +361,7 @@ struct Observation {
     xp: BTreeMap<String, i32>,
     chat: Vec<(i32, String)>,
     loc_facts: Vec<BoundedLoc>,
+    equipment_ids: BTreeMap<i32, i32>,
 }
 
 /// One loc retained for these named cases. The live loc sweep is not copied.
@@ -410,6 +437,12 @@ impl Observation {
                     .any(|op| op.trim().to_ascii_lowercase().starts_with("open")),
             })
             .collect();
+        let mut equipment_ids = BTreeMap::new();
+        for item in snapshot.equipment() {
+            if item.count > 0 && item.def.id >= 0 {
+                *equipment_ids.entry(item.def.id).or_insert(0) += item.count;
+            }
+        }
         Self {
             ingame: snapshot.ingame() && snapshot.attached(),
             scene_state: snapshot.scene_state(),
@@ -427,6 +460,7 @@ impl Observation {
             xp,
             chat,
             loc_facts,
+            equipment_ids,
         }
     }
 
@@ -452,6 +486,10 @@ impl Observation {
 
     fn level(&self, name: &str) -> i32 {
         self.levels.get(name).copied().unwrap_or(0)
+    }
+
+    fn equipment_id(&self, id: i32) -> i32 {
+        self.equipment_ids.get(&id).copied().unwrap_or(0)
     }
 }
 
@@ -494,6 +532,26 @@ fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32) -> 
     tile.is_some_and(|tile| {
         tile.2 == target.2 && (tile.0 - target.0).abs().max((tile.1 - target.1).abs()) <= radius
     })
+}
+
+fn superheater_baseline_ready(
+    baseline: &Observation,
+    bar: i32,
+    primary: i32,
+    secondary: i32,
+    staff: i32,
+    smithing: i32,
+) -> bool {
+    near(baseline.tile, (3185, 3440, 0), 6)
+        && baseline.level("magic") >= 43
+        && baseline.level("smithing") >= smithing
+        && baseline.item_id(bar) == 0
+        && baseline.item_id(primary) == 0
+        && baseline.item_id(secondary) == 0
+        && baseline.item_id(NATURE_RUNE_ID) == 0
+        && baseline.item_id(staff) == 0
+        && baseline.item_id(IRON_BAR_ID) == 0
+        && baseline.equipment_id(staff) == 0
 }
 
 fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), String> {
@@ -606,6 +664,33 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::FlaxPicker => {
             near(baseline.tile, FLAX_FIELD, 6) && baseline.item_id(FLAX_ID) == 0
         }
+        CoreCase::Superheater => superheater_baseline_ready(
+            baseline,
+            BRONZE_BAR_ID,
+            COPPER_ORE_ID,
+            TIN_ORE_ID,
+            STAFF_OF_FIRE_ID,
+            1,
+        ),
+        CoreCase::SuperheaterSteel => superheater_baseline_ready(
+            baseline,
+            STEEL_BAR_ID,
+            IRON_ORE_ID,
+            COAL_ID,
+            STAFF_OF_FIRE_ID,
+            30,
+        ),
+        CoreCase::SuperheaterFireBattlestaff => {
+            superheater_baseline_ready(
+                baseline,
+                BRONZE_BAR_ID,
+                COPPER_ORE_ID,
+                TIN_ORE_ID,
+                FIRE_BATTLESTAFF_ID,
+                1,
+            ) && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+        }
     };
     if ready {
         return Ok(());
@@ -656,6 +741,15 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Gnome Stronghold start (2474,3436,0)"
         }
         CoreCase::FlaxPicker => "Seers flax field (2741,3444,0) with empty pack of 1779",
+        CoreCase::Superheater => {
+            "Varrock West bank, Magic 43, Smithing 1, empty pack of 436/438/2349/561/1387"
+        }
+        CoreCase::SuperheaterSteel => {
+            "Varrock West bank, Magic 43, Smithing 30, empty pack of 440/453/2353/561/1387"
+        }
+        CoreCase::SuperheaterFireBattlestaff => {
+            "Varrock West bank, Magic 43, empty pack of 1393 and no 1387"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -683,6 +777,7 @@ struct CoreWitness {
     door_opener_cycle: DoorOpenerCycle,
     gnome_course_cycle: GnomeCourseCycle,
     flax_picker_cycle: FlaxPickerCycle,
+    superheater_cycle: SuperheaterCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1222,6 +1317,103 @@ impl FlaxPickerCycle {
     }
 }
 
+/// Superheat a trip, deposit bars except natures, restock ores, then smelt again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct SuperheaterCycle {
+    first_bars: bool,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    produced_after_withdrawal: bool,
+    wrong_product: bool,
+    wrong_staff: bool,
+}
+
+struct SuperheaterSpec {
+    bar: i32,
+    primary: i32,
+    secondary: i32,
+    staff: i32,
+    steel: bool,
+}
+
+impl SuperheaterCycle {
+    fn observe(&mut self, spec: SuperheaterSpec, baseline: &Observation, now: &Observation) {
+        let SuperheaterSpec {
+            bar,
+            primary,
+            secondary,
+            staff,
+            steel,
+        } = spec;
+        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID]
+            .into_iter()
+            .filter(|id| *id != bar)
+            .any(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
+        self.wrong_product |= wrong_bars;
+        if now.equipment_id(STAFF_OF_FIRE_ID) > 0 && staff != STAFF_OF_FIRE_ID {
+            self.wrong_staff = true;
+        }
+        if now.equipment_id(FIRE_BATTLESTAFF_ID) > 0 && staff != FIRE_BATTLESTAFF_ID {
+            self.wrong_staff = true;
+        }
+        self.first_bars |= now.item_id(bar) >= 1
+            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(staff) == 0
+            && now.equipment_id(staff) >= 1
+            && now.skill_xp("magic") > baseline.skill_xp("magic")
+            && now.skill_xp("smithing") > baseline.skill_xp("smithing")
+            && baseline.item_id(bar) == 0
+            && !wrong_bars;
+        if self.first_bars
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(bar) == 0
+            && now.bank_item_id(bar) >= 1
+            && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item_id(primary) == 0
+            && now.item_id(secondary) == 0
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(primary) >= 1
+                && now.item_id(secondary) >= 1
+                && now.bank_item_id(primary) < deposited.bank_item_id(primary)
+                && now.bank_item_id(secondary) < deposited.bank_item_id(secondary)
+                && now.item_id(NATURE_RUNE_ID) >= 1
+                && if steel {
+                    now.item_id(secondary) == 2 * now.item_id(primary)
+                } else {
+                    now.item_id(primary) == now.item_id(secondary)
+                }
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.produced_after_withdrawal |= !now.bank_open
+                && !now.bank_loaded
+                && now.item_id(bar) >= 1
+                && now.item_id(primary) < withdrawn.item_id(primary)
+                && now.item_id(secondary) < withdrawn.item_id(secondary)
+                && now.item_id(NATURE_RUNE_ID) < withdrawn.item_id(NATURE_RUNE_ID)
+                && now.skill_xp("magic") > withdrawn.skill_xp("magic")
+                && now.skill_xp("smithing") > withdrawn.skill_xp("smithing")
+                && now.equipment_id(staff) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.produced_after_withdrawal && !self.wrong_product && !self.wrong_staff
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -1243,6 +1435,7 @@ impl CoreWitness {
             door_opener_cycle: DoorOpenerCycle::default(),
             gnome_course_cycle: GnomeCourseCycle::default(),
             flax_picker_cycle: FlaxPickerCycle::default(),
+            superheater_cycle: SuperheaterCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -1341,6 +1534,45 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::FlaxPicker) {
             self.flax_picker_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::Superheater) {
+            self.superheater_cycle.observe(
+                SuperheaterSpec {
+                    bar: BRONZE_BAR_ID,
+                    primary: COPPER_ORE_ID,
+                    secondary: TIN_ORE_ID,
+                    staff: STAFF_OF_FIRE_ID,
+                    steel: false,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::SuperheaterSteel) {
+            self.superheater_cycle.observe(
+                SuperheaterSpec {
+                    bar: STEEL_BAR_ID,
+                    primary: IRON_ORE_ID,
+                    secondary: COAL_ID,
+                    staff: STAFF_OF_FIRE_ID,
+                    steel: true,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::SuperheaterFireBattlestaff) {
+            self.superheater_cycle.observe(
+                SuperheaterSpec {
+                    bar: BRONZE_BAR_ID,
+                    primary: COPPER_ORE_ID,
+                    secondary: TIN_ORE_ID,
+                    staff: FIRE_BATTLESTAFF_ID,
+                    steel: false,
+                },
+                &self.baseline,
+                observation,
+            );
         }
         let baseline_sequence = self
             .baseline
@@ -1450,6 +1682,9 @@ impl CoreWitness {
                 self.gnome_course_cycle.qualified()
             }
             CoreCase::FlaxPicker => self.flax_picker_cycle.qualified(),
+            CoreCase::Superheater
+            | CoreCase::SuperheaterSteel
+            | CoreCase::SuperheaterFireBattlestaff => self.superheater_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -1476,6 +1711,7 @@ impl CoreWitness {
             "door_opener_cycle": self.door_opener_cycle,
             "gnome_course_cycle": self.gnome_course_cycle,
             "flax_picker_cycle": self.flax_picker_cycle,
+            "superheater_cycle": self.superheater_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -2049,6 +2285,7 @@ mod tests {
                 .map(|(sequence, text)| (*sequence, (*text).to_string()))
                 .collect(),
             loc_facts: Vec::new(),
+            equipment_ids: BTreeMap::new(),
         }
     }
 
@@ -3103,6 +3340,238 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::FlaxPicker, &seeded).is_err());
     }
 
+    fn superheater_obs(
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        equipment_ids: &[(i32, i32)],
+        magic_xp: i32,
+        smithing_xp: i32,
+        smithing_level: i32,
+    ) -> Observation {
+        let mut observation =
+            observation(&[], &[("magic", magic_xp), ("smithing", smithing_xp)], &[]);
+        observation.tile = Some((3185, 3440, 0));
+        observation.levels.insert("magic".into(), 43);
+        observation.levels.insert("smithing".into(), smithing_level);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.equipment_ids = equipment_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn superheater_requires_exact_ids_staff_and_bank_cycle() {
+        for (case, bar, primary, secondary, staff, steel, smithing) in [
+            (
+                CoreCase::Superheater,
+                BRONZE_BAR_ID,
+                COPPER_ORE_ID,
+                TIN_ORE_ID,
+                STAFF_OF_FIRE_ID,
+                false,
+                1,
+            ),
+            (
+                CoreCase::SuperheaterSteel,
+                STEEL_BAR_ID,
+                IRON_ORE_ID,
+                COAL_ID,
+                STAFF_OF_FIRE_ID,
+                true,
+                30,
+            ),
+            (
+                CoreCase::SuperheaterFireBattlestaff,
+                BRONZE_BAR_ID,
+                COPPER_ORE_ID,
+                TIN_ORE_ID,
+                FIRE_BATTLESTAFF_ID,
+                false,
+                1,
+            ),
+        ] {
+            let baseline = superheater_obs(&[], &[], &[], 10_000, 1_000, smithing);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let primary_n = 9;
+            let secondary_n = if steel { 18 } else { 9 };
+            let first = superheater_obs(
+                &[(bar, 9), (NATURE_RUNE_ID, 41)],
+                &[],
+                &[(staff, 1)],
+                10_053,
+                1_056,
+                smithing,
+            );
+            let mut deposited = superheater_obs(
+                &[(NATURE_RUNE_ID, 41)],
+                &[
+                    (bar, 9),
+                    (primary, 91),
+                    (secondary, if steel { 182 } else { 91 }),
+                ],
+                &[(staff, 1)],
+                10_053,
+                1_056,
+                smithing,
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn = superheater_obs(
+                &[
+                    (primary, primary_n),
+                    (secondary, secondary_n),
+                    (NATURE_RUNE_ID, 41),
+                ],
+                &[
+                    (bar, 9),
+                    (primary, 91 - primary_n),
+                    (secondary, if steel { 182 - 18 } else { 91 - 9 }),
+                ],
+                &[(staff, 1)],
+                10_053,
+                1_056,
+                smithing,
+            );
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let further = superheater_obs(
+                &[
+                    (bar, 1),
+                    (primary, primary_n - 1),
+                    (secondary, secondary_n - if steel { 2 } else { 1 }),
+                    (NATURE_RUNE_ID, 40),
+                ],
+                &[],
+                &[(staff, 1)],
+                10_106,
+                1_062,
+                smithing,
+            );
+
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &further])
+                    .qualify()
+                    .is_ok()
+            );
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first, &deposited, &withdrawn])
+                .qualify()
+                .is_err());
+
+            let xp_only = superheater_obs(
+                &[(NATURE_RUNE_ID, 50)],
+                &[],
+                &[(staff, 1)],
+                10_053,
+                1_056,
+                smithing,
+            );
+            assert!(witness(
+                case,
+                &baseline,
+                [&xp_only, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = first.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Bronze bar".into(), 9);
+            name_only.items.insert("Nature rune".into(), 41);
+            assert!(witness(
+                case,
+                &baseline,
+                [&name_only, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(
+                witness(case, &baseline, [&first, &stale, &withdrawn, &further])
+                    .qualify()
+                    .is_err()
+            );
+            let mut closed_deposit = deposited.clone();
+            closed_deposit.bank_open = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&first, &closed_deposit, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+            withdrawn.bank_generation = 2;
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &further])
+                    .qualify()
+                    .is_err()
+            );
+            withdrawn.bank_generation = 1;
+
+            let mut no_staff = first.clone();
+            no_staff.equipment_ids.clear();
+            assert!(witness(
+                case,
+                &baseline,
+                [&no_staff, &deposited, &withdrawn, &further]
+            )
+            .qualify()
+            .is_err());
+
+            if steel {
+                let mut one_coal = withdrawn.clone();
+                one_coal.item_ids.insert(COAL_ID, 9);
+                assert!(
+                    witness(case, &baseline, [&first, &deposited, &one_coal, &further])
+                        .qualify()
+                        .is_err()
+                );
+                let mut iron_bar = first.clone();
+                iron_bar.item_ids.insert(IRON_BAR_ID, 1);
+                assert!(witness(
+                    case,
+                    &baseline,
+                    [&iron_bar, &deposited, &withdrawn, &further]
+                )
+                .qualify()
+                .is_err());
+            } else {
+                let mut steel_bar = first.clone();
+                steel_bar.item_ids.insert(STEEL_BAR_ID, 1);
+                assert!(witness(
+                    case,
+                    &baseline,
+                    [&steel_bar, &deposited, &withdrawn, &further]
+                )
+                .qualify()
+                .is_err());
+            }
+
+            if case == CoreCase::SuperheaterFireBattlestaff {
+                let mut default_staff = first.clone();
+                default_staff.equipment_ids.clear();
+                default_staff.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+                assert!(witness(
+                    case,
+                    &baseline,
+                    [&default_staff, &deposited, &withdrawn, &further]
+                )
+                .qualify()
+                .is_err());
+            }
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(bar, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -3110,6 +3579,16 @@ mod tests {
         assert!(error.contains("has no mode setting"), "{error}");
         validate_case_catalog(CoreCase::BankFletcherCutString, CATALOG_COMMIT_B).unwrap();
         validate_case_catalog(CoreCase::BankFletcherString, CATALOG_COMMIT_A).unwrap();
+        let staff_error =
+            validate_case_catalog(CoreCase::SuperheaterFireBattlestaff, CATALOG_COMMIT_A)
+                .unwrap_err();
+        assert!(
+            staff_error.contains("requires Staff of fire"),
+            "{staff_error}"
+        );
+        validate_case_catalog(CoreCase::SuperheaterFireBattlestaff, CATALOG_COMMIT_B).unwrap();
+        validate_case_catalog(CoreCase::Superheater, CATALOG_COMMIT_A).unwrap();
+        validate_case_catalog(CoreCase::SuperheaterSteel, CATALOG_COMMIT_A).unwrap();
         for case in [
             CoreCase::AlcherCustomAlias,
             CoreCase::AlcherCustomName,
@@ -3124,6 +3603,8 @@ mod tests {
             CoreCase::GnomeCourse,
             CoreCase::GnomeCourseRadius,
             CoreCase::FlaxPicker,
+            CoreCase::Superheater,
+            CoreCase::SuperheaterSteel,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
