@@ -7,6 +7,27 @@ Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
+## Published foundation and cleanup
+
+Updated 2026-09-11 13:20 UTC. Foundation code940531c3f/clientaef3952d passed
+independent whole-branch Grok4.6 review,2603 workspace tests,1007 client tests
+and8 controlled live cells. Exact-main external-catalog failures and the initial
+door fixture failure are retained. A fresh recursive GitHub checkout passed the
+locked all-targets check. Main now contains the published batch through76b2016b7;
+clientaef3952d is fetchable from FR-client-bothost/r274-bh-modular. Full later
+capability/card/platform acceptance remains open. See08/08a and stage-1 evidence.
+
+Operator requested cleanup of unused/merged worktrees and branches, explicitly
+backing up codex/memory-diagnostics remotely before local removal. Root owns
+inspection, remote verification, preservation of uncommitted artifacts and safe
+removal; active campaign/source/caches remain protected. Memory hostf9975102a
+was pushed, and its client5c73a4a is being backed up. Cleanup is in progress.
+
+Native hint117 and Agility118 R2 are reviewed. Native sequencing123 is running;
+preparation120 follows118, resource125 follows120, Mule bootstrap127 follows125.
+Native trade126 follows the serialized teleport/shop/Make-X/fire capability lane.
+The331-row ledger retains four additional3ba paired failures (no real exchange).
+
 ## Incremental integration and ownership correction
 
 The operator requested continual verified staging, main integration and remote

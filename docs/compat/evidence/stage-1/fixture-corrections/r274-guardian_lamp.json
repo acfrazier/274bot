@@ -1,0 +1,25 @@
+{
+  "host_commit": "940531c3f7a4fe392f8ee5688702fe1f617d28b0",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/world_boundary_live-9ed14245b9ce0fdf",
+    "--ignored",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "WORLD_REVISION": "274",
+    "WORLD_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine",
+    "WORLD_CASE": "guardian_lamp",
+    "WORLD_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "WORLD_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags"
+  },
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+  "started_at": "2026-09-11T13:03:19.515004+00:00",
+  "seconds": 31.76,
+  "exit_code": 0,
+  "binary_sha256": "f84602d91ca3b4be32708eca84fb1734bc801c68bf9bb1d2c587cabcccaaeb73",
+  "log_sha256": "272e5a1fa16135a5bf8c20d289addffaf44131508bc435edc44e9c5853c42db7",
+  "fixture_preparation_is_not_action_proof": true,
+  "elapsed_is_not_performance_measurement": true
+}
