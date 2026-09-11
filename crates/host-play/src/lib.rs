@@ -2362,6 +2362,7 @@ fn with_script_snapshot_input<R>(
         walkable: &reach_pack.walkable,
         reachable: &reach_pack.reachable,
         reachable_adj: &reach_pack.reachable_adj,
+        step: &reach_pack.step,
     };
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {

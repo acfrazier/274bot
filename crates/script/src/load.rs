@@ -2491,6 +2491,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(arr.into())
     }
 
+    fn u8_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        bytes: &[u8],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, bytes.len() as i32);
+        for (i, byte) in bytes.iter().enumerate() {
+            let n = num(scope, f64::from(*byte));
+            arr.set_index(scope, i as u32, n)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
     fn unavailable_reach<'s>(
         scope: &mut v8::HandleScope<'s>,
     ) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -2509,6 +2522,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "reachable", empty.into())?;
         let empty = v8::Array::new(scope, 0);
         set(scope, o, "reachable_adj", empty.into())?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "step", empty.into())?;
         Ok(o.into())
     }
 
@@ -2538,6 +2553,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "reachable", reachable)?;
         let reachable_adj = u32_array(scope, &r.reachable_adj())?;
         set(scope, o, "reachable_adj", reachable_adj)?;
+        let step = u8_array(scope, &r.step())?;
+        set(scope, o, "step", step)?;
         Ok(o.into())
     }
 

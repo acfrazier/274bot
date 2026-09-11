@@ -3921,6 +3921,7 @@ fn posted_reach<'a>(
     walkable: &'a [u32],
     reachable: &'a [u32],
     reachable_adj: &'a [u32],
+    step: &'a [u8],
 ) -> script::isolate_fb::ReachViewInput<'a> {
     script::isolate_fb::ReachViewInput {
         available: true,
@@ -3932,6 +3933,7 @@ fn posted_reach<'a>(
         walkable,
         reachable,
         reachable_adj,
+        step,
     }
 }
 
@@ -3970,7 +3972,7 @@ export default class T extends LoopingBot {
     let reachable = reach_words(&[0, 32]);
     let adj = reach_words(&[0, 31, 32]);
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &adj);
+    snap.reach = posted_reach(&walkable, &reachable, &adj, &[]);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -4022,7 +4024,7 @@ export default class T extends LoopingBot {
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
     let mut snap = base_snapshot();
-    snap.reach = posted_reach(&walkable, &reachable, &reachable);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
     let (keyframe, fp) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
     iso.post_snapshot(keyframe);
     iso.on_game_tick(1);
@@ -4097,7 +4099,7 @@ export default class T extends LoopingBot {
     let reachable = reach_words(&[0, 32]);
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
-    snap.reach = posted_reach(&walkable, &reachable, &reachable);
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
@@ -4110,6 +4112,135 @@ export default class T extends LoopingBot {
     assert_eq!(
         value["missing"], false,
         "no row and no coordinate bit is false"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_reachability_can_step_reads_posted_masks() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        const t = (x, z, level) => ({ x, z, level });
+        globalThis.__probe = {
+            openEast: Reachability.canStep(t(3200, 3200, 0), t(3201, 3200, 0)),
+            openSouth: Reachability.canStep(t(3200, 3200, 0), t(3200, 3201, 0)),
+            wallEast: Reachability.canStep(t(3204, 3200, 0), t(3205, 3200, 0)),
+            diagonal: Reachability.canStep(t(3201, 3201, 0), t(3200, 3200, 0)),
+            corner: Reachability.canStep(t(3205, 3205, 0), t(3204, 3204, 0)),
+            zero: Reachability.canStep(t(3200, 3200, 0), t(3200, 3200, 0)),
+            far: Reachability.canStep(t(3200, 3200, 0), t(3202, 3200, 0)),
+            offFrom: Reachability.canStep(t(3199, 3200, 0), t(3200, 3200, 0)),
+            offTo: Reachability.canStep(t(3200, 3200, 0), t(3199, 3200, 0)),
+            otherPlane: Reachability.canStep(t(3200, 3200, 0), t(3201, 3200, 1)),
+            missingLevel: Reachability.canStep({ x: 3200, z: 3200 }, { x: 3201, z: 3200 }),
+            nonInt: Reachability.canStep({ x: 3200.5, z: 3200, level: 0 }, t(3201, 3200, 0)),
+            walkableWallDest: Reachability.walkable(t(3205, 3200, 0)),
+            bit31: Reachability.canStep(t(3203, 3207, 0), t(3204, 3207, 0)),
+            bit32: Reachability.canStep(t(3204, 3200, 0), t(3204, 3201, 0)),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32, 40]);
+    let reachable = reach_words(&[0, 32]);
+    let mut step = vec![0u8; 9 * 8];
+    step[0] = 0x02 | 0x08;
+    step[9] = 0x10;
+    step[31] = 0x02;
+    step[32] = 0x08;
+    let mut snap = base_snapshot();
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &step);
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["openEast"], true);
+    assert_eq!(value["openSouth"], true);
+    assert_eq!(
+        value["wallEast"], false,
+        "walkable dest does not make a wall step legal"
+    );
+    assert_eq!(value["diagonal"], true);
+    assert_eq!(value["corner"], false, "unset diagonal corner bit");
+    assert_eq!(value["zero"], false);
+    assert_eq!(value["far"], false);
+    assert_eq!(value["offFrom"], false);
+    assert_eq!(value["offTo"], false);
+    assert_eq!(value["otherPlane"], false);
+    assert_eq!(value["missingLevel"], true, "missing level defaults to 0");
+    assert_eq!(value["nonInt"], false);
+    assert_eq!(
+        value["walkableWallDest"], true,
+        "walkable bits stay independent of step"
+    );
+    assert_eq!(value["bit31"], true);
+    assert_eq!(value["bit32"], true);
+    assert_eq!(
+        iso.drain_interacts(),
+        Vec::<script::shim::InteractReq>::new(),
+        "lookups are sync JS reads, no queued command"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_reachability_can_step_unavailable_omitted_and_old_buffer() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = Reachability.canStep(
+            { x: 3200, z: 3200, level: 0 },
+            { x: 3201, z: 3200, level: 0 }
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
+    let mut step = vec![0u8; 9 * 8];
+    step[0] = 0x02;
+    let mut snap = base_snapshot();
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &step);
+    let (keyframe, fp) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
+    iso.post_snapshot(keyframe);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+
+    let (delta, fp2) = script::isolate_fb::encode_snapshot_delta(Some(&fp), &snap, false);
+    let omitted = script::isolate_fb::decode_snapshot(&delta).expect("delta");
+    assert!(!omitted.has_reach(), "unchanged reach omitted");
+    iso.post_snapshot(delta);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        true,
+        "omitted delta keeps last step"
+    );
+
+    snap.reach = script::isolate_fb::ReachViewInput::UNAVAILABLE;
+    let (cleared, _) = script::isolate_fb::encode_snapshot_delta(Some(&fp2), &snap, false);
+    iso.post_snapshot(cleared);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        false,
+        "unavailable post clears step"
+    );
+    iso.join();
+
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.reach = posted_reach(&walkable, &reachable, &reachable, &[]);
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        false,
+        "missing step vector fail-closes like an old buffer"
     );
     iso.join();
 }

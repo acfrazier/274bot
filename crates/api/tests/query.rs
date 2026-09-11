@@ -1051,6 +1051,12 @@ fn pack_reach_query_matches_walkable_and_flood() {
         3 * 10816usize.div_ceil(32) * 4,
         "three JS-safe u32 bitsets for a 104x104 scene"
     );
+    assert_eq!(view.step.len(), 10816, "one adjacent-step byte per tile");
+    assert_eq!(
+        view.view_bytes(),
+        view.bitset_bytes() + 10816,
+        "104x104 view is bitsets plus one byte per tile"
+    );
     assert_eq!(
         pack_reach_query(&scene, None),
         ReachQueryView::unavailable()
@@ -1211,6 +1217,85 @@ fn pack_reach_query_word_boundaries_survive_u32_pack() {
         r64,
         ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(64))
     );
+    assert_eq!(view.step.len(), 9 * 8);
+    assert_eq!(
+        SceneQuery::new(&scene, Some(player)).can_step(at(31), at(32)),
+        view.can_step(at(31), at(32)),
+        "step bytes are per-tile, not packed across u32 words"
+    );
+}
+
+#[test]
+fn pack_reach_query_step_masks_match_can_step() {
+    let mut scene = open_scene();
+    scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    scene.collision_flags[10 * 104 + 10] = CollisionFlag::W_W;
+    scene.collision_flags[4 * 104 + 5] = CollisionFlag::W_E;
+    let player = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&scene, Some(player));
+    let flood = sq.flood_reach().expect("player in scene floods");
+    let view = pack_reach_query(&scene, Some(&flood));
+    assert_eq!(view.step_bytes(), 10816);
+    assert_eq!(
+        pack_reach_query(&scene, None),
+        ReachQueryView::unavailable()
+    );
+
+    let tile = |x: i32, z: i32, level: i32| WorldTile { x, z, level };
+    let pairs = [
+        (tile(3205, 3207, 0), tile(3206, 3207, 0)),
+        (tile(3205, 3205, 0), tile(3205, 3206, 0)),
+        (tile(3209, 3210, 0), tile(3210, 3210, 0)),
+        (tile(3205, 3205, 0), tile(3205, 3205, 0)),
+        (tile(3205, 3205, 0), tile(3207, 3205, 0)),
+        (tile(3205, 3205, 0), tile(3206, 3206, 1)),
+        (tile(3199, 3205, 0), tile(3200, 3205, 0)),
+        (tile(3200, 3205, 0), tile(3199, 3205, 0)),
+        (tile(3208, 3208, 0), tile(3209, 3209, 0)),
+        (tile(3205, 3205, 0), tile(3204, 3204, 0)),
+    ];
+    for (from, to) in pairs {
+        assert_eq!(
+            sq.can_step(from, to),
+            view.can_step(from, to),
+            "can_step {from:?} -> {to:?}"
+        );
+    }
+    assert!(
+        sq.walkable(tile(3210, 3210, 0)),
+        "W_W dest stays walkable; step is not walkable-or-reachable"
+    );
+    assert!(!sq.can_step(tile(3209, 3210, 0), tile(3210, 3210, 0)));
+    assert!(!view.can_step(tile(3209, 3210, 0), tile(3210, 3210, 0)));
+    assert!(!sq.can_step(tile(3205, 3205, 0), tile(3204, 3204, 0)));
+    assert!(!view.can_step(tile(3205, 3205, 0), tile(3204, 3204, 0)));
+
+    for lx in 0..5 {
+        for lz in 0..5 {
+            for (dx, dz) in [
+                (-1, 0),
+                (1, 0),
+                (0, -1),
+                (0, 1),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+                (1, 1),
+            ] {
+                let from = tile(3200 + lx, 3200 + lz, 0);
+                let to = tile(from.x + dx, from.z + dz, 0);
+                assert_eq!(
+                    sq.can_step(from, to),
+                    view.can_step(from, to),
+                    "local {lx},{lz} d={dx},{dz}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

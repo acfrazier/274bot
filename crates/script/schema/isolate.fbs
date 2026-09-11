@@ -129,9 +129,10 @@ table ChatLine {
   text: string;
 }
 
-// Compact derived reach query: scene origin plus JS-safe u32 bitsets.
-// Index is lx * height + lz, matching native ReachFlood. Old buffers
-// omit this table; the isolate treats missing as unavailable.
+// Compact derived reach query: scene origin plus JS-safe u32 bitsets
+// and one adjacent-step byte per tile. Index is lx * height + lz,
+// matching native ReachFlood. Old buffers omit this table or the
+// trailing `step` vector; the isolate treats missing as unavailable.
 table Reach {
   available: bool;
   base_x: int;
@@ -142,6 +143,7 @@ table Reach {
   walkable: [uint];
   reachable: [uint];
   reachable_adj: [uint];
+  step: [ubyte];
 }
 
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
