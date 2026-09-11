@@ -1,0 +1,25 @@
+{
+  "host_commit": "cb9d14e83f16daf131d958ac7a94ed200942582f",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "clone_url": "https://github.com/acfrazier/274bot.git",
+  "clone_branch": "codex/rs2b0t-stage-1",
+  "submodule_url": "https://github.com/acfrazier/FR-client-bothost.git",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/fresh-remote-stage-1",
+  "recursive_remote_clone": true,
+  "git_alternates": false,
+  "clean_before_check": true,
+  "command": [
+    "cargo",
+    "check",
+    "--workspace",
+    "--all-targets",
+    "--features",
+    "memory-profile",
+    "--locked"
+  ],
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "exclusive_root_reused_compiler_cache": true,
+  "seconds": 6.822,
+  "exit_code": 0,
+  "log_sha256": "36b90a3e7f72aded0884c5821e9121ec1b639ecf22d584ec5acd7cfe0962c1d2"
+}

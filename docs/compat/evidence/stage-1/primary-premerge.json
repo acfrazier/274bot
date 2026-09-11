@@ -1,0 +1,18 @@
+{
+  "base": "b2bd5023489ab2e0b6ba690f228217e8984ac91b",
+  "candidate": "cb9d14e83f16daf131d958ac7a94ed200942582f",
+  "candidate_path_collisions": [],
+  "tracked_primary_clean": true,
+  "unrelated_untracked_file_count": 2179,
+  "unrelated_untracked_paths_sha256": "15b6689590d24f71bd43972a8d876950a162c652dd2c49c0c26e5f4a47ccb23f",
+  "primary_status": [
+    "?? CONTEXT.md",
+    "?? crates/script/src/memory.rs",
+    "?? crates/script/src/snapshot_pool.rs",
+    "?? crates/script/tests/memory_allocations.rs",
+    "?? docs/memory/",
+    "?? package-lock.json",
+    "?? package.json",
+    "?? target-client-review-69804/"
+  ]
+}

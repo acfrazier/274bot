@@ -1,0 +1,49 @@
+{
+  "host_commit": "659380651869bd12fc9d281a30037b3b0368b380",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_ownership": "Exclusively root-owned completed cache transferred sequentially to isolated stage1 checkout",
+  "checks": [
+    {
+      "name": "host-tests-rest",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--features",
+        "memory-profile",
+        "--no-fail-fast",
+        "--",
+        "--skip",
+        "bright_catalog_cards_start_without_not_impl",
+        "--skip",
+        "declared_abi_fixture_matches_local_dts"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+      "exit_code": 0,
+      "seconds": 150.917,
+      "log": "docs/compat/evidence/stage-1/host-tests-rest.log",
+      "sha256": "6eec8e7b12d10ddebf7631fdd6c00b813c7261111bd8780a601dfe005f67f7b5"
+    },
+    {
+      "name": "client-tests",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "client",
+        "--tests",
+        "--features",
+        "audio"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/vendor/fr-client-rust",
+      "exit_code": 0,
+      "seconds": 121.146,
+      "log": "docs/compat/evidence/stage-1/client-tests.log",
+      "sha256": "775da5964e64a99d5ab06dc0267320e9919be2abf32a8ab54e4ba72efa8b1295"
+    }
+  ],
+  "all_passed": true
+}
