@@ -34,6 +34,7 @@ pub const ESSENCE_NOTED_ID: i32 = 1437;
 pub const AIR_RUNE_ID: i32 = 556;
 pub const AIR_TALISMAN_ID: i32 = 1438;
 pub const TRADE_CAP: i32 = 25;
+pub const BANK_SEED_ESSENCE: i32 = 200;
 pub const TEMPLE_Z: i32 = 4000;
 pub const AIR_RUINS: (i32, i32, i32) = (2983, 3288, 0);
 pub const FALADOR_EAST: (i32, i32, i32) = (3013, 3355, 0);
@@ -267,6 +268,189 @@ pub fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32)
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelogAdmission {
+    WaitLogout,
+    LoggedOut,
+    WaitLogin,
+    Ready,
+}
+
+pub fn relog_admission(
+    saw_logout: bool,
+    ingame: bool,
+    scene_state: i32,
+    inventory_tab_available: bool,
+) -> RelogAdmission {
+    if !saw_logout {
+        if !ingame || scene_state != 2 {
+            RelogAdmission::LoggedOut
+        } else {
+            RelogAdmission::WaitLogout
+        }
+    } else if ingame && scene_state == 2 && inventory_tab_available {
+        RelogAdmission::Ready
+    } else {
+        RelogAdmission::WaitLogin
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartBarrier {
+    Wait,
+    StartBoth,
+    RejectStartedWhileUnready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartBarrierInput {
+    pub a_prepared: bool,
+    pub b_prepared: bool,
+    pub a_started: bool,
+    pub b_started: bool,
+    pub a_wait_ack: bool,
+    pub b_wait_ack: bool,
+    pub a_current_ok: bool,
+    pub b_current_ok: bool,
+}
+
+pub fn shared_start_barrier(input: StartBarrierInput) -> StartBarrier {
+    if input.a_started || input.b_started {
+        if input.a_started && input.b_started {
+            return StartBarrier::Wait;
+        }
+        return StartBarrier::RejectStartedWhileUnready;
+    }
+    if input.a_wait_ack || input.b_wait_ack {
+        return StartBarrier::Wait;
+    }
+    if input.a_prepared && input.b_prepared && input.a_current_ok && input.b_current_ok {
+        StartBarrier::StartBoth
+    } else {
+        StartBarrier::Wait
+    }
+}
+
+pub fn bank_seed_acknowledged(observation: &AirObservation, min_count: i32) -> bool {
+    observation.ingame
+        && observation.scene_state == 2
+        && observation.bank_open
+        && observation.bank_loaded
+        && observation.bank_essence_unnoted >= min_count
+        && near(observation.tile, FALADOR_EAST, 8)
+}
+
+pub fn bank_ack_target_absence(
+    tile: Option<(i32, i32, i32)>,
+    booth_present: bool,
+) -> Option<String> {
+    if !near(tile, FALADOR_EAST, 8) {
+        Some(format!(
+            "no Falador East booth in loaded scene at stand {FALADOR_EAST:?}; actor tile {tile:?}"
+        ))
+    } else if !booth_present {
+        Some(format!(
+            "no Falador East Use-quickly booth in loaded scene at stand {FALADOR_EAST:?}"
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn air_prepared_current(
+    role: AirRole,
+    expected_player: &str,
+    observation: &AirObservation,
+) -> Result<(), String> {
+    if !observation.ingame || observation.scene_state != 2 {
+        return Err(format!(
+            "Start baseline is not attached ingame scene2: {observation:?}"
+        ));
+    }
+    if !observation.inventory_tab_available {
+        return Err("Start baseline inventory tab is not bound after relog".into());
+    }
+    let player = observation
+        .player
+        .as_deref()
+        .ok_or_else(|| "Start baseline has no local player".to_string())?;
+    if !player.eq_ignore_ascii_case(expected_player) {
+        return Err(format!(
+            "Start baseline player {player:?} is not fresh account {expected_player:?}"
+        ));
+    }
+    if !near(observation.tile, AIR_RUINS, 8) {
+        return Err(format!(
+            "Start baseline is not at Air ruins: {:?}",
+            observation.tile
+        ));
+    }
+    if observation.air_runes > 0 {
+        return Err("Start baseline already has Air 556".into());
+    }
+    if observation.essence_noted > 0 {
+        return Err("Start baseline has noted essence 1437; Air does not accept noting".into());
+    }
+    if observation.trade_active() {
+        return Err("Start baseline already has a trade window".into());
+    }
+    if observation.bank_open {
+        return Err("Start baseline still has an open bank".into());
+    }
+    match role {
+        AirRole::Master => {
+            if observation.air_talisman <= 0 {
+                return Err("master baseline has no Air talisman".into());
+            }
+            if observation.essence_unnoted > 0 {
+                return Err("master baseline already holds unnoted essence".into());
+            }
+        }
+        AirRole::Runner => {
+            if observation.essence_unnoted < TRADE_CAP {
+                return Err("runner baseline has no seeded unnoted 1436 first load of 25".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn duel_prepared_current(
+    expected_player: &str,
+    observation: &DuelObservation,
+) -> Result<(), String> {
+    if !observation.ingame || observation.scene_state != 2 {
+        return Err(format!(
+            "Start baseline is not attached ingame scene2: {observation:?}"
+        ));
+    }
+    if !observation.inventory_tab_available {
+        return Err("Start baseline inventory tab is not bound after relog".into());
+    }
+    let player = observation
+        .player
+        .as_deref()
+        .ok_or_else(|| "Start baseline has no local player".to_string())?;
+    if !player.eq_ignore_ascii_case(expected_player) {
+        return Err(format!(
+            "Start baseline player {player:?} is not fresh account {expected_player:?}"
+        ));
+    }
+    if !observation.in_challenge_area {
+        return Err(format!(
+            "Start baseline is not in the Duel Arena challenge area: {:?}",
+            observation.tile
+        ));
+    }
+    if observation.duel_active() || observation.duel_win_open {
+        return Err("seeded modal is not a duel: baseline already has a duel interface".into());
+    }
+    if !observation.weapon_equipped {
+        return Err("Start baseline has no 1-handed melee weapon equipped".into());
+    }
+    Ok(())
+}
+
 pub fn in_temple(tile: Option<(i32, i32, i32)>) -> bool {
     tile.is_some_and(|tile| tile.1 > TEMPLE_Z)
 }
@@ -341,6 +525,7 @@ pub struct AirObservation {
     pub air_talisman: i32,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub bank_session_generation: u64,
     pub bank_essence_unnoted: i32,
     pub trade_offer_open: bool,
     pub trade_confirm_open: bool,
@@ -375,6 +560,7 @@ impl AirObservation {
             air_talisman: count_id(snapshot.inventory(), AIR_TALISMAN_ID),
             bank_open: snapshot.bank_component_id() >= 0,
             bank_loaded: snapshot.bank_loaded(),
+            bank_session_generation: snapshot.bank_session_generation(),
             bank_essence_unnoted: count_id(snapshot.bank(), ESSENCE_UNNOTED_ID),
             trade_offer_open: trade.offer_open,
             trade_confirm_open: trade.confirm_open,
