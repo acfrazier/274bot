@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 03:40 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 03:52 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -69,6 +69,12 @@ not a product behavior change.
   Flax qualification. The ledger now retains 155 rows. Native GPU 289/newer
   Gnome completes multiple laps, including elevated loc operations and return
   to ground, with a read terminal screenshot and no runtime errors.
+- Superheater 6d750e65 passes all eight Bronze/Steel cells. Both newer-catalog
+  alternative Fire battlestaff cells fail at wield because the fixture seeded
+  Attack 1; both selected content sources require Attack 30 plus Magic 30.
+  Root verified source line/hash and retained the failed runs. Fix and acknowledge
+  Attack 30 before Start after the PeriodicBank fixture owner releases shared
+  source, then repeat only those two cells. Ledger now retains 165 rows.
 
 - Navigation d2372fe0 passed same-card Grok 4.5 review 1191 and all four isolated
   274/289 external/bundled probes. One read/decode each; external hashes once,
@@ -122,15 +128,19 @@ not a product behavior change.
 - Coordinate reachability design t_d49b087b completed as actual Grok 4.6 run
   1199, commit cc57adca. It recommends posting compact bits from the existing
   native flood, with no JS collision algorithm or per-read world copies.
-  Coordinate query implementation t_246e320b is active in actual Grok 4.6
-  run 1203. Superheater fixtures t_10f975b7 committed 6d750e65 and entered actual
+  Coordinate query implementation t_246e320b committed 1f8737cf plus evidence
+  e1e8d700 and passed actual Grok 4.5 review 1215/session
+  20260910_234158_3f57a9. The three bitsets occupy 4,056 bytes for 104x104;
+  this is a design fact, not a measured saving. Superheater fixtures t_10f975b7 committed 6d750e65 and entered actual
   Grok 4.5 review 1212/session 20260910_232854_63c926, now approved. Root's new
-  empty-target 6d750e65 binaries are built and ten Superheater LIVE cells have
-  started. PeriodicBank fixture t_63524882 is actual Grok 4.6 run 1214/session
+  empty-target 6d750e65 binaries completed the ten Superheater LIVE cells above.
+  PeriodicBank fixture t_63524882 is actual Grok 4.6 run 1214/session
   20260910_233959_9ec089, preserving one owner for scenario/harness files.
   Independent loadout provisioning proof t_3d333b56 is actual Grok 4.6 run
   1213/session 20260910_233255_ce3577, owning a standalone host-play test.
-  DirectNavigator mapping t_f7fd9f55 follows query review. The separate
+  DirectNavigator mapping t_f7fd9f55 is actual Grok 4.6 run 1216/session
+  20260910_234659_5fde26; canStep t_1a213450 is actual Grok 4.6 run 1217/session
+  20260910_234659_340044. The separate
   missing DirectNavigator.walkTo must also map to existing native walking;
   foreign radius-8 re-sync remains a distinct source finding, not a pass.
 - Operator requested four more Grok implementation assignments and periodic
@@ -145,6 +155,13 @@ not a product behavior change.
   7:40 AM reset there. Use that browser tab for actual quota checks; token
   activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.
+- Root started two N=1 sustained TUI Thiever prerequisites on 274 and 289 at
+  03:48:36 UTC using 6d750e65 plus a seven-line private IsolatedEnv entry.
+  The new empty-target binary uses the existing shipped controller, private
+  Memory food loadout, Auto banking, 120 s warmup and 600 s observation.
+  Both have live script-caused theft during warmup; bank/return and observation
+  qualification remain pending. Raw artifacts are in evidence/fleet-prerequisite/.
+  These overlapping runs are functional diagnostics, not performance comparisons.
 
 ## Accepted milestones
 

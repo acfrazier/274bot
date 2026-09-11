@@ -1,0 +1,121 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"Superheater","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/Superheater/Superheater.ts","source_sha256":"9188208c035121358cf6b72a176c34cbc50336509b8143282be2899d46d49089","compiled_sha256":"f282b7608f4f20874dbb2d83869062b68bcf033f78d29d9a4200e81521a1248c","siblings":[{"module":"/rs2b0t/bot/scripts/bot/SuperheaterLogic.js","compiled_sha256":"24bb074856de0446e036ed38d60e06cbffcfbb78c8662ed7548f41f4b78427cf"}],"settings":{"bar":"Bronze"}},"account":"livevxr7j7_0","engine_speed_ms":null}
+[host-play] slot livevxr7j7_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot livevxr7j7_0: handshake begin reconnect=false
+[host-play] slot livevxr7j7_0: handshake ok
+[host] slot livevxr7j7_0: d_loop_us=4035 d_raster_us=0 d_observe_us=40116 max_observe_us=3241 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livevxr7j7_0: queued mainland tele+setvar (scene 2)
+[host-play] slot livevxr7j7_0: handshake begin reconnect=true
+[host-play] slot livevxr7j7_0: handshake ok
+[host-play] slot livevxr7j7_0: queued mainland tele+setvar (scene 2)
+[host] slot livevxr7j7_0: d_loop_us=10666 d_raster_us=0 d_observe_us=55119 max_observe_us=3312 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot livevxr7j7_0: d_loop_us=15674 d_raster_us=0 d_observe_us=100516 max_observe_us=8211 d_paints=0 d_skips=50 d_ticks=23 window_ms=13721
+{"phase":"baseline-after-preparation","scenario":"superheater","account":"livevxr7j7_0","observation":{"ingame":true,"scene_state":2,"player":"Livevxr7j7 0","tile":[3185,3440,0],"tick":30,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50339,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{}}}
+[script livevxr7j7_0] start load
+{"phase":"start","account":"livevxr7j7_0","count":1}
+[host] hitch livevxr7j7_0: observe_us=102962 paints=0 skips=108 ticks=30
+[script livevxr7j7_0] Superheater — Bronze via Superheat Item (13 Copper ore + 13 Tin ore), keeping 50 Nature runes
+[script livevxr7j7_0] banking at Bank booth (Bank booth / Use-quickly)
+[script livevxr7j7_0] opening Bank booth (Use-quickly)
+[script livevxr7j7_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livevxr7j7_0: d_loop_us=1234 d_raster_us=0 d_observe_us=179402 max_observe_us=102962 d_paints=0 d_skips=50 d_ticks=8 window_ms=5241
+[script livevxr7j7_0] bank open
+[script livevxr7j7_0] interact Close
+[shim-close] sent
+[host] slot livevxr7j7_0: d_loop_us=1163 d_raster_us=0 d_observe_us=80134 max_observe_us=13684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[script livevxr7j7_0] interact Held { name: "Staff of fire", action: "Wield" }
+[shim-held] Staff of fire Wield slot=0 -> sent
+[host] slot livevxr7j7_0: d_loop_us=1249 d_raster_us=0 d_observe_us=98056 max_observe_us=15107 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[script livevxr7j7_0] wore Staff of fire — casts need only Nature runes now
+[script livevxr7j7_0] opening Bank booth (Use-quickly)
+[script livevxr7j7_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livevxr7j7_0: d_loop_us=1135 d_raster_us=0 d_observe_us=78173 max_observe_us=13260 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script livevxr7j7_0] bank open
+[host] slot livevxr7j7_0: d_loop_us=1123 d_raster_us=0 d_observe_us=84389 max_observe_us=9004 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script livevxr7j7_0] topped up Nature runes to 50
+[script livevxr7j7_0] withdrawing 13 Copper ore
+[host] slot livevxr7j7_0: d_loop_us=1079 d_raster_us=0 d_observe_us=92216 max_observe_us=12448 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[script livevxr7j7_0] got 13 Copper ore
+[script livevxr7j7_0] withdrawing 13 Tin ore
+[host] slot livevxr7j7_0: d_loop_us=1196 d_raster_us=0 d_observe_us=86627 max_observe_us=13923 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[script livevxr7j7_0] got 13 Tin ore
+[script livevxr7j7_0] interact Close
+[shim-close] sent
+[host] slot livevxr7j7_0: d_loop_us=1071 d_raster_us=0 d_observe_us=81108 max_observe_us=9163 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[script livevxr7j7_0] restocked: 13 Copper ore + 13 Tin ore + 50 Nature runes
+[script livevxr7j7_0] interact SideTab { tab: 6 }
+[host] slot livevxr7j7_0: d_loop_us=1252 d_raster_us=0 d_observe_us=90378 max_observe_us=13560 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[script livevxr7j7_0] casting on Copper ore (13 more bars' worth of ore left, 50 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1096 d_raster_us=0 d_observe_us=76852 max_observe_us=9263 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script livevxr7j7_0] casting on Copper ore (12 more bars' worth of ore left, 49 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1149 d_raster_us=0 d_observe_us=77718 max_observe_us=9923 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot livevxr7j7_0: d_loop_us=1112 d_raster_us=0 d_observe_us=89119 max_observe_us=13694 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script livevxr7j7_0] casting on Copper ore (11 more bars' worth of ore left, 48 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1203 d_raster_us=0 d_observe_us=96981 max_observe_us=12945 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[script livevxr7j7_0] casting on Copper ore (10 more bars' worth of ore left, 47 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1216 d_raster_us=0 d_observe_us=86791 max_observe_us=9080 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch livevxr7j7_0: observe_us=16892 paints=0 skips=816 ticks=59
+[host] slot livevxr7j7_0: d_loop_us=1109 d_raster_us=0 d_observe_us=90360 max_observe_us=16892 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[script livevxr7j7_0] casting on Copper ore (9 more bars' worth of ore left, 46 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1189 d_raster_us=0 d_observe_us=96542 max_observe_us=12478 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[script livevxr7j7_0] casting on Copper ore (8 more bars' worth of ore left, 45 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1120 d_raster_us=0 d_observe_us=68688 max_observe_us=7375 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] slot livevxr7j7_0: d_loop_us=1313 d_raster_us=0 d_observe_us=89723 max_observe_us=13054 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script livevxr7j7_0] casting on Copper ore (7 more bars' worth of ore left, 44 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1210 d_raster_us=0 d_observe_us=89133 max_observe_us=12743 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[script livevxr7j7_0] casting on Copper ore (6 more bars' worth of ore left, 43 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1027 d_raster_us=0 d_observe_us=66132 max_observe_us=7122 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[host] slot livevxr7j7_0: d_loop_us=1014 d_raster_us=0 d_observe_us=86074 max_observe_us=13609 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[script livevxr7j7_0] casting on Copper ore (5 more bars' worth of ore left, 42 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot livevxr7j7_0: d_loop_us=1346 d_raster_us=0 d_observe_us=86379 max_observe_us=11815 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[script livevxr7j7_0] casting on Copper ore (4 more bars' worth of ore left, 41 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1165 d_raster_us=0 d_observe_us=78011 max_observe_us=9406 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot livevxr7j7_0: d_loop_us=1183 d_raster_us=0 d_observe_us=85179 max_observe_us=13274 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[script livevxr7j7_0] casting on Copper ore (3 more bars' worth of ore left, 40 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1011 d_raster_us=0 d_observe_us=80595 max_observe_us=13895 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+[host] slot livevxr7j7_0: d_loop_us=1174 d_raster_us=0 d_observe_us=73474 max_observe_us=10075 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[script livevxr7j7_0] casting on Copper ore (2 more bars' worth of ore left, 39 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1146 d_raster_us=0 d_observe_us=82167 max_observe_us=12325 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livevxr7j7_0] casting on Copper ore (1 more bars' worth of ore left, 38 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livevxr7j7_0: d_loop_us=1063 d_raster_us=0 d_observe_us=69239 max_observe_us=7485 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] slot livevxr7j7_0: d_loop_us=745 d_raster_us=0 d_observe_us=68205 max_observe_us=4522 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script livevxr7j7_0] opening Bank booth (Use-quickly)
+[script livevxr7j7_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livevxr7j7_0: d_loop_us=725 d_raster_us=0 d_observe_us=49011 max_observe_us=3826 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livevxr7j7_0] bank open
+[host] slot livevxr7j7_0: d_loop_us=795 d_raster_us=0 d_observe_us=68903 max_observe_us=9230 d_paints=0 d_skips=50 d_ticks=2 window_ms=1225
+[script livevxr7j7_0] deposited 13 items (kept 37 Nature runes), bank left open
+[host] slot livevxr7j7_0: d_loop_us=795 d_raster_us=0 d_observe_us=67881 max_observe_us=6466 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[script livevxr7j7_0] withdrawing 13 Copper ore
+[host] slot livevxr7j7_0: d_loop_us=764 d_raster_us=0 d_observe_us=69742 max_observe_us=7226 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[script livevxr7j7_0] got 13 Copper ore
+[script livevxr7j7_0] withdrawing 13 Tin ore
+[host] slot livevxr7j7_0: d_loop_us=802 d_raster_us=0 d_observe_us=57863 max_observe_us=6119 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script livevxr7j7_0] got 13 Tin ore
+[script livevxr7j7_0] interact Close
+[shim-close] sent
+[script livevxr7j7_0] restocked: 13 Copper ore + 13 Tin ore + 37 Nature runes
+[host] slot livevxr7j7_0: d_loop_us=893 d_raster_us=0 d_observe_us=65932 max_observe_us=8560 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[script livevxr7j7_0] casting on Copper ore (13 more bars' worth of ore left, 37 Nature runes)
+[script livevxr7j7_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Copper ore"), x: 0, z: 0, level: 0, index: None }
+PASS: catalog_boundary_live: {"scenario":"superheater","runner":"Some(Evidence { scenario: \"superheater\", outcome: \"PASS\", predicate: \"stat_xp_gain(13)>=2\", ticks: 149, elapsed_ms: 73420, message: None, tile: Some([3185, 3440, 0]), inv: [InvRow { id: 561, name: Some(\"Nature rune\"), count: 36 }, InvRow { id: 2349, name: Some(\"Bronze bar\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 436, name: Some(\"Copper ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }, InvRow { id: 438, name: Some(\"Tin ore\"), count: 1 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"superheater","baseline":{"ingame":true,"scene_state":2,"player":"Livevxr7j7 0","tile":[3185,3440,0],"tick":30,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50339,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{}},"latest":{"ingame":true,"scene_state":2,"player":"Livevxr7j7 0","tile":[3185,3440,0],"tick":101,"items":{"Bronze bar":1,"Copper ore":12,"Nature rune":36,"Tin ore":12},"item_ids":{"436":12,"438":12,"561":36,"2349":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":8,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":2,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":51081,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":86,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"max_items":{"Bronze bar":13,"Copper ore":13,"Nature rune":50,"Staff of fire":1,"Tin ore":13},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":51081,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":86,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":1768,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":true,"deposited":{"ingame":true,"scene_state":2,"player":"Livevxr7j7 0","tile":[3185,3440,0],"tick":92,"items":{"Nature rune":37},"item_ids":{"561":37},"bank":{"Bronze bar":13,"Copper ore":87,"Nature rune":150,"Tin ore":87},"bank_ids":{"436":87,"438":87,"561":150,"2349":13},"bank_open":true,"bank_loaded":true,"bank_generation":7,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":51028,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":80,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"withdrawn":{"ingame":true,"scene_state":2,"player":"Livevxr7j7 0","tile":[3185,3440,0],"tick":98,"items":{"Copper ore":13,"Nature rune":37,"Tin ore":13},"item_ids":{"436":13,"438":13,"561":37},"bank":{"Bronze bar":13,"Copper ore":74,"Nature rune":150,"Tin ore":74},"bank_ids":{"436":74,"438":74,"561":150,"2349":13},"bank_open":true,"bank_loaded":true,"bank_generation":7,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":51028,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":80,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"produced_after_withdrawal":true,"wrong_product":false,"wrong_staff":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 76.58s
+

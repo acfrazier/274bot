@@ -1,0 +1,104 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"Superheater","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/Superheater/Superheater.ts","source_sha256":"9188208c035121358cf6b72a176c34cbc50336509b8143282be2899d46d49089","compiled_sha256":"f282b7608f4f20874dbb2d83869062b68bcf033f78d29d9a4200e81521a1248c","siblings":[{"module":"/rs2b0t/bot/scripts/bot/SuperheaterLogic.js","compiled_sha256":"24bb074856de0446e036ed38d60e06cbffcfbb78c8662ed7548f41f4b78427cf"}],"settings":{"bar":"Steel"}},"account":"livezpk276_0","engine_speed_ms":null}
+[host-play] slot livezpk276_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot livezpk276_0: handshake begin reconnect=false
+[host-play] slot livezpk276_0: handshake ok
+[host-play] slot livezpk276_0: queued mainland tele+setvar (scene 2)
+[host] slot livezpk276_0: d_loop_us=11878 d_raster_us=0 d_observe_us=39607 max_observe_us=4743 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot livezpk276_0: handshake begin reconnect=true
+[host-play] slot livezpk276_0: handshake ok
+[host] slot livezpk276_0: d_loop_us=1035 d_raster_us=0 d_observe_us=43813 max_observe_us=3389 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livezpk276_0: queued mainland tele+setvar (scene 2)
+[host] slot livezpk276_0: d_loop_us=22753 d_raster_us=0 d_observe_us=107162 max_observe_us=9888 d_paints=0 d_skips=50 d_ticks=27 window_ms=16117
+{"phase":"baseline-after-preparation","scenario":"superheater_steel","account":"livezpk276_0","observation":{"ingame":true,"scene_state":2,"player":"Livezpk276 0","tile":[3185,3440,0],"tick":31,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":30,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50339,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13363,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{}}}
+[script livezpk276_0] start load
+{"phase":"start","account":"livezpk276_0","count":1}
+[host] hitch livezpk276_0: observe_us=106928 paints=0 skips=105 ticks=31
+[script livezpk276_0] Superheater — Steel via Superheat Item (9 Iron ore + 18 Coal), keeping 50 Nature runes
+[script livezpk276_0] banking at Bank booth (Bank booth / Use-quickly)
+[script livezpk276_0] opening Bank booth (Use-quickly)
+[script livezpk276_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livezpk276_0: d_loop_us=1323 d_raster_us=0 d_observe_us=201949 max_observe_us=106928 d_paints=0 d_skips=50 d_ticks=6 window_ms=3639
+[script livezpk276_0] bank open
+[script livezpk276_0] interact Close
+[shim-close] sent
+[script livezpk276_0] interact Held { name: "Staff of fire", action: "Wield" }
+[shim-held] Staff of fire Wield slot=0 -> sent
+[host] slot livezpk276_0: d_loop_us=1191 d_raster_us=0 d_observe_us=85267 max_observe_us=15273 d_paints=0 d_skips=50 d_ticks=2 window_ms=1267
+[script livezpk276_0] wore Staff of fire — casts need only Nature runes now
+[script livezpk276_0] opening Bank booth (Use-quickly)
+[script livezpk276_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livezpk276_0: d_loop_us=1415 d_raster_us=0 d_observe_us=108826 max_observe_us=12687 d_paints=0 d_skips=50 d_ticks=2 window_ms=1318
+[script livezpk276_0] bank open
+[host] slot livezpk276_0: d_loop_us=1154 d_raster_us=0 d_observe_us=77459 max_observe_us=10464 d_paints=0 d_skips=50 d_ticks=2 window_ms=1305
+[host] slot livezpk276_0: d_loop_us=1066 d_raster_us=0 d_observe_us=75956 max_observe_us=8333 d_paints=0 d_skips=50 d_ticks=2 window_ms=1327
+[script livezpk276_0] topped up Nature runes to 50
+[script livezpk276_0] withdrawing 9 Iron ore
+[host] slot livezpk276_0: d_loop_us=1141 d_raster_us=0 d_observe_us=89744 max_observe_us=13431 d_paints=0 d_skips=50 d_ticks=2 window_ms=1302
+[script livezpk276_0] got 9 Iron ore
+[script livezpk276_0] withdrawing 18 Coal
+[host] slot livezpk276_0: d_loop_us=1212 d_raster_us=0 d_observe_us=108569 max_observe_us=15197 d_paints=0 d_skips=50 d_ticks=3 window_ms=1298
+[script livezpk276_0] got 18 Coal
+[script livezpk276_0] interact Close
+[shim-close] sent
+[script livezpk276_0] restocked: 9 Iron ore + 18 Coal + 50 Nature runes
+[script livezpk276_0] interact SideTab { tab: 6 }
+[host] slot livezpk276_0: d_loop_us=1214 d_raster_us=0 d_observe_us=83395 max_observe_us=15159 d_paints=0 d_skips=50 d_ticks=2 window_ms=1275
+[script livezpk276_0] casting on Iron ore (9 more bars' worth of ore left, 50 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1263 d_raster_us=0 d_observe_us=87548 max_observe_us=10669 d_paints=0 d_skips=50 d_ticks=2 window_ms=1308
+[script livezpk276_0] casting on Iron ore (8 more bars' worth of ore left, 49 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1176 d_raster_us=0 d_observe_us=80029 max_observe_us=8280 d_paints=0 d_skips=50 d_ticks=2 window_ms=1296
+[host] slot livezpk276_0: d_loop_us=1223 d_raster_us=0 d_observe_us=97468 max_observe_us=14153 d_paints=0 d_skips=50 d_ticks=2 window_ms=1292
+[script livezpk276_0] casting on Iron ore (7 more bars' worth of ore left, 48 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1301 d_raster_us=0 d_observe_us=93533 max_observe_us=13188 d_paints=0 d_skips=50 d_ticks=2 window_ms=1318
+[script livezpk276_0] casting on Iron ore (6 more bars' worth of ore left, 47 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1235 d_raster_us=0 d_observe_us=102486 max_observe_us=13899 d_paints=0 d_skips=50 d_ticks=3 window_ms=1346
+[script livezpk276_0] casting on Iron ore (5 more bars' worth of ore left, 46 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1066 d_raster_us=0 d_observe_us=75875 max_observe_us=8686 d_paints=0 d_skips=50 d_ticks=2 window_ms=1374
+[host] hitch livezpk276_0: observe_us=16945 paints=0 skips=813 ticks=63
+[host] slot livezpk276_0: d_loop_us=1075 d_raster_us=0 d_observe_us=83031 max_observe_us=16945 d_paints=0 d_skips=50 d_ticks=2 window_ms=1349
+[script livezpk276_0] casting on Iron ore (4 more bars' worth of ore left, 45 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1111 d_raster_us=0 d_observe_us=90204 max_observe_us=12965 d_paints=0 d_skips=50 d_ticks=2 window_ms=1309
+[script livezpk276_0] casting on Iron ore (3 more bars' worth of ore left, 44 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1539 d_raster_us=0 d_observe_us=95282 max_observe_us=15769 d_paints=0 d_skips=50 d_ticks=3 window_ms=1357
+[script livezpk276_0] casting on Iron ore (2 more bars' worth of ore left, 43 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1133 d_raster_us=0 d_observe_us=95959 max_observe_us=8907 d_paints=0 d_skips=50 d_ticks=2 window_ms=1316
+[host] slot livezpk276_0: d_loop_us=1125 d_raster_us=0 d_observe_us=92346 max_observe_us=15293 d_paints=0 d_skips=50 d_ticks=2 window_ms=1340
+[script livezpk276_0] casting on Iron ore (1 more bars' worth of ore left, 42 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1125 d_raster_us=0 d_observe_us=79605 max_observe_us=10099 d_paints=0 d_skips=50 d_ticks=2 window_ms=1299
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot livezpk276_0: d_loop_us=968 d_raster_us=0 d_observe_us=65647 max_observe_us=5487 d_paints=0 d_skips=50 d_ticks=2 window_ms=1338
+[script livezpk276_0] opening Bank booth (Use-quickly)
+[script livezpk276_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[script livezpk276_0] bank open
+[host] slot livezpk276_0: d_loop_us=1066 d_raster_us=0 d_observe_us=68972 max_observe_us=9619 d_paints=0 d_skips=50 d_ticks=3 window_ms=1379
+[script livezpk276_0] deposited 9 items (kept 41 Nature runes), bank left open
+[host] slot livezpk276_0: d_loop_us=1230 d_raster_us=0 d_observe_us=80749 max_observe_us=13095 d_paints=0 d_skips=50 d_ticks=2 window_ms=1336
+[script livezpk276_0] withdrawing 9 Iron ore
+[host] slot livezpk276_0: d_loop_us=1125 d_raster_us=0 d_observe_us=69506 max_observe_us=8065 d_paints=0 d_skips=50 d_ticks=2 window_ms=1346
+[script livezpk276_0] got 9 Iron ore
+[script livezpk276_0] withdrawing 18 Coal
+[host] slot livezpk276_0: d_loop_us=1236 d_raster_us=0 d_observe_us=73733 max_observe_us=9143 d_paints=0 d_skips=50 d_ticks=2 window_ms=1344
+[script livezpk276_0] got 18 Coal
+[script livezpk276_0] interact Close
+[shim-close] sent
+[script livezpk276_0] restocked: 9 Iron ore + 18 Coal + 41 Nature runes
+[script livezpk276_0] casting on Iron ore (9 more bars' worth of ore left, 41 Nature runes)
+[script livezpk276_0] interact UseWidgetOn { component_id: 1173, kind: "held", target_name: Some("Iron ore"), x: 0, z: 0, level: 0, index: None }
+[host] slot livezpk276_0: d_loop_us=1222 d_raster_us=0 d_observe_us=80942 max_observe_us=12733 d_paints=0 d_skips=50 d_ticks=3 window_ms=1365
+PASS: catalog_boundary_live: {"scenario":"superheater_steel","runner":"Some(Evidence { scenario: \"superheater_steel\", outcome: \"PASS\", predicate: \"stat_xp_gain(13)>=2\", ticks: 128, elapsed_ms: 65098, message: None, tile: Some([3185, 3440, 0]), inv: [InvRow { id: 561, name: Some(\"Nature rune\"), count: 40 }, InvRow { id: 2353, name: Some(\"Steel bar\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 440, name: Some(\"Iron ore\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }, InvRow { id: 453, name: Some(\"Coal\"), count: 1 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"superheater_steel","baseline":{"ingame":true,"scene_state":2,"player":"Livezpk276 0","tile":[3185,3440,0],"tick":31,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":30,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50339,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13363,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{}},"latest":{"ingame":true,"scene_state":2,"player":"Livezpk276 0","tile":[3185,3440,0],"tick":90,"items":{"Coal":16,"Iron ore":8,"Nature rune":40,"Steel bar":1},"item_ids":{"440":8,"453":16,"561":40,"2353":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":8,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":30,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50869,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13538,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"max_items":{"Coal":18,"Iron ore":9,"Nature rune":50,"Staff of fire":1,"Steel bar":9},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50869,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13538,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":1315,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":true,"deposited":{"ingame":true,"scene_state":2,"player":"Livezpk276 0","tile":[3185,3440,0],"tick":81,"items":{"Nature rune":41},"item_ids":{"561":41},"bank":{"Coal":182,"Iron ore":91,"Nature rune":150,"Steel bar":9},"bank_ids":{"440":91,"453":182,"561":150,"2353":9},"bank_open":true,"bank_loaded":true,"bank_generation":7,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":30,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50816,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13520,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"withdrawn":{"ingame":true,"scene_state":2,"player":"Livezpk276 0","tile":[3185,3440,0],"tick":87,"items":{"Coal":18,"Iron ore":9,"Nature rune":41},"item_ids":{"440":9,"453":18,"561":41},"bank":{"Coal":164,"Iron ore":82,"Nature rune":150,"Steel bar":9},"bank_ids":{"440":82,"453":164,"561":150,"2353":9},"bank_open":true,"bank_loaded":true,"bank_generation":7,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":30,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50816,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":13520,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{"1387":1}},"produced_after_withdrawal":true,"wrong_product":false,"wrong_staff":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 68.23s
+

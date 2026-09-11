@@ -1,0 +1,35 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"8e7d965be2071d6ec65c3265e12af797082d720a","catalog_identity":"289-updated frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"Superheater","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/Superheater/Superheater.ts","source_sha256":"4c4ea711e2f71dfaea8be05366bbbd0779d4be13cd6989702472e765d8d022ee","compiled_sha256":"db0a1c8ee740a965bd83f5fc54897cec77789b44f9901f90133089e6e9d49859","siblings":[{"module":"/rs2b0t/bot/scripts/bot/SuperheaterLogic.js","compiled_sha256":"d436ca159bdb794d34f34f2b38294c7fb6c94e5a1d77c4afa5b1757b6d2ec1dc"}],"settings":{"bar":"Bronze"}},"account":"live5mxeu9_0","engine_speed_ms":null}
+[host-play] slot live5mxeu9_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot live5mxeu9_0: handshake begin reconnect=false
+[host-play] slot live5mxeu9_0: handshake ok
+[host] slot live5mxeu9_0: d_loop_us=4315 d_raster_us=0 d_observe_us=39508 max_observe_us=3894 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live5mxeu9_0: queued mainland tele+setvar (scene 2)
+[host-play] slot live5mxeu9_0: handshake begin reconnect=true
+[host-play] slot live5mxeu9_0: handshake ok
+[host-play] slot live5mxeu9_0: queued mainland tele+setvar (scene 2)
+[host] slot live5mxeu9_0: d_loop_us=10964 d_raster_us=0 d_observe_us=52928 max_observe_us=3080 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot live5mxeu9_0: d_loop_us=10375 d_raster_us=0 d_observe_us=100156 max_observe_us=9238 d_paints=0 d_skips=50 d_ticks=24 window_ms=14310
+{"phase":"baseline-after-preparation","scenario":"superheater_fire_battlestaff","account":"live5mxeu9_0","observation":{"ingame":true,"scene_state":2,"player":"Live5mxeu9 0","tile":[3185,3440,0],"tick":34,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":43,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":50339,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1533,"x":3183,"z":3434,"level":0,"name":"Door","open":true}],"equipment_ids":{}}}
+[script live5mxeu9_0] start load
+{"phase":"start","account":"live5mxeu9_0","count":1}
+[host] hitch live5mxeu9_0: observe_us=107459 paints=0 skips=110 ticks=34
+[script live5mxeu9_0] Superheater — Bronze via Superheat Item (13 Copper ore + 13 Tin ore), keeping 50 Nature runes
+[script live5mxeu9_0] banking at Bank booth (Bank booth / Use-quickly)
+[script live5mxeu9_0] opening Bank booth (Use-quickly)
+[script live5mxeu9_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot live5mxeu9_0: d_loop_us=1571 d_raster_us=0 d_observe_us=186916 max_observe_us=107459 d_paints=0 d_skips=50 d_ticks=11 window_ms=7121
+[script live5mxeu9_0] bank open
+[script live5mxeu9_0] withdrawing Fire battlestaff
+[script live5mxeu9_0] interact Close
+[shim-close] sent
+[host] slot live5mxeu9_0: d_loop_us=1338 d_raster_us=0 d_observe_us=90319 max_observe_us=12525 d_paints=0 d_skips=50 d_ticks=3 window_ms=1359
+[script live5mxeu9_0] interact Held { name: "Fire battlestaff", action: "Wield" }
+[shim-held] Fire battlestaff Wield slot=0 -> sent
+[host] slot live5mxeu9_0: d_loop_us=1148 d_raster_us=0 d_observe_us=67987 max_observe_us=5856 d_paints=0 d_skips=50 d_ticks=2 window_ms=1349
+[host] slot live5mxeu9_0: d_loop_us=1286 d_raster_us=0 d_observe_us=72380 max_observe_us=6592 d_paints=0 d_skips=50 d_ticks=2 window_ms=1357
+[script live5mxeu9_0] could not wield Fire battlestaff — stopping
+[script live5mxeu9_0] script requested stop on tick 58; isolate stopping
+FAIL: catalog_boundary_live: script error: script requested stop on tick 58; isolate stopping
