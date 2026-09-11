@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -90,6 +90,19 @@ const SHOPMAIN: i32 = 3824;
 const AL_KHARID_BANK: (i32, i32, i32) = (3269, 3167, 0);
 const TANNER_STAND: (i32, i32, i32) = (3277, 3191, 0);
 const DOMMIK_STAND: (i32, i32, i32) = (3316, 3192, 0);
+const RUNE_ESSENCE_ID: i32 = 1436;
+const NOTED_ESSENCE_ID: i32 = 1437;
+const AIR_TALISMAN_ID: i32 = 1438;
+const EARTH_TALISMAN_ID: i32 = 1440;
+const AIR_RUNE_ID: i32 = 556;
+const EARTH_RUNE_ID: i32 = 557;
+const TEMPLE_Z: i32 = 4000;
+const VARROCK_EAST_BANK: (i32, i32, i32) = (3253, 3420, 0);
+const RUNECRAFTER_AIR_RUINS: (i32, i32, i32) = (2988, 3294, 0);
+const RUNECRAFTER_EARTH_RUINS: (i32, i32, i32) = (3303, 3477, 0);
+const MULECRAFTER_AIR_RUINS: (i32, i32, i32) = (2983, 3288, 0);
+const AIR_ALTAR: (i32, i32, i32) = (2841, 4829, 0);
+const EARTH_ALTAR: (i32, i32, i32) = (2655, 4830, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +140,9 @@ enum CoreCase {
     PotionMakerNamed,
     TannerBot,
     TannerBotHard,
+    RuneCrafter,
+    RuneCrafterEarth,
+    MuleCrafter,
 }
 
 impl CoreCase {
@@ -165,6 +181,9 @@ impl CoreCase {
             "potion_maker_named" => Ok(Self::PotionMakerNamed),
             "tanner_bot" => Ok(Self::TannerBot),
             "tanner_bot_hard" => Ok(Self::TannerBotHard),
+            "rune_crafter" => Ok(Self::RuneCrafter),
+            "rune_crafter_earth" => Ok(Self::RuneCrafterEarth),
+            "mule_crafter" => Ok(Self::MuleCrafter),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -206,6 +225,9 @@ impl CoreCase {
             Self::PotionMakerNamed => "potion_maker_named",
             Self::TannerBot => "tanner_bot",
             Self::TannerBotHard => "tanner_bot_hard",
+            Self::RuneCrafter => "rune_crafter",
+            Self::RuneCrafterEarth => "rune_crafter_earth",
+            Self::MuleCrafter => "mule_crafter",
         }
     }
 
@@ -235,6 +257,8 @@ impl CoreCase {
             Self::VialFiller | Self::VialFillerEast => "VialFiller",
             Self::PotionMaker | Self::PotionMakerNamed => "PotionMaker",
             Self::TannerBot | Self::TannerBotHard => "TannerBot",
+            Self::RuneCrafter | Self::RuneCrafterEarth => "RuneCrafter",
+            Self::MuleCrafter => "MuleCrafter",
         }
     }
 }
@@ -615,6 +639,31 @@ fn superheater_baseline_ready(
         && baseline.equipment_id(staff) == 0
 }
 
+fn in_temple(tile: Option<(i32, i32, i32)>) -> bool {
+    tile.is_some_and(|tile| tile.1 > TEMPLE_Z)
+}
+
+fn overworld(tile: Option<(i32, i32, i32)>) -> bool {
+    tile.is_some_and(|tile| tile.1 <= TEMPLE_Z)
+}
+
+fn runecraft_baseline_ready(
+    baseline: &Observation,
+    bank: (i32, i32, i32),
+    rune: i32,
+    wrong_rune: i32,
+    talisman: i32,
+    rc_level: i32,
+) -> bool {
+    near(baseline.tile, bank, 6)
+        && baseline.level("runecraft") >= rc_level
+        && baseline.item_id(RUNE_ESSENCE_ID) == 0
+        && baseline.item_id(NOTED_ESSENCE_ID) == 0
+        && baseline.item_id(rune) == 0
+        && baseline.item_id(wrong_rune) == 0
+        && baseline.item_id(talisman) == 0
+}
+
 fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), String> {
     let ready = match case {
         CoreCase::BoneBurier => {
@@ -795,6 +844,30 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.item_id(HARD_LEATHER_ID) == 0
                 && baseline.item_id(COINS_ID) == 0
         }
+        CoreCase::RuneCrafter => runecraft_baseline_ready(
+            baseline,
+            FALADOR_EAST_BANK,
+            AIR_RUNE_ID,
+            EARTH_RUNE_ID,
+            AIR_TALISMAN_ID,
+            1,
+        ),
+        CoreCase::RuneCrafterEarth => runecraft_baseline_ready(
+            baseline,
+            VARROCK_EAST_BANK,
+            EARTH_RUNE_ID,
+            AIR_RUNE_ID,
+            EARTH_TALISMAN_ID,
+            9,
+        ),
+        CoreCase::MuleCrafter => runecraft_baseline_ready(
+            baseline,
+            FALADOR_EAST_BANK,
+            AIR_RUNE_ID,
+            EARTH_RUNE_ID,
+            AIR_TALISMAN_ID,
+            1,
+        ),
     };
     if ready {
         return Ok(());
@@ -866,6 +939,15 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::TannerBot | CoreCase::TannerBotHard => {
             "Al-Kharid bank (3269,3167,0) and empty pack of 1739/1741/1743/995"
         }
+        CoreCase::RuneCrafter => {
+            "Falador East bank (3013,3355,0), Runecraft 1, and empty pack of 1436/1437/556/557"
+        }
+        CoreCase::RuneCrafterEarth => {
+            "Varrock East bank (3253,3420,0), Runecraft 9, and empty pack of 1436/1437/557/556"
+        }
+        CoreCase::MuleCrafter => {
+            "Falador East bank (3013,3355,0), Runecraft 1, blank partner, and empty pack of 1436/1437/556/557"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -898,6 +980,7 @@ struct CoreWitness {
     vial_filler_cycle: VialFillerCycle,
     potion_maker_cycle: PotionMakerCycle,
     tanner_bot_cycle: TannerBotCycle,
+    rune_crafter_cycle: RuneCrafterCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1836,6 +1919,124 @@ impl TannerBotCycle {
     }
 }
 
+/// Withdraw unnoted essence, enter the selected altar, convert to the selected
+/// rune with Runecraft XP, portal out, deposit, restock, and craft again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct RuneCrafterCycle {
+    withdrawn: Option<Observation>,
+    entered: Option<Observation>,
+    crafted: Option<Observation>,
+    exited: Option<Observation>,
+    deposited: Option<Observation>,
+    restocked: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+struct RuneCrafterSpec {
+    rune: i32,
+    wrong_rune: i32,
+    ruins: (i32, i32, i32),
+    bank: (i32, i32, i32),
+}
+
+impl RuneCrafterCycle {
+    fn observe(&mut self, spec: RuneCrafterSpec, baseline: &Observation, now: &Observation) {
+        let RuneCrafterSpec {
+            rune,
+            wrong_rune,
+            ruins,
+            bank,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong_rune) > 0 || now.bank_item_id(wrong_rune) > 0;
+        self.noted |= now.item_id(NOTED_ESSENCE_ID) > 0;
+        if self.withdrawn.is_none()
+            && overworld(now.tile)
+            && near(now.tile, bank, 8)
+            && now.item_id(RUNE_ESSENCE_ID) >= 1
+            && now.item_id(rune) == 0
+            && now.item_id(NOTED_ESSENCE_ID) == 0
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        if self.withdrawn.is_some()
+            && self.entered.is_none()
+            && in_temple(now.tile)
+            && now.item_id(RUNE_ESSENCE_ID) >= 1
+            && now.item_id(rune) == 0
+        {
+            self.entered = Some(now.clone());
+        }
+        if self.entered.is_some()
+            && self.crafted.is_none()
+            && in_temple(now.tile)
+            && now.item_id(rune) >= 1
+            && now.item_id(RUNE_ESSENCE_ID) == 0
+            && now.skill_xp("runecraft") > baseline.skill_xp("runecraft")
+            && now.item_id(wrong_rune) == 0
+            && now.item_id(NOTED_ESSENCE_ID) == 0
+        {
+            self.crafted = Some(now.clone());
+        }
+        if self.crafted.is_some()
+            && self.exited.is_none()
+            && overworld(now.tile)
+            && near(now.tile, ruins, 8)
+            && now.item_id(rune) >= 1
+        {
+            self.exited = Some(now.clone());
+        }
+        if self.exited.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(rune) == 0
+            && now.bank_item_id(rune) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(RUNE_ESSENCE_ID) >= 1
+                && now.bank_item_id(RUNE_ESSENCE_ID) < deposited.bank_item_id(RUNE_ESSENCE_ID)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && (near(now.tile, ruins, 8) || in_temple(now.tile));
+        }
+        if let Some(crafted) = &self.crafted {
+            self.further |= self.returned
+                && !now.bank_open
+                && now.item_id(rune) >= 1
+                && now.item_id(RUNE_ESSENCE_ID) == 0
+                && now.item_id(wrong_rune) == 0
+                && now.skill_xp("runecraft") > crafted.skill_xp("runecraft");
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.entered.is_some()
+            && self.crafted.is_some()
+            && self.exited.is_some()
+            && self.deposited.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -1862,6 +2063,7 @@ impl CoreWitness {
             vial_filler_cycle: VialFillerCycle::default(),
             potion_maker_cycle: PotionMakerCycle::default(),
             tanner_bot_cycle: TannerBotCycle::default(),
+            rune_crafter_cycle: RuneCrafterCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -2059,6 +2261,42 @@ impl CoreWitness {
                 observation,
             );
         }
+        if matches!(self.case, CoreCase::RuneCrafter) {
+            self.rune_crafter_cycle.observe(
+                RuneCrafterSpec {
+                    rune: AIR_RUNE_ID,
+                    wrong_rune: EARTH_RUNE_ID,
+                    ruins: RUNECRAFTER_AIR_RUINS,
+                    bank: FALADOR_EAST_BANK,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::RuneCrafterEarth) {
+            self.rune_crafter_cycle.observe(
+                RuneCrafterSpec {
+                    rune: EARTH_RUNE_ID,
+                    wrong_rune: AIR_RUNE_ID,
+                    ruins: RUNECRAFTER_EARTH_RUINS,
+                    bank: VARROCK_EAST_BANK,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::MuleCrafter) {
+            self.rune_crafter_cycle.observe(
+                RuneCrafterSpec {
+                    rune: AIR_RUNE_ID,
+                    wrong_rune: EARTH_RUNE_ID,
+                    ruins: MULECRAFTER_AIR_RUINS,
+                    bank: FALADOR_EAST_BANK,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -2176,6 +2414,9 @@ impl CoreWitness {
                 self.potion_maker_cycle.qualified()
             }
             CoreCase::TannerBot | CoreCase::TannerBotHard => self.tanner_bot_cycle.qualified(),
+            CoreCase::RuneCrafter | CoreCase::RuneCrafterEarth | CoreCase::MuleCrafter => {
+                self.rune_crafter_cycle.qualified()
+            }
         };
         if !ok {
             return Err(format!(
@@ -2207,6 +2448,7 @@ impl CoreWitness {
             "vial_filler_cycle": self.vial_filler_cycle,
             "potion_maker_cycle": self.potion_maker_cycle,
             "tanner_bot_cycle": self.tanner_bot_cycle,
+            "rune_crafter_cycle": self.rune_crafter_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -4700,6 +4942,239 @@ mod tests {
         }
     }
 
+    fn runecraft_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        xp: i32,
+        rc_level: i32,
+    ) -> Observation {
+        let mut observation = observation(&[], &[("runecraft", xp)], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.levels.insert("runecraft".into(), rc_level);
+        observation
+    }
+
+    #[test]
+    fn rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft() {
+        for (case, bank, ruins, altar, rune, wrong, talisman, rc_level) in [
+            (
+                CoreCase::RuneCrafter,
+                FALADOR_EAST_BANK,
+                RUNECRAFTER_AIR_RUINS,
+                AIR_ALTAR,
+                AIR_RUNE_ID,
+                EARTH_RUNE_ID,
+                AIR_TALISMAN_ID,
+                1,
+            ),
+            (
+                CoreCase::RuneCrafterEarth,
+                VARROCK_EAST_BANK,
+                RUNECRAFTER_EARTH_RUINS,
+                EARTH_ALTAR,
+                EARTH_RUNE_ID,
+                AIR_RUNE_ID,
+                EARTH_TALISMAN_ID,
+                9,
+            ),
+            (
+                CoreCase::MuleCrafter,
+                FALADOR_EAST_BANK,
+                MULECRAFTER_AIR_RUINS,
+                AIR_ALTAR,
+                AIR_RUNE_ID,
+                EARTH_RUNE_ID,
+                AIR_TALISMAN_ID,
+                1,
+            ),
+        ] {
+            let baseline = runecraft_obs(bank, &[], &[], 0, rc_level);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let withdrawn = runecraft_obs(
+                bank,
+                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[],
+                0,
+                rc_level,
+            );
+            let entered = runecraft_obs(
+                altar,
+                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[],
+                0,
+                rc_level,
+            );
+            let crafted = runecraft_obs(altar, &[(rune, 27), (talisman, 1)], &[], 5, rc_level);
+            let exited = runecraft_obs(ruins, &[(rune, 27), (talisman, 1)], &[], 5, rc_level);
+            let mut deposited = runecraft_obs(
+                bank,
+                &[(talisman, 1)],
+                &[(rune, 27), (RUNE_ESSENCE_ID, 173)],
+                5,
+                rc_level,
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut restocked = runecraft_obs(
+                bank,
+                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[(rune, 27), (RUNE_ESSENCE_ID, 146)],
+                5,
+                rc_level,
+            );
+            restocked.bank_open = true;
+            restocked.bank_loaded = true;
+            restocked.bank_generation = 1;
+            let mut returned = runecraft_obs(
+                ruins,
+                &[(RUNE_ESSENCE_ID, 27), (talisman, 1)],
+                &[],
+                5,
+                rc_level,
+            );
+            returned.bank_generation = 2;
+            let mut further = runecraft_obs(altar, &[(rune, 27), (talisman, 1)], &[], 10, rc_level);
+            further.bank_generation = 2;
+
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &entered, &crafted, &exited, &deposited, &restocked, &returned,
+                    &further,
+                ]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&withdrawn]).qualify().is_err());
+            assert!(witness(case, &baseline, [&withdrawn, &entered])
+                .qualify()
+                .is_err());
+            assert!(witness(case, &baseline, [&withdrawn, &entered, &crafted])
+                .qualify()
+                .is_err());
+            assert!(
+                witness(case, &baseline, [&withdrawn, &entered, &crafted, &exited])
+                    .qualify()
+                    .is_err()
+            );
+            assert!(witness(
+                case,
+                &baseline,
+                [&withdrawn, &entered, &crafted, &exited, &deposited, &restocked, &returned]
+            )
+            .qualify()
+            .is_err());
+
+            let mut unclosed_return = returned.clone();
+            unclosed_return.bank_generation = deposited.bank_generation;
+            let mut unclosed_further = further.clone();
+            unclosed_further.bank_generation = deposited.bank_generation;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &entered,
+                    &crafted,
+                    &exited,
+                    &deposited,
+                    &restocked,
+                    &unclosed_return,
+                    &unclosed_further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = crafted.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Air rune".into(), 27);
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &entered, &name_only, &exited, &deposited, &restocked, &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &entered, &crafted, &exited, &stale, &restocked, &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut xp_only = crafted.clone();
+            xp_only.item_ids.remove(&rune);
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &entered, &xp_only, &exited, &deposited, &restocked, &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let queued = entered.clone();
+            assert!(witness(
+                case,
+                &baseline,
+                [&withdrawn, &queued, &exited, &deposited, &restocked, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut wrong_obs = crafted.clone();
+            wrong_obs.item_ids.insert(wrong, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &entered, &wrong_obs, &exited, &deposited, &restocked, &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut noted = withdrawn.clone();
+            noted.item_ids.insert(NOTED_ESSENCE_ID, 27);
+            noted.item_ids.remove(&RUNE_ESSENCE_ID);
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &noted, &entered, &crafted, &exited, &deposited, &restocked, &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(rune, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -4740,6 +5215,9 @@ mod tests {
             CoreCase::PotionMakerNamed,
             CoreCase::TannerBot,
             CoreCase::TannerBotHard,
+            CoreCase::RuneCrafter,
+            CoreCase::RuneCrafterEarth,
+            CoreCase::MuleCrafter,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
