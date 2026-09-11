@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -157,6 +157,12 @@ const CATHERBY_RANGE_STAND: (i32, i32, i32) = (2817, 3443, 0);
 const AL_KHARID_FURNACE: (i32, i32, i32) = (3275, 3185, 0);
 const FLAX_SPINNER_BANK: (i32, i32, i32) = (2722, 3493, 0);
 const FLAX_SPINNER_WHEEL: (i32, i32, i32) = (2711, 3471, 1);
+const FLAX_AIO_BANK: (i32, i32, i32) = (2725, 3493, 0);
+const RED_SPIDERS_EGGS_ID: i32 = 223;
+const NOTED_RED_SPIDERS_EGGS_ID: i32 = 224;
+const NOTED_EYE_OF_NEWT_ID: i32 = 222;
+const EGG_FIELD: (i32, i32, i32) = (3120, 9952, 0);
+const BETTY_SHOP: (i32, i32, i32) = (3012, 3259, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -209,6 +215,11 @@ enum CoreCase {
     SmelterBot,
     SmelterBotSteel,
     FlaxSpinner,
+    FlaxAio,
+    FlaxAioPick,
+    FlaxAioSpin,
+    HerbloreSecondaries,
+    HerbloreSecondariesNewt,
 }
 
 impl CoreCase {
@@ -262,6 +273,11 @@ impl CoreCase {
             "smelter_bot" => Ok(Self::SmelterBot),
             "smelter_bot_steel" => Ok(Self::SmelterBotSteel),
             "flax_spinner" => Ok(Self::FlaxSpinner),
+            "flax_aio" => Ok(Self::FlaxAio),
+            "flax_aio_pick" => Ok(Self::FlaxAioPick),
+            "flax_aio_spin" => Ok(Self::FlaxAioSpin),
+            "herblore_secondaries" => Ok(Self::HerbloreSecondaries),
+            "herblore_secondaries_newt" => Ok(Self::HerbloreSecondariesNewt),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -318,6 +334,11 @@ impl CoreCase {
             Self::SmelterBot => "smelter_bot",
             Self::SmelterBotSteel => "smelter_bot_steel",
             Self::FlaxSpinner => "flax_spinner",
+            Self::FlaxAio => "flax_aio",
+            Self::FlaxAioPick => "flax_aio_pick",
+            Self::FlaxAioSpin => "flax_aio_spin",
+            Self::HerbloreSecondaries => "herblore_secondaries",
+            Self::HerbloreSecondariesNewt => "herblore_secondaries_newt",
         }
     }
 
@@ -356,6 +377,8 @@ impl CoreCase {
             Self::CookBot | Self::CookBotLobster => "CookBot",
             Self::SmelterBot | Self::SmelterBotSteel => "SmelterBot",
             Self::FlaxSpinner => "FlaxSpinner",
+            Self::FlaxAio | Self::FlaxAioPick | Self::FlaxAioSpin => "FlaxAIO",
+            Self::HerbloreSecondaries | Self::HerbloreSecondariesNewt => "HerbloreSecondaries",
         }
     }
 }
@@ -875,6 +898,55 @@ fn flax_spinner_baseline_ready(baseline: &Observation) -> bool {
         && !flax_spinner_noted(baseline)
 }
 
+fn flax_aio_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, FLAX_FIELD, 6)
+        && baseline.level("crafting") >= 1
+        && baseline.item_id(FLAX_ID) == 0
+        && baseline.item_id(BOW_STRING_ID) == 0
+        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && !flax_spinner_noted(baseline)
+}
+
+fn flax_aio_pick_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, FLAX_FIELD, 6)
+        && baseline.item_id(FLAX_ID) == 0
+        && baseline.item_id(BOW_STRING_ID) == 0
+        && !flax_spinner_noted(baseline)
+}
+
+fn flax_aio_spin_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, FLAX_AIO_BANK, 8)
+        && baseline.level("crafting") >= 1
+        && baseline.item_id(FLAX_ID) == 0
+        && baseline.item_id(BOW_STRING_ID) == 0
+        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && !flax_spinner_noted(baseline)
+}
+
+fn herblore_eggs_noted(observation: &Observation) -> bool {
+    observation.item_id(NOTED_RED_SPIDERS_EGGS_ID) > 0
+        || observation.bank_item_id(NOTED_RED_SPIDERS_EGGS_ID) > 0
+}
+
+fn herblore_newt_noted(observation: &Observation) -> bool {
+    observation.item_id(NOTED_EYE_OF_NEWT_ID) > 0
+        || observation.bank_item_id(NOTED_EYE_OF_NEWT_ID) > 0
+}
+
+fn herblore_eggs_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, EGG_FIELD, 8)
+        && baseline.item_id(RED_SPIDERS_EGGS_ID) == 0
+        && baseline.item_id(EYE_OF_NEWT_ID) == 0
+        && !herblore_eggs_noted(baseline)
+}
+
+fn herblore_newt_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, BETTY_SHOP, 6)
+        && baseline.item_id(EYE_OF_NEWT_ID) == 0
+        && baseline.item_id(RED_SPIDERS_EGGS_ID) == 0
+        && !herblore_newt_noted(baseline)
+}
+
 fn superheater_baseline_ready(
     baseline: &Observation,
     bar: i32,
@@ -1170,6 +1242,11 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             30,
         ),
         CoreCase::FlaxSpinner => flax_spinner_baseline_ready(baseline),
+        CoreCase::FlaxAio => flax_aio_baseline_ready(baseline),
+        CoreCase::FlaxAioPick => flax_aio_pick_baseline_ready(baseline),
+        CoreCase::FlaxAioSpin => flax_aio_spin_baseline_ready(baseline),
+        CoreCase::HerbloreSecondaries => herblore_eggs_baseline_ready(baseline),
+        CoreCase::HerbloreSecondariesNewt => herblore_newt_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -1286,6 +1363,21 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::FlaxSpinner => {
             "Seers flax bank (2722,3493,0), Crafting 1, empty pack of 1779/1777"
         }
+        CoreCase::FlaxAio => {
+            "Seers flax field (2741,3444,0), Crafting 1, empty pack of 1779/1777"
+        }
+        CoreCase::FlaxAioPick => {
+            "Seers flax field (2741,3444,0) with empty pack of 1779/1777"
+        }
+        CoreCase::FlaxAioSpin => {
+            "FlaxAIO Seers bank (2725,3493,0), Crafting 1, empty pack of 1779/1777"
+        }
+        CoreCase::HerbloreSecondaries => {
+            "Edgeville dungeon eggs (3120,9952,0) with empty pack of 223/221"
+        }
+        CoreCase::HerbloreSecondariesNewt => {
+            "Betty shop (3012,3259,0) with empty pack of 221/223"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -1325,6 +1417,10 @@ struct CoreWitness {
     gnome_fletch_cycle: GnomeFletchCycle,
     coal_trucks_cycle: CoalTrucksCycle,
     station_production_cycle: StationProductionCycle,
+    flax_aio_cycle: FlaxAioCycle,
+    flax_aio_pick_cycle: FlaxAioPickCycle,
+    herblore_eggs_cycle: HerbloreEggsCycle,
+    herblore_newt_cycle: HerbloreNewtCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1864,6 +1960,233 @@ impl FlaxPickerCycle {
 
     fn qualified(&self) -> bool {
         self.further
+    }
+}
+
+/// Pick 1779 at the field, convert at the wheel with Crafting XP, deposit 1777,
+/// closed return to the field, further Pick. Wool or noted ids fail.
+#[derive(Debug, Clone, Default, Serialize)]
+struct FlaxAioCycle {
+    picked: Option<Observation>,
+    produced: Option<Observation>,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl FlaxAioCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            now.item_id(BALL_OF_WOOL_ID) > 0 || now.bank_item_id(BALL_OF_WOOL_ID) > 0;
+        self.noted |= flax_spinner_noted(now);
+        if self.picked.is_none()
+            && now.item_id(FLAX_ID) >= 1
+            && baseline.item_id(FLAX_ID) == 0
+            && now.item_id(BOW_STRING_ID) == 0
+            && !self.noted
+            && !self.wrong_product
+        {
+            self.picked = Some(now.clone());
+        }
+        if let Some(picked) = &self.picked {
+            if self.produced.is_none()
+                && now.item_id(BOW_STRING_ID) >= 1
+                && now.item_id(FLAX_ID) < picked.item_id(FLAX_ID)
+                && now.skill_xp("crafting") > baseline.skill_xp("crafting")
+                && near(now.tile, FLAX_SPINNER_WHEEL, 8)
+                && now.item_id(BALL_OF_WOOL_ID) == 0
+                && !self.noted
+            {
+                self.produced = Some(now.clone());
+            }
+        }
+        if self.produced.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(BOW_STRING_ID) == 0
+            && now.bank_item_id(BOW_STRING_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, FLAX_FIELD, 12);
+        }
+        if self.returned {
+            self.further |=
+                !now.bank_open && now.item_id(FLAX_ID) >= 1 && now.item_id(BALL_OF_WOOL_ID) == 0;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.picked.is_some()
+            && self.produced.is_some()
+            && self.deposited.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
+/// Full pack of exact flax 1779, deposit, return, further pick. Bow string 1777
+/// must never qualify this pick-only cell.
+#[derive(Debug, Clone, Default, Serialize)]
+struct FlaxAioPickCycle {
+    first_pack: bool,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl FlaxAioPickCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |= now.item_id(BOW_STRING_ID) > 0
+            || now.bank_item_id(BOW_STRING_ID) > 0
+            || now.item_id(BALL_OF_WOOL_ID) > 0
+            || now.bank_item_id(BALL_OF_WOOL_ID) > 0;
+        self.noted |= flax_spinner_noted(now);
+        self.first_pack |= now.item_id(FLAX_ID) >= 28
+            && baseline.item_id(FLAX_ID) == 0
+            && now.item_id(FLAX_ID) > baseline.item_id(FLAX_ID)
+            && !self.wrong_product;
+        if self.first_pack
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(FLAX_ID) == 0
+            && now.bank_item_id(FLAX_ID) >= 28
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, FLAX_FIELD, 12);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(FLAX_ID) >= 1 && !self.wrong_product;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && !self.wrong_product && !self.noted
+    }
+}
+
+/// Ground Take 223, deposit, closed return to the egg field, further Take.
+/// Eye of newt 221 must not mix into this cell. Ground spawns are not given.
+#[derive(Debug, Clone, Default, Serialize)]
+struct HerbloreEggsCycle {
+    taken: bool,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl HerbloreEggsCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            now.item_id(EYE_OF_NEWT_ID) > 0 || now.bank_item_id(EYE_OF_NEWT_ID) > 0;
+        self.noted |= herblore_eggs_noted(now);
+        self.taken |= now.item_id(RED_SPIDERS_EGGS_ID) >= 1
+            && baseline.item_id(RED_SPIDERS_EGGS_ID) == 0
+            && !self.wrong_product
+            && !self.noted;
+        if self.taken
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(RED_SPIDERS_EGGS_ID) == 0
+            && now.bank_item_id(RED_SPIDERS_EGGS_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, EGG_FIELD, 14);
+        }
+        if self.returned {
+            self.further |=
+                !now.bank_open && now.item_id(RED_SPIDERS_EGGS_ID) >= 1 && !self.wrong_product;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && !self.wrong_product && !self.noted
+    }
+}
+
+/// Betty shop purchase 221 with coins 995, deposit, return, further buy.
+/// Eggs 223 must not mix into this cell.
+#[derive(Debug, Clone, Default, Serialize)]
+struct HerbloreNewtCycle {
+    bought: bool,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    coins_spent: bool,
+    coins_peak: i32,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl HerbloreNewtCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            now.item_id(RED_SPIDERS_EGGS_ID) > 0 || now.bank_item_id(RED_SPIDERS_EGGS_ID) > 0;
+        self.noted |= herblore_newt_noted(now);
+        let previous_coins_peak = self.coins_peak;
+        self.coins_peak = previous_coins_peak.max(now.item_id(COINS_ID));
+        self.bought |= now.item_id(EYE_OF_NEWT_ID) >= 1
+            && baseline.item_id(EYE_OF_NEWT_ID) == 0
+            && !self.wrong_product
+            && !self.noted;
+        if self.bought
+            && previous_coins_peak > 0
+            && now.item_id(EYE_OF_NEWT_ID) >= 1
+            && now.item_id(COINS_ID) < previous_coins_peak
+        {
+            self.coins_spent = true;
+        }
+        if self.bought
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(EYE_OF_NEWT_ID) == 0
+            && now.bank_item_id(EYE_OF_NEWT_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, BETTY_SHOP, 6);
+        }
+        if self.returned {
+            self.further |=
+                !now.bank_open && now.item_id(EYE_OF_NEWT_ID) >= 1 && !self.wrong_product;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && self.coins_spent && !self.wrong_product && !self.noted
     }
 }
 
@@ -2858,6 +3181,17 @@ fn station_production_spec(
             station_radius: 8,
             noted: flax_spinner_noted(observation),
         }),
+        CoreCase::FlaxAioSpin => Some(StationProductionSpec {
+            product: BOW_STRING_ID,
+            input: FLAX_ID,
+            extra_input: None,
+            wrong: BALL_OF_WOOL_ID,
+            extra_wrong: None,
+            skill: "crafting",
+            station: FLAX_SPINNER_WHEEL,
+            station_radius: 8,
+            noted: flax_spinner_noted(observation),
+        }),
         _ => None,
     }
 }
@@ -2895,6 +3229,10 @@ impl CoreWitness {
             gnome_fletch_cycle: GnomeFletchCycle::default(),
             coal_trucks_cycle: CoalTrucksCycle::default(),
             station_production_cycle: StationProductionCycle::default(),
+            flax_aio_cycle: FlaxAioCycle::default(),
+            flax_aio_pick_cycle: FlaxAioPickCycle::default(),
+            herblore_eggs_cycle: HerbloreEggsCycle::default(),
+            herblore_newt_cycle: HerbloreNewtCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -2993,6 +3331,21 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::FlaxPicker) {
             self.flax_picker_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::FlaxAio) {
+            self.flax_aio_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::FlaxAioPick) {
+            self.flax_aio_pick_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::HerbloreSecondaries) {
+            self.herblore_eggs_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::HerbloreSecondariesNewt) {
+            self.herblore_newt_cycle
+                .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -3296,7 +3649,12 @@ impl CoreWitness {
             | CoreCase::CookBotLobster
             | CoreCase::SmelterBot
             | CoreCase::SmelterBotSteel
-            | CoreCase::FlaxSpinner => self.station_production_cycle.qualified(),
+            | CoreCase::FlaxSpinner
+            | CoreCase::FlaxAioSpin => self.station_production_cycle.qualified(),
+            CoreCase::FlaxAio => self.flax_aio_cycle.qualified(),
+            CoreCase::FlaxAioPick => self.flax_aio_pick_cycle.qualified(),
+            CoreCase::HerbloreSecondaries => self.herblore_eggs_cycle.qualified(),
+            CoreCase::HerbloreSecondariesNewt => self.herblore_newt_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -3335,6 +3693,10 @@ impl CoreWitness {
             "gnome_fletch_cycle": self.gnome_fletch_cycle,
             "coal_trucks_cycle": self.coal_trucks_cycle,
             "station_production_cycle": self.station_production_cycle,
+            "flax_aio_cycle": self.flax_aio_cycle,
+            "flax_aio_pick_cycle": self.flax_aio_pick_cycle,
+            "herblore_eggs_cycle": self.herblore_eggs_cycle,
+            "herblore_newt_cycle": self.herblore_newt_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -3974,6 +4336,8 @@ mod tests {
                 CoreCase::DoorOpener,
                 CoreCase::GnomeCourse,
                 CoreCase::FlaxPicker,
+                CoreCase::FlaxAio,
+                CoreCase::HerbloreSecondaries,
             ] {
                 let row = ledger_card(&matrix, commit, 274, case).unwrap();
                 verify_source_identity(&root, &row).unwrap();
@@ -7519,6 +7883,403 @@ mod tests {
     }
 
     #[test]
+    fn flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further() {
+        let craft = [("crafting", 1)];
+        let aio_baseline = resource_obs(FLAX_FIELD, &[], &[], &[], &[("crafting", 0)], &craft);
+        validate_case_baseline(CoreCase::FlaxAio, &aio_baseline).unwrap();
+        let picked = resource_obs(
+            FLAX_FIELD,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &craft,
+        );
+        let produced = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        let mut deposited = resource_obs(
+            FLAX_AIO_BANK,
+            &[],
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = resource_obs(FLAX_FIELD, &[], &[], &[], &[("crafting", 420)], &craft);
+        returned.bank_generation = 2;
+        let mut further = resource_obs(
+            FLAX_FIELD,
+            &[(FLAX_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &produced, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::FlaxAio, &aio_baseline, [&aio_baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::FlaxAio, &aio_baseline, [&picked])
+            .qualify()
+            .is_err());
+        assert!(
+            witness(CoreCase::FlaxAio, &aio_baseline, [&picked, &produced])
+                .qualify()
+                .is_err()
+        );
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &produced, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [
+                &picked,
+                &produced,
+                &deposited,
+                &unclosed_return,
+                &unclosed_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let no_consume = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(FLAX_ID, 28), (BOW_STRING_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &no_consume, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let xp_only = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &xp_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut wool = produced.clone();
+        wool.item_ids.insert(BALL_OF_WOOL_ID, 1);
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &wool, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut noted = produced.clone();
+        noted.item_ids.insert(NOTED_BOW_STRING_ID, 1);
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &noted, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut name_only = produced.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Bow string".into(), 28);
+        assert!(witness(
+            CoreCase::FlaxAio,
+            &aio_baseline,
+            [&picked, &name_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut seeded = aio_baseline.clone();
+        seeded.item_ids.insert(BOW_STRING_ID, 1);
+        assert!(validate_case_baseline(CoreCase::FlaxAio, &seeded).is_err());
+
+        let pick_baseline = flax_obs(FLAX_FIELD, &[], &[]);
+        validate_case_baseline(CoreCase::FlaxAioPick, &pick_baseline).unwrap();
+        let first = flax_obs(FLAX_FIELD, &[(FLAX_ID, 28)], &[]);
+        let mut pick_deposited = flax_obs(FLAX_AIO_BANK, &[], &[(FLAX_ID, 28)]);
+        pick_deposited.bank_open = true;
+        pick_deposited.bank_loaded = true;
+        pick_deposited.bank_generation = 1;
+        let mut pick_returned = flax_obs(FLAX_FIELD, &[], &[]);
+        pick_returned.bank_generation = 2;
+        let mut pick_further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        pick_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxAioPick,
+            &pick_baseline,
+            [&first, &pick_deposited, &pick_returned, &pick_further]
+        )
+        .qualify()
+        .is_ok());
+        let mut spun = first.clone();
+        spun.item_ids.insert(BOW_STRING_ID, 1);
+        assert!(witness(
+            CoreCase::FlaxAioPick,
+            &pick_baseline,
+            [&spun, &pick_deposited, &pick_returned, &pick_further]
+        )
+        .qualify()
+        .is_err());
+        let mut seeded_pick = pick_baseline.clone();
+        seeded_pick.item_ids.insert(FLAX_ID, 28);
+        assert!(validate_case_baseline(CoreCase::FlaxAioPick, &seeded_pick).is_err());
+
+        let spin_baseline = resource_obs(FLAX_AIO_BANK, &[], &[], &[], &[("crafting", 0)], &craft);
+        validate_case_baseline(CoreCase::FlaxAioSpin, &spin_baseline).unwrap();
+        let spin_withdrawn = resource_obs(
+            FLAX_AIO_BANK,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &craft,
+        );
+        let spin_produced = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        let mut spin_deposited = resource_obs(
+            FLAX_AIO_BANK,
+            &[],
+            &[(BOW_STRING_ID, 28), (FLAX_ID, 28)],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        spin_deposited.bank_open = true;
+        spin_deposited.bank_loaded = true;
+        spin_deposited.bank_generation = 1;
+        let mut spin_restocked = resource_obs(
+            FLAX_AIO_BANK,
+            &[(FLAX_ID, 28)],
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        spin_restocked.bank_open = true;
+        spin_restocked.bank_loaded = true;
+        spin_restocked.bank_generation = 1;
+        let mut spin_returned = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        spin_returned.bank_generation = 2;
+        let mut spin_further = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(BOW_STRING_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 435)],
+            &craft,
+        );
+        spin_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxAioSpin,
+            &spin_baseline,
+            [
+                &spin_withdrawn,
+                &spin_produced,
+                &spin_deposited,
+                &spin_restocked,
+                &spin_returned,
+                &spin_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        let mut ground_return = resource_obs(
+            FLAX_AIO_BANK,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &craft,
+        );
+        ground_return.bank_generation = 2;
+        let mut ground_further = resource_obs(
+            FLAX_AIO_BANK,
+            &[(BOW_STRING_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 435)],
+            &craft,
+        );
+        ground_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxAioSpin,
+            &spin_baseline,
+            [
+                &spin_withdrawn,
+                &spin_produced,
+                &spin_deposited,
+                &spin_restocked,
+                &ground_return,
+                &ground_further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let egg_baseline = flax_obs(EGG_FIELD, &[], &[]);
+        validate_case_baseline(CoreCase::HerbloreSecondaries, &egg_baseline).unwrap();
+        let taken = flax_obs(EGG_FIELD, &[(RED_SPIDERS_EGGS_ID, 18)], &[]);
+        let mut egg_deposited = flax_obs(EGG_FIELD, &[], &[(RED_SPIDERS_EGGS_ID, 18)]);
+        egg_deposited.bank_open = true;
+        egg_deposited.bank_loaded = true;
+        egg_deposited.bank_generation = 1;
+        let mut egg_returned = flax_obs(EGG_FIELD, &[], &[]);
+        egg_returned.bank_generation = 2;
+        let mut egg_further = flax_obs(EGG_FIELD, &[(RED_SPIDERS_EGGS_ID, 1)], &[]);
+        egg_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::HerbloreSecondaries,
+            &egg_baseline,
+            [&taken, &egg_deposited, &egg_returned, &egg_further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(
+            witness(CoreCase::HerbloreSecondaries, &egg_baseline, [&taken])
+                .qualify()
+                .is_err()
+        );
+        let mut mixed = taken.clone();
+        mixed.item_ids.insert(EYE_OF_NEWT_ID, 1);
+        assert!(witness(
+            CoreCase::HerbloreSecondaries,
+            &egg_baseline,
+            [&mixed, &egg_deposited, &egg_returned, &egg_further]
+        )
+        .qualify()
+        .is_err());
+        let mut noted_egg = taken.clone();
+        noted_egg.item_ids.insert(NOTED_RED_SPIDERS_EGGS_ID, 1);
+        assert!(witness(
+            CoreCase::HerbloreSecondaries,
+            &egg_baseline,
+            [&noted_egg, &egg_deposited, &egg_returned, &egg_further]
+        )
+        .qualify()
+        .is_err());
+        let mut seeded_egg = egg_baseline.clone();
+        seeded_egg.item_ids.insert(RED_SPIDERS_EGGS_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HerbloreSecondaries, &seeded_egg).is_err());
+
+        let newt_baseline = flax_obs(BETTY_SHOP, &[], &[]);
+        validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &newt_baseline).unwrap();
+        let coins_held = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[]);
+        let bought = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900), (EYE_OF_NEWT_ID, 10)], &[]);
+        let mut newt_deposited = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900)], &[(EYE_OF_NEWT_ID, 10)]);
+        newt_deposited.bank_open = true;
+        newt_deposited.bank_loaded = true;
+        newt_deposited.bank_generation = 1;
+        let mut newt_returned = flax_obs(BETTY_SHOP, &[(COINS_ID, 4900)], &[]);
+        newt_returned.bank_generation = 2;
+        let mut newt_further = flax_obs(BETTY_SHOP, &[(COINS_ID, 4800), (EYE_OF_NEWT_ID, 1)], &[]);
+        newt_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::HerbloreSecondariesNewt,
+            &newt_baseline,
+            [
+                &coins_held,
+                &bought,
+                &newt_deposited,
+                &newt_returned,
+                &newt_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        let no_spend = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000), (EYE_OF_NEWT_ID, 10)], &[]);
+        let mut no_spend_deposited =
+            flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[(EYE_OF_NEWT_ID, 10)]);
+        no_spend_deposited.bank_open = true;
+        no_spend_deposited.bank_loaded = true;
+        no_spend_deposited.bank_generation = 1;
+        let mut no_spend_returned = flax_obs(BETTY_SHOP, &[(COINS_ID, 5000)], &[]);
+        no_spend_returned.bank_generation = 2;
+        let mut no_spend_further =
+            flax_obs(BETTY_SHOP, &[(COINS_ID, 5000), (EYE_OF_NEWT_ID, 1)], &[]);
+        no_spend_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::HerbloreSecondariesNewt,
+            &newt_baseline,
+            [
+                &coins_held,
+                &no_spend,
+                &no_spend_deposited,
+                &no_spend_returned,
+                &no_spend_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut mixed_buy = bought.clone();
+        mixed_buy.item_ids.insert(RED_SPIDERS_EGGS_ID, 1);
+        assert!(witness(
+            CoreCase::HerbloreSecondariesNewt,
+            &newt_baseline,
+            [
+                &coins_held,
+                &mixed_buy,
+                &newt_deposited,
+                &newt_returned,
+                &newt_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut seeded_newt = newt_baseline.clone();
+        seeded_newt.item_ids.insert(EYE_OF_NEWT_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &seeded_newt).is_err());
+    }
+
+    #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
             validate_case_catalog(CoreCase::BankFletcherCutString, CATALOG_COMMIT_A).unwrap_err();
@@ -7573,6 +8334,11 @@ mod tests {
             CoreCase::SmelterBot,
             CoreCase::SmelterBotSteel,
             CoreCase::FlaxSpinner,
+            CoreCase::FlaxAio,
+            CoreCase::FlaxAioPick,
+            CoreCase::FlaxAioSpin,
+            CoreCase::HerbloreSecondaries,
+            CoreCase::HerbloreSecondariesNewt,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

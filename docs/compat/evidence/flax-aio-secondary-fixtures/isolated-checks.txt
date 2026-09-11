@@ -1,0 +1,23 @@
+isolated export: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio
+host: 91289e9bac158721849209a301dcae5c26988eb9
+client: 9d090ed04957e4efc254f073cda97bc5510ca72b
+empty target: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio-target
+overlay: crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+inputs symlink for frozen ledger identity
+
+cargo test -p scenario --lib
+  96 passed; 0 failed
+
+cargo test -p host-play --features memory-profile --test catalog_boundary_live
+  33 passed; 0 failed; 1 ignored LIVE
+
+cargo clippy -p scenario -- -D warnings
+  pass
+
+cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings
+  pass
+
+rustfmt --check crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  clean
+
+no LIVE

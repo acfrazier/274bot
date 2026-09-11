@@ -432,6 +432,11 @@ pub fn get(name: &str) -> Option<Scenario> {
         "smelter_bot" => Some(smelter_bot_scenario()),
         "smelter_bot_steel" => Some(smelter_bot_steel_scenario()),
         "flax_spinner" => Some(flax_spinner_scenario()),
+        "flax_aio" => Some(flax_aio_scenario()),
+        "flax_aio_pick" => Some(flax_aio_pick_scenario()),
+        "flax_aio_spin" => Some(flax_aio_spin_scenario()),
+        "herblore_secondaries" => Some(herblore_secondaries_scenario()),
+        "herblore_secondaries_newt" => Some(herblore_secondaries_newt_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -499,6 +504,11 @@ pub fn names() -> Vec<&'static str> {
         "smelter_bot",
         "smelter_bot_steel",
         "flax_spinner",
+        "flax_aio",
+        "flax_aio_pick",
+        "flax_aio_spin",
+        "herblore_secondaries",
+        "herblore_secondaries_newt",
         "script_trade",
     ]
 }
@@ -6995,6 +7005,76 @@ const FLAX_SPINNER_WHEEL: WorldTile = WorldTile {
     z: 3471,
     level: 1,
 };
+/// FlaxAIO BANK_STAND; the spinner booth seed is 2722,3493,0.
+const FLAX_AIO_BANK: WorldTile = WorldTile {
+    x: 2725,
+    z: 3493,
+    level: 0,
+};
+const RED_SPIDERS_EGGS_ID: i32 = 223;
+const NOTED_RED_SPIDERS_EGGS_ID: i32 = 224;
+const NOTED_EYE_OF_NEWT_ID: i32 = 222;
+const HERBLORE_EGG_FOOD_SEED: i32 = 50;
+const HERBLORE_NEWT_COIN_SEED: i32 = 5000;
+const EGG_FIELD: WorldTile = WorldTile {
+    x: 3120,
+    z: 9952,
+    level: 0,
+};
+const EDGEVILLE_BANK: WorldTile = WorldTile {
+    x: 3094,
+    z: 3493,
+    level: 0,
+};
+const BETTY_SHOP: WorldTile = WorldTile {
+    x: 3012,
+    z: 3259,
+    level: 0,
+};
+const DRAYNOR_BANK: WorldTile = WorldTile {
+    x: 3093,
+    z: 3243,
+    level: 0,
+};
+
+const FLAX_AIO_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "picking",
+        value: ScriptInjectValue::Bool(true),
+    },
+    ScriptSettingInject {
+        id: "spinning",
+        value: ScriptInjectValue::Bool(true),
+    },
+];
+const FLAX_AIO_PICK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "picking",
+        value: ScriptInjectValue::Bool(true),
+    },
+    ScriptSettingInject {
+        id: "spinning",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const FLAX_AIO_SPIN_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "picking",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "spinning",
+        value: ScriptInjectValue::Bool(true),
+    },
+];
+const HERBLORE_EGGS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "secondary",
+    value: ScriptInjectValue::Str("Red spiders' eggs"),
+}];
+const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "secondary",
+    value: ScriptInjectValue::Str("Eye of newt"),
+}];
 
 const COOK_BOT_SALMON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -7727,6 +7807,739 @@ fn flax_spinner_scenario() -> Scenario {
     }
 }
 
+fn flax_aio_empty_pack_confirms() -> Vec<(&'static str, Proof)> {
+    vec![
+        (
+            "confirm Crafting 1 before Start",
+            Proof::Stat {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        (
+            "confirm no seeded flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded ball of wool in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BALL_OF_WOOL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+    ]
+}
+
+/// Empty pack at the Seers flax field. FlaxAIO own script, both flags on.
+/// Pick 1779, climb, makeX 1779→1777 with Crafting XP, deposit strings,
+/// closed return to the field, further Pick. Not FlaxPicker+FlaxSpinner.
+fn flax_aio_scenario() -> Scenario {
+    let field = FLAX_FIELD;
+    let wheel = Proof::ArrivedNear {
+        x: FLAX_SPINNER_WHEEL.x,
+        z: FLAX_SPINNER_WHEEL.z,
+        level: FLAX_SPINNER_WHEEL.level,
+        radius: 8,
+    };
+    let flax = Proof::ItemId {
+        id: FLAX_ID,
+        count: 1,
+    };
+    let product = Proof::ItemId {
+        id: BOW_STRING_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed crafting and tele to the Seers flax field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat crafting 1");
+                cheat(c, &tele_args(field.level, field.x, field.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in flax_aio_empty_pack_confirms() {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch exact flax 1779 from the Seers field after Start",
+            flax,
+        ),
+        (
+            "watch arrival at the upstairs spinning wheel after picking",
+            wheel,
+        ),
+        (
+            "watch Crafting XP from the spinning wheel after Start",
+            Proof::StatXpGain {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch exact unnoted bow string 1777 after Start", product),
+        (
+            "watch the picked flax finish converting",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-spun bow string enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: BOW_STRING_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of bow string after deposit",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        ("watch the script close its flax bank", Proof::BankClosed),
+        (
+            "watch return to the flax field after banking",
+            Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 12,
+            },
+        ),
+        ("watch further exact flax after return", flax),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "flax_aio",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: flax,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("FlaxAIO"),
+            script_settings_inject: Some(FLAX_AIO_INJECT),
+            terminal_shot: Some("flax_aio"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// FlaxAIO pick-only. Full flax pack, deposit 1779, closed return, further
+/// Pick. Spun 1777 must not qualify.
+fn flax_aio_pick_scenario() -> Scenario {
+    let field = FLAX_FIELD;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "clear the pack and tele to the Seers flax field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(field.level, field.x, field.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm no seeded flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_FLAX_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch a full pack of exact flax 1779",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 28,
+            },
+        ),
+        (
+            "watch script-created flax enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: FLAX_ID,
+                count: 28,
+            },
+        ),
+        (
+            "watch the pack empty of flax after deposit",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        ("watch the flax bank close after deposit", Proof::BankClosed),
+        (
+            "watch return to the flax field after banking",
+            Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 12,
+            },
+        ),
+        (
+            "watch further exact flax after return",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "flax_aio_pick",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemId {
+            id: FLAX_ID,
+            count: 1,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("FlaxAIO"),
+            script_settings_inject: Some(FLAX_AIO_PICK_INJECT),
+            terminal_shot: Some("flax_aio_pick"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// FlaxAIO spin-only. Banked flax at FlaxAIO's own booth stand, wheel
+/// conversion+XP, string deposit, restock, closed return upstairs, further
+/// spin. Wool is not this core.
+fn flax_aio_spin_scenario() -> Scenario {
+    let wheel = Proof::ArrivedNear {
+        x: FLAX_SPINNER_WHEEL.x,
+        z: FLAX_SPINNER_WHEEL.z,
+        level: FLAX_SPINNER_WHEEL.level,
+        radius: 8,
+    };
+    let product = Proof::ItemId {
+        id: BOW_STRING_ID,
+        count: 1,
+    };
+    let bank = FLAX_AIO_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed crafting, banked flax, and tele to FlaxAIO's Seers bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat crafting 1");
+                cheat(c, &format!("givebank flax {FLAX_SPIN_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in flax_aio_empty_pack_confirms() {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact flax seed bank",
+        Proof::BankItemId {
+            id: FLAX_ID,
+            count: FLAX_SPIN_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded bow string in bank",
+        Proof::BankItemIdAtMost {
+            id: BOW_STRING_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted flax in bank",
+        Proof::BankItemIdAtMost {
+            id: NOTED_FLAX_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch arrival at the upstairs spinning wheel after Start",
+            wheel,
+        ),
+        (
+            "watch Crafting XP from the spinning wheel after Start",
+            Proof::StatXpGain {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch exact unnoted bow string 1777 after Start", product),
+        (
+            "watch the withdrawn flax finish converting",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-spun bow string enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: BOW_STRING_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of bow string after deposit",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of exact flax 1779",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            },
+        ),
+        ("watch the script close its spin bank", Proof::BankClosed),
+        (
+            "watch return to the upstairs spinning wheel after restock",
+            wheel,
+        ),
+        ("watch another exact bow string after restock", product),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "flax_aio_spin",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("FlaxAIO"),
+            script_settings_inject: Some(FLAX_AIO_SPIN_INJECT),
+            terminal_shot: Some("flax_aio_spin"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// HerbloreSecondaries default Red spiders' eggs. Empty pack at the
+/// Edgeville dungeon field, lobster food banked only. Ground Take 223,
+/// deposit, closed return, further Take. Eggs are not given.
+fn herblore_secondaries_scenario() -> Scenario {
+    let field = EGG_FIELD;
+    let bank = EDGEVILLE_BANK;
+    let eggs = Proof::ItemId {
+        id: RED_SPIDERS_EGGS_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed banked lobster at Edgeville and tele to the egg field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("givebank lobster {HERBLORE_EGG_FOOD_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact lobster food seed bank",
+        Proof::BankItemId {
+            id: LOBSTER_ID,
+            count: HERBLORE_EGG_FOOD_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded red spiders' eggs in bank",
+        Proof::BankItemIdAtMost {
+            id: RED_SPIDERS_EGGS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted eggs in bank",
+        Proof::BankItemIdAtMost {
+            id: NOTED_RED_SPIDERS_EGGS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded eye of newt in bank",
+        Proof::BankItemIdAtMost {
+            id: EYE_OF_NEWT_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(Step {
+        name: "tele to the Edgeville dungeon egg field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(field.level, field.x, field.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm no seeded eggs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded eye of newt in pack before Start",
+            Proof::ItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted eggs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch exact red spiders' eggs 223 from the ground after Start",
+            eggs,
+        ),
+        (
+            "watch script-taken eggs enter a fresh Edgeville bank",
+            Proof::BankItemId {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of eggs after deposit",
+            Proof::ItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        ("watch the script close its egg bank", Proof::BankClosed),
+        (
+            "watch return to the egg field after banking",
+            Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 14,
+            },
+        ),
+        ("watch further exact eggs after return", eggs),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "herblore_secondaries",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: eggs,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("HerbloreSecondaries"),
+            script_settings_inject: Some(HERBLORE_EGGS_INJECT),
+            terminal_shot: Some("herblore_secondaries"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// HerbloreSecondaries Eye of newt shop branch. Banked coins, Betty stand.
+/// Distinct from ground eggs. LIVE still waits on Shop.buy publication.
+fn herblore_secondaries_newt_scenario() -> Scenario {
+    let shop = BETTY_SHOP;
+    let bank = DRAYNOR_BANK;
+    let newt = Proof::ItemId {
+        id: EYE_OF_NEWT_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed banked coins at Draynor before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("givebank coins {HERBLORE_NEWT_COIN_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact coin seed bank",
+        Proof::BankItemId {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded eye of newt in bank",
+        Proof::BankItemIdAtMost {
+            id: EYE_OF_NEWT_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted newt in bank",
+        Proof::BankItemIdAtMost {
+            id: NOTED_EYE_OF_NEWT_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded red spiders' eggs in bank",
+        Proof::BankItemIdAtMost {
+            id: RED_SPIDERS_EGGS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(Step {
+        name: "tele to Betty's shop stand before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(shop.level, shop.x, shop.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: shop.x,
+                z: shop.z,
+                level: shop.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm no seeded eye of newt in pack before Start",
+            Proof::ItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded eggs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted newt in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch exact eye of newt 221 after Start", newt),
+        (
+            "watch script-bought newt enter a fresh Draynor bank",
+            Proof::BankItemId {
+                id: EYE_OF_NEWT_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of newt after deposit",
+            Proof::ItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        ("watch the script close its newt bank", Proof::BankClosed),
+        (
+            "watch return to Betty after banking",
+            Proof::ArrivedNear {
+                x: shop.x,
+                z: shop.z,
+                level: shop.level,
+                radius: 6,
+            },
+        ),
+        ("watch further exact newt after return", newt),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "herblore_secondaries_newt",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: newt,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("HerbloreSecondaries"),
+            script_settings_inject: Some(HERBLORE_NEWT_INJECT),
+            terminal_shot: Some("herblore_secondaries_newt"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -8274,6 +9087,11 @@ mod tests {
                 "smelter_bot",
                 "smelter_bot_steel",
                 "flax_spinner",
+                "flax_aio",
+                "flax_aio_pick",
+                "flax_aio_spin",
+                "herblore_secondaries",
+                "herblore_secondaries_newt",
                 "script_trade",
             ]
         );
@@ -11052,6 +11870,261 @@ mod tests {
     }
 
     #[test]
+    fn flax_aio_and_secondary_cases_register_collection_cycles() {
+        let aio = get("flax_aio").expect("flax_aio");
+        assert_eq!(aio.settings.start_script, Some("FlaxAIO"));
+        assert_eq!(aio.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(aio.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("picking"), Some(&Value::Bool(true)));
+        assert_eq!(inject.get("spinning"), Some(&Value::Bool(true)));
+        let start = aio
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = aio.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2741,
+            z: 3444,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: CRAFTING_STAT,
+            min: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: FLAX_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BOW_STRING_ID,
+            count: 0,
+        }));
+        let watch = aio.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let flax = Proof::ItemId {
+            id: FLAX_ID,
+            count: 1,
+        };
+        let string = Proof::ItemId {
+            id: BOW_STRING_ID,
+            count: 1,
+        };
+        let craft_xp = Proof::StatXpGain {
+            id: CRAFTING_STAT,
+            min: 1,
+        };
+        let wheel = Proof::ArrivedNear {
+            x: FLAX_SPINNER_WHEEL.x,
+            z: FLAX_SPINNER_WHEEL.z,
+            level: FLAX_SPINNER_WHEEL.level,
+            radius: 8,
+        };
+        let first_flax = watch.iter().position(|arm| *arm == flax).unwrap();
+        let first_wheel = watch.iter().position(|arm| *arm == wheel).unwrap();
+        let first_xp = watch.iter().position(|arm| *arm == craft_xp).unwrap();
+        let first_string = watch.iter().position(|arm| *arm == string).unwrap();
+        let bank_string = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: BOW_STRING_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let further = watch.iter().rposition(|arm| *arm == flax).unwrap();
+        assert!(first_flax < first_wheel);
+        assert!(first_wheel < first_xp);
+        assert!(first_xp < first_string);
+        assert!(first_string < bank_string);
+        assert!(bank_string < further);
+        assert_ne!(first_flax, further);
+        assert_eq!(aio.proof, flax);
+        assert!(!watch.contains(&Proof::ItemId {
+            id: BALL_OF_WOOL_ID,
+            count: 1,
+        }));
+
+        let pick = get("flax_aio_pick").expect("flax_aio_pick");
+        assert_eq!(pick.settings.start_script, Some("FlaxAIO"));
+        let inject = settings_inject_map(pick.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("picking"), Some(&Value::Bool(true)));
+        assert_eq!(inject.get("spinning"), Some(&Value::Bool(false)));
+        let pick_start = pick
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let pick_watch = pick.steps[pick_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(pick_watch.contains(&Proof::ItemId {
+            id: FLAX_ID,
+            count: 28,
+        }));
+        assert!(pick_watch.contains(&Proof::BankItemId {
+            id: FLAX_ID,
+            count: 28,
+        }));
+        assert!(!pick_watch.contains(&string));
+        assert!(!pick_watch.contains(&craft_xp));
+        assert_eq!(
+            pick.proof,
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            }
+        );
+
+        let spin = get("flax_aio_spin").expect("flax_aio_spin");
+        assert_eq!(spin.settings.start_script, Some("FlaxAIO"));
+        let inject = settings_inject_map(spin.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("picking"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("spinning"), Some(&Value::Bool(true)));
+        let spin_start = spin
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let spin_seed = spin.steps[..spin_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(spin_seed.contains(&Proof::ArrivedNear {
+            x: 2725,
+            z: 3493,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(spin_seed.contains(&Proof::BankItemId {
+            id: FLAX_ID,
+            count: FLAX_SPIN_SEED,
+        }));
+        let spin_watch = spin.steps[spin_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(spin_watch[0], wheel);
+        assert_eq!(spin_watch[1], craft_xp);
+        assert_eq!(spin_watch[2], string);
+        assert_eq!(spin.proof, string);
+
+        let eggs = get("herblore_secondaries").expect("herblore_secondaries");
+        assert_eq!(eggs.settings.start_script, Some("HerbloreSecondaries"));
+        let inject = settings_inject_map(eggs.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("secondary"),
+            Some(&Value::String("Red spiders' eggs".into()))
+        );
+        let eggs_start = eggs
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let eggs_seed = eggs.steps[..eggs_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(eggs_seed.contains(&Proof::ArrivedNear {
+            x: 3120,
+            z: 9952,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(eggs_seed.contains(&Proof::BankItemId {
+            id: LOBSTER_ID,
+            count: HERBLORE_EGG_FOOD_SEED,
+        }));
+        assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
+            id: RED_SPIDERS_EGGS_ID,
+            count: 0,
+        }));
+        let eggs_watch = eggs.steps[eggs_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let egg = Proof::ItemId {
+            id: RED_SPIDERS_EGGS_ID,
+            count: 1,
+        };
+        let newt = Proof::ItemId {
+            id: EYE_OF_NEWT_ID,
+            count: 1,
+        };
+        let first_egg = eggs_watch.iter().position(|arm| *arm == egg).unwrap();
+        let bank_egg = eggs_watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: RED_SPIDERS_EGGS_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let further_egg = eggs_watch.iter().rposition(|arm| *arm == egg).unwrap();
+        assert!(first_egg < bank_egg);
+        assert!(bank_egg < further_egg);
+        assert!(!eggs_watch.contains(&newt));
+        assert_eq!(eggs.proof, egg);
+
+        let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+        assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
+        let inject = settings_inject_map(buy.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("secondary"),
+            Some(&Value::String("Eye of newt".into()))
+        );
+        let buy_start = buy
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let buy_seed = buy.steps[..buy_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(buy_seed.contains(&Proof::ArrivedNear {
+            x: 3012,
+            z: 3259,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(buy_seed.contains(&Proof::BankItemId {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED,
+        }));
+        let buy_watch = buy.steps[buy_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(buy_watch.contains(&newt));
+        assert!(buy_watch.contains(&Proof::BankItemId {
+            id: EYE_OF_NEWT_ID,
+            count: 1,
+        }));
+        assert!(!buy_watch.contains(&egg));
+        assert_eq!(buy.proof, newt);
+
+        for name in [
+            "flax_aio",
+            "flax_aio_pick",
+            "flax_aio_spin",
+            "herblore_secondaries",
+            "herblore_secondaries_newt",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -11142,6 +12215,11 @@ mod tests {
             "smelter_bot",
             "smelter_bot_steel",
             "flax_spinner",
+            "flax_aio",
+            "flax_aio_pick",
+            "flax_aio_spin",
+            "herblore_secondaries",
+            "herblore_secondaries_newt",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));

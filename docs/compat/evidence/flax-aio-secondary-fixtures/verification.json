@@ -1,0 +1,126 @@
+{
+  "task": "t_993a114f",
+  "brief": "docs/compat/briefs/98-flax-aio-secondary-fixtures.md",
+  "brief_sha256": "942d8c52c4b2b40d549e63ed446db181b1362a72283d42900989ba104ae75353",
+  "export_host_commit": "91289e9bac158721849209a301dcae5c26988eb9",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "empty_started": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "shared_campaign_target": false,
+  "live": false,
+  "scenarios": [
+    "flax_aio",
+    "flax_aio_pick",
+    "flax_aio_spin",
+    "herblore_secondaries",
+    "herblore_secondaries_newt"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "flaxaio.ts": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "picking.ts": "c0955fac57da78d375857e4d5e1629ad61b933f3fabbdce9edafa9af4b1124b5",
+      "spinning.ts": "590278465105338defb4e27289b936a36f6770773cc5732d3ed4caa7a52aaab0",
+      "banking.ts": "f7b2b65a78a5c57b7abb6a2be9006efd7d2391883829fc7354559e4cf4cd5f64",
+      "walking.ts": "824e3b76044c95d71daf7064ce05eedd179a77e0c475858cb2fae5b9a311157e",
+      "HerbloreSecondaries.ts": "daa91562ff5993a6b560a7471c62a5c6c69a1f63b5c823c7a2aa3965fec28523",
+      "HerbloreSecondariesLogic.ts": "716b0502695ce938bcfaca5451feec15111f349e8be9c6e70a6972864e629716"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "flaxaio.ts": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "picking.ts": "c0955fac57da78d375857e4d5e1629ad61b933f3fabbdce9edafa9af4b1124b5",
+      "spinning.ts": "590278465105338defb4e27289b936a36f6770773cc5732d3ed4caa7a52aaab0",
+      "banking.ts": "f7b2b65a78a5c57b7abb6a2be9006efd7d2391883829fc7354559e4cf4cd5f64",
+      "walking.ts": "824e3b76044c95d71daf7064ce05eedd179a77e0c475858cb2fae5b9a311157e",
+      "HerbloreSecondaries.ts": "daa91562ff5993a6b560a7471c62a5c6c69a1f63b5c823c7a2aa3965fec28523",
+      "HerbloreSecondariesLogic.ts": "716b0502695ce938bcfaca5451feec15111f349e8be9c6e70a6972864e629716"
+    }
+  },
+  "selected_ids": {
+    "flax": 1779,
+    "bow_string": 1777,
+    "noted_flax": 1780,
+    "noted_bow_string": 1778,
+    "ball_of_wool_rejected": 1759,
+    "red_spiders_eggs": 223,
+    "noted_red_spiders_eggs": 224,
+    "eye_of_newt": 221,
+    "noted_eye_of_newt": 222,
+    "coins": 995,
+    "lobster_food_seed": 379,
+    "crafting_stat": 12
+  },
+  "stands": {
+    "flax_field": [2741, 3444, 0],
+    "flax_aio_bank": [2725, 3493, 0],
+    "flax_spinner_bank_not_this_card": [2722, 3493, 0],
+    "flax_wheel": [2711, 3471, 1],
+    "egg_field": [3120, 9952, 0],
+    "edgeville_bank": [3094, 3493, 0],
+    "betty_shop": [3012, 3259, 0],
+    "draynor_bank": [3093, 3243, 0]
+  },
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "unchanged": true
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "cb806007076183945fb5d57e0c576b4cb8ef58381426ad1d678cac39501e7ca9",
+    "crates/host-play/tests/catalog_boundary_live.rs": "2e03303df4328d86dd21bc850e3532bc449e9cdcd31d48d87824659584c92b27",
+    "docs/compat/05s-flax-aio-secondary-fixtures.md": "ef76afd3fe552330ef42efdb8660d8801008f9743b7bf08196362b4f7307dd12"
+  },
+  "adapter_audit": {
+    "flax_aio_pick": [
+      "Locs.query name Flax action Pick",
+      "Traversal.walkResilient / local walk",
+      "Bank.openBooth Use-quickly",
+      "Bank.depositInventory"
+    ],
+    "flax_aio_spin": [
+      "Ladder Climb-up/Climb-down",
+      "Spinning wheel Spin",
+      "ChatDialog.makeX Flax fibreCount",
+      "Bank.withdraw All in spin-only"
+    ],
+    "herblore_eggs": [
+      "GroundItems Take 223",
+      "Bank.openNearest booth",
+      "Bank.depositAllMatching keep lobster"
+    ],
+    "herblore_newt": [
+      "Shop.open Betty",
+      "Shop.buy Eye of newt qty min(free,50) if-button when component_id posted else notImpl"
+    ],
+    "missing_ops_not_implemented_here": [
+      "Make-X LIVE still gated t_4b04cb5f if world posting fails",
+      "Shop.buy LIVE gated t_1591d140 if stock rows lack component_id",
+      "ground egg spawns cannot be fabricated",
+      "generated game-data JSON has no loc types"
+    ]
+  },
+  "checks": [
+    "isolated cargo test -p scenario --lib: 96 passed",
+    "flax_aio_and_secondary_cases_register_collection_cycles: passed",
+    "isolated cargo test -p host-play --features memory-profile --test catalog_boundary_live: 33 passed, 1 ignored LIVE",
+    "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed from isolated export with .superpowers/inputs symlink",
+    "flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further: passed",
+    "cargo clippy -p scenario -- -D warnings: pass",
+    "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
+    "rustfmt --check scenario and catalog harness: clean"
+  ],
+  "limits": [
+    "no live client run",
+    "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+    "pick+spin full pack plus wheel plus bank plus return may not fit 180s; record exact partial phase rather than widen timeouts",
+    "loc type IDs not in generated game-data JSON; scripts query loc names",
+    "make-menu component IDs are snapshot-posted not frozen constants",
+    "Make-X t_4b04cb5f still gates FlaxAIO spin LIVE if world posting fails",
+    "Shop.buy t_1591d140 still gates newt LIVE if component_id unpublished",
+    "ground egg spawns cannot be fabricated",
+    "git export does not include gitignored catalog inputs; frozen-ledger identity rechecked with inputs symlink",
+    "isolated export host 91289e9ba plus overlay; campaign HEAD may move after export"
+  ]
+}
