@@ -29,13 +29,15 @@ export class Loc {
 
     interact(action) {
         if (opIndex(this.snap.actions, action) === -1) return false;
-        queue({
+        const req = {
             op: 'loc',
             x: this.snap.x,
             z: this.snap.z,
             level: this.snap.level ?? 0,
             action: String(action),
-        });
+        };
+        if (Number.isInteger(this.snap.id)) req.id = this.snap.id;
+        queue(req);
         return true;
     }
 }

@@ -1360,6 +1360,12 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
                 optional: false,
                 doc: None,
             },
+            TsField {
+                name: "id",
+                ty: "number | null",
+                optional: true,
+                doc: None,
+            },
         ],
     },
     InteractVariant {
