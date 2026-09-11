@@ -1,0 +1,12 @@
+{
+  "source": "docs/compat/evidence/platform-isolated/concord-tui-e72cfb39/r289-params/controls/restarted.ansi",
+  "source_sha256": "e8571444fae285910af88d7a793c4c02c1b310d4779b441c1610b8721a70a63f",
+  "prefix_bytes": 123953,
+  "derivation": "Decode only prefix before final LeaveAlternateScreen. Excludes normal-screen PASS; no gameplay/raw mutation.",
+  "screen_sha256": "8d60fb59f1b7f0990698c48a452a5b4dbabd19bdd922ca54ba39863222217275",
+  "terminal_size": [
+    140,
+    40
+  ],
+  "decoder": "pyte0.8.2"
+}

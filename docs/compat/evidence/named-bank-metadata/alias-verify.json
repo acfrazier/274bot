@@ -1,0 +1,95 @@
+{
+  "schema": "named-bank-alias-verify/v1",
+  "note": "Compatibility aliases to packed bankbooth loc tiles. tile is the walk stand, not the booth. Do not copy the foreign BankLocations table.",
+  "packed_identity": {
+    "274_nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+    "289_nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+    "packed_tiles_equal_across_revisions": true,
+    "bank_stands": 68,
+    "packed_display_name": "Bank booth",
+    "packed_access": "Booth { op: 2 }"
+  },
+  "first_hop_aliases": [
+    {
+      "name": "Falador East",
+      "stand": [3013, 3355, 0],
+      "stand_provenance": [
+        "catalog RuneCrafter.ts Air inline bank Tile",
+        "catalog MuleCrafter.ts field initializer before BANK_LOCATIONS overwrite",
+        "live mule baseline tile [3012,3355,0] on the same plaza row"
+      ],
+      "representative_booth": [3011, 3354, 0],
+      "representative_booth_provenance": "live named OpenBooth id 2213 Use-quickly (05l/05o/04k)",
+      "packed_booths_chebyshev_le_2": [
+        [3011, 3354, 0],
+        [3012, 3354, 0],
+        [3013, 3354, 0],
+        [3014, 3354, 0],
+        [3015, 3354, 0]
+      ],
+      "stand_equals_any_packed_booth": false
+    },
+    {
+      "name": "Varrock East",
+      "stand": [3253, 3420, 0],
+      "stand_provenance": [
+        "catalog RuneCrafter.ts Earth inline bank Tile",
+        "api::content::FIRE_PLOTS Varrock East bank"
+      ],
+      "representative_booth": [3253, 3419, 0],
+      "packed_booths_chebyshev_le_3": [
+        [3252, 3419, 0],
+        [3253, 3419, 0],
+        [3254, 3419, 0],
+        [3256, 3419, 0]
+      ],
+      "stand_equals_any_packed_booth": false
+    },
+    {
+      "name": "Edgeville",
+      "stand": [3094, 3493, 0],
+      "stand_provenance": [
+        "shim rune_craft_locations.js Mind/Body bank name",
+        "catalog GreenDragon default bankTile comment Edgeville"
+      ],
+      "representative_booth": [3096, 3493, 0],
+      "packed_booths_chebyshev_le_3": [
+        [3095, 3491, 0],
+        [3096, 3493, 0]
+      ],
+      "stand_equals_any_packed_booth": false
+    },
+    {
+      "name": "Draynor",
+      "stand": [3093, 3243, 0],
+      "stand_provenance": ["api::content::FIRE_PLOTS Draynor bank"],
+      "representative_booth": [3091, 3243, 0],
+      "packed_booths_chebyshev_le_3": [
+        [3091, 3242, 0],
+        [3091, 3243, 0],
+        [3091, 3245, 0]
+      ],
+      "stand_equals_any_packed_booth": false
+    },
+    {
+      "name": "Al Kharid",
+      "stand": [3269, 3167, 0],
+      "stand_provenance": ["shim rune_craft_locations.js Fire bank name; packed cluster at x=3268"],
+      "representative_booth": [3268, 3167, 0],
+      "packed_booths_chebyshev_le_3": [
+        [3268, 3164, 0],
+        [3268, 3166, 0],
+        [3268, 3167, 0],
+        [3268, 3168, 0],
+        [3268, 3169, 0]
+      ],
+      "stand_equals_any_packed_booth": false
+    }
+  ],
+  "not_in_first_hop": {
+    "Catherby": "already host cook_stands bank [2809,3441,0]; packed booths at z=3442; not a F2P shim RUNES.bank name",
+    "Falador West / Varrock West / Seers / Ardougne East": "packed booths exist; no BANK_LOCATIONS.find caller on enabled Mule/Rune/cook shims",
+    "Shilo Village / Mage Arena": "npcAccess, not packed bankbooth",
+    "Shantay Pass / Duel Arena": "chest access, not packed bankbooth"
+  }
+}

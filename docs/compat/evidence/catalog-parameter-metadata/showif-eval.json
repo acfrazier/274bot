@@ -1,0 +1,29 @@
+{
+  "foreign_isVisible": {
+    "file": "src/bot/panel/paramControls.ts",
+    "sha256": "ed1efe067fef0ff445f7876cbf577bd53d0f248ab3e195c7eb2f939e87badb8f",
+    "rule": "valueOf(key).split(',').map(trim/lower); anyOf some ticked.has(v.lower)",
+    "test": "test/panel/param-controls.test.ts isVisible: a showIf on a chip list matches any ticked chip, not the joined string",
+    "cases": [
+      {"valueOf": "yew_longbow, custom", "visible": true},
+      {"valueOf": "Custom", "visible": true},
+      {"valueOf": "yew_longbow", "visible": false},
+      {"valueOf": "", "visible": false}
+    ]
+  },
+  "host_setting_visible": {
+    "file": "crates/script/src/settings_store.rs",
+    "sha256": "d1589ae5dea5c62d6b8cb92519d14c7e16736aefd258aa32a52a478c7b6c1b45",
+    "comment": "unresolved identifier refs fail open (shown) — only when the whole showIf is not '{'",
+    "observed_raw": "{ key: 'items', anyOf: [CUSTOM_ALCH_KEY] }",
+    "extract_any_of": "inner CUSTOM_ALCH_KEY is unquoted so quoted-only scan yields [] and returns Some([])",
+    "array_bag": "value_as_setting_str(Array) returns empty string; coerce_list('custom') stores [\"custom\"]",
+    "result_today": "customItem always hidden, including after TUI save of custom"
+  },
+  "required_after_correction": [
+    {"bag_items": ["custom"], "show_if": "{ key: 'items', anyOf: ['custom'] }", "visible": true},
+    {"bag_items": ["yew_longbow", "custom"], "visible": true},
+    {"bag_items": ["yew_longbow"], "visible": false},
+    {"bag_items": [], "visible": false}
+  ]
+}

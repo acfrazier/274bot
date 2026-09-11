@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-09-11T08:23:21.341967+00:00",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-e72cfb39/live/r274-alcher-params/terminal.log",
+  "terminal_size": [
+    140,
+    40
+  ],
+  "decoder": "pyte0.8.2",
+  "raw_sha256": "4b443b41af0ee9bc95b7e830dba9f6d955741b8c1d84217e50b41fe82364e7a5",
+  "screen_sha256": "30cbcb59cb8ede80a94ee1541c31a67124f24ed673afa5a8cf019ad26dde50a3",
+  "screen_file": "docs/compat/evidence/platform-isolated/mac-tui-e72cfb39/r274-params/controls/params-open.txt",
+  "active_pass_text_present": false
+}

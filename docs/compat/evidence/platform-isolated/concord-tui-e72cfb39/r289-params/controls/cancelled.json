@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-09-11T08:30:59.811143+00:00",
+  "source": "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-e72cfb39/live/r289-alcher-params/terminal.log",
+  "terminal_size": [
+    140,
+    40
+  ],
+  "decoder": "pyte0.8.2",
+  "raw_sha256": "5c31fc867d6c0dff57959c10a8b9be7a80e0af5907e31b2aedda45270207679e",
+  "screen_sha256": "24859b048e3794ba5ed55e801cbe73adb1ed1c5849e5023eee24e4e9f55906f1",
+  "screen_file": "docs/compat/evidence/platform-isolated/concord-tui-e72cfb39/r289-params/controls/cancelled.txt",
+  "active_pass_text_present": false
+}

@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-11T08:54:25.075181+00:00",
+  "reason": "Completed Rune1271/1276 and hostile1268/1274 compiler intermediates; source/export/reports and independent raw test logs preserved, no open references, no tracked files.",
+  "prior_partial_cleanup": {
+    "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t67dc0fab-rune-obs-target",
+    "bytes_before": 5428598735,
+    "method": "cargo clean succeeded"
+  },
+  "cargo_refusal": "Manual reviewer target has no CACHEDIR.TAG. Cargo clean refused. Root verified exact task target ownership and only rustc_info/debug/tmp contents before explicit targeted removal; did not alter Cargo safeguards.",
+  "targets": [
+    {
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t67dc0fab-rune-obs-review-r1276",
+      "bytes_before": 5428672454,
+      "children": [
+        ".rustc_info.json",
+        "debug",
+        "tmp"
+      ],
+      "method": "Remove only exact validated completed compiler directory; no fabricated cache marker."
+    },
+    {
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/hostile-duel-t_eeea20f0-target",
+      "bytes_before": 5431614391,
+      "children": [
+        ".rustc_info.json",
+        "CACHEDIR.TAG",
+        "debug",
+        "tmp"
+      ],
+      "method": "Remove only exact validated completed compiler directory; no fabricated cache marker."
+    },
+    {
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/hostile-duel-review-t_eeea20f0-r1274-1789115839-target",
+      "bytes_before": 5431915491,
+      "children": [
+        ".rustc_info.json",
+        "debug",
+        "tmp"
+      ],
+      "method": "Remove only exact validated completed compiler directory; no fabricated cache marker."
+    }
+  ]
+}

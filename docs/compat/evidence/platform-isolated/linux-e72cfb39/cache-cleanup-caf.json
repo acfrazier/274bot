@@ -1,0 +1,14 @@
+{
+  "checked_at": "2026-09-11T08:17:34.110420+00:00",
+  "target": "/home/builder/274bot-campaign/multirevision-20260910/target-tui-caf6b809",
+  "exit_code": 0,
+  "output": "     Removed 6177 files, 4.8GiB total\n",
+  "preserved_binaries": [
+    {
+      "path": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/bin/platform_proof-caf6b809",
+      "sha256": "b15745c0695a4292eac261d3f47127b30bc29917203165c459fc8b1755762925"
+    }
+  ],
+  "no_open_files": true,
+  "scope": "Only completed CAF Linux compiler target; source, raw build receipts and copied binary retained."
+}
