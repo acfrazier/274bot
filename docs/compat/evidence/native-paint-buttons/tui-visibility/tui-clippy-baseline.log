@@ -1,0 +1,44 @@
+    Checking tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147/crates/tui)
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:177:17
+    |
+177 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:188:17
+    |
+188 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:201:17
+    |
+201 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: could not compile `tui` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/tui/src/bin.rs:1665:30
+     |
+1665 |       fn frontend_fixture() -> (
+     |  ______________________________^
+1666 | |         Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
+1667 | |         Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+1668 | |         Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+1669 | |         Arc<Mutex<NavStepLatch>>,
+1670 | |     ) {
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: could not compile `tui` (lib test) due to 4 previous errors

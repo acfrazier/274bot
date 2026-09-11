@@ -959,10 +959,11 @@ impl TuiApp {
                     && !self.rs2b0t_catalog_open
                     && !self.script_load_open,
             );
+        let chat_h = self.chat_data.view().preferred_height();
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(8),
-            Constraint::Length(6),
+            Constraint::Length(chat_h),
             Constraint::Min(6),
             Constraint::Length(script_h),
         ])
@@ -1225,6 +1226,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::Terminal;
 
     use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
@@ -1263,6 +1265,33 @@ mod tests {
             text: text.into(),
             sequence: 0,
         }
+    }
+
+    fn nature_crafter_paint() -> script::shim::ScriptPaint {
+        script::shim::ScriptPaint {
+            title: Some("NatureCrafter — Air — runner — restocking at the bank".into()),
+            accent: None,
+            lines: vec![
+                "Runtime: 1m | Mode: Runner | To: paintproof".into(),
+                "Deliveries: 0 | Ess sent: 0 | Coins: 0".into(),
+                "Pack ess: 0 | noted: 0 | unnoted: 0".into(),
+            ],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
+        }
+    }
+
+    fn buffer_position(buf: &Buffer, width: u16, needle: &str) -> Option<(u16, u16)> {
+        buf.content()
+            .chunks(usize::from(width))
+            .enumerate()
+            .find_map(|(row, cells)| {
+                let text: String = cells.iter().map(|cell| cell.symbol()).collect();
+                text.find(needle).map(|col| (col as u16, row as u16))
+            })
     }
 
     /// The window title line survives the full chrome draw.
@@ -1496,6 +1525,63 @@ mod tests {
             app.on_key(key(KeyCode::Enter)),
             AppAction::Chat(super::ChatAction::Continue),
             "modal still wins over paint buttons"
+        );
+    }
+
+    #[test]
+    fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
+        const WIDTH: u16 = 140;
+        let mut app = TuiApp::new("274bot headless");
+        app.chat_data.script_paint = Some(nature_crafter_paint());
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, 40)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let buf = terminal.backend().buffer();
+        let (button_col, button_row) = buffer_position(buf, WIDTH, "[1] Go bank")
+            .expect("the advertised NatureCrafter button must be visible");
+        let (title_col, title_row) = buffer_position(buf, WIDTH, "NatureCrafter — Air")
+            .expect("the paint title must remain visible");
+        let (body_col, body_row) = buffer_position(buf, WIDTH, "Runtime: 1m")
+            .expect("the first paint status row must remain visible");
+
+        assert_eq!(
+            app.on_click(button_col, button_row),
+            AppAction::Chat(super::ChatAction::PaintButton(0)),
+            "clicking the actual rendered label row dispatches its button"
+        );
+        assert_eq!(app.on_click(title_col, title_row), AppAction::None);
+        assert_eq!(app.on_click(body_col, body_row), AppAction::None);
+        assert_eq!(
+            app.on_click(app.chat_area.x + 1, button_row - 1),
+            AppAction::None,
+            "the rendered spacer above the button is not a hit target"
+        );
+        assert_eq!(
+            app.on_click(app.chat_area.x, button_row),
+            AppAction::None,
+            "the pane border is not a button hit target"
+        );
+    }
+
+    #[test]
+    fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
+        const WIDTH: u16 = 48;
+        let mut app = TuiApp::new("274bot headless");
+        app.chat_data.script_paint = Some(nature_crafter_paint());
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, 18)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let (button_col, button_row) =
+            buffer_position(terminal.backend().buffer(), WIDTH, "[1] Go bank")
+                .expect("the focused paint button must survive compact layout clipping");
+        assert_eq!(
+            app.on_click(button_col, button_row),
+            AppAction::Chat(super::ChatAction::PaintButton(0))
+        );
+        assert_eq!(
+            app.on_click(app.chat_area.x, app.chat_area.y),
+            AppAction::None,
+            "the compact pane's title border is not a paint hit target"
         );
     }
 
