@@ -3,6 +3,7 @@
 //! this library so it can poll per-slot state instead of scraping logs.
 
 pub mod audio;
+pub mod catalog_core;
 pub mod nav_identity;
 pub mod profile;
 pub mod progress;
@@ -4062,6 +4063,9 @@ pub struct Play {
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
     obj_names: Arc<api::obj_names::ObjNames>,
+    /// Dormant unless a visible catalog proof explicitly configures it.
+    /// Slot threads feed it from the same snapshot publication used by scripts.
+    catalog_core: catalog_core::CoreWatch,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: Arc<Mutex<LoginQueue>>,
@@ -4198,6 +4202,7 @@ impl Play {
             named_banks,
             cache,
             obj_names,
+            catalog_core: catalog_core::CoreWatch::default(),
             ifaces,
             ifaces_mut_template,
             queue: Arc::new(Mutex::new(LoginQueue::default())),
@@ -4293,6 +4298,11 @@ impl Play {
     /// it.
     pub fn obj_names(&self) -> Arc<api::obj_names::ObjNames> {
         Arc::clone(&self.obj_names)
+    }
+
+    /// Shared headed catalog proof handle. It is disabled by default.
+    pub fn catalog_core_watch(&self) -> catalog_core::CoreWatch {
+        self.catalog_core.clone()
     }
 
     /// Blocks until every slot thread exits (slot threads run forever, so
@@ -4660,6 +4670,7 @@ impl Play {
             Arc::clone(&self.navs),
             self.world.clone(),
             Arc::clone(&self.obj_names),
+            self.catalog_core.clone(),
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
@@ -4912,6 +4923,7 @@ fn spawn_slot_thread(
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
+    slot_catalog_core: catalog_core::CoreWatch,
     slot_frame: SlotFrame,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -5038,6 +5050,7 @@ fn spawn_slot_thread(
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);
                 let obs_name = username.clone();
+                let obs_catalog_core = slot_catalog_core.clone();
                 let knock_name = username.clone();
                 let knock_scripts = Arc::clone(&slot_scripts);
                 let knock = move |ev: &DetectedRandom| -> RandomClaim {
@@ -5091,6 +5104,12 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            obs_catalog_core.observe_snapshot(
+                                name,
+                                &nav_snapshot,
+                                &slot_obj_names,
+                                session_boundary,
+                            );
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();
                             let hold = status.hold || !ready || session_boundary;
