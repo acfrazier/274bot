@@ -1,0 +1,21 @@
+host_commit 7d1d43869fc4d9a1ca00043345ac219b0c7a8111
+client_commit 9d090ed04957e4efc254f073cda97bc5510ca72b
+source /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-root-7d1d4386
+manifest /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-root-7d1d4386-manifest.json
+manifest_files 2474
+manifest_missing 0
+manifest_mismatch 0
+manifest_extra 0
+target /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-root-7d1d4386-target
+target_existed_before_checks false
+
+git_blob snapshot.rs f2f25adf1ef97fc451264c60e4bbcd6d47849d2d
+git_blob static_loc_observation.rs b43c4f1018428cb1f01cb3a2ef3b9ab0e598bdc4
+git_blob world.rs e94739fa9b8349d6fadcc631803769ef45837d0a
+
+sha256 crates/api/src/snapshot.rs 61e4eefc5bbd3288c81bca8472f6104da26e420dce6d3501771b471bccdfaf49
+sha256 crates/api/tests/static_loc_observation.rs 5c65c154d8cb54e9b0349ca47588b6b3302eeec662680b94ac6ad24e4f470140
+sha256 vendor/fr-client-rust/crates/client/src/core/world.rs eb8520694e4d4b7f38dbc1176b8d5079dee650ecfafe84b8d35f07d93a0468fd
+
+prior_unextracted_host_tar .check-t192feefa/host-7d1d43869.tar sha256 00689bc96cea8c4af2c8e19c09a7bcbdb2d698c139f6110a26cb9aa1e0bf8bfd
+prior_unextracted_client_tar .check-t192feefa/client-9d090ed.tar sha256 9ce67b1ebe27589aca2bb050ae5396dfc3d1fa870695f20773961f2b23fddf2d
