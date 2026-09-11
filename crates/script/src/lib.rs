@@ -56,6 +56,8 @@ pub use slot::{RunState, SlotScript};
 pub use load::{transpile_ts, LoadIsolate};
 
 #[cfg(feature = "load")]
+mod autocast;
+#[cfg(feature = "load")]
 mod bank_withdraw;
 #[cfg(feature = "load")]
 mod death_recovery;

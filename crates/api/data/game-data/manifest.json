@@ -10,8 +10,18 @@
       "pickpocket": 12,
       "spells": 16,
       "staves": 14,
-      "bytes": 1384805,
-      "sha256": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
+      "autocast": {
+        "staff_tab_root": 328,
+        "spell_panel_root": 1829,
+        "choose_com": 353,
+        "toggle_com": 349,
+        "spell_grid_base": 1830,
+        "magic_varp": 108,
+        "selected_value": 2,
+        "armed_value": 3
+      },
+      "bytes": 1385352,
+      "sha256": "e08bcf585d3f310381e2fc12bc1a99d3345b3799e1e2807b9ab01d711e4bc87d",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -76,6 +86,16 @@
           "path": "scripts/skill_magic/configs/magic_staff.dbrow",
           "bytes": 698,
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
+        },
+        {
+          "path": "pack/interface.pack",
+          "bytes": 286718,
+          "sha256": "74f8c9d15bcf4c519a709a92a756450eb1d617d493eec50b8439f8d12b4aae00"
+        },
+        {
+          "path": "pack/varp.pack",
+          "bytes": 6016,
+          "sha256": "be5d9b325d1e26c06c2643a63d796a922acc1f4dde38f1090c0653ee833517d8"
         }
       ],
       "decoder_sources": [
@@ -174,8 +194,18 @@
       "pickpocket": 12,
       "spells": 16,
       "staves": 14,
-      "bytes": 1447301,
-      "sha256": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9",
+      "autocast": {
+        "staff_tab_root": 328,
+        "spell_panel_root": 1829,
+        "choose_com": 353,
+        "toggle_com": 349,
+        "spell_grid_base": 1830,
+        "magic_varp": 108,
+        "selected_value": 2,
+        "armed_value": 3
+      },
+      "bytes": 1447848,
+      "sha256": "2404040764d0282b0458b6ee28b6871b48f0b90ed1e334e0b085770a498eaf34",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -240,6 +270,16 @@
           "path": "scripts/skill_magic/configs/magic_staff.dbrow",
           "bytes": 698,
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
+        },
+        {
+          "path": "pack/interface.pack",
+          "bytes": 318712,
+          "sha256": "259f2c47f0e0b91807be1126c9a7cf66d39bc24efec8caf075c0a52805ec610a"
+        },
+        {
+          "path": "pack/varp.pack",
+          "bytes": 6665,
+          "sha256": "22f75da703461b26797f5291d36e655302b3409e6454d9b0b1169869e15ef6ef"
         }
       ],
       "decoder_sources": [

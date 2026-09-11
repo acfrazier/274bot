@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractMagicFacts, parseRows } from './generate.ts';
+import { extractFacts, extractMagicFacts, extractAutocastControls, parsePack, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -96,4 +96,15 @@ assert.equal(magicFacts.spells[1].ssb, 1);
 const lava = magicFacts.staves.find((staff) => staff.name === 'Lava battlestaff');
 assert.deepEqual(lava?.runes.map((rune) => rune.name).sort(), ['Earth rune', 'Fire rune']);
 assert.equal(magicFacts.staves.find((staff) => staff.name === 'Staff of air')?.runes.length, 1);
+fs.mkdirSync(path.join(content, 'pack'), { recursive: true });
+fs.writeFileSync(path.join(content, 'pack/interface.pack'), `328=combat_staff_2\n349=combat_staff_2:auto_toggle\n353=combat_staff_2:auto_choose\n1829=staff_spells\n1830=staff_spells:ssb0\n`);
+fs.writeFileSync(path.join(content, 'pack/varp.pack'), `108=attackstyle_magic\n`);
+const autocast = extractAutocastControls(content);
+assert.equal(autocast.staff_tab_root, 328);
+assert.equal(autocast.choose_com, 353);
+assert.equal(autocast.spell_panel_root, 1829);
+assert.equal(autocast.spell_grid_base, 1830);
+assert.equal(autocast.toggle_com, 349);
+assert.equal(autocast.magic_varp, 108);
+assert.equal(parsePack('328=combat_staff_2\n').get('combat_staff_2'), 328);
 console.log('generate fixture passed');
