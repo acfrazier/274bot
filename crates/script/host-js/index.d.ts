@@ -237,6 +237,7 @@ export interface Snapshot {
   retaliate_enabled: boolean;
   retaliate_controls: ToggleControls | null;
   quest_statuses: QuestStatusRow[] | null;
+  npc_boxes: { index: number; points: { x: number; y: number }[] }[] | null;
   my_name: string | null;
   in_combat: boolean;
   animating: boolean;

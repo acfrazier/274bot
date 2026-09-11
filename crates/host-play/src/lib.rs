@@ -798,7 +798,7 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
 #[allow(clippy::too_many_arguments)]
-fn script_observe(
+fn script_observe_with_npc_boxes(
     driver: &mut dyn Driver,
     name: &str,
     up: bool,
@@ -808,6 +808,7 @@ fn script_observe(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
+    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -1027,6 +1028,7 @@ fn script_observe(
                     snapshot,
                     obj_names,
                     world.as_deref(),
+                    npc_boxes,
                     hold,
                     ours,
                     teleports_enabled,
@@ -1437,6 +1439,32 @@ fn script_observe(
         wrote = true;
     }
     wrote
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn script_observe(
+    driver: &mut dyn Driver,
+    name: &str,
+    up: bool,
+    tick_edge: bool,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    inv: Option<&[(i32, i32)]>,
+    state: Option<WorldState>,
+    snapshot: Option<&GameSnapshot>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    hold: bool,
+    ours: bool,
+) -> bool {
+    script_observe_with_npc_boxes(
+        driver, name, up, tick_edge, tick, here, inv, state, snapshot, None, obj_names, scripts,
+        cheats, navs, world, hold, ours,
+    )
 }
 
 fn dispatch_observed_bank_op(
@@ -2309,6 +2337,7 @@ fn script_snapshot_fb(
         snapshot,
         obj_names,
         world,
+        None,
         hold,
         ours,
         teleports_enabled,
@@ -2357,6 +2386,7 @@ fn with_script_snapshot_input<R>(
     snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
     world: Option<&NavWorld>,
+    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
     hold: bool,
     ours: bool,
     teleports_enabled: bool,
@@ -3238,6 +3268,7 @@ fn with_script_snapshot_input<R>(
             .and_then(GameSnapshot::retaliate_controls)
             .map(|controls| (controls.on_component_id, controls.off_component_id)),
         quest_statuses,
+        npc_boxes,
     };
     f(&input, native)
 }
@@ -3855,6 +3886,27 @@ fn observe_script_inv(
     snapshot: &GameSnapshot,
 ) -> Option<&[(i32, i32)]> {
     (running && tick_edge).then(|| snapshot.inv())
+}
+
+/// Project only the client's bounded active-NPC list. A ready scene with no
+/// projectable NPCs is an available empty update; a non-ready scene is
+/// unavailable so isolates clear any prior geometry.
+fn projected_npc_boxes(client: &Client) -> Option<Vec<script::isolate_fb::NpcBoxInput>> {
+    if !client.ingame || client.scene_state != 2 {
+        return None;
+    }
+    Some(
+        client
+            .npc_ids
+            .iter()
+            .take(usize::try_from(client.npc_count).unwrap_or(0))
+            .filter_map(|&index| {
+                let slot = usize::try_from(index).ok()?;
+                client::render::npc_overlay_box(client, slot)
+                    .map(|points| script::isolate_fb::NpcBoxInput { index, points })
+            })
+            .collect(),
+    )
 }
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
@@ -5074,7 +5126,8 @@ fn spawn_slot_thread(
                                 running,
                                 nav_armed,
                             );
-                            script_observe(
+                            let npc_boxes = projected_npc_boxes(c);
+                            script_observe_with_npc_boxes(
                                 c,
                                 name,
                                 up,
@@ -5084,6 +5137,7 @@ fn spawn_slot_thread(
                                 inv,
                                 nav_state,
                                 Some(&nav_snapshot),
+                                npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
                                 &slot_cheats,
@@ -5445,6 +5499,63 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    #[test]
+    fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.cam_x = 6400;
+        client.cam_z = 5000;
+        let mut npc = client::dash3d::ClientNpc::at(49, 46);
+        npc.r#type = Some(0);
+        npc.entity.x = 6400;
+        npc.entity.z = 6000;
+        npc.entity.size = 1;
+        npc.entity.height = 100;
+        client.npc[7] = Some(Box::new(npc));
+        client.npc_ids[0] = 7;
+        client.npc_count = 1;
+
+        let boxes = projected_npc_boxes(&client).expect("ready scene");
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].index, 7);
+        assert_eq!(boxes[0].points[0], (225, 171));
+        let bytes = with_script_snapshot_input(
+            1,
+            None,
+            true,
+            None,
+            None,
+            None,
+            None,
+            Some(&boxes),
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            script::isolate_fb::encode_snapshot_with_native,
+        );
+        let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(posted.npc_boxes_available());
+        assert_eq!(posted.npc_boxes()[0].points()[0], (225, 171));
+
+        client.npc_count = 0;
+        assert_eq!(projected_npc_boxes(&client), Some(Vec::new()));
+        client.scene_state = 1;
+        assert_eq!(projected_npc_boxes(&client), None);
+    }
     use std::thread;
 
     use client::client::ClientConfig;

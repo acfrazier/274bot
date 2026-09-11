@@ -1160,6 +1160,12 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         doc: None,
     },
     TsField {
+        name: "npc_boxes",
+        ty: "{ index: number; points: { x: number; y: number }[] }[] | null",
+        optional: false,
+        doc: None,
+    },
+    TsField {
         name: "my_name",
         ty: "string | null",
         optional: false,
