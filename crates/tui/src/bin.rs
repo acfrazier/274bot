@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1046,11 +1047,13 @@ impl TuiSession {
                 play.focus(&run.names[run.focus_index()]);
                 match run.poll(play) {
                     Ok(true) => {
+                        restore_terminal();
                         eprintln!("PASS: memory tui observation complete");
                         std::process::exit(0);
                     }
                     Ok(false) => {}
                     Err(error) => {
+                        restore_terminal();
                         eprintln!("FAIL: memory tui: {error}");
                         std::process::exit(1);
                     }
@@ -1195,8 +1198,10 @@ impl TuiSession {
     }
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
-    /// passed (0) or failed (1); `None` while it runs.
-    fn live_status(&mut self) -> Option<i32> {
+    /// passed (0) or failed (1); `None` while it runs. Proof lines are
+    /// returned, not printed, so a headed loop can hold them until after
+    /// alternate-screen restore.
+    fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
         let name = self.live_name.as_deref().unwrap_or("script");
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
         let evidence = self
@@ -1207,24 +1212,70 @@ impl TuiSession {
             .and_then(|r| r.evidence().cloned())
             .map(|ev| ev.to_json())
             .unwrap_or_default();
-        match status {
-            Some(scenario::RunnerStatus::Passed) => {
-                if !self.live_announced_pass {
-                    println!("PASS: live {name} {evidence}");
-                    self.live_announced_pass = true;
-                }
-                if self.live_soak_until.is_some_and(|t| Instant::now() < t) {
-                    return None;
-                }
-                Some(0)
-            }
-            Some(scenario::RunnerStatus::Failed(msg)) => {
-                eprintln!("FAIL: live {name} {evidence}");
-                eprintln!("FAIL: {msg}");
-                Some(1)
-            }
-            _ => None,
+        let soaking = self.live_soak_until.is_some_and(|t| Instant::now() < t);
+        let (code, lines, announced) =
+            live_proof(name, status, &evidence, soaking, self.live_announced_pass);
+        self.live_announced_pass = announced;
+        (code, lines)
+    }
+}
+
+/// One machine-readable `--live` proof line. PASS stays on stdout for
+/// harness scrapers; FAIL stays on stderr and still exits 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProofLine {
+    Stdout(String),
+    Stderr(String),
+}
+
+impl ProofLine {
+    fn write(&self) {
+        match self {
+            Self::Stdout(line) => println!("{line}"),
+            Self::Stderr(line) => eprintln!("{line}"),
         }
+    }
+}
+
+fn write_proof_lines(lines: &[ProofLine]) {
+    for line in lines {
+        line.write();
+    }
+}
+
+/// Proof text and exit for one `--live` poll. `announced_pass` is the
+/// caller's latch so a `BUDGET_S` soak does not reprint PASS.
+fn live_proof(
+    name: &str,
+    status: Option<scenario::RunnerStatus>,
+    evidence: &str,
+    soaking: bool,
+    announced_pass: bool,
+) -> (Option<i32>, Vec<ProofLine>, bool) {
+    match status {
+        Some(scenario::RunnerStatus::Passed) => {
+            let mut lines = Vec::new();
+            let announced = if announced_pass {
+                true
+            } else {
+                lines.push(ProofLine::Stdout(format!("PASS: live {name} {evidence}")));
+                true
+            };
+            if soaking {
+                (None, lines, announced)
+            } else {
+                (Some(0), lines, announced)
+            }
+        }
+        Some(scenario::RunnerStatus::Failed(msg)) => (
+            Some(1),
+            vec![
+                ProofLine::Stderr(format!("FAIL: live {name} {evidence}")),
+                ProofLine::Stderr(format!("FAIL: {msg}")),
+            ],
+            announced_pass,
+        ),
+        _ => (None, Vec::new(), announced_pass),
     }
 }
 
@@ -1361,20 +1412,57 @@ impl TuiSession {
     }
 }
 
+/// Raw mode was enabled for this process. `restore_terminal` clears it.
+static RAW_MODE: AtomicBool = AtomicBool::new(false);
+/// Alternate screen + mouse capture were entered. Cleared on restore.
+static ALT_SCREEN: AtomicBool = AtomicBool::new(false);
+
+/// Leave the headed TUI (raw mode / alt screen) if this process entered it.
+/// Idempotent. `process::exit` skips Drop, so memory-profile paths call this
+/// before printing PASS/FAIL.
+fn restore_terminal() {
+    if RAW_MODE.swap(false, Ordering::SeqCst) {
+        disable_raw_mode().ok();
+    }
+    if ALT_SCREEN.swap(false, Ordering::SeqCst) {
+        let mut out = std::io::stdout();
+        let _ = crossterm::execute!(
+            out,
+            crossterm::event::DisableMouseCapture,
+            LeaveAlternateScreen
+        );
+        let _ = out.flush();
+    }
+}
+
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
 /// The crossterm event loop. `--live` runs headed when a controlling
 /// terminal is available (the operator watches the panes) and degrades to
 /// a headless pump loop otherwise, so the PASS/FAIL still lands in CI.
+/// Headless prints proof immediately. Headed holds it until after restore
+/// so the PASS JSON line cannot paint into Ratatui rows.
 fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
         loop {
             session.pump(&mut app);
-            if let Some(code) = session.live_status() {
+            let (code, lines) = session.live_status();
+            write_proof_lines(&lines);
+            if let Some(code) = code {
                 return Ok(code);
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    RAW_MODE.store(true, Ordering::SeqCst);
+    let _guard = TerminalGuard;
     let mut stdout = std::io::stdout();
     crossterm::execute!(
         stdout,
@@ -1382,12 +1470,16 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         crossterm::event::EnableMouseCapture
     )
     .map_err(|e| format!("terminal setup: {e}"))?;
+    ALT_SCREEN.store(true, Ordering::SeqCst);
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
+    let mut deferred = Vec::new();
     let result = (|| loop {
         session.pump(&mut app);
-        if let Some(code) = session.live_status() {
+        let (code, lines) = session.live_status();
+        deferred.extend(lines);
+        if let Some(code) = code {
             return Ok(code);
         }
         {
@@ -1426,13 +1518,9 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         }
     })();
 
-    disable_raw_mode().ok();
-    crossterm::execute!(
-        terminal.backend_mut(),
-        crossterm::event::DisableMouseCapture,
-        LeaveAlternateScreen
-    )
-    .ok();
+    drop(terminal);
+    restore_terminal();
+    write_proof_lines(&deferred);
     result
 }
 
@@ -1716,6 +1804,105 @@ mod tests {
             app.world.is_some(),
             "pump copies the session nav world onto the map"
         );
+    }
+
+    #[test]
+    fn live_pass_is_stdout_and_exit_0() {
+        let (code, lines, announced) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Passed),
+            "{\"outcome\":\"PASS\"}",
+            false,
+            false,
+        );
+        assert_eq!(code, Some(0));
+        assert!(announced);
+        assert_eq!(
+            lines,
+            vec![ProofLine::Stdout(
+                "PASS: live alcher {\"outcome\":\"PASS\"}".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn live_fail_is_stderr_and_exit_1() {
+        let (code, lines, announced) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Failed("deadline".into())),
+            "{\"outcome\":\"FAIL\"}",
+            true,
+            false,
+        );
+        assert_eq!(
+            code,
+            Some(1),
+            "FAIL must still exit 1, including during soak"
+        );
+        assert!(!announced, "FAIL does not latch a PASS announcement");
+        assert_eq!(
+            lines,
+            vec![
+                ProofLine::Stderr("FAIL: live alcher {\"outcome\":\"FAIL\"}".into()),
+                ProofLine::Stderr("FAIL: deadline".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_pass_is_held_once_across_soak_then_exits_0() {
+        let (code, lines, announced) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Passed),
+            "{\"outcome\":\"PASS\"}",
+            true,
+            false,
+        );
+        assert_eq!(code, None, "soak keeps pumping after the PASS line exists");
+        assert_eq!(
+            lines,
+            vec![ProofLine::Stdout(
+                "PASS: live alcher {\"outcome\":\"PASS\"}".into()
+            )]
+        );
+        let (code, lines, announced) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Passed),
+            "{\"outcome\":\"PASS\"}",
+            true,
+            announced,
+        );
+        assert_eq!(code, None);
+        assert!(
+            lines.is_empty(),
+            "headed soak must not reprint PASS into the alt screen"
+        );
+        let (code, lines, _) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Passed),
+            "{\"outcome\":\"PASS\"}",
+            false,
+            announced,
+        );
+        assert_eq!(code, Some(0));
+        assert!(
+            lines.is_empty(),
+            "the held PASS line is flushed after restore, not here"
+        );
+    }
+
+    #[test]
+    fn live_running_emits_no_proof() {
+        let (code, lines, announced) = live_proof(
+            "alcher",
+            Some(scenario::RunnerStatus::Running { step: 1, total: 2 }),
+            "",
+            false,
+            false,
+        );
+        assert_eq!(code, None);
+        assert!(lines.is_empty());
+        assert!(!announced);
     }
 
     #[test]
