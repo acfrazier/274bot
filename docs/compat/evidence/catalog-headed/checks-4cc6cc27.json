@@ -1,0 +1,60 @@
+{
+  "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3190,
+  "checks": [
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.289,
+      "log": "docs/compat/evidence/catalog-headed/checks-4cc6cc27-catalog.log",
+      "log_sha256": "020ef924f9e9c27a832678a1329b7922d68e57cc3184aa6132cbe857de3800d3"
+    },
+    {
+      "label": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 18.545,
+      "log": "docs/compat/evidence/catalog-headed/checks-4cc6cc27-scenario.log",
+      "log_sha256": "f9fa43c2bd0e4b8ab69f6c54ccf5aea3b50130158d42b406db7c9e680fc93a25"
+    },
+    {
+      "label": "clippy-catalog",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 16.123,
+      "log": "docs/compat/evidence/catalog-headed/checks-4cc6cc27-clippy-catalog.log",
+      "log_sha256": "f3023b719d6aa98739ddfbed2a86311116d3ccd3c73d934525a4a3704b57af9a"
+    }
+  ],
+  "all_passed": true,
+  "isolated_build": true
+}

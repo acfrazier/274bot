@@ -1,0 +1,44 @@
+{
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3364,
+  "checks": [
+    {
+      "label": "count-dialog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "client_adapter_count_dialog",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 15.439,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-count-dialog.log",
+      "log_sha256": "aa604b7422d9ff8a86112e99df8d9bbbd1bdffe3c1cd5e87ba68bb21843886bf"
+    },
+    {
+      "label": "clippy-count-dialog",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--test",
+        "client_adapter_count_dialog",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 101,
+      "elapsed_seconds": 5.513,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-clippy-count-dialog.log",
+      "log_sha256": "99fc37fd2732dbe8d7e67e944c1ec97f1619365891c65c38834f7339721bb457"
+    }
+  ],
+  "all_passed": false,
+  "isolated_build": true
+}

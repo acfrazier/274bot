@@ -25484,7 +25484,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -25501,9 +25501,14 @@
           "source_evidence": "src/bot/scripts/ArdyThiever/ArdyThiever.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+      ]
     },
     {
       "display_name": "ArdyThiever",
@@ -26118,7 +26123,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26135,9 +26140,14 @@
           "source_evidence": "src/bot/scripts/ArdyThiever/ArdyThiever.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+      ]
     },
     {
       "display_name": "ArdyCakes",
@@ -26488,7 +26498,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26501,9 +26511,13 @@
           "source_evidence": "src/bot/scripts/ArdyCakes/ArdyCakes.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+      ]
     },
     {
       "display_name": "ArdyCakes",
@@ -26854,7 +26868,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26867,9 +26881,13 @@
           "source_evidence": "src/bot/scripts/ArdyCakes/ArdyCakes.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+      ]
     },
     {
       "display_name": "GnomeMagicChopper",
@@ -28232,17 +28250,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-100adccc-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-100adccc-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
       ]
     },
     {
@@ -28526,17 +28547,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-100adccc-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-100adccc-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-100adccc-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
       ]
     },
     {
@@ -41839,12 +41863,12 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
+      "fixture_readiness": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
+      "status_detail": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.json",
@@ -41854,7 +41878,10 @@
         "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-060e15a0.json",
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-060e15a0.json",
-        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-78cc99d0.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-78cc99d0.json",
+        "docs/compat/evidence/catalog-harness/tanner-78cc99d0.json"
       ]
     },
     {
@@ -42095,12 +42122,12 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
+      "fixture_readiness": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
+      "status_detail": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.json",
@@ -42110,7 +42137,10 @@
         "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-060e15a0.json",
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-060e15a0.json",
-        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-78cc99d0.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-78cc99d0.json",
+        "docs/compat/evidence/catalog-harness/tanner-78cc99d0.json"
       ]
     },
     {
@@ -63068,17 +63098,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated675: rune_crafter=FAIL, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: rune_crafter=FAIL, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-8e7d965b-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-8e7d965b-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-8e7d965b-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-8e7d965b-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
       ]
     },
     {
@@ -63362,17 +63395,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated4cc: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-8e7d965b-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-8e7d965b-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-8e7d965b-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-8e7d965b-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
       ]
     },
     {
@@ -76698,15 +76734,17 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_readiness": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "BLOCKED",
-      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "status": "PARTIAL",
+      "status_detail": "Isolated78: actual27hide count withdrawal succeeds; Tanner Trade/modal wait fails before conversion. Some soft cells observe interface679; exact timing/publication audit pending. No tanning acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-headed/r274-tanner-bot-8e7d965b-78cc99d0-gpu.json",
+        "docs/compat/evidence/catalog-harness/tanner-78cc99d0.json"
       ]
     },
     {

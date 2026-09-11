@@ -1,88 +1,98 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 08:48 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 09:31 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (08:48 UTC)
+## Current follow-ups (09:31 UTC)
 
-- Full45card/180row plan remains active on the named campaign branch. No
-  main/remotes/releases changed. Whole-branch Grok review, remaining supported
-  branches/frontends/reconnect and final integrated N32 remain required.
-- Root060e15a0/client9d isolated source3082 Git blobs passes affected checks.
-  All12 banking cells completed:8PASS/4FAIL, ledger240. East and West VialFiller
-  each pass both revisions/catalogs with fill28/deposit28/restock28/return and
-  further fill. Tanner soft/hard old catalog both revisions reach Input.invButton
-  then fail on missing reader.countDialogOpen. Newer Tanner cells wait after
-  family failure. harvest_060e15a0.py verifies raw/source/binary/cycle witnesses;
-  no dim and no failed evidence overwritten. Native289/newer East vial also PASS with read panel PNG: scene2, Trips1,
-  fresh water1/empty27. Metal adapter logged; no presentation counters, so no
-  texture-routing claim from this run.
-- Count-dialog t_ee0d3dbd now actualGrok4.6 run1275/session20260911_044337_77dcc1
-  maps both reader.countDialogOpen and actions.answerCountDialog to existing
-  native facts/commands. It owns client_adapter and a unique test only; no
-  opcode/runtime/timeout changes. Root repeats Tanner after same-card review.
-- Hostile/duel c6b52affb + evidence d49dccbdb passed actualGrok4.5 review1274,
-  session20260911_043554_ed3bd2. Its SQLite transcript was unavailable after disk
-  I/O failure; root verified all12 API call log entries model/provider and
-  successful lifecycle. Receipt evidence/hostile-duel/root-review-verification.json.
-  Prior crash1272 remains insufficient. No hostile/duel LIVE acceptance yet.
-- Native named-bank design04n actualGrok4.6 run1269/session20260911_041209_0efa1c
-  identifies empty BANK_LOCATIONS as Mule failure owner. Root verified actual
-  API log33calls; no source acceptance from design. New t_bced5c76/brief89 waits
-  count-dialog review, then Special waits89. Publish only five shim RUNES.bank
-  aliases validated against actually bound NavWorld BEFORE module eval; reject
-  test-only runtime bypass. Correct draft Edgeville/Draynor distance2 stands
-  with native walkable adjacent stands. Preserve nearest/packed/ranking policy,
-  pack format and cook table; no foreign world table. Full Mule core still needed.
-- Ardy fixtures43749c42f approved actualGrok4.5 review1270/session20260911_042150_36bd7d.
-  Review1267 crash retained; recovery reused its independently empty-started
-  target after source verification. No Ardy LIVE yet. Rune observation4cc6cc27d
-  approved actualGrok4.5 same-card1276/session20260911_044636_2c074f:
-  XP arms before product after
-  ruins, plus real ScenarioRunner regression and existing CoreWitness on
-  failure. No deadline or runtime change. New exact candidate/review gates
-  required before Rune/Ardy LIVE. Resource t_aa061a28 now runs1278 after Rune review.
-- Root67514cells remain11PASS/3FAIL. Flax4PASS, Earth4PASS, Air3PASS plus274/newer
-  bank pack-empty timeout, Mule oldbothrevs missingFaladorEast. Native274Flax
-  PASS; native289Earth FAIL lateXPbaseline135.724s despite craft/deposit/restock.
-  Air05o audit cannot equate its failure to the XP watch defect. Retain all
-  failures and require new raw before claiming either correction qualified.
-- TUIe72cfb39e actualGrok4.5 review1265. Exact6779file package, new Mac/Linux
-  builds, native Mac274 and Concord289 Params PASS. harvest_e72.py verifies
-  source/binary/raw/proof-after-terminal-restore. Numeric27->3 savedMac; no
-  subsequent Start with3 in that run. Concordarray custom->rune_chainbody saved,
-  invalidnumber rejected,Esc restores27,close/reopen persists; fresh Start
-  casts once with inventory23/23/120k ->22/22/150k and freshpaint. Actual140x40
-  PTY inputs/captures read. Native editing for other setting types remains.
-- e72 exposed separate shared metadata omission: Alcher imported choices,
-  defaults and showIf constants unresolved, so Items is free text and Custom
-  item stays hidden. Read-only actualGrok4.6 t_10ea7213/run1273/session
-  20260911_043354_6ce6f6 completed04p (root renamed accidental own04p). Scanner
-  literal/default/inner-const loss plus array-visibility bug confirmed. New
-  t_7bb8a58a/brief90 implements faithful literals/list membership preserving
-  scalar semantics. t_89a57fc5/brief91 designs selected-data choices/order/labels;
-  root rejects unfiltered FODDER source-order approximation. No V8 at Browse.
-- Prior CAF5TUI controls remain PASS: Mac274twice/Mac289/Concord274/289 actual
-  Pause/Resume/Stop and Browse/select/Start. All owned Concord engines stopped,
-  game/HTTPports absent; original service inactive. e72Concord289 also stopped;
-  receipt connect_ex111 means ECONNREFUSED. No Concord compilation or Xvfb.
-- Shared runtime queue: count -> named aliases -> special -> teleport -> Sol
-  shop -> Make-X/smithing -> fire. Fixture resource waits Rune review. Keep
-  implementations and same-card reviews monitored, actual models verified.
-- BankSorter policy question remains unanswered and required only for that
-  card. Do not infer authorization for value-sort/category-policy change or
-  fabricate quest-junk completion. Ancillary native feature stubs remain as
-  explicitly authorized. Foreign Gnome radius8/default-resync defects retain
-  four recorded branch limits; missing host mappings never justify a dim.
-- Grok browser usage refreshed08:37:75%used/25%remaining, resets11:40UTC/07:40
-  Eastern. Root cleaned completed060 ande72 compiler targets only after
-  copied-binary SHA/open-file checks, freeing10.98GiB; source/evidence/binaries
-  retained in cache-cleanup-20260911-0847.json (actual08:41 timestamp). Earlier
-  cleanup receipts remain. Build overlap is diagnostic, never performance.
+- Full45card/180row implementation remains active on this branch; no main,
+  remote or release changes. Supported branches/frontends/reconnect, final
+  integrated N32 and final Grok whole-branch review remain required. Historical
+  results below are snapshots; this section governs current work.
+- Root4cc6cc27/client9d090ed exact3190file source, initially empty target,
+  copied headless/native binaries and affected checks qualified. RuneCrafter
+  Air/Earth all8 revision/catalog cells PASS with ordered withdrawal/temple/
+  conversion+XP/portal/deposit/pack-empty/restock/closed-return/further craft.
+  Native289/newer Earth PASS130772ms, process184.942s; actual CUA and PNG read,
+  terminal27Earth plus talisman, texture7147/pixmap0. The prior675 failures are
+  retained; new Air PASS does not retrospectively prove the old failure cause.
+- Root4cc ArdyCakes Flee/ArdyThiever Guard/Knight oldbothrevs all6FAIL at first
+  XP with no movement/item/XP delta. Newer family cells gated. Updated FAIL
+  path retains full CoreWitness. harvest_4cc6cc27.py verifies14cells8PASS6FAIL;
+  report06r and runes-ardy-4cc6cc27.json; all source/raw/binaries retained.
+- Root78cc99d0/client9d exact3364file source and new empty compiler target.
+  Count-dialog actualGrok4.5 review1280 approved artifact. Reviewer reused
+  implementer target despite claiming empty-independent execution; root gate
+  explicitly corrects that claim and provides fresh isolated checks. 8count,
+  strict count Clippy,28catalog,93scenario,strict catalogClippy PASS. Initial
+  disk-full Clippy and missing external-input-link catalog failures retained;
+  final checks-78cc99d0-inputs.json records successful retry and actual inputs.
+- Root78 Tanner soft/hard oldbothrevs4FAIL, newer gated. Actual AnswerCount27
+  now withdraws27hide1739+2000coins995; native nav arrives, selected Tanner
+  Trade then script5000ms modal wait fails before leather. Both soft cases
+  actually observe679 with correct widget at tile3276,3193/tick115 or120;
+  never infer absent modal from timeout text alone. Native274/newer softFAIL
+  85288ms/process91.029s; actual bank CUA and terminal PNG show27hides/2000coins,
+  Trips0/Tanned0. No tanning acceptance. harvest_78cc99d0.py -> ledger258;
+  report06s and tanner-78cc99d0.json retain hashes and observations.
+- Ardy audit t_fa68337f actualGrok4.6 run1285/session20260911_051725_6a64aa,
+  26actualAPI calls verified, completed04u. First owner confirmed cake_stall
+  nearest-unfiltered/options-ignored mapping; Guard/Knight's RestockCakes wins
+  before pickpocket. No foreign defect/dim. New97 t_24333a16 waits named-bank
+  review, then special waits97: native selected pins/correct filtered loc/
+  bounded adapter with observed results, no cloned foreign90s controller.
+  One-attempt mapping is NOT full controller-equivalence acceptance; honest
+  stocked/callback/lockout requirements and explicit unsupported limits apply.
+- Tanner audit96 t_59351ef0 run1290 currently running read-only. Own04v and
+  unique evidence only; no LIVE/compiler/source edits. Root supplied decisive
+  soft679 witness so audit distinguishes timing, actual dispatch and posting.
+- Disk full~09:15UTC killed original resource1278/named-bank1281/paired1282/
+  selected-UI1284 workers. All WIP/export/raw retained. Root cleaned completed
+  count/static review targets7.55GB and completed root78target8.44GB after
+  copied-binary hashes/no-open-reference checks, preserving source/evidence.
+  Receipts cache-cleanup-20260911-0919.json(actual09:16) and0921(actual09:20).
+  All4 SAME cards resumed: resource1286, named-bank1287, paired1288, UI1289.
+  No source or functional acceptance inferred from crashed attempts.
+- Named-bank t_bced5c76/89 now resumed: publish only five native aliases against
+  actually bound NavWorld BEFORE module eval, no test-only validation bypass,
+  correct adjacent Edgeville/Draynor stands, preserve nearest/ranking/pack/cook
+  semantics. Mule oldbothrevs remain missing FaladorEast until new source LIVE.
+  Runtime queue now bank -> cake97 -> special -> teleport -> Sol shop -> Make-X
+  -> fire. Keep exclusive ownership and same-card actual-model review gates.
+- Resource t_aa061a28/83 resumed owns scenario/catalog magic-log/logbank/short/
+  long plus CoalTrucks fixtures. Station92 t_6faf0ef6 waits resource review for
+  CookBot Catherby salmon/lobster, Smelter bronze/steel, FlaxSpinner. Paired93
+  t_435afcb0 resumed unique two-actor test/support: actual NatureCrafter Air
+  Master/Runner trade/conservation/restock/return/further and actual Duel Arena
+  combat/reset. No invented partner/seeded modal; runtime gates remain explicit.
+- Static literal-settings8bd34675b actualGrok4.5 review1283/session
+  20260911_050645_4d1bf3,19actualAPI calls verified, approved. Exact11defaults,
+  inner custom constant and list showIf membership retained without changing
+  scalar case semantics. Computed choices still unresolved on that source.
+  Design04s actualGrok4.6 run1279/session20260911_045238_84a54b verified28calls.
+  UI94 t_f8ca5ed7 resumed implements typed recognized high-alchemy descriptor,
+  borrowed selected facts, faithful filtering/order/identity labels in panel
+  and TUI; no Browse evaluator. Root native Params proof follows review.
+- Completed root060 banking12cells8PASS4FAIL remain: East/West vial fill28/
+  deposit28/restock28/closed-return/further bothrevs/cats. Tanner prior missing
+  count reader failure retained. Native289newerEastPASS, no presentation
+  counters in that run, so no texture-routing claim. Reports06q/banking060.
+- Completed native TUIe72 Mac274+Concord289 Params evidence remains qualified
+  (harvest_e72.py/report06p): numeric saveMac, array/invalidnumber/Esc/persist/
+  fresh Start and actualAlcher outputConcord. Earlier CAF5TUIcontrols PASS.
+  All owned Concord engines stopped, ports absent; no Concord compilation.
+  Further settings types and new dynamic choices still require native proof.
+- BankSorter policy question remains unanswered and blocks only that card.
+  No inferred value-sort/category/quest-junk rewrite. Explicitly authorized
+  ancillary stubs stay bounded future native integration points. Foreign
+  Gnome radius8/default-resync limits retain evidence and current card policy.
+- Grok browser usage refreshed09:30:76%used/24%remaining, reset11:40UTC/07:40
+  Eastern. Existing15minute heartbeat unchanged. Builds/LIVE overlap is
+  diagnostic only, never a clean performance result.
 
 ## Imported-script ownership (operator clarification, 01:41 UTC)
 

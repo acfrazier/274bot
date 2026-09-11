@@ -1,0 +1,1061 @@
+{"elapsed_seconds": 0.153084, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.733006, "line": "[host-play] slot liveajlk9g_0: thread up"}
+{"elapsed_seconds": 4.769291, "line": "274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"}
+{"elapsed_seconds": 4.913095, "line": "[panel] scenario capture armed: Some(\"rune_crafter_earth\")"}
+{"elapsed_seconds": 4.913156, "line": "[panel] liveajlk9g_0: liveajlk9g_0: slot up"}
+{"elapsed_seconds": 6.580352, "line": "[host-play] slot liveajlk9g_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 7.014021, "line": "[host-play] slot liveajlk9g_0: handshake ok"}
+{"elapsed_seconds": 7.078269, "line": "[host] hitch liveajlk9g_0: frame_us=63753 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 7.097167, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 8.188386, "line": "[host] hitch liveajlk9g_0: frame_us=69430 paints=43 skips=0 ticks=1"}
+{"elapsed_seconds": 8.189583, "line": "[panel] liveajlk9g_0: liveajlk9g_0: mainland hop queued"}
+{"elapsed_seconds": 8.210022, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 8.210085, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 8.210104, "line": "live script_rune_crafter_earth: running step 1/28"}
+{"elapsed_seconds": 8.3535, "line": "[host] slot liveajlk9g_0: d_loop_us=11639 d_raster_us=222626 d_observe_us=54276 max_observe_us=2399 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 8.626708, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 8.730346, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 8.730415, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 9.603772, "line": "[host] slot liveajlk9g_0: d_loop_us=9900 d_raster_us=212682 d_observe_us=71108 max_observe_us=4211 d_paints=50 d_skips=0 d_ticks=4 window_ms=1250"}
+{"elapsed_seconds": 10.878646, "line": "[host] slot liveajlk9g_0: d_loop_us=1396 d_raster_us=224999 d_observe_us=35515 max_observe_us=1155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1274"}
+{"elapsed_seconds": 11.252461, "line": "live script_rune_crafter_earth: running step 2/28"}
+{"elapsed_seconds": 11.862455, "line": "[host-play] slot liveajlk9g_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 11.876715, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 0"}
+{"elapsed_seconds": 12.409129, "line": "[host-play] slot liveajlk9g_0: handshake ok"}
+{"elapsed_seconds": 12.447122, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 13.459321, "line": "[host] hitch liveajlk9g_0: frame_us=50054 paints=39 skips=0 ticks=1"}
+{"elapsed_seconds": 13.480482, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 13.480549, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 13.707189, "line": "[host] slot liveajlk9g_0: d_loop_us=16957 d_raster_us=172181 d_observe_us=81845 max_observe_us=3703 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 14.97837, "line": "[host] slot liveajlk9g_0: d_loop_us=1452 d_raster_us=185290 d_observe_us=48697 max_observe_us=5690 d_paints=50 d_skips=0 d_ticks=4 window_ms=1271"}
+{"elapsed_seconds": 15.485028, "line": "live script_rune_crafter_earth: running step 3/28"}
+{"elapsed_seconds": 16.068383, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 16.193326, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 16.193398, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 16.268466, "line": "[host] slot liveajlk9g_0: d_loop_us=14486 d_raster_us=176654 d_observe_us=63755 max_observe_us=8158 d_paints=50 d_skips=0 d_ticks=2 window_ms=1290"}
+{"elapsed_seconds": 17.530927, "line": "[host] slot liveajlk9g_0: d_loop_us=1054 d_raster_us=206405 d_observe_us=53572 max_observe_us=4823 d_paints=50 d_skips=0 d_ticks=2 window_ms=1262"}
+{"elapsed_seconds": 18.209987, "line": "live script_rune_crafter_earth: running step 4/28"}
+{"elapsed_seconds": 18.25168, "line": "live script_rune_crafter_earth: running step 5/28"}
+{"elapsed_seconds": 18.272153, "line": "live script_rune_crafter_earth: running step 6/28"}
+{"elapsed_seconds": 18.293339, "line": "live script_rune_crafter_earth: running step 7/28"}
+{"elapsed_seconds": 18.313711, "line": "live script_rune_crafter_earth: running step 8/28"}
+{"elapsed_seconds": 18.335014, "line": "live script_rune_crafter_earth: running step 9/28"}
+{"elapsed_seconds": 18.37669, "line": "live script_rune_crafter_earth: running step 10/28"}
+{"elapsed_seconds": 18.793648, "line": "[host] slot liveajlk9g_0: d_loop_us=982 d_raster_us=207797 d_observe_us=36091 max_observe_us=1234 d_paints=50 d_skips=0 d_ticks=2 window_ms=1262"}
+{"elapsed_seconds": 19.088818, "line": "live script_rune_crafter_earth: running step 11/28"}
+{"elapsed_seconds": 19.109983, "line": "live script_rune_crafter_earth: running step 12/28"}
+{"elapsed_seconds": 19.130487, "line": "live script_rune_crafter_earth: running step 13/28"}
+{"elapsed_seconds": 19.151675, "line": "live script_rune_crafter_earth: running step 14/28"}
+{"elapsed_seconds": 19.193364, "line": "live script_rune_crafter_earth: running step 15/28"}
+{"elapsed_seconds": 19.672045, "line": "live script_rune_crafter_earth: running step 16/28"}
+{"elapsed_seconds": 19.692083, "line": "[script liveajlk9g_0] start load"}
+{"elapsed_seconds": 19.766894, "line": "live script_rune_crafter_earth: running step 17/28"}
+{"elapsed_seconds": 19.766979, "line": "[host] hitch liveajlk9g_0: observe_us=75365 paints=284 skips=0 ticks=13"}
+{"elapsed_seconds": 20.139233, "line": "[host] slot liveajlk9g_0: d_loop_us=981 d_raster_us=223208 d_observe_us=120931 max_observe_us=75365 d_paints=50 d_skips=0 d_ticks=2 window_ms=1345"}
+{"elapsed_seconds": 20.283272, "line": "[host] hitch liveajlk9g_0: observe_us=23806 paints=304 skips=0 ticks=14"}
+{"elapsed_seconds": 20.872825, "line": "[script liveajlk9g_0] RuneCrafter starting \u2014 Earth runes, ruins (3303, 3477, 0), bank (3253, 3420, 0)"}
+{"elapsed_seconds": 20.872922, "line": "[script liveajlk9g_0] heading to the bank"}
+{"elapsed_seconds": 20.872952, "line": "[script liveajlk9g_0] interact OpenBooth { x: 3252, z: 3419, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 20.880479, "line": "[panel] liveajlk9g_0: script: RuneCrafter starting \u2014 Earth runes, ruins (3303, 3477, 0), bank (3253, 3420, 0)"}
+{"elapsed_seconds": 20.880551, "line": "[panel] liveajlk9g_0: script: heading to the bank"}
+{"elapsed_seconds": 21.422737, "line": "[host] slot liveajlk9g_0: d_loop_us=964 d_raster_us=197123 d_observe_us=73825 max_observe_us=23806 d_paints=50 d_skips=0 d_ticks=2 window_ms=1283"}
+{"elapsed_seconds": 22.08268, "line": "[script liveajlk9g_0] interact SetNoteMode { on: false }"}
+{"elapsed_seconds": 22.082795, "line": "[shim-note] on=false sent"}
+{"elapsed_seconds": 22.694395, "line": "[host] slot liveajlk9g_0: d_loop_us=944 d_raster_us=242089 d_observe_us=74623 max_observe_us=13978 d_paints=50 d_skips=0 d_ticks=3 window_ms=1271"}
+{"elapsed_seconds": 23.963407, "line": "[host] slot liveajlk9g_0: d_loop_us=963 d_raster_us=253029 d_observe_us=62237 max_observe_us=11815 d_paints=50 d_skips=0 d_ticks=2 window_ms=1268"}
+{"elapsed_seconds": 25.211708, "line": "[host] slot liveajlk9g_0: d_loop_us=910 d_raster_us=245620 d_observe_us=60297 max_observe_us=10854 d_paints=50 d_skips=0 d_ticks=2 window_ms=1248"}
+{"elapsed_seconds": 26.470758, "line": "[host] slot liveajlk9g_0: d_loop_us=958 d_raster_us=210289 d_observe_us=55232 max_observe_us=11748 d_paints=50 d_skips=0 d_ticks=2 window_ms=1259"}
+{"elapsed_seconds": 26.89253, "line": "[script liveajlk9g_0] withdrew a Earth talisman"}
+{"elapsed_seconds": 26.901657, "line": "[panel] liveajlk9g_0: script: withdrew a Earth talisman"}
+{"elapsed_seconds": 27.469206, "line": "live script_rune_crafter_earth: running step 18/28"}
+{"elapsed_seconds": 27.734571, "line": "[host] slot liveajlk9g_0: d_loop_us=967 d_raster_us=254793 d_observe_us=65581 max_observe_us=14032 d_paints=50 d_skips=0 d_ticks=2 window_ms=1263"}
+{"elapsed_seconds": 28.063921, "line": "[script liveajlk9g_0] withdrew 27 rune essence (trip 1)"}
+{"elapsed_seconds": 28.068303, "line": "[panel] liveajlk9g_0: script: withdrew 27 rune essence (trip 1)"}
+{"elapsed_seconds": 28.682765, "line": "[script liveajlk9g_0] heading to the mysterious ruins"}
+{"elapsed_seconds": 28.682993, "line": "[script liveajlk9g_0] interact WalkNear { x: 3303, z: 3477, level: 0, radius: 1, allow_teleports: false }"}
+{"elapsed_seconds": 28.693298, "line": "[panel] liveajlk9g_0: script: heading to the mysterious ruins"}
+{"elapsed_seconds": 28.992552, "line": "[host] slot liveajlk9g_0: d_loop_us=929 d_raster_us=231571 d_observe_us=59024 max_observe_us=11545 d_paints=50 d_skips=0 d_ticks=2 window_ms=1257"}
+{"elapsed_seconds": 29.266505, "line": "[nav-follow] here=WorldTile { x: 3252, z: 3420, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 29.8826, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3422, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 29.882685, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3422, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 29.882702, "line": "[host] hitch liveajlk9g_0: observe_us=23331 paints=684 skips=0 ticks=30"}
+{"elapsed_seconds": 30.245295, "line": "[host] slot liveajlk9g_0: d_loop_us=946 d_raster_us=220133 d_observe_us=74073 max_observe_us=23331 d_paints=50 d_skips=0 d_ticks=2 window_ms=1252"}
+{"elapsed_seconds": 30.491376, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3424, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 30.491515, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3424, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 30.491538, "line": "[host] hitch liveajlk9g_0: observe_us=26230 paints=708 skips=0 ticks=31"}
+{"elapsed_seconds": 31.065906, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3426, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 31.066019, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3426, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 31.066046, "line": "[host] hitch liveajlk9g_0: observe_us=23949 paints=730 skips=0 ticks=32"}
+{"elapsed_seconds": 31.53724, "line": "[host] slot liveajlk9g_0: d_loop_us=988 d_raster_us=189843 d_observe_us=94695 max_observe_us=26230 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 31.68281, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 31.682901, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 31.68292, "line": "[host] hitch liveajlk9g_0: observe_us=22974 paints=754 skips=0 ticks=33"}
+{"elapsed_seconds": 32.274121, "line": "[nav-walk] here=WorldTile { x: 3256, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 32.274209, "line": "[nav-follow] here=WorldTile { x: 3256, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 32.274224, "line": "[host] hitch liveajlk9g_0: observe_us=25279 paints=777 skips=0 ticks=34"}
+{"elapsed_seconds": 32.836109, "line": "[host] slot liveajlk9g_0: d_loop_us=968 d_raster_us=173567 d_observe_us=86860 max_observe_us=25279 d_paints=50 d_skips=0 d_ticks=3 window_ms=1298"}
+{"elapsed_seconds": 32.876698, "line": "[nav-walk] here=WorldTile { x: 3258, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 32.876779, "line": "[nav-follow] here=WorldTile { x: 3258, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 32.876797, "line": "[host] hitch liveajlk9g_0: observe_us=18938 paints=800 skips=0 ticks=35"}
+{"elapsed_seconds": 33.48693, "line": "[nav-walk] here=WorldTile { x: 3260, z: 3429, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 33.487005, "line": "[nav-follow] here=WorldTile { x: 3260, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 33.487021, "line": "[host] hitch liveajlk9g_0: observe_us=21839 paints=824 skips=0 ticks=36"}
+{"elapsed_seconds": 34.073961, "line": "[nav-walk] here=WorldTile { x: 3262, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 34.074151, "line": "[nav-follow] here=WorldTile { x: 3262, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 34.074232, "line": "[host] hitch liveajlk9g_0: observe_us=25516 paints=846 skips=0 ticks=37"}
+{"elapsed_seconds": 34.127631, "line": "[host] slot liveajlk9g_0: d_loop_us=931 d_raster_us=165579 d_observe_us=102331 max_observe_us=25516 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 34.692976, "line": "[nav-walk] here=WorldTile { x: 3264, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 34.693035, "line": "[nav-follow] here=WorldTile { x: 3264, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 34.693049, "line": "[host] hitch liveajlk9g_0: observe_us=27844 paints=870 skips=0 ticks=38"}
+{"elapsed_seconds": 35.285372, "line": "[nav-walk] here=WorldTile { x: 3266, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 35.285444, "line": "[nav-follow] here=WorldTile { x: 3266, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 35.285458, "line": "[host] hitch liveajlk9g_0: observe_us=21904 paints=893 skips=0 ticks=39"}
+{"elapsed_seconds": 35.405559, "line": "[host] slot liveajlk9g_0: d_loop_us=1072 d_raster_us=163527 d_observe_us=96104 max_observe_us=27844 d_paints=50 d_skips=0 d_ticks=2 window_ms=1277"}
+{"elapsed_seconds": 35.875718, "line": "[nav-walk] here=WorldTile { x: 3268, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 35.875796, "line": "[nav-follow] here=WorldTile { x: 3268, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 35.875815, "line": "[host] hitch liveajlk9g_0: observe_us=25079 paints=916 skips=0 ticks=40"}
+{"elapsed_seconds": 36.466212, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 36.466411, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 36.466466, "line": "[host] hitch liveajlk9g_0: observe_us=26069 paints=939 skips=0 ticks=41"}
+{"elapsed_seconds": 36.703131, "line": "[host] slot liveajlk9g_0: d_loop_us=1004 d_raster_us=151349 d_observe_us=89881 max_observe_us=26069 d_paints=50 d_skips=0 d_ticks=2 window_ms=1297"}
+{"elapsed_seconds": 37.081947, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 37.082218, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 37.082478, "line": "[host] hitch liveajlk9g_0: observe_us=25150 paints=963 skips=0 ticks=42"}
+{"elapsed_seconds": 37.681742, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3431, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 37.681895, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3431, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 37.681921, "line": "[host] hitch liveajlk9g_0: observe_us=22116 paints=986 skips=0 ticks=43"}
+{"elapsed_seconds": 37.985477, "line": "[host] slot liveajlk9g_0: d_loop_us=932 d_raster_us=151573 d_observe_us=87633 max_observe_us=25150 d_paints=50 d_skips=0 d_ticks=2 window_ms=1282"}
+{"elapsed_seconds": 38.281662, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3433, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 38.281734, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3433, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 38.281763, "line": "[host] hitch liveajlk9g_0: observe_us=22761 paints=1010 skips=0 ticks=44"}
+{"elapsed_seconds": 38.863611, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3435, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 38.863684, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3435, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 38.863701, "line": "[host] hitch liveajlk9g_0: observe_us=19692 paints=1033 skips=0 ticks=45"}
+{"elapsed_seconds": 39.235497, "line": "[host] slot liveajlk9g_0: d_loop_us=1092 d_raster_us=127681 d_observe_us=78095 max_observe_us=22761 d_paints=50 d_skips=0 d_ticks=2 window_ms=1250"}
+{"elapsed_seconds": 39.486998, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3437, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 39.487066, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3437, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 39.487082, "line": "[host] hitch liveajlk9g_0: observe_us=18791 paints=1058 skips=0 ticks=46"}
+{"elapsed_seconds": 40.077396, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3439, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 40.077451, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3439, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 40.077464, "line": "[host] hitch liveajlk9g_0: observe_us=20631 paints=1081 skips=0 ticks=47"}
+{"elapsed_seconds": 40.527158, "line": "[host] slot liveajlk9g_0: d_loop_us=928 d_raster_us=121464 d_observe_us=71562 max_observe_us=20631 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 40.667681, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3439, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 40.667743, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3439, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 40.66776, "line": "[host] hitch liveajlk9g_0: observe_us=19238 paints=1104 skips=0 ticks=48"}
+{"elapsed_seconds": 41.293805, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3440, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 41.293878, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3440, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 41.293908, "line": "[host] hitch liveajlk9g_0: observe_us=25683 paints=1128 skips=0 ticks=49"}
+{"elapsed_seconds": 41.819049, "line": "[host] slot liveajlk9g_0: d_loop_us=852 d_raster_us=129346 d_observe_us=85032 max_observe_us=25683 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 41.888091, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3442, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 41.888153, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3442, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 41.888171, "line": "[host] hitch liveajlk9g_0: observe_us=22989 paints=1151 skips=0 ticks=50"}
+{"elapsed_seconds": 42.471048, "line": "[nav-walk] here=WorldTile { x: 3281, z: 3444, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 42.471115, "line": "[nav-follow] here=WorldTile { x: 3281, z: 3444, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 42.471131, "line": "[host] hitch liveajlk9g_0: observe_us=27141 paints=1175 skips=0 ticks=51"}
+{"elapsed_seconds": 43.075829, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3446, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 43.075889, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3446, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 43.075903, "line": "[host] hitch liveajlk9g_0: observe_us=19513 paints=1199 skips=0 ticks=52"}
+{"elapsed_seconds": 43.078504, "line": "[host] slot liveajlk9g_0: d_loop_us=874 d_raster_us=140949 d_observe_us=108381 max_observe_us=27141 d_paints=50 d_skips=0 d_ticks=3 window_ms=1259"}
+{"elapsed_seconds": 43.674736, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3448, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 43.674815, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3448, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 43.674834, "line": "[host] hitch liveajlk9g_0: observe_us=26298 paints=1222 skips=0 ticks=53"}
+{"elapsed_seconds": 44.285512, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3450, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 44.285593, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3450, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 44.285613, "line": "[host] hitch liveajlk9g_0: observe_us=24451 paints=1246 skips=0 ticks=54"}
+{"elapsed_seconds": 44.342642, "line": "[host] slot liveajlk9g_0: d_loop_us=710 d_raster_us=120783 d_observe_us=87387 max_observe_us=26298 d_paints=50 d_skips=0 d_ticks=2 window_ms=1264"}
+{"elapsed_seconds": 44.870899, "line": "[nav-walk] here=WorldTile { x: 3285, z: 3452, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 44.870977, "line": "[nav-follow] here=WorldTile { x: 3285, z: 3452, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 44.870996, "line": "[host] hitch liveajlk9g_0: observe_us=25137 paints=1269 skips=0 ticks=55"}
+{"elapsed_seconds": 45.487098, "line": "[nav-walk] here=WorldTile { x: 3287, z: 3454, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 45.487174, "line": "[nav-follow] here=WorldTile { x: 3287, z: 3454, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 45.487206, "line": "[host] hitch liveajlk9g_0: observe_us=23933 paints=1293 skips=0 ticks=56"}
+{"elapsed_seconds": 45.618924, "line": "[host] slot liveajlk9g_0: d_loop_us=727 d_raster_us=119576 d_observe_us=89104 max_observe_us=25137 d_paints=50 d_skips=0 d_ticks=2 window_ms=1276"}
+{"elapsed_seconds": 46.084955, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 46.188725, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 46.188789, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 46.658458, "line": "[nav-walk] here=WorldTile { x: 3291, z: 3458, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 46.658593, "line": "[nav-follow] here=WorldTile { x: 3291, z: 3458, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 46.658621, "line": "[host] hitch liveajlk9g_0: observe_us=18376 paints=1339 skips=0 ticks=58"}
+{"elapsed_seconds": 46.893254, "line": "[host] slot liveajlk9g_0: d_loop_us=8752 d_raster_us=120547 d_observe_us=88419 max_observe_us=18376 d_paints=50 d_skips=0 d_ticks=2 window_ms=1274"}
+{"elapsed_seconds": 47.279842, "line": "[nav-walk] here=WorldTile { x: 3293, z: 3460, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 47.279902, "line": "[nav-follow] here=WorldTile { x: 3293, z: 3460, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 47.875985, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3462, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 47.876045, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3462, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 48.169786, "line": "[host] slot liveajlk9g_0: d_loop_us=733 d_raster_us=114903 d_observe_us=60662 max_observe_us=14858 d_paints=50 d_skips=0 d_ticks=2 window_ms=1276"}
+{"elapsed_seconds": 48.46963, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3464, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 48.469697, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3464, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 48.469713, "line": "[host] hitch liveajlk9g_0: observe_us=18366 paints=1410 skips=0 ticks=61"}
+{"elapsed_seconds": 49.06583, "line": "[nav-walk] here=WorldTile { x: 3297, z: 3466, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 49.065911, "line": "[nav-follow] here=WorldTile { x: 3297, z: 3466, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 49.065927, "line": "[host] hitch liveajlk9g_0: observe_us=17427 paints=1433 skips=0 ticks=62"}
+{"elapsed_seconds": 49.480392, "line": "[host] slot liveajlk9g_0: d_loop_us=811 d_raster_us=125762 d_observe_us=71897 max_observe_us=18366 d_paints=50 d_skips=0 d_ticks=2 window_ms=1310"}
+{"elapsed_seconds": 49.68213, "line": "[nav-walk] here=WorldTile { x: 3299, z: 3468, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 49.682257, "line": "[nav-follow] here=WorldTile { x: 3299, z: 3468, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 49.682288, "line": "[host] hitch liveajlk9g_0: observe_us=16106 paints=1456 skips=0 ticks=63"}
+{"elapsed_seconds": 50.266142, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3470, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 50.266745, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3470, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 50.266777, "line": "[host] hitch liveajlk9g_0: observe_us=17696 paints=1479 skips=0 ticks=64"}
+{"elapsed_seconds": 50.767909, "line": "[host] slot liveajlk9g_0: d_loop_us=652 d_raster_us=139410 d_observe_us=65525 max_observe_us=17696 d_paints=50 d_skips=0 d_ticks=2 window_ms=1287"}
+{"elapsed_seconds": 50.865148, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3472, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 50.865252, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3472, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 50.865272, "line": "[host] hitch liveajlk9g_0: observe_us=22086 paints=1502 skips=0 ticks=65"}
+{"elapsed_seconds": 51.465889, "line": "live script_rune_crafter_earth: running step 19/28"}
+{"elapsed_seconds": 51.46596, "line": "[nav-walk] here=WorldTile { x: 3301, z: 3473, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 51.465979, "line": "[nav-follow] here=WorldTile { x: 3301, z: 3473, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 51.46599, "line": "[host] hitch liveajlk9g_0: observe_us=17492 paints=1525 skips=0 ticks=66"}
+{"elapsed_seconds": 52.072828, "line": "[nav-walk] here=WorldTile { x: 3302, z: 3474, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 52.072905, "line": "[nav-follow] here=WorldTile { x: 3302, z: 3474, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 52.072927, "line": "[host] hitch liveajlk9g_0: observe_us=20449 paints=1548 skips=0 ticks=67"}
+{"elapsed_seconds": 52.079326, "line": "[host] slot liveajlk9g_0: d_loop_us=747 d_raster_us=131098 d_observe_us=94501 max_observe_us=22086 d_paints=50 d_skips=0 d_ticks=3 window_ms=1311"}
+{"elapsed_seconds": 52.667711, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3474, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 52.667791, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3474, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 52.66781, "line": "[host] hitch liveajlk9g_0: observe_us=16367 paints=1572 skips=0 ticks=68"}
+{"elapsed_seconds": 53.269946, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3476, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 53.270004, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3476, level: 0 } walk=false transport=false leg=1 hops=5 outcome=Some(Arrived { at: WorldTile { x: 3304, z: 3476, level: 0 } })"}
+{"elapsed_seconds": 53.270021, "line": "[host] hitch liveajlk9g_0: observe_us=16151 paints=1598 skips=0 ticks=69"}
+{"elapsed_seconds": 53.277153, "line": "[host] slot liveajlk9g_0: d_loop_us=751 d_raster_us=130300 d_observe_us=65618 max_observe_us=16367 d_paints=50 d_skips=0 d_ticks=2 window_ms=1197"}
+{"elapsed_seconds": 53.298257, "line": "[script liveajlk9g_0] using the Earth talisman on the mysterious ruins"}
+{"elapsed_seconds": 53.298366, "line": "[script liveajlk9g_0] interact UseOn { name: \"Earth talisman\", kind: \"loc\", target_name: Some(\"Mysterious ruins\"), x: 3305, z: 3473, level: 0, index: None, source_item_id: Some(1440), source_item_slot: Some(0), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 53.30947, "line": "[panel] liveajlk9g_0: script: using the Earth talisman on the mysterious ruins"}
+{"elapsed_seconds": 54.456838, "line": "[host] slot liveajlk9g_0: d_loop_us=726 d_raster_us=137299 d_observe_us=55818 max_observe_us=13945 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179"}
+{"elapsed_seconds": 55.617177, "line": "[host] slot liveajlk9g_0: d_loop_us=759 d_raster_us=136400 d_observe_us=41717 max_observe_us=9414 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160"}
+{"elapsed_seconds": 55.663617, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 55.726254, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 55.726311, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 56.29837, "line": "[script liveajlk9g_0] entered the altar"}
+{"elapsed_seconds": 56.309454, "line": "[panel] liveajlk9g_0: script: entered the altar"}
+{"elapsed_seconds": 56.767842, "line": "[host] slot liveajlk9g_0: d_loop_us=6013 d_raster_us=147909 d_observe_us=67413 max_observe_us=11327 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 56.882224, "line": "[script liveajlk9g_0] crafting 27 essence at the altar"}
+{"elapsed_seconds": 56.882303, "line": "[script liveajlk9g_0] interact Loc { x: 2657, z: 4840, level: 0, action: \"Craft-rune\", id: Some(2481) }"}
+{"elapsed_seconds": 56.892788, "line": "[panel] liveajlk9g_0: script: crafting 27 essence at the altar"}
+{"elapsed_seconds": 57.941704, "line": "[host] slot liveajlk9g_0: d_loop_us=722 d_raster_us=145818 d_observe_us=47225 max_observe_us=10048 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 59.092784, "line": "[host] slot liveajlk9g_0: d_loop_us=703 d_raster_us=144722 d_observe_us=46351 max_observe_us=9141 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 60.260666, "line": "[host] slot liveajlk9g_0: d_loop_us=697 d_raster_us=138584 d_observe_us=48574 max_observe_us=9633 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 60.470026, "line": "[script liveajlk9g_0] crafted 27 Earth runes"}
+{"elapsed_seconds": 60.472383, "line": "[script liveajlk9g_0] taking the portal back to the ruins"}
+{"elapsed_seconds": 60.472433, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 60.476115, "line": "[panel] liveajlk9g_0: script: crafted 27 Earth runes"}
+{"elapsed_seconds": 60.476164, "line": "[panel] liveajlk9g_0: script: taking the portal back to the ruins"}
+{"elapsed_seconds": 60.476185, "line": "live script_rune_crafter_earth: running step 20/28"}
+{"elapsed_seconds": 60.496916, "line": "live script_rune_crafter_earth: running step 21/28"}
+{"elapsed_seconds": 60.517731, "line": "live script_rune_crafter_earth: running step 22/28"}
+{"elapsed_seconds": 61.063492, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 61.44216, "line": "[host] slot liveajlk9g_0: d_loop_us=747 d_raster_us=148461 d_observe_us=46902 max_observe_us=9558 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181"}
+{"elapsed_seconds": 61.66531, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 62.26803, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 62.600006, "line": "[host] slot liveajlk9g_0: d_loop_us=777 d_raster_us=151120 d_observe_us=42551 max_observe_us=6398 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 62.8592, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 63.469326, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 63.773782, "line": "[host] slot liveajlk9g_0: d_loop_us=746 d_raster_us=138022 d_observe_us=42109 max_observe_us=7849 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 64.074703, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 64.693952, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 64.933705, "line": "[host] slot liveajlk9g_0: d_loop_us=774 d_raster_us=143013 d_observe_us=52849 max_observe_us=10797 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 65.273332, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 65.871074, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 66.08245, "line": "[host] slot liveajlk9g_0: d_loop_us=787 d_raster_us=147661 d_observe_us=54125 max_observe_us=11433 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 66.455304, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 66.538657, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 66.538738, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 67.106493, "line": "[script liveajlk9g_0] back at the mysterious ruins"}
+{"elapsed_seconds": 67.121974, "line": "[panel] liveajlk9g_0: script: back at the mysterious ruins"}
+{"elapsed_seconds": 67.249598, "line": "[host] slot liveajlk9g_0: d_loop_us=9910 d_raster_us=144686 d_observe_us=79525 max_observe_us=15073 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 67.681801, "line": "[script liveajlk9g_0] heading to the bank"}
+{"elapsed_seconds": 67.68189, "line": "[script liveajlk9g_0] interact WalkNear { x: 3253, z: 3420, level: 0, radius: 3, allow_teleports: false }"}
+{"elapsed_seconds": 67.684423, "line": "[panel] liveajlk9g_0: script: heading to the bank"}
+{"elapsed_seconds": 68.253465, "line": "[nav-follow] here=WorldTile { x: 3303, z: 3477, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 68.410532, "line": "[host] slot liveajlk9g_0: d_loop_us=751 d_raster_us=148689 d_observe_us=52204 max_observe_us=9629 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 68.559522, "line": "live script_rune_crafter_earth: running step 23/28"}
+{"elapsed_seconds": 68.86758, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3476, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 68.86765, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3476, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 68.867669, "line": "[host] hitch liveajlk9g_0: observe_us=16594 paints=2268 skips=0 ticks=95"}
+{"elapsed_seconds": 69.454137, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3474, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 69.454203, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3474, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 69.580913, "line": "[host] slot liveajlk9g_0: d_loop_us=747 d_raster_us=143502 d_observe_us=65917 max_observe_us=16594 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 70.065354, "line": "[nav-walk] here=WorldTile { x: 3302, z: 3474, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 70.065443, "line": "[nav-follow] here=WorldTile { x: 3302, z: 3474, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 70.06546, "line": "[host] hitch liveajlk9g_0: observe_us=17710 paints=2319 skips=0 ticks=97"}
+{"elapsed_seconds": 70.649839, "line": "[nav-walk] here=WorldTile { x: 3301, z: 3473, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 70.649909, "line": "[nav-follow] here=WorldTile { x: 3301, z: 3473, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 70.750189, "line": "[host] slot liveajlk9g_0: d_loop_us=755 d_raster_us=137052 d_observe_us=66990 max_observe_us=17710 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 71.269068, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3472, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 71.269131, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3472, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 71.871514, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3470, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 71.871583, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3470, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 71.871602, "line": "[host] hitch liveajlk9g_0: observe_us=17613 paints=2397 skips=0 ticks=100"}
+{"elapsed_seconds": 71.898956, "line": "[host] slot liveajlk9g_0: d_loop_us=728 d_raster_us=142490 d_observe_us=68093 max_observe_us=17613 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 72.464234, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3468, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 72.464306, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3468, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 72.464427, "line": "[host] hitch liveajlk9g_0: observe_us=16600 paints=2423 skips=0 ticks=101"}
+{"elapsed_seconds": 73.064464, "line": "[nav-walk] here=WorldTile { x: 3299, z: 3466, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 73.064663, "line": "[nav-follow] here=WorldTile { x: 3299, z: 3466, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 73.064684, "line": "[host] hitch liveajlk9g_0: observe_us=17813 paints=2449 skips=0 ticks=102"}
+{"elapsed_seconds": 73.077802, "line": "[host] slot liveajlk9g_0: d_loop_us=734 d_raster_us=151372 d_observe_us=66970 max_observe_us=17813 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 73.65531, "line": "[nav-walk] here=WorldTile { x: 3297, z: 3464, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 73.655377, "line": "[nav-follow] here=WorldTile { x: 3297, z: 3464, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 73.655399, "line": "[host] hitch liveajlk9g_0: observe_us=17046 paints=2474 skips=0 ticks=103"}
+{"elapsed_seconds": 74.222725, "line": "[host] slot liveajlk9g_0: d_loop_us=716 d_raster_us=143695 d_observe_us=51590 max_observe_us=17046 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 74.260156, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3462, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 74.260231, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3462, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 74.260252, "line": "[host] hitch liveajlk9g_0: observe_us=18794 paints=2500 skips=0 ticks=104"}
+{"elapsed_seconds": 74.858956, "line": "[nav-walk] here=WorldTile { x: 3294, z: 3460, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 74.859027, "line": "[nav-follow] here=WorldTile { x: 3294, z: 3460, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 75.379733, "line": "[host] slot liveajlk9g_0: d_loop_us=757 d_raster_us=133112 d_observe_us=67173 max_observe_us=18794 d_paints=50 d_skips=0 d_ticks=1 window_ms=1156"}
+{"elapsed_seconds": 75.458745, "line": "[nav-walk] here=WorldTile { x: 3292, z: 3458, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 75.458809, "line": "[nav-follow] here=WorldTile { x: 3292, z: 3458, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 75.643063, "line": "[panel] rss=601030656 traffic_sum=5982"}
+{"elapsed_seconds": 75.643129, "line": "[panel] present pixmap=0 tex=2676 bind_noop=2674 bind_rereg=2"}
+{"elapsed_seconds": 76.064667, "line": "[nav-walk] here=WorldTile { x: 3290, z: 3456, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 76.06478, "line": "[nav-follow] here=WorldTile { x: 3290, z: 3456, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 76.544723, "line": "[host] slot liveajlk9g_0: d_loop_us=744 d_raster_us=125772 d_observe_us=55324 max_observe_us=12992 d_paints=49 d_skips=1 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 76.651484, "line": "[nav-walk] here=WorldTile { x: 3288, z: 3454, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 76.65155, "line": "[nav-follow] here=WorldTile { x: 3288, z: 3454, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 76.651568, "line": "[host] hitch liveajlk9g_0: observe_us=17116 paints=2602 skips=1 ticks=108"}
+{"elapsed_seconds": 76.65162, "line": "[panel] rss=601030656 traffic_sum=6015"}
+{"elapsed_seconds": 76.651678, "line": "[panel] present pixmap=0 tex=2716 bind_noop=2714 bind_rereg=2"}
+{"elapsed_seconds": 77.255317, "line": "[nav-walk] here=WorldTile { x: 3288, z: 3452, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 77.255393, "line": "[nav-follow] here=WorldTile { x: 3288, z: 3452, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 77.255412, "line": "[host] hitch liveajlk9g_0: observe_us=16981 paints=2628 skips=1 ticks=109"}
+{"elapsed_seconds": 77.663697, "line": "[panel] rss=601030656 traffic_sum=6072"}
+{"elapsed_seconds": 77.663762, "line": "[panel] present pixmap=0 tex=2759 bind_noop=2757 bind_rereg=2"}
+{"elapsed_seconds": 77.708052, "line": "[host] slot liveajlk9g_0: d_loop_us=804 d_raster_us=129943 d_observe_us=66345 max_observe_us=17116 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 77.859076, "line": "[nav-walk] here=WorldTile { x: 3287, z: 3450, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 77.859143, "line": "[nav-follow] here=WorldTile { x: 3287, z: 3450, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 77.859162, "line": "[host] hitch liveajlk9g_0: observe_us=18249 paints=2654 skips=1 ticks=110"}
+{"elapsed_seconds": 78.460114, "line": "[nav-walk] here=WorldTile { x: 3285, z: 3448, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 78.460187, "line": "[nav-follow] here=WorldTile { x: 3285, z: 3448, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 78.460205, "line": "[host] hitch liveajlk9g_0: observe_us=17021 paints=2680 skips=1 ticks=111"}
+{"elapsed_seconds": 78.684582, "line": "[panel] rss=601030656 traffic_sum=6118"}
+{"elapsed_seconds": 78.684645, "line": "[panel] present pixmap=0 tex=2800 bind_noop=2798 bind_rereg=2"}
+{"elapsed_seconds": 78.872076, "line": "[host] slot liveajlk9g_0: d_loop_us=790 d_raster_us=125163 d_observe_us=68585 max_observe_us=18249 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 79.070637, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3446, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 79.070726, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3446, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 79.070746, "line": "[host] hitch liveajlk9g_0: observe_us=16793 paints=2706 skips=1 ticks=112"}
+{"elapsed_seconds": 79.657145, "line": "[nav-walk] here=WorldTile { x: 3281, z: 3444, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 79.657238, "line": "[nav-follow] here=WorldTile { x: 3281, z: 3444, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 79.684588, "line": "[panel] rss=601030656 traffic_sum=6167"}
+{"elapsed_seconds": 79.684675, "line": "[panel] present pixmap=0 tex=2841 bind_noop=2839 bind_rereg=2"}
+{"elapsed_seconds": 80.041612, "line": "[host] slot liveajlk9g_0: d_loop_us=752 d_raster_us=125283 d_observe_us=63315 max_observe_us=16793 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 80.260484, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3442, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 80.260549, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3442, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 80.70537, "line": "[panel] rss=601030656 traffic_sum=6193"}
+{"elapsed_seconds": 80.705434, "line": "[panel] present pixmap=0 tex=2886 bind_noop=2884 bind_rereg=2"}
+{"elapsed_seconds": 80.870895, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3440, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 80.870948, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3440, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 80.870976, "line": "[host] hitch liveajlk9g_0: observe_us=16004 paints=2784 skips=1 ticks=115"}
+{"elapsed_seconds": 81.180014, "line": "[host] slot liveajlk9g_0: d_loop_us=848 d_raster_us=124722 d_observe_us=66843 max_observe_us=16004 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 81.455288, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 81.559413, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 81.559478, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 81.705412, "line": "[panel] rss=604012544 traffic_sum=6446"}
+{"elapsed_seconds": 81.70548, "line": "[panel] present pixmap=0 tex=2927 bind_noop=2925 bind_rereg=2"}
+{"elapsed_seconds": 82.062963, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3439, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 82.063034, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3439, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 82.063051, "line": "[host] hitch liveajlk9g_0: observe_us=19426 paints=2835 skips=1 ticks=117"}
+{"elapsed_seconds": 82.357857, "line": "[host] slot liveajlk9g_0: d_loop_us=9347 d_raster_us=128354 d_observe_us=86991 max_observe_us=19426 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 82.66951, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3437, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 82.669582, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3437, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 82.669597, "line": "[host] hitch liveajlk9g_0: observe_us=18121 paints=2861 skips=1 ticks=118"}
+{"elapsed_seconds": 82.705431, "line": "[panel] rss=604028928 traffic_sum=6511"}
+{"elapsed_seconds": 82.705507, "line": "[panel] present pixmap=0 tex=2968 bind_noop=2966 bind_rereg=2"}
+{"elapsed_seconds": 83.259501, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3435, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 83.259575, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3435, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 83.259594, "line": "[host] hitch liveajlk9g_0: observe_us=20201 paints=2886 skips=1 ticks=119"}
+{"elapsed_seconds": 83.521221, "line": "[host] slot liveajlk9g_0: d_loop_us=864 d_raster_us=130772 d_observe_us=69263 max_observe_us=20201 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 83.726226, "line": "[panel] rss=604127232 traffic_sum=6539"}
+{"elapsed_seconds": 83.726283, "line": "[panel] present pixmap=0 tex=3010 bind_noop=3008 bind_rereg=2"}
+{"elapsed_seconds": 83.863613, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3433, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 83.863681, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3433, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 84.473052, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 84.473155, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 84.47318, "line": "[host] hitch liveajlk9g_0: observe_us=20860 paints=2938 skips=1 ticks=121"}
+{"elapsed_seconds": 84.69172, "line": "[host] slot liveajlk9g_0: d_loop_us=848 d_raster_us=127562 d_observe_us=68783 max_observe_us=20860 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 84.726347, "line": "[panel] rss=604160000 traffic_sum=6587"}
+{"elapsed_seconds": 84.726421, "line": "[panel] present pixmap=0 tex=3051 bind_noop=3049 bind_rereg=2"}
+{"elapsed_seconds": 85.059037, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 85.059118, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 85.059135, "line": "[host] hitch liveajlk9g_0: observe_us=19764 paints=2963 skips=1 ticks=122"}
+{"elapsed_seconds": 85.665899, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 85.665968, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 85.665982, "line": "[host] hitch liveajlk9g_0: observe_us=19823 paints=2989 skips=1 ticks=123"}
+{"elapsed_seconds": 85.726368, "line": "[panel] rss=604274688 traffic_sum=6649"}
+{"elapsed_seconds": 85.72643, "line": "[panel] present pixmap=0 tex=3092 bind_noop=3090 bind_rereg=2"}
+{"elapsed_seconds": 85.859042, "line": "[host] slot liveajlk9g_0: d_loop_us=946 d_raster_us=141694 d_observe_us=72016 max_observe_us=19823 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 86.269286, "line": "[nav-walk] here=WorldTile { x: 3268, z: 3430, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 86.269368, "line": "[nav-follow] here=WorldTile { x: 3268, z: 3430, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 86.269386, "line": "[host] hitch liveajlk9g_0: observe_us=21578 paints=3015 skips=1 ticks=124"}
+{"elapsed_seconds": 86.747084, "line": "[panel] rss=604274688 traffic_sum=6695"}
+{"elapsed_seconds": 86.747151, "line": "[panel] present pixmap=0 tex=3135 bind_noop=3133 bind_rereg=2"}
+{"elapsed_seconds": 86.869231, "line": "[nav-walk] here=WorldTile { x: 3266, z: 3430, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3439, level: 0 })"}
+{"elapsed_seconds": 86.869291, "line": "[nav-follow] here=WorldTile { x: 3266, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 86.869306, "line": "[host] hitch liveajlk9g_0: observe_us=17894 paints=3041 skips=1 ticks=125"}
+{"elapsed_seconds": 87.017113, "line": "[host] slot liveajlk9g_0: d_loop_us=990 d_raster_us=143338 d_observe_us=69041 max_observe_us=21578 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 87.465263, "line": "[nav-walk] here=WorldTile { x: 3264, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 87.46533, "line": "[nav-follow] here=WorldTile { x: 3264, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 87.465347, "line": "[host] hitch liveajlk9g_0: observe_us=16463 paints=3067 skips=1 ticks=126"}
+{"elapsed_seconds": 87.767316, "line": "[panel] rss=604700672 traffic_sum=6753"}
+{"elapsed_seconds": 87.767381, "line": "[panel] present pixmap=0 tex=3177 bind_noop=3175 bind_rereg=2"}
+{"elapsed_seconds": 88.073724, "line": "[nav-walk] here=WorldTile { x: 3262, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 88.073804, "line": "[nav-follow] here=WorldTile { x: 3262, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 88.073821, "line": "[host] hitch liveajlk9g_0: observe_us=19928 paints=3093 skips=1 ticks=127"}
+{"elapsed_seconds": 88.173457, "line": "[host] slot liveajlk9g_0: d_loop_us=1084 d_raster_us=146199 d_observe_us=70814 max_observe_us=19928 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 88.658283, "line": "[nav-walk] here=WorldTile { x: 3260, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 88.658354, "line": "[nav-follow] here=WorldTile { x: 3260, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 88.658371, "line": "[host] hitch liveajlk9g_0: observe_us=23490 paints=3118 skips=1 ticks=128"}
+{"elapsed_seconds": 88.767856, "line": "[panel] rss=604717056 traffic_sum=6829"}
+{"elapsed_seconds": 88.767918, "line": "[panel] present pixmap=0 tex=3220 bind_noop=3218 bind_rereg=2"}
+{"elapsed_seconds": 89.271285, "line": "[nav-walk] here=WorldTile { x: 3258, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 89.27135, "line": "[nav-follow] here=WorldTile { x: 3258, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 89.271369, "line": "[host] hitch liveajlk9g_0: observe_us=19906 paints=3144 skips=1 ticks=129"}
+{"elapsed_seconds": 89.346921, "line": "[host] slot liveajlk9g_0: d_loop_us=1086 d_raster_us=147805 d_observe_us=73456 max_observe_us=23490 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 89.767921, "line": "[panel] rss=604798976 traffic_sum=6847"}
+{"elapsed_seconds": 89.767996, "line": "[panel] present pixmap=0 tex=3262 bind_noop=3260 bind_rereg=2"}
+{"elapsed_seconds": 89.872039, "line": "[nav-walk] here=WorldTile { x: 3256, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 89.87211, "line": "[nav-follow] here=WorldTile { x: 3256, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 89.872141, "line": "[host] hitch liveajlk9g_0: observe_us=18517 paints=3170 skips=1 ticks=130"}
+{"elapsed_seconds": 90.47422, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3428, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 90.474282, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3428, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 90.474299, "line": "[host] hitch liveajlk9g_0: observe_us=20009 paints=3196 skips=1 ticks=131"}
+{"elapsed_seconds": 90.505603, "line": "[host] slot liveajlk9g_0: d_loop_us=1047 d_raster_us=154734 d_observe_us=70645 max_observe_us=20009 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 90.767946, "line": "[panel] rss=604848128 traffic_sum=6896"}
+{"elapsed_seconds": 90.768011, "line": "[panel] present pixmap=0 tex=3303 bind_noop=3301 bind_rereg=2"}
+{"elapsed_seconds": 91.057586, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3426, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 91.057667, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3426, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 91.057688, "line": "[host] hitch liveajlk9g_0: observe_us=19440 paints=3221 skips=1 ticks=132"}
+{"elapsed_seconds": 91.665314, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3424, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 91.6654, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3424, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 91.665419, "line": "[host] hitch liveajlk9g_0: observe_us=18777 paints=3247 skips=1 ticks=133"}
+{"elapsed_seconds": 91.672265, "line": "[host] slot liveajlk9g_0: d_loop_us=912 d_raster_us=161408 d_observe_us=67901 max_observe_us=19440 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 91.788711, "line": "[panel] rss=604848128 traffic_sum=6923"}
+{"elapsed_seconds": 91.788779, "line": "[panel] present pixmap=0 tex=3344 bind_noop=3342 bind_rereg=2"}
+{"elapsed_seconds": 92.270332, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3422, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3266, z: 3430, level: 0 })"}
+{"elapsed_seconds": 92.270397, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3422, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 92.270414, "line": "[host] hitch liveajlk9g_0: observe_us=21070 paints=3273 skips=1 ticks=134"}
+{"elapsed_seconds": 92.301436, "line": "[script liveajlk9g_0] interact WalkNear { x: 3253, z: 3420, level: 0, radius: 1, allow_teleports: false }"}
+{"elapsed_seconds": 92.788775, "line": "[panel] rss=604848128 traffic_sum=7008"}
+{"elapsed_seconds": 92.788863, "line": "[panel] present pixmap=0 tex=3386 bind_noop=3384 bind_rereg=2"}
+{"elapsed_seconds": 92.850606, "line": "[nav-follow] here=WorldTile { x: 3251, z: 3422, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 92.850942, "line": "[host] hitch liveajlk9g_0: observe_us=18514 paints=3298 skips=1 ticks=135"}
+{"elapsed_seconds": 92.855619, "line": "[host] slot liveajlk9g_0: d_loop_us=1052 d_raster_us=172891 d_observe_us=76608 max_observe_us=21070 d_paints=50 d_skips=0 d_ticks=2 window_ms=1183"}
+{"elapsed_seconds": 93.453598, "line": "[nav-walk] here=WorldTile { x: 3252, z: 3421, level: 0 } aim=WorldTile { x: 3252, z: 3421, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3251, z: 3422, level: 0 })"}
+{"elapsed_seconds": 93.45366, "line": "[nav-follow] here=WorldTile { x: 3252, z: 3421, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3252, z: 3421, level: 0 } })"}
+{"elapsed_seconds": 93.453708, "line": "[host] hitch liveajlk9g_0: observe_us=17400 paints=3324 skips=1 ticks=136"}
+{"elapsed_seconds": 93.482379, "line": "[script liveajlk9g_0] interact OpenBooth { x: 3252, z: 3419, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 93.809534, "line": "[panel] rss=605241344 traffic_sum=7073"}
+{"elapsed_seconds": 93.809608, "line": "[panel] present pixmap=0 tex=3428 bind_noop=3426 bind_rereg=2"}
+{"elapsed_seconds": 93.999293, "line": "[host] slot liveajlk9g_0: d_loop_us=982 d_raster_us=188859 d_observe_us=47057 max_observe_us=17400 d_paints=50 d_skips=0 d_ticks=1 window_ms=1143"}
+{"elapsed_seconds": 94.057547, "line": "[host] hitch liveajlk9g_0: observe_us=17624 paints=3350 skips=1 ticks=137"}
+{"elapsed_seconds": 94.809697, "line": "[panel] rss=606208000 traffic_sum=7098"}
+{"elapsed_seconds": 94.809767, "line": "[panel] present pixmap=0 tex=3469 bind_noop=3467 bind_rereg=2"}
+{"elapsed_seconds": 95.168664, "line": "[host] slot liveajlk9g_0: d_loop_us=923 d_raster_us=184154 d_observe_us=54052 max_observe_us=17624 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 95.830539, "line": "[panel] rss=606240768 traffic_sum=7124"}
+{"elapsed_seconds": 95.830621, "line": "[panel] present pixmap=0 tex=3514 bind_noop=3512 bind_rereg=2"}
+{"elapsed_seconds": 96.308628, "line": "[host] slot liveajlk9g_0: d_loop_us=1039 d_raster_us=188759 d_observe_us=49408 max_observe_us=9025 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 96.85141, "line": "[panel] rss=606765056 traffic_sum=7152"}
+{"elapsed_seconds": 96.851488, "line": "[panel] present pixmap=0 tex=3557 bind_noop=3555 bind_rereg=2"}
+{"elapsed_seconds": 97.459579, "line": "[host] slot liveajlk9g_0: d_loop_us=997 d_raster_us=186701 d_observe_us=48745 max_observe_us=9734 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 97.872122, "line": "[panel] rss=606781440 traffic_sum=7178"}
+{"elapsed_seconds": 97.872187, "line": "[panel] present pixmap=0 tex=3601 bind_noop=3599 bind_rereg=2"}
+{"elapsed_seconds": 98.609539, "line": "[host] slot liveajlk9g_0: d_loop_us=943 d_raster_us=183791 d_observe_us=46427 max_observe_us=9096 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 98.860594, "line": "[script liveajlk9g_0] interact OpenBooth { x: 3252, z: 3419, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 98.893102, "line": "[panel] rss=607518720 traffic_sum=7219"}
+{"elapsed_seconds": 98.893169, "line": "[panel] present pixmap=0 tex=3645 bind_noop=3643 bind_rereg=2"}
+{"elapsed_seconds": 99.766776, "line": "[host] slot liveajlk9g_0: d_loop_us=978 d_raster_us=209778 d_observe_us=54459 max_observe_us=12601 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 99.913884, "line": "[panel] rss=608256000 traffic_sum=7290"}
+{"elapsed_seconds": 99.913985, "line": "[panel] present pixmap=0 tex=3688 bind_noop=3686 bind_rereg=2"}
+{"elapsed_seconds": 100.078291, "line": "[script liveajlk9g_0] interact SetNoteMode { on: false }"}
+{"elapsed_seconds": 100.103178, "line": "[shim-note] on=false sent"}
+{"elapsed_seconds": 100.91677, "line": "[host] slot liveajlk9g_0: d_loop_us=989 d_raster_us=231586 d_observe_us=45922 max_observe_us=8444 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 100.93462, "line": "[panel] rss=608321536 traffic_sum=7328"}
+{"elapsed_seconds": 100.934681, "line": "[panel] present pixmap=0 tex=3731 bind_noop=3729 bind_rereg=2"}
+{"elapsed_seconds": 101.267752, "line": "live script_rune_crafter_earth: running step 24/28"}
+{"elapsed_seconds": 101.288593, "line": "live script_rune_crafter_earth: running step 25/28"}
+{"elapsed_seconds": 101.853928, "line": "[script liveajlk9g_0] deposited 27 Earth runes"}
+{"elapsed_seconds": 101.871944, "line": "[panel] liveajlk9g_0: script: deposited 27 Earth runes"}
+{"elapsed_seconds": 101.934795, "line": "[panel] rss=608321536 traffic_sum=7389"}
+{"elapsed_seconds": 101.934862, "line": "[panel] present pixmap=0 tex=3774 bind_noop=3772 bind_rereg=2"}
+{"elapsed_seconds": 102.069496, "line": "[host] slot liveajlk9g_0: d_loop_us=933 d_raster_us=236765 d_observe_us=49635 max_observe_us=10556 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 102.455204, "line": "live script_rune_crafter_earth: running step 26/28"}
+{"elapsed_seconds": 102.955567, "line": "[panel] rss=608567296 traffic_sum=7704"}
+{"elapsed_seconds": 102.95563, "line": "[panel] present pixmap=0 tex=3818 bind_noop=3816 bind_rereg=2"}
+{"elapsed_seconds": 103.056648, "line": "[script liveajlk9g_0] withdrew 27 rune essence (trip 2)"}
+{"elapsed_seconds": 103.059369, "line": "[panel] liveajlk9g_0: script: withdrew 27 rune essence (trip 2)"}
+{"elapsed_seconds": 103.225586, "line": "[host] slot liveajlk9g_0: d_loop_us=966 d_raster_us=238336 d_observe_us=54681 max_observe_us=12591 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 103.657024, "line": "[script liveajlk9g_0] heading to the mysterious ruins"}
+{"elapsed_seconds": 103.65711, "line": "[script liveajlk9g_0] interact WalkNear { x: 3303, z: 3477, level: 0, radius: 1, allow_teleports: false }"}
+{"elapsed_seconds": 103.663532, "line": "[panel] liveajlk9g_0: script: heading to the mysterious ruins"}
+{"elapsed_seconds": 103.955506, "line": "[panel] rss=610009088 traffic_sum=7730"}
+{"elapsed_seconds": 103.955574, "line": "[panel] present pixmap=0 tex=3860 bind_noop=3858 bind_rereg=2"}
+{"elapsed_seconds": 104.247143, "line": "[nav-follow] here=WorldTile { x: 3252, z: 3420, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 104.383936, "line": "[host] slot liveajlk9g_0: d_loop_us=905 d_raster_us=230600 d_observe_us=47187 max_observe_us=9151 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 104.858114, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3422, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 104.858186, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3422, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 104.858205, "line": "[host] hitch liveajlk9g_0: observe_us=19076 paints=3818 skips=1 ticks=155"}
+{"elapsed_seconds": 104.871836, "line": "live script_rune_crafter_earth: running step 27/28"}
+{"elapsed_seconds": 104.976319, "line": "[panel] rss=610009088 traffic_sum=7788"}
+{"elapsed_seconds": 104.976397, "line": "[panel] present pixmap=0 tex=3902 bind_noop=3900 bind_rereg=2"}
+{"elapsed_seconds": 105.459117, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3424, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 105.459186, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3424, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 105.459208, "line": "[host] hitch liveajlk9g_0: observe_us=21425 paints=3844 skips=1 ticks=156"}
+{"elapsed_seconds": 105.535103, "line": "[host] slot liveajlk9g_0: d_loop_us=1005 d_raster_us=207471 d_observe_us=79458 max_observe_us=21425 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 105.976396, "line": "[panel] rss=610009088 traffic_sum=7853"}
+{"elapsed_seconds": 105.976475, "line": "[panel] present pixmap=0 tex=3944 bind_noop=3942 bind_rereg=2"}
+{"elapsed_seconds": 106.059152, "line": "[nav-walk] here=WorldTile { x: 3253, z: 3426, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 106.059237, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3426, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 106.059284, "line": "[host] hitch liveajlk9g_0: observe_us=19899 paints=3870 skips=1 ticks=157"}
+{"elapsed_seconds": 106.665551, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 106.665654, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 106.665682, "line": "[host] hitch liveajlk9g_0: observe_us=19985 paints=3896 skips=1 ticks=158"}
+{"elapsed_seconds": 106.697449, "line": "[host] slot liveajlk9g_0: d_loop_us=923 d_raster_us=192166 d_observe_us=69838 max_observe_us=19985 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 106.997149, "line": "[panel] rss=610009088 traffic_sum=7880"}
+{"elapsed_seconds": 106.997216, "line": "[panel] present pixmap=0 tex=3987 bind_noop=3985 bind_rereg=2"}
+{"elapsed_seconds": 107.267418, "line": "[nav-walk] here=WorldTile { x: 3256, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 107.267482, "line": "[nav-follow] here=WorldTile { x: 3256, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 107.267522, "line": "[host] hitch liveajlk9g_0: observe_us=21311 paints=3922 skips=1 ticks=159"}
+{"elapsed_seconds": 107.867523, "line": "[nav-walk] here=WorldTile { x: 3258, z: 3428, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 107.867607, "line": "[nav-follow] here=WorldTile { x: 3258, z: 3428, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 107.867627, "line": "[host] hitch liveajlk9g_0: observe_us=19574 paints=3948 skips=1 ticks=160"}
+{"elapsed_seconds": 107.871211, "line": "[host] slot liveajlk9g_0: d_loop_us=932 d_raster_us=170618 d_observe_us=73153 max_observe_us=21311 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 108.018057, "line": "[panel] rss=610009088 traffic_sum=7938"}
+{"elapsed_seconds": 108.018133, "line": "[panel] present pixmap=0 tex=4030 bind_noop=4028 bind_rereg=2"}
+{"elapsed_seconds": 108.466257, "line": "[nav-walk] here=WorldTile { x: 3260, z: 3429, level: 0 } aim=WorldTile { x: 3261, z: 3430, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3252, z: 3420, level: 0 })"}
+{"elapsed_seconds": 108.466368, "line": "[nav-follow] here=WorldTile { x: 3260, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 108.466406, "line": "[host] hitch liveajlk9g_0: observe_us=19304 paints=3974 skips=1 ticks=161"}
+{"elapsed_seconds": 109.002551, "line": "[host] slot liveajlk9g_0: d_loop_us=1017 d_raster_us=178573 d_observe_us=50674 max_observe_us=19304 d_paints=50 d_skips=0 d_ticks=1 window_ms=1131"}
+{"elapsed_seconds": 109.018061, "line": "[panel] rss=610009088 traffic_sum=8006"}
+{"elapsed_seconds": 109.018132, "line": "[panel] present pixmap=0 tex=4072 bind_noop=4070 bind_rereg=2"}
+{"elapsed_seconds": 109.064583, "line": "[nav-walk] here=WorldTile { x: 3262, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 109.064647, "line": "[nav-follow] here=WorldTile { x: 3262, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 109.064666, "line": "[host] hitch liveajlk9g_0: observe_us=19370 paints=4000 skips=1 ticks=162"}
+{"elapsed_seconds": 109.67067, "line": "[nav-walk] here=WorldTile { x: 3264, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 109.670741, "line": "[nav-follow] here=WorldTile { x: 3264, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 109.670763, "line": "[host] hitch liveajlk9g_0: observe_us=20739 paints=4026 skips=1 ticks=163"}
+{"elapsed_seconds": 110.018079, "line": "[panel] rss=610009088 traffic_sum=8057"}
+{"elapsed_seconds": 110.018156, "line": "[panel] present pixmap=0 tex=4113 bind_noop=4111 bind_rereg=2"}
+{"elapsed_seconds": 110.176339, "line": "[host] slot liveajlk9g_0: d_loop_us=1079 d_raster_us=167062 d_observe_us=74709 max_observe_us=20739 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 110.283946, "line": "[nav-walk] here=WorldTile { x: 3266, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 110.284022, "line": "[nav-follow] here=WorldTile { x: 3266, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 110.284045, "line": "[host] hitch liveajlk9g_0: observe_us=23299 paints=4052 skips=1 ticks=164"}
+{"elapsed_seconds": 110.867346, "line": "[nav-walk] here=WorldTile { x: 3268, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 110.867412, "line": "[nav-follow] here=WorldTile { x: 3268, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 110.867437, "line": "[host] hitch liveajlk9g_0: observe_us=17926 paints=4077 skips=1 ticks=165"}
+{"elapsed_seconds": 111.038776, "line": "[panel] rss=610009088 traffic_sum=8101"}
+{"elapsed_seconds": 111.038855, "line": "[panel] present pixmap=0 tex=4156 bind_noop=4154 bind_rereg=2"}
+{"elapsed_seconds": 111.341743, "line": "[host] slot liveajlk9g_0: d_loop_us=1104 d_raster_us=155906 d_observe_us=72270 max_observe_us=23299 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 111.476511, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 111.476581, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 111.476605, "line": "[host] hitch liveajlk9g_0: observe_us=19470 paints=4103 skips=1 ticks=166"}
+{"elapsed_seconds": 112.038883, "line": "[panel] rss=610009088 traffic_sum=8116"}
+{"elapsed_seconds": 112.038957, "line": "[panel] present pixmap=0 tex=4198 bind_noop=4196 bind_rereg=2"}
+{"elapsed_seconds": 112.064593, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3429, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 112.064668, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3429, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 112.064757, "line": "[host] hitch liveajlk9g_0: observe_us=22446 paints=4128 skips=1 ticks=167"}
+{"elapsed_seconds": 112.517131, "line": "[host] slot liveajlk9g_0: d_loop_us=1121 d_raster_us=164308 d_observe_us=76003 max_observe_us=22446 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 112.668571, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3431, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 112.668639, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3431, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 112.668659, "line": "[host] hitch liveajlk9g_0: observe_us=16834 paints=4154 skips=1 ticks=168"}
+{"elapsed_seconds": 113.059707, "line": "[panel] rss=610009088 traffic_sum=8167"}
+{"elapsed_seconds": 113.059789, "line": "[panel] present pixmap=0 tex=4239 bind_noop=4237 bind_rereg=2"}
+{"elapsed_seconds": 113.282237, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3433, level: 0 } aim=WorldTile { x: 3276, z: 3434, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3260, z: 3429, level: 0 })"}
+{"elapsed_seconds": 113.282313, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3433, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 113.282334, "line": "[host] hitch liveajlk9g_0: observe_us=22474 paints=4180 skips=1 ticks=169"}
+{"elapsed_seconds": 113.692088, "line": "[host] slot liveajlk9g_0: d_loop_us=944 d_raster_us=147654 d_observe_us=73147 max_observe_us=22474 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 113.867362, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3435, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 113.867435, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3435, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 113.867465, "line": "[host] hitch liveajlk9g_0: observe_us=17779 paints=4205 skips=1 ticks=170"}
+{"elapsed_seconds": 114.080474, "line": "[panel] rss=610009088 traffic_sum=8231"}
+{"elapsed_seconds": 114.08054, "line": "[panel] present pixmap=0 tex=4282 bind_noop=4280 bind_rereg=2"}
+{"elapsed_seconds": 114.466902, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3437, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 114.466979, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3437, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 114.467005, "line": "[host] hitch liveajlk9g_0: observe_us=20383 paints=4231 skips=1 ticks=171"}
+{"elapsed_seconds": 114.847268, "line": "[host] slot liveajlk9g_0: d_loop_us=906 d_raster_us=146583 d_observe_us=69378 max_observe_us=20383 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 115.072749, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3439, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 115.072977, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3439, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 115.073042, "line": "[host] hitch liveajlk9g_0: observe_us=18427 paints=4257 skips=1 ticks=172"}
+{"elapsed_seconds": 115.101253, "line": "[panel] rss=610009088 traffic_sum=8260"}
+{"elapsed_seconds": 115.101355, "line": "[panel] present pixmap=0 tex=4325 bind_noop=4323 bind_rereg=2"}
+{"elapsed_seconds": 115.655791, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3439, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 115.655933, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3439, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 115.655955, "line": "[host] hitch liveajlk9g_0: observe_us=20409 paints=4282 skips=1 ticks=173"}
+{"elapsed_seconds": 116.011361, "line": "[host] slot liveajlk9g_0: d_loop_us=995 d_raster_us=137048 d_observe_us=69600 max_observe_us=20409 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 116.101374, "line": "[panel] rss=610009088 traffic_sum=8274"}
+{"elapsed_seconds": 116.101448, "line": "[panel] present pixmap=0 tex=4366 bind_noop=4364 bind_rereg=2"}
+{"elapsed_seconds": 116.261419, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3440, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 116.261499, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3440, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 116.261524, "line": "[host] hitch liveajlk9g_0: observe_us=22184 paints=4308 skips=1 ticks=174"}
+{"elapsed_seconds": 116.867419, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3442, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 116.867493, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3442, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 116.867516, "line": "[host] hitch liveajlk9g_0: observe_us=21696 paints=4334 skips=1 ticks=175"}
+{"elapsed_seconds": 117.122164, "line": "[panel] rss=610009088 traffic_sum=8324"}
+{"elapsed_seconds": 117.122233, "line": "[panel] present pixmap=0 tex=4410 bind_noop=4408 bind_rereg=2"}
+{"elapsed_seconds": 117.17285, "line": "[host] slot liveajlk9g_0: d_loop_us=968 d_raster_us=127536 d_observe_us=76946 max_observe_us=22184 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 117.477124, "line": "[nav-walk] here=WorldTile { x: 3281, z: 3444, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 117.477193, "line": "[nav-follow] here=WorldTile { x: 3281, z: 3444, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 117.47722, "line": "[host] hitch liveajlk9g_0: observe_us=22386 paints=4360 skips=1 ticks=176"}
+{"elapsed_seconds": 118.058432, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3446, level: 0 } aim=WorldTile { x: 3284, z: 3447, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3433, level: 0 })"}
+{"elapsed_seconds": 118.058511, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3446, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 118.058537, "line": "[host] hitch liveajlk9g_0: observe_us=19103 paints=4385 skips=1 ticks=177"}
+{"elapsed_seconds": 118.143, "line": "[panel] rss=610009088 traffic_sum=8381"}
+{"elapsed_seconds": 118.143075, "line": "[panel] present pixmap=0 tex=4452 bind_noop=4450 bind_rereg=2"}
+{"elapsed_seconds": 118.337996, "line": "[host] slot liveajlk9g_0: d_loop_us=791 d_raster_us=139530 d_observe_us=75616 max_observe_us=22386 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 118.679508, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3448, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 118.679577, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3448, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 118.679596, "line": "[host] hitch liveajlk9g_0: observe_us=19769 paints=4412 skips=1 ticks=178"}
+{"elapsed_seconds": 119.143031, "line": "[panel] rss=610009088 traffic_sum=8415"}
+{"elapsed_seconds": 119.143106, "line": "[panel] present pixmap=0 tex=4495 bind_noop=4493 bind_rereg=2"}
+{"elapsed_seconds": 119.271839, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3450, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 119.271912, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3450, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 119.271934, "line": "[host] hitch liveajlk9g_0: observe_us=19071 paints=4437 skips=1 ticks=179"}
+{"elapsed_seconds": 119.513774, "line": "[host] slot liveajlk9g_0: d_loop_us=765 d_raster_us=128000 d_observe_us=70739 max_observe_us=19769 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 119.862783, "line": "[nav-walk] here=WorldTile { x: 3285, z: 3452, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 119.862866, "line": "[nav-follow] here=WorldTile { x: 3285, z: 3452, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 119.86289, "line": "[host] hitch liveajlk9g_0: observe_us=19811 paints=4462 skips=1 ticks=180"}
+{"elapsed_seconds": 120.163798, "line": "[panel] rss=610009088 traffic_sum=8442"}
+{"elapsed_seconds": 120.163919, "line": "[panel] present pixmap=0 tex=4536 bind_noop=4534 bind_rereg=2"}
+{"elapsed_seconds": 120.465102, "line": "[nav-walk] here=WorldTile { x: 3287, z: 3454, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 120.465249, "line": "[nav-follow] here=WorldTile { x: 3287, z: 3454, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 120.465269, "line": "[host] hitch liveajlk9g_0: observe_us=17991 paints=4488 skips=1 ticks=181"}
+{"elapsed_seconds": 120.684281, "line": "[host] slot liveajlk9g_0: d_loop_us=728 d_raster_us=126810 d_observe_us=68872 max_observe_us=19811 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 121.072436, "line": "[nav-walk] here=WorldTile { x: 3289, z: 3456, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 121.072506, "line": "[nav-follow] here=WorldTile { x: 3289, z: 3456, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 121.07253, "line": "[host] hitch liveajlk9g_0: observe_us=20775 paints=4514 skips=1 ticks=182"}
+{"elapsed_seconds": 121.184712, "line": "[panel] rss=610009088 traffic_sum=8506"}
+{"elapsed_seconds": 121.184797, "line": "[panel] present pixmap=0 tex=4578 bind_noop=4576 bind_rereg=2"}
+{"elapsed_seconds": 121.665422, "line": "[nav-walk] here=WorldTile { x: 3291, z: 3458, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 121.665492, "line": "[nav-follow] here=WorldTile { x: 3291, z: 3458, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 121.665517, "line": "[host] hitch liveajlk9g_0: observe_us=22922 paints=4539 skips=1 ticks=183"}
+{"elapsed_seconds": 121.857343, "line": "[host] slot liveajlk9g_0: d_loop_us=816 d_raster_us=127127 d_observe_us=80845 max_observe_us=22922 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 122.205511, "line": "[panel] rss=610009088 traffic_sum=8531"}
+{"elapsed_seconds": 122.205588, "line": "[panel] present pixmap=0 tex=4620 bind_noop=4618 bind_rereg=2"}
+{"elapsed_seconds": 122.270584, "line": "[nav-walk] here=WorldTile { x: 3293, z: 3460, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 122.270659, "line": "[nav-follow] here=WorldTile { x: 3293, z: 3460, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 122.270682, "line": "[host] hitch liveajlk9g_0: observe_us=17342 paints=4565 skips=1 ticks=184"}
+{"elapsed_seconds": 122.860409, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3462, level: 0 } aim=WorldTile { x: 3296, z: 3463, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3283, z: 3446, level: 0 })"}
+{"elapsed_seconds": 122.86048, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3462, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 122.860501, "line": "[host] hitch liveajlk9g_0: observe_us=18083 paints=4590 skips=1 ticks=185"}
+{"elapsed_seconds": 123.032909, "line": "[host] slot liveajlk9g_0: d_loop_us=751 d_raster_us=130048 d_observe_us=65338 max_observe_us=18083 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 123.205524, "line": "[panel] rss=610009088 traffic_sum=8576"}
+{"elapsed_seconds": 123.205599, "line": "[panel] present pixmap=0 tex=4660 bind_noop=4658 bind_rereg=2"}
+{"elapsed_seconds": 123.472672, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3464, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 123.47283, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3464, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 123.472849, "line": "[host] hitch liveajlk9g_0: observe_us=18048 paints=4616 skips=1 ticks=186"}
+{"elapsed_seconds": 124.068806, "line": "[nav-walk] here=WorldTile { x: 3297, z: 3466, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 124.068903, "line": "[nav-follow] here=WorldTile { x: 3297, z: 3466, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 124.068928, "line": "[host] hitch liveajlk9g_0: observe_us=23392 paints=4641 skips=1 ticks=187"}
+{"elapsed_seconds": 124.205566, "line": "[panel] rss=610009088 traffic_sum=8620"}
+{"elapsed_seconds": 124.205642, "line": "[panel] present pixmap=0 tex=4701 bind_noop=4699 bind_rereg=2"}
+{"elapsed_seconds": 124.215878, "line": "[host] slot liveajlk9g_0: d_loop_us=792 d_raster_us=132563 d_observe_us=73757 max_observe_us=23392 d_paints=50 d_skips=0 d_ticks=2 window_ms=1182"}
+{"elapsed_seconds": 124.675035, "line": "[nav-walk] here=WorldTile { x: 3299, z: 3468, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 124.675108, "line": "[nav-follow] here=WorldTile { x: 3299, z: 3468, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 124.675129, "line": "[host] hitch liveajlk9g_0: observe_us=19116 paints=4667 skips=1 ticks=188"}
+{"elapsed_seconds": 125.226363, "line": "[panel] rss=610009088 traffic_sum=8633"}
+{"elapsed_seconds": 125.226438, "line": "[panel] present pixmap=0 tex=4744 bind_noop=4742 bind_rereg=2"}
+{"elapsed_seconds": 125.255803, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3470, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 125.25587, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3470, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 125.255923, "line": "[host] hitch liveajlk9g_0: observe_us=18638 paints=4692 skips=1 ticks=189"}
+{"elapsed_seconds": 125.383512, "line": "[host] slot liveajlk9g_0: d_loop_us=731 d_raster_us=130827 d_observe_us=67394 max_observe_us=19116 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 125.871866, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 125.95523, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 125.955295, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 126.247169, "line": "[panel] rss=620068864 traffic_sum=8852"}
+{"elapsed_seconds": 126.247253, "line": "[panel] present pixmap=0 tex=4786 bind_noop=4784 bind_rereg=2"}
+{"elapsed_seconds": 126.470194, "line": "[nav-walk] here=WorldTile { x: 3301, z: 3473, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 126.470269, "line": "[nav-follow] here=WorldTile { x: 3301, z: 3473, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 126.470297, "line": "[host] hitch liveajlk9g_0: observe_us=16217 paints=4744 skips=1 ticks=191"}
+{"elapsed_seconds": 126.54943, "line": "[host] slot liveajlk9g_0: d_loop_us=9406 d_raster_us=145253 d_observe_us=80522 max_observe_us=16217 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 127.055943, "line": "[nav-walk] here=WorldTile { x: 3302, z: 3474, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 127.056018, "line": "[nav-follow] here=WorldTile { x: 3302, z: 3474, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 127.056067, "line": "[host] hitch liveajlk9g_0: observe_us=16694 paints=4769 skips=1 ticks=192"}
+{"elapsed_seconds": 127.267919, "line": "[panel] rss=620068864 traffic_sum=8893"}
+{"elapsed_seconds": 127.267979, "line": "[panel] present pixmap=0 tex=4829 bind_noop=4827 bind_rereg=2"}
+{"elapsed_seconds": 127.664957, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3474, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 127.665115, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3474, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 127.665151, "line": "[host] hitch liveajlk9g_0: observe_us=19564 paints=4795 skips=1 ticks=193"}
+{"elapsed_seconds": 127.716658, "line": "[host] slot liveajlk9g_0: d_loop_us=763 d_raster_us=133540 d_observe_us=68254 max_observe_us=19564 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 127.955197, "line": "live script_rune_crafter_earth: running step 28/28"}
+{"elapsed_seconds": 128.263371, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3476, level: 0 } aim=WorldTile { x: 3304, z: 3476, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3295, z: 3462, level: 0 })"}
+{"elapsed_seconds": 128.263477, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3476, level: 0 } walk=false transport=false leg=1 hops=5 outcome=Some(Arrived { at: WorldTile { x: 3304, z: 3476, level: 0 } })"}
+{"elapsed_seconds": 128.267944, "line": "[panel] rss=620134400 traffic_sum=8940"}
+{"elapsed_seconds": 128.26801, "line": "[panel] present pixmap=0 tex=4870 bind_noop=4868 bind_rereg=2"}
+{"elapsed_seconds": 128.291242, "line": "[script liveajlk9g_0] using the Earth talisman on the mysterious ruins"}
+{"elapsed_seconds": 128.291329, "line": "[script liveajlk9g_0] interact UseOn { name: \"Earth talisman\", kind: \"loc\", target_name: Some(\"Mysterious ruins\"), x: 3305, z: 3473, level: 0, index: None, source_item_id: Some(1440), source_item_slot: Some(0), target_item_id: None, target_item_slot: None }"}
+{"elapsed_seconds": 128.30938, "line": "[panel] liveajlk9g_0: script: using the Earth talisman on the mysterious ruins"}
+{"elapsed_seconds": 128.880157, "line": "[host] slot liveajlk9g_0: d_loop_us=802 d_raster_us=144461 d_observe_us=61849 max_observe_us=15679 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 129.267966, "line": "[panel] rss=621297664 traffic_sum=8976"}
+{"elapsed_seconds": 129.268041, "line": "[panel] present pixmap=0 tex=4911 bind_noop=4909 bind_rereg=2"}
+{"elapsed_seconds": 130.054768, "line": "[host] slot liveajlk9g_0: d_loop_us=778 d_raster_us=136239 d_observe_us=45412 max_observe_us=7763 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 130.288724, "line": "[panel] rss=621658112 traffic_sum=9112"}
+{"elapsed_seconds": 130.288794, "line": "[panel] present pixmap=0 tex=4955 bind_noop=4953 bind_rereg=2"}
+{"elapsed_seconds": 130.663489, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 130.767727, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 130.767818, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 131.211612, "line": "[host] slot liveajlk9g_0: d_loop_us=6052 d_raster_us=139710 d_observe_us=54822 max_observe_us=6210 d_paints=50 d_skips=0 d_ticks=1 window_ms=1156"}
+{"elapsed_seconds": 131.274454, "line": "[script liveajlk9g_0] entered the altar"}
+{"elapsed_seconds": 131.288532, "line": "[panel] liveajlk9g_0: script: entered the altar"}
+{"elapsed_seconds": 131.288765, "line": "[panel] rss=621658112 traffic_sum=9313"}
+{"elapsed_seconds": 131.288798, "line": "[panel] present pixmap=0 tex=4997 bind_noop=4995 bind_rereg=2"}
+{"elapsed_seconds": 131.874469, "line": "[script liveajlk9g_0] crafting 27 essence at the altar"}
+{"elapsed_seconds": 131.874551, "line": "[script liveajlk9g_0] interact Loc { x: 2657, z: 4840, level: 0, action: \"Craft-rune\", id: Some(2481) }"}
+{"elapsed_seconds": 131.892677, "line": "[panel] liveajlk9g_0: script: crafting 27 essence at the altar"}
+{"elapsed_seconds": 132.288827, "line": "[panel] rss=621658112 traffic_sum=9343"}
+{"elapsed_seconds": 132.288902, "line": "[panel] present pixmap=0 tex=5040 bind_noop=5038 bind_rereg=2"}
+{"elapsed_seconds": 132.376659, "line": "[host] slot liveajlk9g_0: d_loop_us=713 d_raster_us=146640 d_observe_us=47801 max_observe_us=9135 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 133.309675, "line": "[panel] rss=621658112 traffic_sum=9395"}
+{"elapsed_seconds": 133.309745, "line": "[panel] present pixmap=0 tex=5083 bind_noop=5081 bind_rereg=2"}
+{"elapsed_seconds": 133.537492, "line": "[host] slot liveajlk9g_0: d_loop_us=818 d_raster_us=147358 d_observe_us=53237 max_observe_us=10973 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 134.33045, "line": "[panel] rss=621658112 traffic_sum=9420"}
+{"elapsed_seconds": 134.330536, "line": "[panel] present pixmap=0 tex=5126 bind_noop=5124 bind_rereg=2"}
+{"elapsed_seconds": 134.706321, "line": "[host] slot liveajlk9g_0: d_loop_us=710 d_raster_us=136430 d_observe_us=47422 max_observe_us=9454 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 135.33054, "line": "[panel] rss=621658112 traffic_sum=9441"}
+{"elapsed_seconds": 135.330635, "line": "[panel] present pixmap=0 tex=5167 bind_noop=5165 bind_rereg=2"}
+{"elapsed_seconds": 135.452148, "line": "[panel] scenario capture requested: rune_crafter_earth"}
+{"elapsed_seconds": 135.504818, "line": "[host] hitch liveajlk9g_0: observe_us=56563 paints=5130 skips=1 ticks=206"}
+{"elapsed_seconds": 135.507371, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 135.50895, "line": "[script liveajlk9g_0] crafted 27 Earth runes"}
+{"elapsed_seconds": 135.508989, "line": "[script liveajlk9g_0] taking the portal back to the ruins"}
+{"elapsed_seconds": 135.509009, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 135.913249, "line": "[host] slot liveajlk9g_0: d_loop_us=704 d_raster_us=137004 d_observe_us=92556 max_observe_us=56563 d_paints=50 d_skips=0 d_ticks=2 window_ms=1206"}
+{"elapsed_seconds": 136.069226, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 136.563861, "line": "[panel] shot rune_crafter_earth -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-rune-crafter-earth-8e7d965b-4cc6cc27-gpu/shots/2026-09-11T08-58-43_14416/2026-09-11T09-00-54_rune_crafter_earth.png"}
+{"elapsed_seconds": 136.563922, "line": "[panel] liveajlk9g_0: script: crafted 27 Earth runes"}
+{"elapsed_seconds": 136.563938, "line": "[panel] liveajlk9g_0: script: taking the portal back to the ruins"}
+{"elapsed_seconds": 136.563952, "line": "PASS: live script_rune_crafter_earth {\"scenario\":\"rune_crafter_earth\",\"outcome\":\"PASS\",\"predicate\":\"has_item_id(557)>=1\",\"ticks\":248,\"elapsed_ms\":130772,\"tile\":[2658,4839,0],\"inv\":[{\"id\":1440,\"name\":\"Earth talisman\",\"count\":1},{\"id\":557,\"name\":\"Earth rune\",\"count\":27}],\"stat\":{\"runenergy\":12},\"chat\":[{\"text\":\"You bind the temple's power into Earth Runes.\"},{\"text\":\"You feel a powerful force take hold of you...\"},{\"text\":\"You hold the Earth Talisman towards the mysterious ruins.\"},{\"text\":\"You don't have enough inventory space to withdraw that many.\"},{\"text\":\"You step through the portal...\"},{\"text\":\"You bind the temple's power into Earth Runes.\"},{\"text\":\"You feel a powerful force take hold of you...\"},{\"text\":\"You hold the Earth Talisman towards the mysterious ruins.\"},{\"text\":\"You don't have enough inventory space to withdraw that many.\"},{\"text\":\"Inventory wiped.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 136.564219, "line": "[panel] rss=663175168 traffic_sum=9694"}
+{"elapsed_seconds": 136.564234, "line": "[panel] present pixmap=0 tex=5173 bind_noop=5171 bind_rereg=2"}
+{"elapsed_seconds": 136.683607, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 137.084409, "line": "[host] slot liveajlk9g_0: d_loop_us=750 d_raster_us=133649 d_observe_us=35902 max_observe_us=5480 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 137.262346, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 137.56807, "line": "[panel] rss=663175168 traffic_sum=9762"}
+{"elapsed_seconds": 137.568193, "line": "[panel] present pixmap=0 tex=5215 bind_noop=5213 bind_rereg=2"}
+{"elapsed_seconds": 137.875879, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 138.244429, "line": "[host] slot liveajlk9g_0: d_loop_us=855 d_raster_us=159335 d_observe_us=44472 max_observe_us=8382 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 138.472982, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 138.588745, "line": "[panel] rss=663175168 traffic_sum=10003"}
+{"elapsed_seconds": 138.588825, "line": "[panel] present pixmap=0 tex=5257 bind_noop=5255 bind_rereg=2"}
+{"elapsed_seconds": 139.077484, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 139.407989, "line": "[host] slot liveajlk9g_0: d_loop_us=804 d_raster_us=162933 d_observe_us=49845 max_observe_us=10715 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 139.588933, "line": "[panel] rss=663175168 traffic_sum=10051"}
+{"elapsed_seconds": 139.589025, "line": "[panel] present pixmap=0 tex=5300 bind_noop=5298 bind_rereg=2"}
+{"elapsed_seconds": 139.657628, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 140.266904, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 140.580995, "line": "[host] slot liveajlk9g_0: d_loop_us=775 d_raster_us=162630 d_observe_us=47690 max_observe_us=9889 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 140.609748, "line": "[panel] rss=663175168 traffic_sum=10104"}
+{"elapsed_seconds": 140.609827, "line": "[panel] present pixmap=0 tex=5343 bind_noop=5341 bind_rereg=2"}
+{"elapsed_seconds": 140.860546, "line": "[script liveajlk9g_0] interact Loc { x: 2655, z: 4829, level: 0, action: \"Use\", id: Some(2468) }"}
+{"elapsed_seconds": 141.46355, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 141.567666, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 141.567746, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 141.630361, "line": "[panel] rss=663175168 traffic_sum=10345"}
+{"elapsed_seconds": 141.630413, "line": "[panel] present pixmap=0 tex=5386 bind_noop=5384 bind_rereg=2"}
+{"elapsed_seconds": 141.742925, "line": "[host] slot liveajlk9g_0: d_loop_us=10614 d_raster_us=146456 d_observe_us=58232 max_observe_us=11000 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 142.090651, "line": "[script liveajlk9g_0] back at the mysterious ruins"}
+{"elapsed_seconds": 142.109342, "line": "[panel] liveajlk9g_0: script: back at the mysterious ruins"}
+{"elapsed_seconds": 142.651276, "line": "[panel] rss=663175168 traffic_sum=10424"}
+{"elapsed_seconds": 142.651341, "line": "[panel] present pixmap=0 tex=5429 bind_noop=5427 bind_rereg=2"}
+{"elapsed_seconds": 142.674102, "line": "[script liveajlk9g_0] heading to the bank"}
+{"elapsed_seconds": 142.674183, "line": "[script liveajlk9g_0] interact WalkNear { x: 3253, z: 3420, level: 0, radius: 3, allow_teleports: false }"}
+{"elapsed_seconds": 142.692692, "line": "[panel] liveajlk9g_0: script: heading to the bank"}
+{"elapsed_seconds": 142.915336, "line": "[host] slot liveajlk9g_0: d_loop_us=722 d_raster_us=122911 d_observe_us=45396 max_observe_us=14245 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 143.25243, "line": "[nav-follow] here=WorldTile { x: 3303, z: 3477, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 143.672091, "line": "[panel] rss=663175168 traffic_sum=10463"}
+{"elapsed_seconds": 143.672186, "line": "[panel] present pixmap=0 tex=5472 bind_noop=5470 bind_rereg=2"}
+{"elapsed_seconds": 143.849605, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3476, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 143.849696, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3476, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 144.096698, "line": "[host] slot liveajlk9g_0: d_loop_us=717 d_raster_us=115907 d_observe_us=44035 max_observe_us=13441 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181"}
+{"elapsed_seconds": 144.457735, "line": "[nav-walk] here=WorldTile { x: 3304, z: 3474, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 144.457821, "line": "[nav-follow] here=WorldTile { x: 3304, z: 3474, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 144.672078, "line": "[panel] rss=663175168 traffic_sum=10510"}
+{"elapsed_seconds": 144.672141, "line": "[panel] present pixmap=0 tex=5515 bind_noop=5513 bind_rereg=2"}
+{"elapsed_seconds": 145.067939, "line": "[nav-walk] here=WorldTile { x: 3302, z: 3474, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 145.068026, "line": "[nav-follow] here=WorldTile { x: 3302, z: 3474, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 145.266377, "line": "[host] slot liveajlk9g_0: d_loop_us=734 d_raster_us=118259 d_observe_us=51874 max_observe_us=13680 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 145.659576, "line": "[nav-walk] here=WorldTile { x: 3301, z: 3473, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 145.659644, "line": "[nav-follow] here=WorldTile { x: 3301, z: 3473, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 145.672083, "line": "[panel] rss=663175168 traffic_sum=10556"}
+{"elapsed_seconds": 145.672144, "line": "[panel] present pixmap=0 tex=5556 bind_noop=5554 bind_rereg=2"}
+{"elapsed_seconds": 146.2507, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3472, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 146.250773, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3472, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 146.451467, "line": "[host] slot liveajlk9g_0: d_loop_us=747 d_raster_us=114581 d_observe_us=47406 max_observe_us=12913 d_paints=50 d_skips=0 d_ticks=2 window_ms=1185"}
+{"elapsed_seconds": 146.692867, "line": "[panel] rss=663175168 traffic_sum=10572"}
+{"elapsed_seconds": 146.692937, "line": "[panel] present pixmap=0 tex=5599 bind_noop=5597 bind_rereg=2"}
+{"elapsed_seconds": 146.860376, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3470, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 146.860451, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3470, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 147.461486, "line": "[nav-walk] here=WorldTile { x: 3300, z: 3468, level: 0 } aim=WorldTile { x: 3300, z: 3467, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3303, z: 3477, level: 0 })"}
+{"elapsed_seconds": 147.461558, "line": "[nav-follow] here=WorldTile { x: 3300, z: 3468, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 147.614412, "line": "[host] slot liveajlk9g_0: d_loop_us=781 d_raster_us=114799 d_observe_us=50128 max_observe_us=13717 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 147.713792, "line": "[panel] rss=663175168 traffic_sum=10632"}
+{"elapsed_seconds": 147.713892, "line": "[panel] present pixmap=0 tex=5641 bind_noop=5639 bind_rereg=2"}
+{"elapsed_seconds": 148.04821, "line": "[nav-walk] here=WorldTile { x: 3299, z: 3466, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 148.048422, "line": "[nav-follow] here=WorldTile { x: 3299, z: 3466, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 148.660268, "line": "[nav-walk] here=WorldTile { x: 3297, z: 3464, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 148.660342, "line": "[nav-follow] here=WorldTile { x: 3297, z: 3464, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 148.713856, "line": "[panel] rss=663175168 traffic_sum=10657"}
+{"elapsed_seconds": 148.713924, "line": "[panel] present pixmap=0 tex=5681 bind_noop=5679 bind_rereg=2"}
+{"elapsed_seconds": 148.788941, "line": "[host] slot liveajlk9g_0: d_loop_us=767 d_raster_us=116583 d_observe_us=50091 max_observe_us=13536 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 149.245024, "line": "[nav-walk] here=WorldTile { x: 3295, z: 3462, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 149.245092, "line": "[nav-follow] here=WorldTile { x: 3295, z: 3462, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 149.713957, "line": "[panel] rss=663175168 traffic_sum=10710"}
+{"elapsed_seconds": 149.714048, "line": "[panel] present pixmap=0 tex=5724 bind_noop=5722 bind_rereg=2"}
+{"elapsed_seconds": 149.868004, "line": "[nav-walk] here=WorldTile { x: 3294, z: 3460, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 149.868097, "line": "[nav-follow] here=WorldTile { x: 3294, z: 3460, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 149.94748, "line": "[host] slot liveajlk9g_0: d_loop_us=810 d_raster_us=134754 d_observe_us=57760 max_observe_us=14319 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 150.45445, "line": "[nav-walk] here=WorldTile { x: 3292, z: 3458, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 150.454516, "line": "[nav-follow] here=WorldTile { x: 3292, z: 3458, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 150.713954, "line": "[panel] rss=663175168 traffic_sum=10734"}
+{"elapsed_seconds": 150.714037, "line": "[panel] present pixmap=0 tex=5766 bind_noop=5764 bind_rereg=2"}
+{"elapsed_seconds": 151.066732, "line": "[nav-walk] here=WorldTile { x: 3290, z: 3456, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 151.066815, "line": "[nav-follow] here=WorldTile { x: 3290, z: 3456, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 151.12445, "line": "[host] slot liveajlk9g_0: d_loop_us=803 d_raster_us=145717 d_observe_us=56082 max_observe_us=14868 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 151.656513, "line": "[nav-walk] here=WorldTile { x: 3288, z: 3454, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 151.656641, "line": "[nav-follow] here=WorldTile { x: 3288, z: 3454, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None"}
+{"elapsed_seconds": 151.656681, "line": "[host] hitch liveajlk9g_0: observe_us=18451 paints=5820 skips=1 ticks=233"}
+{"elapsed_seconds": 151.734696, "line": "[panel] rss=663175168 traffic_sum=10783"}
+{"elapsed_seconds": 151.734774, "line": "[panel] present pixmap=0 tex=5807 bind_noop=5805 bind_rereg=2"}
+{"elapsed_seconds": 152.272147, "line": "[nav-walk] here=WorldTile { x: 3288, z: 3452, level: 0 } aim=WorldTile { x: 3288, z: 3451, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3300, z: 3468, level: 0 })"}
+{"elapsed_seconds": 152.272258, "line": "[nav-follow] here=WorldTile { x: 3288, z: 3452, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 152.272281, "line": "[host] hitch liveajlk9g_0: observe_us=19956 paints=5846 skips=1 ticks=234"}
+{"elapsed_seconds": 152.300587, "line": "[host] slot liveajlk9g_0: d_loop_us=845 d_raster_us=141511 d_observe_us=67264 max_observe_us=19956 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 152.73481, "line": "[panel] rss=663175168 traffic_sum=10831"}
+{"elapsed_seconds": 152.734908, "line": "[panel] present pixmap=0 tex=5849 bind_noop=5847 bind_rereg=2"}
+{"elapsed_seconds": 152.853677, "line": "[nav-walk] here=WorldTile { x: 3288, z: 3451, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 152.853772, "line": "[nav-follow] here=WorldTile { x: 3288, z: 3451, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 152.853795, "line": "[host] hitch liveajlk9g_0: observe_us=16021 paints=5871 skips=1 ticks=235"}
+{"elapsed_seconds": 153.46288, "line": "[nav-walk] here=WorldTile { x: 3287, z: 3450, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 153.462949, "line": "[nav-follow] here=WorldTile { x: 3287, z: 3450, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 153.46297, "line": "[host] hitch liveajlk9g_0: observe_us=19551 paints=5897 skips=1 ticks=236"}
+{"elapsed_seconds": 153.470871, "line": "[host] slot liveajlk9g_0: d_loop_us=809 d_raster_us=135543 d_observe_us=65879 max_observe_us=19551 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 153.755587, "line": "[panel] rss=663175168 traffic_sum=10874"}
+{"elapsed_seconds": 153.755669, "line": "[panel] present pixmap=0 tex=5892 bind_noop=5890 bind_rereg=2"}
+{"elapsed_seconds": 154.070696, "line": "[nav-walk] here=WorldTile { x: 3286, z: 3449, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 154.070782, "line": "[nav-follow] here=WorldTile { x: 3286, z: 3449, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 154.070833, "line": "[host] hitch liveajlk9g_0: observe_us=18215 paints=5923 skips=1 ticks=237"}
+{"elapsed_seconds": 154.659823, "line": "[nav-walk] here=WorldTile { x: 3285, z: 3448, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 154.659908, "line": "[nav-follow] here=WorldTile { x: 3285, z: 3448, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 154.659931, "line": "[host] hitch liveajlk9g_0: observe_us=16882 paints=5948 skips=1 ticks=238"}
+{"elapsed_seconds": 154.662611, "line": "[host] slot liveajlk9g_0: d_loop_us=828 d_raster_us=132428 d_observe_us=64494 max_observe_us=18215 d_paints=50 d_skips=0 d_ticks=2 window_ms=1191"}
+{"elapsed_seconds": 154.776425, "line": "[panel] rss=663175168 traffic_sum=10915"}
+{"elapsed_seconds": 154.776515, "line": "[panel] present pixmap=0 tex=5933 bind_noop=5931 bind_rereg=2"}
+{"elapsed_seconds": 155.274868, "line": "[nav-walk] here=WorldTile { x: 3284, z: 3447, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 155.274962, "line": "[nav-follow] here=WorldTile { x: 3284, z: 3447, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 155.274986, "line": "[host] hitch liveajlk9g_0: observe_us=17730 paints=5974 skips=1 ticks=239"}
+{"elapsed_seconds": 155.7971, "line": "[panel] rss=663175168 traffic_sum=10929"}
+{"elapsed_seconds": 155.797213, "line": "[panel] present pixmap=0 tex=5975 bind_noop=5973 bind_rereg=2"}
+{"elapsed_seconds": 155.816196, "line": "[host] slot liveajlk9g_0: d_loop_us=826 d_raster_us=132112 d_observe_us=47533 max_observe_us=17730 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 155.852916, "line": "[nav-walk] here=WorldTile { x: 3283, z: 3446, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 155.853001, "line": "[nav-follow] here=WorldTile { x: 3283, z: 3446, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 155.853026, "line": "[host] hitch liveajlk9g_0: observe_us=16585 paints=5999 skips=1 ticks=240"}
+{"elapsed_seconds": 156.460553, "line": "[nav-walk] here=WorldTile { x: 3282, z: 3445, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 156.460609, "line": "[nav-follow] here=WorldTile { x: 3282, z: 3445, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 156.797109, "line": "[panel] rss=663175168 traffic_sum=10965"}
+{"elapsed_seconds": 156.797202, "line": "[panel] present pixmap=0 tex=6017 bind_noop=6015 bind_rereg=2"}
+{"elapsed_seconds": 156.984512, "line": "[host] slot liveajlk9g_0: d_loop_us=813 d_raster_us=132891 d_observe_us=57885 max_observe_us=16585 d_paints=50 d_skips=0 d_ticks=1 window_ms=1168"}
+{"elapsed_seconds": 157.069406, "line": "[nav-walk] here=WorldTile { x: 3281, z: 3444, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 157.06949, "line": "[nav-follow] here=WorldTile { x: 3281, z: 3444, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 157.069514, "line": "[host] hitch liveajlk9g_0: observe_us=16324 paints=6051 skips=1 ticks=242"}
+{"elapsed_seconds": 157.652809, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3443, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=8 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 157.652896, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3443, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 157.652921, "line": "[host] hitch liveajlk9g_0: observe_us=17370 paints=6076 skips=1 ticks=243"}
+{"elapsed_seconds": 157.797222, "line": "[panel] rss=663175168 traffic_sum=11013"}
+{"elapsed_seconds": 157.797303, "line": "[panel] present pixmap=0 tex=6058 bind_noop=6056 bind_rereg=2"}
+{"elapsed_seconds": 158.155346, "line": "[host] slot liveajlk9g_0: d_loop_us=897 d_raster_us=137705 d_observe_us=62697 max_observe_us=17370 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 158.261729, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3442, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=9 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 158.26181, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3442, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 158.261835, "line": "[host] hitch liveajlk9g_0: observe_us=17737 paints=6102 skips=1 ticks=244"}
+{"elapsed_seconds": 158.818051, "line": "[panel] rss=663175168 traffic_sum=11028"}
+{"elapsed_seconds": 158.818152, "line": "[panel] present pixmap=0 tex=6101 bind_noop=6099 bind_rereg=2"}
+{"elapsed_seconds": 158.866259, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3441, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=10 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 158.866342, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3441, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 158.866366, "line": "[host] hitch liveajlk9g_0: observe_us=16933 paints=6128 skips=1 ticks=245"}
+{"elapsed_seconds": 159.323111, "line": "[host] slot liveajlk9g_0: d_loop_us=921 d_raster_us=142156 d_observe_us=64264 max_observe_us=17737 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 159.452851, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3440, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=11 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 159.45293, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3440, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None"}
+{"elapsed_seconds": 159.452953, "line": "[host] hitch liveajlk9g_0: observe_us=18243 paints=6153 skips=1 ticks=246"}
+{"elapsed_seconds": 159.818068, "line": "[panel] rss=663175168 traffic_sum=11099"}
+{"elapsed_seconds": 159.818152, "line": "[panel] present pixmap=0 tex=6142 bind_noop=6140 bind_rereg=2"}
+{"elapsed_seconds": 160.067646, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 1"}
+{"elapsed_seconds": 160.171814, "line": "[panel] liveajlk9g_0: liveajlk9g_0: ingame"}
+{"elapsed_seconds": 160.171904, "line": "[panel] liveajlk9g_0: liveajlk9g_0: scene 2"}
+{"elapsed_seconds": 160.496834, "line": "[host] slot liveajlk9g_0: d_loop_us=9038 d_raster_us=134464 d_observe_us=73575 max_observe_us=18243 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 160.677575, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3439, level: 0 } aim=WorldTile { x: 3275, z: 3438, level: 0 } radius=2 ticks_waited=12 sent_tile=Some(WorldTile { x: 3288, z: 3452, level: 0 })"}
+{"elapsed_seconds": 160.677656, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3439, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 160.677676, "line": "[host] hitch liveajlk9g_0: observe_us=18161 paints=6205 skips=1 ticks=248"}
+{"elapsed_seconds": 160.838865, "line": "[panel] rss=663175168 traffic_sum=11349"}
+{"elapsed_seconds": 160.838954, "line": "[panel] present pixmap=0 tex=6184 bind_noop=6182 bind_rereg=2"}
+{"elapsed_seconds": 161.263679, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3439, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 161.263767, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3439, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 161.263789, "line": "[host] hitch liveajlk9g_0: observe_us=23456 paints=6230 skips=1 ticks=249"}
+{"elapsed_seconds": 161.669133, "line": "[host] slot liveajlk9g_0: d_loop_us=945 d_raster_us=136488 d_observe_us=70285 max_observe_us=23456 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 161.869311, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3439, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 161.86943, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3439, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 161.869454, "line": "[host] hitch liveajlk9g_0: observe_us=21792 paints=6256 skips=1 ticks=250"}
+{"elapsed_seconds": 161.869589, "line": "[panel] rss=663175168 traffic_sum=11374"}
+{"elapsed_seconds": 161.869629, "line": "[panel] present pixmap=0 tex=6226 bind_noop=6224 bind_rereg=2"}
+{"elapsed_seconds": 162.481794, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3438, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 162.48194, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3438, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 162.481991, "line": "[host] hitch liveajlk9g_0: observe_us=21689 paints=6282 skips=1 ticks=251"}
+{"elapsed_seconds": 162.837819, "line": "[host] slot liveajlk9g_0: d_loop_us=959 d_raster_us=130214 d_observe_us=71224 max_observe_us=21792 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 162.880416, "line": "[panel] rss=663175168 traffic_sum=11387"}
+{"elapsed_seconds": 162.880488, "line": "[panel] present pixmap=0 tex=6268 bind_noop=6266 bind_rereg=2"}
+{"elapsed_seconds": 163.066437, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3437, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 163.066544, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3437, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 163.066567, "line": "[host] hitch liveajlk9g_0: observe_us=19887 paints=6307 skips=1 ticks=252"}
+{"elapsed_seconds": 163.65759, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3436, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 163.657675, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3436, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 163.6577, "line": "[host] hitch liveajlk9g_0: observe_us=21772 paints=6332 skips=1 ticks=253"}
+{"elapsed_seconds": 163.901182, "line": "[panel] rss=663175168 traffic_sum=11423"}
+{"elapsed_seconds": 163.901267, "line": "[panel] present pixmap=0 tex=6309 bind_noop=6307 bind_rereg=2"}
+{"elapsed_seconds": 164.016691, "line": "[host] slot liveajlk9g_0: d_loop_us=934 d_raster_us=137263 d_observe_us=70253 max_observe_us=21772 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 164.266586, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3435, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 164.26669, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3435, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 164.266714, "line": "[host] hitch liveajlk9g_0: observe_us=20240 paints=6358 skips=1 ticks=254"}
+{"elapsed_seconds": 164.876087, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3434, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 164.876178, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3434, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 164.8762, "line": "[host] hitch liveajlk9g_0: observe_us=20280 paints=6384 skips=1 ticks=255"}
+{"elapsed_seconds": 164.901222, "line": "[panel] rss=663175168 traffic_sum=11459"}
+{"elapsed_seconds": 164.901279, "line": "[panel] present pixmap=0 tex=6351 bind_noop=6349 bind_rereg=2"}
+{"elapsed_seconds": 165.189266, "line": "[host] slot liveajlk9g_0: d_loop_us=964 d_raster_us=142427 d_observe_us=69077 max_observe_us=20280 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 165.459289, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3433, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 165.459369, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3433, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 165.459394, "line": "[host] hitch liveajlk9g_0: observe_us=20227 paints=6409 skips=1 ticks=256"}
+{"elapsed_seconds": 165.901422, "line": "[panel] rss=663175168 traffic_sum=11474"}
+{"elapsed_seconds": 165.901509, "line": "[panel] present pixmap=0 tex=6394 bind_noop=6392 bind_rereg=2"}
+{"elapsed_seconds": 166.072394, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3432, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=8 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 166.072472, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3432, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 166.072493, "line": "[host] hitch liveajlk9g_0: observe_us=21020 paints=6435 skips=1 ticks=257"}
+{"elapsed_seconds": 166.353793, "line": "[host] slot liveajlk9g_0: d_loop_us=953 d_raster_us=144908 d_observe_us=70835 max_observe_us=21020 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 166.678133, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=9 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 166.678213, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 166.678235, "line": "[host] hitch liveajlk9g_0: observe_us=20522 paints=6461 skips=1 ticks=258"}
+{"elapsed_seconds": 166.922144, "line": "[panel] rss=663175168 traffic_sum=11519"}
+{"elapsed_seconds": 166.922331, "line": "[panel] present pixmap=0 tex=6436 bind_noop=6434 bind_rereg=2"}
+{"elapsed_seconds": 167.259402, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=10 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 167.259478, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 167.259508, "line": "[host] hitch liveajlk9g_0: observe_us=20225 paints=6486 skips=1 ticks=259"}
+{"elapsed_seconds": 167.527756, "line": "[host] slot liveajlk9g_0: d_loop_us=1011 d_raster_us=152806 d_observe_us=71019 max_observe_us=20522 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 167.871615, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=11 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 167.871704, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 167.871752, "line": "[host] hitch liveajlk9g_0: observe_us=20845 paints=6512 skips=1 ticks=260"}
+{"elapsed_seconds": 167.942949, "line": "[panel] rss=663175168 traffic_sum=11546"}
+{"elapsed_seconds": 167.943021, "line": "[panel] present pixmap=0 tex=6477 bind_noop=6475 bind_rereg=2"}
+{"elapsed_seconds": 168.450391, "line": "[nav-walk] here=WorldTile { x: 3271, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=12 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 168.450462, "line": "[nav-follow] here=WorldTile { x: 3271, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 168.450481, "line": "[host] hitch liveajlk9g_0: observe_us=16903 paints=6537 skips=1 ticks=261"}
+{"elapsed_seconds": 168.695118, "line": "[host] slot liveajlk9g_0: d_loop_us=961 d_raster_us=152221 d_observe_us=66943 max_observe_us=20845 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 168.943097, "line": "[panel] rss=663175168 traffic_sum=11593"}
+{"elapsed_seconds": 168.943192, "line": "[panel] present pixmap=0 tex=6519 bind_noop=6517 bind_rereg=2"}
+{"elapsed_seconds": 169.063697, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=13 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 169.063793, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 169.063819, "line": "[host] hitch liveajlk9g_0: observe_us=18421 paints=6563 skips=1 ticks=262"}
+{"elapsed_seconds": 169.667428, "line": "[nav-walk] here=WorldTile { x: 3269, z: 3431, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=14 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 169.667508, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3431, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 169.667532, "line": "[host] hitch liveajlk9g_0: observe_us=20496 paints=6589 skips=1 ticks=263"}
+{"elapsed_seconds": 169.864271, "line": "[host] slot liveajlk9g_0: d_loop_us=1022 d_raster_us=158506 d_observe_us=68538 max_observe_us=20496 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 169.963866, "line": "[panel] rss=663175168 traffic_sum=11642"}
+{"elapsed_seconds": 169.963946, "line": "[panel] present pixmap=0 tex=6563 bind_noop=6561 bind_rereg=2"}
+{"elapsed_seconds": 170.256112, "line": "[nav-walk] here=WorldTile { x: 3268, z: 3430, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=15 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 170.256196, "line": "[nav-follow] here=WorldTile { x: 3268, z: 3430, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None"}
+{"elapsed_seconds": 170.256217, "line": "[host] hitch liveajlk9g_0: observe_us=21545 paints=6614 skips=1 ticks=264"}
+{"elapsed_seconds": 170.866586, "line": "[nav-walk] here=WorldTile { x: 3267, z: 3430, level: 0 } aim=WorldTile { x: 3265, z: 3430, level: 0 } radius=2 ticks_waited=16 sent_tile=Some(WorldTile { x: 3277, z: 3439, level: 0 })"}
+{"elapsed_seconds": 170.866675, "line": "[nav-follow] here=WorldTile { x: 3267, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 170.866697, "line": "[host] hitch liveajlk9g_0: observe_us=21383 paints=6640 skips=1 ticks=265"}
+{"elapsed_seconds": 170.9846, "line": "[panel] rss=663175168 traffic_sum=11708"}
+{"elapsed_seconds": 170.984669, "line": "[panel] present pixmap=0 tex=6604 bind_noop=6602 bind_rereg=2"}
+{"elapsed_seconds": 171.038409, "line": "[host] slot liveajlk9g_0: d_loop_us=1151 d_raster_us=160078 d_observe_us=71520 max_observe_us=21545 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 171.466822, "line": "[nav-walk] here=WorldTile { x: 3266, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 171.466887, "line": "[nav-follow] here=WorldTile { x: 3266, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 171.466908, "line": "[host] hitch liveajlk9g_0: observe_us=20139 paints=6666 skips=1 ticks=266"}
+{"elapsed_seconds": 171.984701, "line": "[panel] rss=663175168 traffic_sum=11722"}
+{"elapsed_seconds": 171.984799, "line": "[panel] present pixmap=0 tex=6646 bind_noop=6644 bind_rereg=2"}
+{"elapsed_seconds": 172.055395, "line": "[nav-walk] here=WorldTile { x: 3265, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 172.055471, "line": "[nav-follow] here=WorldTile { x: 3265, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 172.055493, "line": "[host] hitch liveajlk9g_0: observe_us=19534 paints=6691 skips=1 ticks=267"}
+{"elapsed_seconds": 172.201817, "line": "[host] slot liveajlk9g_0: d_loop_us=1128 d_raster_us=157328 d_observe_us=69038 max_observe_us=20139 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 172.665323, "line": "[nav-walk] here=WorldTile { x: 3264, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 172.665398, "line": "[nav-follow] here=WorldTile { x: 3264, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 172.665418, "line": "[host] hitch liveajlk9g_0: observe_us=18791 paints=6717 skips=1 ticks=268"}
+{"elapsed_seconds": 173.005463, "line": "[panel] rss=663175168 traffic_sum=11749"}
+{"elapsed_seconds": 173.005555, "line": "[panel] present pixmap=0 tex=6688 bind_noop=6686 bind_rereg=2"}
+{"elapsed_seconds": 173.254674, "line": "[nav-walk] here=WorldTile { x: 3263, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 173.25475, "line": "[nav-follow] here=WorldTile { x: 3263, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 173.254804, "line": "[host] hitch liveajlk9g_0: observe_us=21170 paints=6742 skips=1 ticks=269"}
+{"elapsed_seconds": 173.381491, "line": "[host] slot liveajlk9g_0: d_loop_us=1150 d_raster_us=159486 d_observe_us=70021 max_observe_us=21170 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179"}
+{"elapsed_seconds": 173.861636, "line": "[nav-walk] here=WorldTile { x: 3262, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 173.861709, "line": "[nav-follow] here=WorldTile { x: 3262, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 173.861728, "line": "[host] hitch liveajlk9g_0: observe_us=17335 paints=6768 skips=1 ticks=270"}
+{"elapsed_seconds": 174.026299, "line": "[panel] rss=663175168 traffic_sum=11813"}
+{"elapsed_seconds": 174.026373, "line": "[panel] present pixmap=0 tex=6729 bind_noop=6727 bind_rereg=2"}
+{"elapsed_seconds": 174.47187, "line": "[nav-walk] here=WorldTile { x: 3261, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 174.47195, "line": "[nav-follow] here=WorldTile { x: 3261, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 174.471972, "line": "[host] hitch liveajlk9g_0: observe_us=20838 paints=6794 skips=1 ticks=271"}
+{"elapsed_seconds": 174.549528, "line": "[host] slot liveajlk9g_0: d_loop_us=1107 d_raster_us=156689 d_observe_us=67337 max_observe_us=20838 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 175.026366, "line": "[panel] rss=663175168 traffic_sum=11827"}
+{"elapsed_seconds": 175.026461, "line": "[panel] present pixmap=0 tex=6771 bind_noop=6769 bind_rereg=2"}
+{"elapsed_seconds": 175.057953, "line": "[nav-walk] here=WorldTile { x: 3260, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 175.058041, "line": "[nav-follow] here=WorldTile { x: 3260, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 175.058063, "line": "[host] hitch liveajlk9g_0: observe_us=21068 paints=6819 skips=1 ticks=272"}
+{"elapsed_seconds": 175.675038, "line": "[nav-walk] here=WorldTile { x: 3259, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 175.675112, "line": "[nav-follow] here=WorldTile { x: 3259, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 175.67513, "line": "[host] hitch liveajlk9g_0: observe_us=19318 paints=6845 skips=1 ticks=273"}
+{"elapsed_seconds": 175.725909, "line": "[host] slot liveajlk9g_0: d_loop_us=1047 d_raster_us=162434 d_observe_us=67890 max_observe_us=21068 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 176.03035, "line": "[panel] rss=663175168 traffic_sum=11854"}
+{"elapsed_seconds": 176.030425, "line": "[panel] present pixmap=0 tex=6811 bind_noop=6809 bind_rereg=2"}
+{"elapsed_seconds": 176.264214, "line": "[nav-walk] here=WorldTile { x: 3258, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 176.264303, "line": "[nav-follow] here=WorldTile { x: 3258, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 176.26433, "line": "[host] hitch liveajlk9g_0: observe_us=20992 paints=6870 skips=1 ticks=274"}
+{"elapsed_seconds": 176.858599, "line": "[nav-walk] here=WorldTile { x: 3257, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 176.858716, "line": "[nav-follow] here=WorldTile { x: 3257, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 176.858738, "line": "[host] hitch liveajlk9g_0: observe_us=19423 paints=6896 skips=1 ticks=275"}
+{"elapsed_seconds": 176.888863, "line": "[host] slot liveajlk9g_0: d_loop_us=976 d_raster_us=154176 d_observe_us=67856 max_observe_us=20992 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 177.030355, "line": "[panel] rss=663175168 traffic_sum=11882"}
+{"elapsed_seconds": 177.030426, "line": "[panel] present pixmap=0 tex=6853 bind_noop=6851 bind_rereg=2"}
+{"elapsed_seconds": 177.472156, "line": "[nav-walk] here=WorldTile { x: 3256, z: 3430, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 177.472242, "line": "[nav-follow] here=WorldTile { x: 3256, z: 3430, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 177.472265, "line": "[host] hitch liveajlk9g_0: observe_us=19314 paints=6922 skips=1 ticks=276"}
+{"elapsed_seconds": 178.030501, "line": "[panel] rss=663175168 traffic_sum=11896"}
+{"elapsed_seconds": 178.030593, "line": "[panel] present pixmap=0 tex=6895 bind_noop=6893 bind_rereg=2"}
+{"elapsed_seconds": 178.07425, "line": "[nav-walk] here=WorldTile { x: 3255, z: 3429, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 178.074322, "line": "[nav-follow] here=WorldTile { x: 3255, z: 3429, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 178.074345, "line": "[host] hitch liveajlk9g_0: observe_us=19473 paints=6948 skips=1 ticks=277"}
+{"elapsed_seconds": 178.078081, "line": "[host] slot liveajlk9g_0: d_loop_us=978 d_raster_us=158639 d_observe_us=66636 max_observe_us=19473 d_paints=50 d_skips=0 d_ticks=2 window_ms=1189"}
+{"elapsed_seconds": 178.656428, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3428, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 178.656504, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3428, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 178.656523, "line": "[host] hitch liveajlk9g_0: observe_us=19104 paints=6973 skips=1 ticks=278"}
+{"elapsed_seconds": 179.05127, "line": "[panel] rss=663175168 traffic_sum=11943"}
+{"elapsed_seconds": 179.051368, "line": "[panel] present pixmap=0 tex=6937 bind_noop=6935 bind_rereg=2"}
+{"elapsed_seconds": 179.225453, "line": "[host] slot liveajlk9g_0: d_loop_us=952 d_raster_us=162900 d_observe_us=50212 max_observe_us=19104 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 179.263094, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3427, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 179.263175, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3427, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 179.263193, "line": "[host] hitch liveajlk9g_0: observe_us=20533 paints=6999 skips=1 ticks=279"}
+{"elapsed_seconds": 179.867915, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3426, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=14 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 179.867994, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3426, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 179.868015, "line": "[host] hitch liveajlk9g_0: observe_us=17917 paints=7025 skips=1 ticks=280"}
+{"elapsed_seconds": 180.051331, "line": "[panel] rss=663175168 traffic_sum=11969"}
+{"elapsed_seconds": 180.051408, "line": "[panel] present pixmap=0 tex=6978 bind_noop=6976 bind_rereg=2"}
+{"elapsed_seconds": 180.385542, "line": "[host] slot liveajlk9g_0: d_loop_us=924 d_raster_us=172314 d_observe_us=67243 max_observe_us=20533 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160"}
+{"elapsed_seconds": 180.469761, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3425, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=15 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 180.469834, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3425, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 180.469858, "line": "[host] hitch liveajlk9g_0: observe_us=17282 paints=7051 skips=1 ticks=281"}
+{"elapsed_seconds": 181.067483, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3424, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=16 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 181.067559, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3424, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 181.067578, "line": "[host] hitch liveajlk9g_0: observe_us=17406 paints=7077 skips=1 ticks=282"}
+{"elapsed_seconds": 181.067715, "line": "[panel] rss=663175168 traffic_sum=11995"}
+{"elapsed_seconds": 181.067731, "line": "[panel] present pixmap=0 tex=7020 bind_noop=7018 bind_rereg=2"}
+{"elapsed_seconds": 181.542987, "line": "[host] slot liveajlk9g_0: d_loop_us=966 d_raster_us=173435 d_observe_us=63227 max_observe_us=17406 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 181.676812, "line": "[nav-walk] here=WorldTile { x: 3254, z: 3423, level: 0 } aim=WorldTile { x: 3250, z: 3423, level: 0 } radius=0 ticks_waited=17 sent_tile=Some(WorldTile { x: 3267, z: 3430, level: 0 })"}
+{"elapsed_seconds": 181.676894, "line": "[nav-follow] here=WorldTile { x: 3254, z: 3423, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None"}
+{"elapsed_seconds": 181.676916, "line": "[host] hitch liveajlk9g_0: observe_us=21002 paints=7103 skips=1 ticks=283"}
+{"elapsed_seconds": 181.707267, "line": "[script liveajlk9g_0] interact WalkNear { x: 3253, z: 3420, level: 0, radius: 1, allow_teleports: false }"}
+{"elapsed_seconds": 182.072057, "line": "[panel] rss=663175168 traffic_sum=12066"}
+{"elapsed_seconds": 182.07214, "line": "[panel] present pixmap=0 tex=7063 bind_noop=7061 bind_rereg=2"}
+{"elapsed_seconds": 182.255346, "line": "[nav-follow] here=WorldTile { x: 3253, z: 3422, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 182.255423, "line": "[host] hitch liveajlk9g_0: observe_us=18142 paints=7128 skips=1 ticks=284"}
+{"elapsed_seconds": 182.708598, "line": "[host] slot liveajlk9g_0: d_loop_us=1026 d_raster_us=170793 d_observe_us=71490 max_observe_us=21002 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 182.861742, "line": "[nav-walk] here=WorldTile { x: 3252, z: 3421, level: 0 } aim=WorldTile { x: 3252, z: 3421, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3253, z: 3422, level: 0 })"}
+{"elapsed_seconds": 182.86182, "line": "[nav-follow] here=WorldTile { x: 3252, z: 3421, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3252, z: 3421, level: 0 } })"}
+{"elapsed_seconds": 182.861839, "line": "[host] hitch liveajlk9g_0: observe_us=18882 paints=7154 skips=1 ticks=285"}
+{"elapsed_seconds": 182.91373, "line": "[script liveajlk9g_0] interact OpenBooth { x: 3252, z: 3419, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 183.072074, "line": "[panel] rss=663175168 traffic_sum=12148"}
+{"elapsed_seconds": 183.072158, "line": "[panel] present pixmap=0 tex=7105 bind_noop=7103 bind_rereg=2"}
+{"elapsed_seconds": 183.473892, "line": "[host] hitch liveajlk9g_0: observe_us=19211 paints=7180 skips=1 ticks=286"}
+{"elapsed_seconds": 183.878759, "line": "[host] slot liveajlk9g_0: d_loop_us=955 d_raster_us=179819 d_observe_us=65584 max_observe_us=19211 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 184.092798, "line": "[panel] rss=663175168 traffic_sum=12174"}
+{"elapsed_seconds": 184.092903, "line": "[panel] present pixmap=0 tex=7147 bind_noop=7145 bind_rereg=2"}

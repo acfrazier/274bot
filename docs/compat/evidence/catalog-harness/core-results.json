@@ -35620,5 +35620,3417 @@
         "bank_loaded": false
       }
     }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_cakes",
+    "exit_code": 1,
+    "elapsed_seconds": 114.429,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch Thieving XP from Baker's stall after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 17,
+      "tile": [
+        2668,
+        3312,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 388,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 166,
+      "tile": [
+        2668,
+        3312,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 388,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3725
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_thiever",
+    "exit_code": 1,
+    "elapsed_seconds": 115.667,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 9 (watch Thieving XP after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 19,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 37224,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 169,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 37224,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3770
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_thiever_knight",
+    "exit_code": 1,
+    "elapsed_seconds": 116.234,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 9 (watch Thieving XP after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 19,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 166636,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 169,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 166636,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3373
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "rune_crafter",
+    "exit_code": 0,
+    "elapsed_seconds": 142.271,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 42,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "1436": 173
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 88,
+        "tile": [
+          2841,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 93,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 103,
+        "tile": [
+          2983,
+          3288,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 162,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 164,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 213,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 270,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "rune_crafter",
+    "exit_code": 0,
+    "elapsed_seconds": 140.901,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-8e7d965b-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-8e7d965b-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 43,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "1436": 200
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 88,
+        "tile": [
+          2841,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 93,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 101,
+        "tile": [
+          2983,
+          3288,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 160,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 162,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 211,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 270,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "rune_crafter_earth",
+    "exit_code": 0,
+    "elapsed_seconds": 146.204,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 39,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "1436": 173
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 87,
+        "tile": [
+          2657,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 95,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 105,
+        "tile": [
+          3303,
+          3477,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 163,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 165,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 220,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1320,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "rune_crafter_earth",
+    "exit_code": 0,
+    "elapsed_seconds": 148.646,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-8e7d965b-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-8e7d965b-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 42,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "1436": 173
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 89,
+        "tile": [
+          2657,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 97,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 107,
+        "tile": [
+          3303,
+          3477,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 165,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 167,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 223,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1320,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_cakes",
+    "exit_code": 1,
+    "elapsed_seconds": 114.44,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch Thieving XP from Baker's stall after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 18,
+      "tile": [
+        2668,
+        3312,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 388,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 167,
+      "tile": [
+        2668,
+        3312,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 388,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3722
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_thiever",
+    "exit_code": 1,
+    "elapsed_seconds": 115.046,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 9 (watch Thieving XP after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 19,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 37224,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 168,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 37224,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3751
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "ardy_thiever_knight",
+    "exit_code": 1,
+    "elapsed_seconds": 115.612,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 9 (watch Thieving XP after Start): stat_xp_gain(17)>=1 not seen within 150 ticks",
+    "failure_class": "ardy_no_first_action_pending_native_cake_audit",
+    "diagnosis": "No movement, item or XP change. Root found an incomplete nearest-object cake shim; t_fa68337f audits exact ownership for each case before implementation. No foreign-script verdict or dim.",
+    "baseline": {
+      "tick": 19,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 166636,
+        "woodcutting": 0
+      }
+    },
+    "latest": {
+      "tick": 169,
+      "tile": [
+        2661,
+        3306,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 0,
+      "bank_open": false,
+      "bank_loaded": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 37224,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 166636,
+        "woodcutting": 0
+      }
+    },
+    "post_start_observations": 3380
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "rune_crafter",
+    "exit_code": 0,
+    "elapsed_seconds": 141.525,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 42,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "1436": 200
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 88,
+        "tile": [
+          2841,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 93,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 101,
+        "tile": [
+          2983,
+          3288,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 160,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 162,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 212,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 270,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "rune_crafter",
+    "exit_code": 0,
+    "elapsed_seconds": 139.637,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-8e7d965b-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-8e7d965b-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 41,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "1436": 200
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 86,
+        "tile": [
+          2841,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 91,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 99,
+        "tile": [
+          2983,
+          3288,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 158,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 160,
+        "tile": [
+          3011,
+          3355,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1438": 1
+        },
+        "bank_ids": {
+          "556": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 135,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 209,
+        "tile": [
+          2843,
+          4832,
+          0
+        ],
+        "item_ids": {
+          "556": 27,
+          "1438": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 270,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "rune_crafter_earth",
+    "exit_code": 0,
+    "elapsed_seconds": 146.817,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-100adccc-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-100adccc-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 40,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "1436": 173
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 87,
+        "tile": [
+          2657,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 95,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 106,
+        "tile": [
+          3303,
+          3477,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 164,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 166,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 221,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1320,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "rune_crafter_earth",
+    "exit_code": 0,
+    "elapsed_seconds": 149.855,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-8e7d965b-4cc6cc27.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-8e7d965b-4cc6cc27.log",
+    "build_provenance": "3190 exact source blobs and isolated binary verified.",
+    "scope": "Selected core/options only; remaining branches and final integrated frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "withdrawn": {
+        "tick": 43,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "1436": 173
+        },
+        "bank_generation": 3,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "entered": {
+        "tick": 91,
+        "tile": [
+          2657,
+          4830,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 969,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "crafted": {
+        "tick": 99,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "exited": {
+        "tick": 109,
+        "tile": [
+          3303,
+          3477,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 4,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "deposited": {
+        "tick": 167,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 173
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "restocked": {
+        "tick": 169,
+        "tile": [
+          3252,
+          3420,
+          0
+        ],
+        "item_ids": {
+          "1436": 27,
+          "1440": 1
+        },
+        "bank_ids": {
+          "557": 27,
+          "1436": 146
+        },
+        "bank_generation": 5,
+        "bank_open": true,
+        "bank_loaded": true,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1144,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      },
+      "further": {
+        "tick": 224,
+        "tile": [
+          2658,
+          4839,
+          0
+        ],
+        "item_ids": {
+          "557": 27,
+          "1440": 1
+        },
+        "bank_ids": {},
+        "bank_generation": 6,
+        "bank_open": false,
+        "bank_loaded": false,
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 0,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 1320,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        }
+      }
+    }
+  },
+  {
+    "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "tanner_bot",
+    "exit_code": 1,
+    "elapsed_seconds": 105.205,
+    "revision": 274,
+    "outcome": "FAIL",
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-78cc99d0.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-78cc99d0.log",
+    "build_provenance": "3364 exact Git source blobs and isolated binary verified.",
+    "failure_class": "tanner_trade_modal_timing_or_publication_pending_audit",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 15 (watch cowhides become the selected leather at the Tanner): has_item_id(1741)>=1 not seen within 150 ticks",
+    "diagnosis": "Actual hide withdrawal now works; selected Tanner Trade and nav arrival observed. Some cells also observe real interface679. Script times out before tanning; task t_59351ef0 distinguishes timing, dispatch and publication without changing timeouts or foreign source.",
+    "baseline": {
+      "tick": 28,
+      "tile": [
+        3269,
+        3166,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 2,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "latest": {
+      "tick": 150,
+      "tile": [
+        3273,
+        3169,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 10,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "actual_tanner_widget": {
+      "tick": 115,
+      "tile": [
+        3276,
+        3193,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 7,
+      "bank_open": false,
+      "main_modal": 679,
+      "widget_ids": [
+        679,
+        680,
+        681,
+        683,
+        684,
+        685,
+        686,
+        687,
+        688,
+        689,
+        690,
+        691,
+        692,
+        693,
+        694,
+        695,
+        696,
+        697,
+        698,
+        699,
+        700,
+        701,
+        702,
+        703,
+        704,
+        705,
+        706,
+        707,
+        708,
+        709,
+        710,
+        711,
+        712,
+        713,
+        714,
+        715,
+        3213,
+        3214,
+        7377,
+        7384,
+        7385,
+        7386,
+        7387,
+        7388,
+        7389,
+        7390,
+        7391,
+        7392,
+        7393,
+        7394,
+        7395,
+        7396,
+        7397,
+        7398,
+        7399,
+        7400,
+        7401,
+        7402,
+        7403,
+        7404,
+        7405,
+        7406,
+        7407,
+        7408,
+        7409,
+        7410,
+        7411,
+        7412,
+        7413,
+        7414,
+        7415,
+        7416,
+        7417,
+        7418,
+        7419,
+        7420,
+        7421,
+        7422,
+        7423,
+        7424,
+        7425,
+        7426,
+        7427,
+        7428,
+        7429,
+        7430,
+        7431,
+        7432,
+        7433,
+        7434,
+        7435,
+        7436,
+        7437,
+        7438,
+        7439,
+        7445,
+        8685,
+        8686,
+        8687,
+        8688,
+        8689,
+        8690,
+        8691,
+        8692,
+        8693,
+        8694,
+        8695,
+        8696,
+        8697,
+        8698,
+        8699,
+        8700,
+        8701,
+        8702,
+        8703,
+        8704,
+        8705,
+        8706,
+        8707,
+        8708,
+        8709,
+        8710,
+        8711,
+        8712,
+        8713
+      ]
+    },
+    "scope": "Count-dialog progress only; no tanning or full bank-cycle acceptance."
+  },
+  {
+    "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "tanner_bot_hard",
+    "exit_code": 1,
+    "elapsed_seconds": 104.27,
+    "revision": 274,
+    "outcome": "FAIL",
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-78cc99d0.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-78cc99d0.log",
+    "build_provenance": "3364 exact Git source blobs and isolated binary verified.",
+    "failure_class": "tanner_trade_modal_timing_or_publication_pending_audit",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 15 (watch cowhides become the selected leather at the Tanner): has_item_id(1743)>=1 not seen within 150 ticks",
+    "diagnosis": "Actual hide withdrawal now works; selected Tanner Trade and nav arrival observed. Some cells also observe real interface679. Script times out before tanning; task t_59351ef0 distinguishes timing, dispatch and publication without changing timeouts or foreign source.",
+    "baseline": {
+      "tick": 25,
+      "tile": [
+        3269,
+        3166,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 2,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "latest": {
+      "tick": 150,
+      "tile": [
+        3275,
+        3173,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 8,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "actual_tanner_widget": null,
+    "scope": "Count-dialog progress only; no tanning or full bank-cycle acceptance."
+  },
+  {
+    "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "tanner_bot",
+    "exit_code": 1,
+    "elapsed_seconds": 106.314,
+    "revision": 289,
+    "outcome": "FAIL",
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-78cc99d0.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-78cc99d0.log",
+    "build_provenance": "3364 exact Git source blobs and isolated binary verified.",
+    "failure_class": "tanner_trade_modal_timing_or_publication_pending_audit",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 15 (watch cowhides become the selected leather at the Tanner): has_item_id(1741)>=1 not seen within 150 ticks",
+    "diagnosis": "Actual hide withdrawal now works; selected Tanner Trade and nav arrival observed. Some cells also observe real interface679. Script times out before tanning; task t_59351ef0 distinguishes timing, dispatch and publication without changing timeouts or foreign source.",
+    "baseline": {
+      "tick": 29,
+      "tile": [
+        3269,
+        3166,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 2,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "latest": {
+      "tick": 154,
+      "tile": [
+        3272,
+        3166,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 10,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "actual_tanner_widget": {
+      "tick": 120,
+      "tile": [
+        3276,
+        3193,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 7,
+      "bank_open": false,
+      "main_modal": 679,
+      "widget_ids": [
+        679,
+        680,
+        681,
+        683,
+        684,
+        685,
+        686,
+        687,
+        688,
+        689,
+        690,
+        691,
+        692,
+        693,
+        694,
+        695,
+        696,
+        697,
+        698,
+        699,
+        700,
+        701,
+        702,
+        703,
+        704,
+        705,
+        706,
+        707,
+        708,
+        709,
+        710,
+        711,
+        712,
+        713,
+        714,
+        715,
+        3213,
+        3214,
+        7377,
+        7384,
+        7385,
+        7386,
+        7387,
+        7388,
+        7389,
+        7390,
+        7391,
+        7392,
+        7393,
+        7394,
+        7395,
+        7396,
+        7397,
+        7398,
+        7399,
+        7400,
+        7401,
+        7402,
+        7403,
+        7404,
+        7405,
+        7406,
+        7407,
+        7408,
+        7409,
+        7410,
+        7411,
+        7412,
+        7413,
+        7414,
+        7415,
+        7416,
+        7417,
+        7418,
+        7419,
+        7420,
+        7421,
+        7422,
+        7423,
+        7424,
+        7425,
+        7426,
+        7427,
+        7428,
+        7429,
+        7430,
+        7431,
+        7432,
+        7433,
+        7434,
+        7435,
+        7436,
+        7437,
+        7438,
+        7439,
+        7445,
+        8685,
+        8686,
+        8687,
+        8688,
+        8689,
+        8690,
+        8691,
+        8692,
+        8693,
+        8694,
+        8695,
+        8696,
+        8697,
+        8698,
+        8699,
+        8700,
+        8701,
+        8702,
+        8703,
+        8704,
+        8705,
+        8706,
+        8707,
+        8708,
+        8709,
+        8710,
+        8711,
+        8712,
+        8713
+      ]
+    },
+    "scope": "Count-dialog progress only; no tanning or full bank-cycle acceptance."
+  },
+  {
+    "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "tanner_bot_hard",
+    "exit_code": 1,
+    "elapsed_seconds": 105.487,
+    "revision": 289,
+    "outcome": "FAIL",
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-78cc99d0.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-78cc99d0.log",
+    "build_provenance": "3364 exact Git source blobs and isolated binary verified.",
+    "failure_class": "tanner_trade_modal_timing_or_publication_pending_audit",
+    "failure_excerpt": "FAIL: catalog_boundary_live: scenario failed: step 15 (watch cowhides become the selected leather at the Tanner): has_item_id(1743)>=1 not seen within 150 ticks",
+    "diagnosis": "Actual hide withdrawal now works; selected Tanner Trade and nav arrival observed. Some cells also observe real interface679. Script times out before tanning; task t_59351ef0 distinguishes timing, dispatch and publication without changing timeouts or foreign source.",
+    "baseline": {
+      "tick": 27,
+      "tile": [
+        3269,
+        3166,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 2,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "latest": {
+      "tick": 149,
+      "tile": [
+        3275,
+        3173,
+        0
+      ],
+      "item_ids": {
+        "995": 2000,
+        "1739": 27
+      },
+      "bank_ids": {},
+      "bank_generation": 8,
+      "bank_open": false,
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "actual_tanner_widget": null,
+    "scope": "Count-dialog progress only; no tanning or full bank-cycle acceptance."
   }
 ]

@@ -1,0 +1,62 @@
+{
+  "host_commit": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3364,
+  "checks": [
+    {
+      "label": "clippy-count-dialog",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--test",
+        "client_adapter_count_dialog",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 13.418,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-retry-clippy-count-dialog.log",
+      "log_sha256": "3e32e86f3e6f15912b52ec041d2c33e21173d416a4414cbb48c9b08f2b9a6969"
+    },
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 101,
+      "elapsed_seconds": 0.327,
+      "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-retry-catalog.log",
+      "log_sha256": "8732abbda69bf84d8d72fa594ace481dca23a2c00f37ad979cd562609a80d005"
+    }
+  ],
+  "all_passed": false,
+  "isolated_build": true,
+  "prior_attempt": "docs/compat/evidence/catalog-headed/checks-78cc99d0.json",
+  "prior_count_dialog_pass": {
+    "label": "count-dialog",
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "script",
+      "--test",
+      "client_adapter_count_dialog",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 15.439,
+    "log": "docs/compat/evidence/catalog-headed/checks-78cc99d0-count-dialog.log",
+    "log_sha256": "aa604b7422d9ff8a86112e99df8d9bbbd1bdffe3c1cd5e87ba68bb21843886bf"
+  }
+}

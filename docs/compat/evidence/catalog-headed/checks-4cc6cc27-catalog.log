@@ -1,0 +1,36 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests/catalog_boundary_live.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-4cc6cc27/debug/deps/catalog_boundary_live-cf42836446c7a751)
+
+running 29 tests
+test catalog_boundary_live ... ignored, requires LIVE=1, CATALOG_REVISION/ROOT/COMMIT/SCENARIO/NAV_PACK, and local engine
+test tests::alcher_requires_acquired_fuel_then_consumption_xp_and_coins ... ok
+test tests::bank_fletcher_requires_a_fresh_bank_cycle_and_further_crafting ... ok
+test tests::bank_fletcher_cut_string_requires_cut_then_bank_then_string_by_id ... ok
+test tests::bank_fletcher_string_requires_exact_ids_and_a_same_generation_bank_cycle ... ok
+test tests::chicken_killer_requires_combat_xp_and_a_post_start_loot_bury_cycle ... ok
+test tests::ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal ... ok
+test tests::bone_burier_rejects_first_burial_and_requires_observed_bank_cycle ... ok
+test tests::flax_picker_requires_full_pack_deposit_return_and_further_pick ... ok
+test tests::alcher_option_witnesses_reject_seeded_only_and_require_order_and_large_stack ... ok
+test tests::chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work ... ok
+test tests::alcher_generated_custom_requires_noted_id_then_exact_consumption ... ok
+test tests::catalog_failure_emits_accumulated_core_witness_and_latest_observation ... ok
+test tests::dart_fletcher_requires_two_observed_actions_and_both_inputs ... ok
+test tests::old_catalog_explicitly_refuses_cut_string_mode ... ok
+test tests::door_opener_requires_selected_world_change_not_queued_open ... ok
+test tests::start_baseline_rejects_a_seeded_outcome_without_case_preparation ... ok
+test tests::ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket ... ok
+test tests::thiever_requires_post_start_xp_and_coin_progress ... ok
+test tests::gnome_course_requires_complete_lap_and_second_lap_progress ... ok
+test tests::herb_cleaner_requires_deposit_restock_and_exact_unid_ids ... ok
+test tests::gem_cutter_requires_chisel_preservation_and_no_crush ... ok
+test tests::vial_filler_requires_fountain_fill_deposit_restock_and_further_fill ... ok
+test tests::potion_maker_requires_staged_unf_finished_deposit_and_further_product ... ok
+test tests::tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan ... ok
+test tests::superheater_requires_exact_ids_staff_and_bank_cycle ... ok
+test tests::rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft ... ok
+test tests::source_identity_rejects_bytes_that_do_not_match_the_frozen_ledger ... ok
+test tests::checked_in_frozen_core_sources_match_both_catalog_ledgers ... ok
+
+test result: ok. 28 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
