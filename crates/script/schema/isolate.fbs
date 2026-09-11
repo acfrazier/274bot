@@ -237,6 +237,8 @@ table Snapshot {
   self_chat: string;
   hint_tile_x: int = -1;
   hint_tile_z: int = -1;
+  retaliate_on_com_id: int = -1;
+  retaliate_off_com_id: int = -1;
 }
 
 // One shim interact request, tagged by `op`:

@@ -3218,6 +3218,9 @@ fn with_script_snapshot_input<R>(
         hint_tile: snapshot
             .and_then(GameSnapshot::hint_tile)
             .map(|tile| (tile.x, tile.z)),
+        retaliate_controls: snapshot
+            .and_then(GameSnapshot::retaliate_controls)
+            .map(|controls| (controls.on_component_id, controls.off_component_id)),
     };
     f(&input, native)
 }
@@ -10900,6 +10903,71 @@ export default class T extends LoopingBot {
             !off.retaliate_enabled(),
             "varp(172)!=0 is auto-retaliate off"
         );
+    }
+
+    #[test]
+    fn script_snapshot_posts_native_retaliate_control_identity() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.set_iface(
+            100,
+            IfType {
+                id: 100,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![101, 102, 103, 104, 105, 106]),
+                ..Default::default()
+            },
+        );
+        for id in 101..=106 {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 100,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+        }
+        c.set_iface_mut(
+            101,
+            IfTypeMut {
+                text: "Auto retaliate".into(),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::IF_SETTEXT);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let bytes = script_snapshot_fb(
+            None,
+            false,
+            1,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .0;
+        let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        assert_eq!(posted.retaliate_controls(), Some((103, 104)));
     }
 
     // Task 9c — delta posts: the keyframe carries every field; a later

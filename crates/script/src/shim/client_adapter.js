@@ -125,6 +125,13 @@ export const reader = proxy('reader', {
         if (!tile || !finiteInt(tile.x) || !finiteInt(tile.z)) return null;
         return { x: tile.x, z: tile.z };
     },
+    retaliateControls() {
+        const controls = snap().retaliate_controls;
+        if (!controls || !finiteInt(controls.onComId) || !finiteInt(controls.offComId)) {
+            return null;
+        }
+        return { onComId: controls.onComId, offComId: controls.offComId };
+    },
     inCombat() {
         return snap().in_combat === true;
     },

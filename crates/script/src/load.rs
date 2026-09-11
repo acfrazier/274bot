@@ -2359,6 +2359,22 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "hint_tile", none)?;
         }
+        if snap.has_retaliate_controls() {
+            let controls = match snap.retaliate_controls() {
+                Some((on, off)) => {
+                    let controls = v8::Object::new(&mut scope);
+                    let on = num(&mut scope, on as f64);
+                    set(&mut scope, controls, "onComId", on)?;
+                    let off = num(&mut scope, off as f64);
+                    set(&mut scope, controls, "offComId", off)?;
+                    controls.into()
+                }
+                None => v8::null(&mut scope).into(),
+            };
+            set(&mut scope, obj, "retaliate_controls", controls)?;
+        } else if !had {
+            set(&mut scope, obj, "retaliate_controls", none)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

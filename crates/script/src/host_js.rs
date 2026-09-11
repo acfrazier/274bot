@@ -567,6 +567,24 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
         }],
     },
     TsInterface {
+        name: "ToggleControls",
+        doc: Some("Native on/off component identity for one toggle."),
+        fields: &[
+            TsField {
+                name: "onComId",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "offComId",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    TsInterface {
         name: "VarpRow",
         doc: None,
         fields: &[
@@ -1022,6 +1040,12 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
     TsField {
         name: "retaliate_enabled",
         ty: "boolean",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "retaliate_controls",
+        ty: "ToggleControls | null",
         optional: false,
         doc: None,
     },
