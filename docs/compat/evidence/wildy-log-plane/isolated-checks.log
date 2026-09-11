@@ -1,0 +1,51 @@
+Task: t_44a27b3c
+Scope: Wildy log destination player-plane correction only
+LIVE: not run (prohibited by brief 135)
+Cargo target: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_44a27b3c
+
+RED
+  cargo test -p scenario wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane -- --nocapture
+  FAIL as expected: actual fixture level 1 differed from expected observed level 0.
+
+  cargo test -p host-play --features memory-profile --test catalog_boundary_live wildy_agility_requires_the_ordered_lap_bonus_and_second_pipe -- --nocapture
+  FAIL as expected: the complete observed-plane-0 chain could not qualify while WILDY_LOG_DEST was level 1.
+
+GREEN (focused)
+  cargo test -p scenario wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane -- --nocapture
+  PASS: 1 passed; 103 filtered out.
+
+  cargo test -p host-play --features memory-profile --test catalog_boundary_live wildy_agility_requires_the_ordered_lap_bonus_and_second_pipe -- --nocapture
+  PASS: 1 passed; 41 filtered out.
+
+AFFECTED SUITES
+  cargo test -p scenario
+  PASS: 104 passed; 0 failed; 0 ignored. Doc-tests: 0 failed.
+
+  cargo test -p host-play --features memory-profile --test catalog_boundary_live
+  PASS: 41 passed; 0 failed; 1 ignored (LIVE test not run).
+
+FORMAT / DIFF
+  rustfmt --edition 2021 --check crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  PASS
+
+  git diff --check -- crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  PASS
+
+SOURCE IDENTITIES
+  274 content commit: 000c19997e07206131bcb3c884265840efce416d
+  289 content commit: 92649430fcbc83538d8c4367ecb96cee1a67a944
+  client gitlink: aef3952d1cd7bb3b93d39c497f0f476b68021c59
+  both m46_61.jm2 sha256: 09c30dc7d888dfaa918634d3c656e52742ce8f573a0bbfacbe236651ee3bcf21
+  274 wilderness_course.rs2 sha256: fddf3605c923f61585edf45c2edc0377b13be9e668ce745d648c59a008062572
+  289 wilderness_course.rs2 sha256: db69683bd6b23f73241a4274334e40b3e9ebae954e853869c45b0d6cab5c3fe9
+  both wilderness_course.loc sha256: 90e9d6bf69eae77c18c12ab53d13e45387a9de5c810f4e6f348ac6c56d053991
+
+RETAINED LIVE FAILURES (unchanged; no reruns)
+  r274 / 100adccc log sha256: 4b57b94176ff22eebc5cbcfd3e6e53dff50416b60120d2ea66cf919c0d7e3648
+    step 16 waited for arrived_near(2994,3945,1,3); final tile plane 0.
+  r289 / 100adccc log sha256: 0f246ff5cc06ee0047543bd6429403b7441d7be2d8a905ef724e119cfdc5ed51
+    step 16 waited for arrived_near(2994,3945,1,3); final tile plane 0.
+  r289 / 8e7d965b log sha256: 50bcf975aa0be789a7e92d872fdd463b11ba26f83c5eb9c447eee23491b8a603
+    step 16 waited for arrived_near(2994,3945,1,3); final tile plane 0.
+  r274 / 8e7d965b log sha256: dbe26b18e9b4740f16a6839c9eb4003b36cf022f30a097aa5be29566b0fb282d
+    original ridge/fall/death path; step 7 XP witness failed. Retained as failure.
