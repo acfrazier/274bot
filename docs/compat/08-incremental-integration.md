@@ -60,3 +60,9 @@ Publish the client to acfrazier/FR-client-bothost r274-bh-modular
 before publishing the host gitlink. Verify a fresh recursive checkout, merge
 ordinary history into host main and push acfrazier/274bot. Preserve unrelated
 primary checkout files and active campaign work. No tag/package/announcement.
+
+The client and staging branch are published. A fresh recursive GitHub clone
+of cb9d14e83 fetched clientaef3952d with no local object alternates;
+`cargo check --workspace --all-targets --features memory-profile --locked`
+passed. Receipt: evidence/stage-1/fresh-remote-check.json. Only documentation
+and this evidence have changed since that clone. Main integration follows.

@@ -7,6 +7,9 @@
   "code_candidate": "940531c3f7a4fe392f8ee5688702fe1f617d28b0",
   "review_report_commit": "02ee3e51eb45ef11ddb2743e0f28b22400653dcf",
   "remote_publication_done": false,
-  "fresh_recursive_clone_checked": false,
-  "main_merged": false
+  "fresh_recursive_clone_checked": true,
+  "main_merged": false,
+  "client_published": true,
+  "staging_branch_published": true,
+  "fresh_recursive_check_receipt": "docs/compat/evidence/stage-1/fresh-remote-check.json"
 }
