@@ -1,0 +1,29 @@
+{
+  "host_commit": "659380651869bd12fc9d281a30037b3b0368b380",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_ownership": "Exclusively root-owned completed cache transferred sequentially to isolated stage1 checkout",
+  "checks": [
+    {
+      "name": "host-tests-remaining",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--features",
+        "memory-profile",
+        "--",
+        "--skip",
+        "bright_catalog_cards_start_without_not_impl"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+      "exit_code": 101,
+      "seconds": 84.639,
+      "log": "docs/compat/evidence/stage-1/host-tests-remaining.log",
+      "sha256": "87ea6db572bd5adef5702743b4e8c6f3da30b07d55b8b1d6a040218d64fc3af6"
+    }
+  ],
+  "all_passed": false
+}

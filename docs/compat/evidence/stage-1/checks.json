@@ -1,0 +1,73 @@
+{
+  "host_commit": "659380651869bd12fc9d281a30037b3b0368b380",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_ownership": "Exclusively root-owned completed cache transferred sequentially to isolated stage1 checkout",
+  "checks": [
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+      "exit_code": 0,
+      "seconds": 1.299,
+      "log": "docs/compat/evidence/stage-1/fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "api",
+        "-p",
+        "host",
+        "-p",
+        "host-play",
+        "-p",
+        "nav",
+        "-p",
+        "script",
+        "-p",
+        "panel",
+        "-p",
+        "tui",
+        "--all-targets",
+        "--features",
+        "memory-profile",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+      "exit_code": 0,
+      "seconds": 6.877,
+      "log": "docs/compat/evidence/stage-1/clippy.log",
+      "sha256": "78e137a1c15eac16bcb661b0994ce769afe7f0df70ec2907e8a29013eb352a0b"
+    },
+    {
+      "name": "host-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--features",
+        "memory-profile"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1",
+      "exit_code": 101,
+      "seconds": 143.472,
+      "log": "docs/compat/evidence/stage-1/host-tests.log",
+      "sha256": "84c7d4c1a8c73e1fd1c94be54e309facebbe6a3a4410f220a8c5b9462a7f836b"
+    }
+  ],
+  "all_passed": false
+}

@@ -1,0 +1,9 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/vendor/fr-client-rust/crates/client)
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/vault)
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/api)
+    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/nav)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/script)
+    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/host)
+    Checking scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/scenario)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-stage-1/crates/host-play)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.15s
