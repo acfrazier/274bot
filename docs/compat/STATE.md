@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 17:00 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 17:17 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -37,13 +37,14 @@ four cells with real work. ArdyCakes214 fails after isolate termination.
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
 newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> reviewed Wildy plane135 (verified Grok4.5 run1369)
 -> combat observer/Coal136 reviewed1372 -> mage132 reviewed1378 -> resource
-start preparation139 -> Mule bootstrap127.
+start preparation139 (active) -> Mule bootstrap127 -> option fixtures147-150.
 Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
-quest status transport137 reviewed1373 -> bounded reachability140 review1379 -> native NPC paint box144 -> teleport -> shop -> Make-X -> fire -> trade126.
+quest status transport137 reviewed1373 -> bounded reachability140 reviewed1379 -> active native NPC paint box144 -> teleport -> shop -> Make-X -> fire -> trade126.
 Existing parent gates remain. Independent bounded reachability audit138 completed (verified Grok4.6
 run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
-Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
-valid adjacency, and prevent entity-row budget bypass. No live fix claimed.
+Rust flood-metadata mapping140 honors budgets without JS BFS, preserves
+valid adjacency, and prevents entity-row budget bypass. Exact324 FlaxAIO pick
+now passes all four revision/catalog cells after verified140 review.
 Exact942 LIVE completed16 bank-dependent PASSs and4 Brimhaven/Ardy FAILs.
 Audit141 verified Grok4.6 identifies a frozen Brimhaven route defect; root
 has applied the verified source-specific loader dim after137 handed off:
@@ -70,15 +71,24 @@ Fire missing reader.npcBox;Ardy both never reach selected Strength style.
 Fixture139 now active with Gnome/Herblore/ArdyCakes/Wildy plus Rock/Green/
 ArdyFighter foodTarget1 and trained Coal Mining60/Rune preparation. Original
 failures/clocks/predicates retained, no RNG forcing. Native144 t_c48f1d6a owns
-NPC projection and gates teleport. No LIVE currently.
+NPC projection and gates teleport. Exact324 batch completed4 Flax PASS/2
+mage pre-Start FAIL; two newer mage cells held. Ledger451. Rootdf2 fixes only
+two gear steps Repeat -> Perform, with105 scenario tests PASS. Exactdf2
+5111-file build is running fresh mage/Green cells; three mage PASS so far.
+Original failures remain. Root owns those two send-kind lines,139 preserves them.
 Root frozen stage2 candidate324d7b594/clientaef passed workspace fmt, strict
 all-target Clippy, full script suite and49 catalog tests;5030 source files
-reverified.132 actualG4.5 run1378 approved;140review1379 pending. Fresh
-324 binaries build for gated mage/core qualification; not yet published.
+reverified.132 actualG4.5 run1378 approved (18 calls);140 actualG4.5 run1379
+approved (16 calls). Stage2 candidate ref codex/rs2b0t-stage2-candidate points
+todf2; base main76b2016b7. Whole-branch review146 t_482a30d9/run1382 has
+source review complete, approval withheld pending validation-ready.json and
+finished df2 cells. Main not yet advanced. No new worktree was made.
 Audit143 completed actualG4.6 run1376,34 API calls; its five extra cells are
-provisional leads, not accepted full remaining scope. Corrective145 t_a7f32d56
-requires accounting for later bank/escape branches and verifying existing
-Thiever fleet evidence. No final support acceptance.
+provisional leads, not accepted full remaining scope. Corrective145 t_a7f32d56 completed actualG4.6 run1377 (37 calls):18 extra
+scenarios in four serial fixture cards147-150 after Mule127. Their proposed
+seeds/settings must be checked during implementation. Existing exact-script
+Thiever N1/N32 proves Auto bank; no four redundant Thiever cells. Final
+integrated fleet/platform refresh and full campaign acceptance remain open.
 Audit142 completed with verified Grok4.6 run1371:274 is a native guard LOS
 catch with successful flee/return movement, no proven foreign defect. Keep
 ArdyCakes enabled and retain FAIL;139 pack preparation is separate.

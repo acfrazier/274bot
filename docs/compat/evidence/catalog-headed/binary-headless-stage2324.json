@@ -1,0 +1,30 @@
+{
+  "mode": "headless",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "host-play",
+    "--test",
+    "catalog_boundary_live",
+    "--features",
+    "memory-profile",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T16:59:00.384489+00:00",
+  "elapsed_seconds": 0.237,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Exclusive root compiler cache reused after completed Wildy and loader checks; source hashes and binary identity reverified; not empty-started",
+  "host_commit": "324d7b5946534db28305942d9bfba75fdd2e5dc8",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-stage2-324",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-stage2324",
+  "binary_sha256": "fe7a3223bf324205a33aa2a9ad94c5a80974070416acf3c1cc631c4e7cb28718",
+  "binary_bytes": 181084344,
+  "source_files_verified": 5030,
+  "elapsed_is_not_performance_measurement": true
+}
