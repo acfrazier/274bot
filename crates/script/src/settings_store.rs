@@ -237,7 +237,9 @@ fn default_for_type(ty: &str, default: &str) -> Value {
 
 /// Whether a setting row should paint given its `showIf` raw text and the
 /// current bag values. Inline `{ key: 'x', anyOf: ['y'] }` objects are
-/// evaluated; unresolved identifier refs fail open (shown).
+/// evaluated; unresolved identifier refs fail open (shown). Array master
+/// values match when any element equals an `anyOf` token using the same
+/// case-sensitive scalar comparison as strings. Empty arrays match nothing.
 pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool {
     let Some(raw) = show_if else {
         return true;
@@ -252,8 +254,15 @@ pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool 
     let Some(any_of) = extract_any_of(raw) else {
         return true;
     };
-    let current = bag.get(&key).map(value_as_setting_str).unwrap_or_default();
-    any_of.iter().any(|v| v == &current)
+    match bag.get(&key) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .any(|item| any_of.iter().any(|v| v == &value_as_setting_str(item))),
+        other => {
+            let current = other.map(value_as_setting_str).unwrap_or_default();
+            any_of.iter().any(|v| v == &current)
+        }
+    }
 }
 
 fn extract_quoted(raw: &str, field: &str) -> Option<String> {
@@ -378,5 +387,41 @@ mod tests {
         assert!(!setting_visible(Some(show), &bag));
         bag.insert("combatStyle".into(), Value::String("melee".into()));
         assert!(setting_visible(Some(show), &bag));
+    }
+
+    #[test]
+    fn show_if_array_membership_is_case_sensitive_scalar() {
+        let show = "{ key: 'items', anyOf: ['custom'] }";
+        let mut bag = Map::new();
+        bag.insert(
+            "items".into(),
+            Value::Array(vec![Value::String("custom".into())]),
+        );
+        assert!(setting_visible(Some(show), &bag));
+        bag.insert(
+            "items".into(),
+            Value::Array(vec![Value::String("yew_longbow".into())]),
+        );
+        assert!(!setting_visible(Some(show), &bag));
+        bag.insert("items".into(), Value::Array(vec![]));
+        assert!(!setting_visible(Some(show), &bag));
+        bag.insert(
+            "items".into(),
+            Value::Array(vec![Value::String("Custom".into())]),
+        );
+        assert!(
+            !setting_visible(Some(show), &bag),
+            "array membership keeps scalar case sensitivity"
+        );
+        bag.insert("combatStyle".into(), Value::String("Melee".into()));
+        assert!(
+            !setting_visible(Some("{ key: 'combatStyle', anyOf: ['melee'] }"), &bag),
+            "scalar equality stays case-sensitive"
+        );
+        bag.insert("combatStyle".into(), Value::String("melee".into()));
+        assert!(setting_visible(
+            Some("{ key: 'combatStyle', anyOf: ['melee'] }"),
+            &bag
+        ));
     }
 }
