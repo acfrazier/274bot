@@ -9,7 +9,7 @@ immutable per-profile data and keep host gameplay policy separate. Audit any
 small protocol constants through the existing client definitions.
 
 
-Use configured `sol` defaults after parent matching/fill review completes.
+Use configured `grok46` defaults after parent matching/fill review completes.
 Campaign checkout / branch: codex/rs2b0t-multirevision. Read applicable host
 instructions, docs/execution.md, fail-closed-dispatch, the plan step 6 and
 04-provisioning-recovery-design.md. This is the next coherent family after
@@ -65,3 +65,9 @@ Deliver 04-capabilities-loadouts.md and concise raw checks in
 evidence/loadout-capabilities/. Record exact scope, migration, tests and live
 limits. Commit only scoped source/report/evidence, request the same card's
 profile `reviewer` review via kanban_request_review, then stop. No more agents.
+
+Operator dispatch update (2026-09-11 01:00 UTC): this is a Grok 4.6
+implementation task, using profile `grok46` defaults (grok-4.6 / xai-oauth, high
+reasoning). This supersedes the original card body mentioning Sol. Keep the
+same branch, scope, dependencies, required checks and same-card `reviewer`
+handoff. Do not self-complete implementation or bypass the review gate.

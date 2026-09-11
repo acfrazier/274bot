@@ -9,7 +9,7 @@ immutable per-profile data and keep host gameplay policy separate. Audit any
 small protocol constants through the existing client definitions.
 
 
-Use configured `sol` defaults after the preceding shared capability review.
+Use configured `grok46` defaults after the preceding shared capability review.
 Campaign branch: codex/rs2b0t-multirevision. Read applicable instructions,
 docs/execution.md, fail-closed-dispatch, plan step 6 and the PeriodicBank section
 of 04-provisioning-recovery-design.md. Match actual enabled frozen callers in
@@ -52,3 +52,9 @@ ChickenKiller or Ardy/RockCrab call shape. Reuse existing tests proportionately.
 Deliver 04-capabilities-periodic-bank.md and raw focused checks in
 evidence/periodic-bank-capabilities/. Commit scoped files, request same-card
 profile `reviewer` review, then stop. No agents or live qualification claim.
+
+Operator dispatch update (2026-09-11 01:00 UTC): this is a Grok 4.6
+implementation task, using profile `grok46` defaults (grok-4.6 / xai-oauth, high
+reasoning). This supersedes the original card body mentioning Sol. Keep the
+same branch, scope, dependencies, required checks and same-card `reviewer`
+handoff. Do not self-complete implementation or bypass the review gate.

@@ -9,7 +9,7 @@ immutable per-profile data and keep host gameplay policy separate. Audit any
 small protocol constants through the existing client definitions.
 
 
-Use configured `sol` defaults after the loadout task's source review. Work on
+Use configured `grok46` defaults after the loadout task's source review. Work on
 the campaign branch codex/rs2b0t-multirevision. Read applicable instructions,
 docs/execution.md, fail-closed-dispatch, plan step 6 and the spell accounting /
 targeted cast sections of 04-combat-production-design.md. The design is
@@ -58,3 +58,9 @@ existing suites/Clippy once after fixes; retain the first banking regressions.
 Deliver 04-capabilities-spells.md with exact facts/provenance, supported callers,
 raw checks under evidence/spell-capabilities/ and clear live limits. Commit only
 scoped files, request same-card profile `reviewer` review, then stop. No agents.
+
+Operator dispatch update (2026-09-11 01:00 UTC): this is a Grok 4.6
+implementation task, using profile `grok46` defaults (grok-4.6 / xai-oauth, high
+reasoning). This supersedes the original card body mentioning Sol. Keep the
+same branch, scope, dependencies, required checks and same-card `reviewer`
+handoff. Do not self-complete implementation or bypass the review gate.
