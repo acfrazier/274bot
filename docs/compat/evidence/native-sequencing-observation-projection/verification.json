@@ -1,0 +1,68 @@
+{
+  "task": "t_11ec797b",
+  "subject": "native-sequencing-observation-projection",
+  "status": "pass",
+  "implementation_commit": "0e7ba119b86d74cc04818c3f621d7835ddb4dbb4",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-sequencing-observation-projection-t_11ec797b-0e7ba119b",
+  "target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-sequencing-observation-projection-t_11ec797b-0e7ba119b/.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact",
+  "log": "docs/compat/evidence/native-sequencing-observation-projection/checks.log",
+  "checks": [
+    {
+      "name": "selected cake-stall API predicates",
+      "command": "cargo test --locked --offline -p api --lib cake_stall -- --test-threads=1",
+      "result": "pass",
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "name": "script unit and focused sequencing integration tests",
+      "command": "cargo test --locked --offline -p script --lib --test named_bank_approach --test cake_stall_native_mapping --test autocast -- --test-threads=1",
+      "result": "pass",
+      "passed": 112,
+      "failed": 0,
+      "breakdown": {
+        "script_lib": 83,
+        "autocast": 9,
+        "cake_stall_native_mapping": 8,
+        "named_bank_approach": 12
+      }
+    },
+    {
+      "name": "snapshot lifecycle regressions",
+      "command": "cargo test --locked --offline -p host-play --lib script_snapshot -- --test-threads=1",
+      "result": "pass",
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "name": "strict affected-target clippy",
+      "command": "cargo clippy --locked --offline --no-deps -p script --lib --test named_bank_approach --test cake_stall_native_mapping --test autocast -- -D warnings",
+      "result": "pass"
+    },
+    {
+      "name": "affected Rust formatting",
+      "command": "rustfmt --edition 2021 --check crates/script/src/bank_open.rs crates/script/src/cake_stall.rs crates/script/src/autocast.rs crates/script/src/load.rs crates/script/tests/named_bank_approach.rs crates/script/tests/cake_stall_native_mapping.rs crates/script/tests/autocast.rs",
+      "result": "pass"
+    }
+  ],
+  "summary": {
+    "tests_passed": 126,
+    "tests_failed": 0,
+    "js_snapshot_collection_getter_traps": [
+      "bank locs/banks/inventory",
+      "cake-stall locs/inventory",
+      "autocast login/side-tab/interfaces/varps"
+    ],
+    "delta_coverage": [
+      "bank retains selected identity when locs are omitted",
+      "cake retains stall target when locs are omitted while inventory changes",
+      "autocast retains unchanged varps and side-tab interfaces across alternating deltas"
+    ],
+    "lifecycle_guards": [
+      "ingame=false clears projected facts in each native observation updater",
+      "the existing reset fan-out clears each native observation",
+      "thread-local observations are initialized empty for each script isolate"
+    ]
+  }
+}
