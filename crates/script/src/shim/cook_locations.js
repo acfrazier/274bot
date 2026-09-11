@@ -12,7 +12,14 @@ export function cookLocation(name) {
     return findCookLocation(COOK_LOCATIONS, name);
 }
 
+/**
+ * Named posted stands only. Auto has no nearest-bank pairing or bankUnlocked
+ * policy on this host, so it stays null like Custom and unknown names.
+ */
 export function resolveCookLocation(name) {
-    if (!name || name === 'Auto' || name === CUSTOM_LOCATION) return null;
+    const wanted = String(name || '').trim().toLowerCase();
+    if (!wanted || wanted === 'auto' || wanted === CUSTOM_LOCATION.toLowerCase()) {
+        return null;
+    }
     return cookLocation(name);
 }
