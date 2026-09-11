@@ -982,3 +982,5 @@ Root reconciled the active campaign through equivalent history (68bcf3659 ->7abc
 Root cleanup reclaimed35.28GiB from eight compiler caches owned by completed139/144/152 tasks after DONE and lsof checks. Source exports/raw proof/frozen binaries preserved; receipt evidence/worktree-cleanup/completed-caches-1810.json. Active127/153 caches and root integration cache untouched.
 
 158 t_acea973c is a read-only grok46 audit of the remaining distinct paired extras beyond157's defaults (Nature island/stayInAltar, Mule bankFill=false/non-Air equivalence). No new LIVE/product changes; root retains scope/fixture decisions.
+
+158 completed as1b8598e51, actualGrok4.6 run1392/session20260911_141341_411314 verified33calls. Three distinct extra pairs/12cells: Nature island, stay-in-altar, Mule bankFill=false; existing nativeboat routes verified in transport.rs.159 t_f9496ae0 follows157 for those fixtures. Recipes require actual bank note semantics; no automatic full-cycle acceptance from independent partial cells. Death altar content at Lumbridge remains an explicit limitation, not a blanket members exclusion or whole-card dim. No new LIVE evidence from audits.
