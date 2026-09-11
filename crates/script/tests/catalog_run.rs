@@ -46,7 +46,12 @@ fn catalog_cards_except_dim_set_remap() {
             "WalkTo",
             "WalkTo stays reserved, never a catalog card"
         );
-        if script::is_catalog_dim(&card.name) {
+        if script::is_catalog_dim(&card.name)
+            || card
+                .unloadable
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("dim:"))
+        {
             assert!(
                 card.unloadable.is_some(),
                 "{} is dim but unloadable is None",
