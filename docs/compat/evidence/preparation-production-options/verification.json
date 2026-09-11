@@ -1,0 +1,159 @@
+{
+  "task": "t_19a3bdac",
+  "round": 2,
+  "verified_at_utc": "2026-09-11T13:51:33Z",
+  "brief": "docs/compat/briefs/120-preparation-and-production-options.md",
+  "brief_sha256": "a96f6768196c2ea214a71969d9c3f269f41bd0a3bdef5adc973b212313dad75c",
+  "branch": "codex/rs2b0t-multirevision",
+  "implementation_commit": "0c4f180276ca3eb2721bfb6d19e70f252afc14af",
+  "implementation_parent": "c6d45f42a983c1b4209e29642b00c9803a1d7aaf",
+  "campaign_head_at_verify": "c0da29753c4bbf89da67df8411c708a84bd57a4d",
+  "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "live": false,
+  "exact_export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_19a3bdac-r1",
+  "exclusive_reused_cargo_target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_19a3bdac",
+  "source_model": "exact implementation-parent export plus the two implementation-file overlays; export and worktree overlay bytes matched",
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "90dd10d4529985adb7af485ead10754f65c8143dae27b19e96fc86f261c5b3bc",
+    "crates/host-play/tests/catalog_boundary_live.rs": "44fcd22a1901a14c1bbd5ed07101a11a5b3724c92a039379d57dd6e0dd4078b9"
+  },
+  "documentation_sha256": {
+    "docs/compat/05za-preparation-production-options.md": "de33742fad61f020de14dd5ca2ca5595f18b81da84b8890a8a0cc24eea870563",
+    "docs/compat/evidence/preparation-production-options/isolated-checks.txt": "8bfd239eb46e2607a8338e8b18cbae30b92b2d26657ded11633231c10581f996"
+  },
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "Alcher.ts": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
+      "BankFletcher.ts": "194eb82dd3613cf2fea77a5cb04fba1dadbacad78efa6e0eee16c1f4a1c3f3ee",
+      "CoalTrucks.ts": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "Alcher.ts": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
+      "BankFletcher.ts": "48a9f13b774931cd2ea5298cf625c480f071713d459ade293c1caccfb383aa2d",
+      "CoalTrucks.ts": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36"
+    }
+  },
+  "safe_pretele": {
+    "shared_scenarios": [
+      "chaos_druid",
+      "moss_giant",
+      "hill_giant",
+      "auto_fighter",
+      "rock_crab",
+      "green_dragon",
+      "fire_giant",
+      "ardy_fighter"
+    ],
+    "required_before_field_arrival": [
+      "Attack 40 effective-level acknowledgement",
+      "Strength 40 effective-level acknowledgement",
+      "Hitpoints 40 effective-level acknowledgement",
+      "selected weapon",
+      "food when configured",
+      "extra equipment when configured",
+      "Thieving when configured",
+      "empty selected loot outcomes"
+    ],
+    "regression": "all stat/item precondition acknowledgements precede field arrival; none remain between hostile arrival and Start",
+    "semantics_unchanged": "Proof::Stat reads effective level"
+  },
+  "coal_trucks": {
+    "documented_constraint": "giant bats are aggressive below combat level 55",
+    "seeded_pretele_levels": {
+      "attack": 48,
+      "strength": 48,
+      "defence": 48,
+      "hitpoints": 48,
+      "mining": 30
+    },
+    "tool_id": 1269,
+    "native_readback": "Observation.combat_level from local_player.player.combat_level",
+    "baseline_gate": ">=55",
+    "boundary_test": "54 rejected; 55 accepted",
+    "bounded_core": "real Mining XP, Coal 453, mine-truck arrival, empty pack after deposit, further Coal 453",
+    "not_claimed": "120-coal full truck haul to Seers, bank, and return"
+  },
+  "production_scenarios": {
+    "alcher_defaults": {
+      "inject": {
+        "items": [],
+        "alchs": 1
+      },
+      "bank_seed": {
+        "855": 1,
+        "561": 1,
+        "1387": 1
+      },
+      "ordered_outcome": "noted 856 withdrawal; Magic XP +65; 856 and 561 consumed; Coins 995 x768; Rune chainbody absent"
+    },
+    "bank_fletcher_shafts": {
+      "inject": {
+        "material": "Logs",
+        "product": "Arrow shafts"
+      },
+      "pack_seed": {
+        "946": 1,
+        "1511": 27
+      },
+      "bank_seed": {
+        "1511": 54
+      },
+      "first_outcome": {
+        "52": 405
+      },
+      "cycle": "input consumption and XP; fresh deposit; 1511 x27 restock and bank decrease; close; fresh XP; further id 52"
+    },
+    "bank_fletcher_headless": {
+      "inject": {
+        "material": "Logs",
+        "product": "Headless arrows"
+      },
+      "pack_seed": {
+        "314": 30,
+        "52": 30
+      },
+      "bank_seed": {
+        "314": 60,
+        "52": 60
+      },
+      "first_outcome": {
+        "53": 30
+      },
+      "cycle": "both inputs consumed and XP; fresh deposit; both inputs restocked in same generation; close; fresh XP; further id 53"
+    }
+  },
+  "named_false_positives": [
+    "hostile-field precondition acknowledgement after arrival",
+    "CoalTrucks native combat level 54",
+    "Alcher seed-only or withdrawal-only observation",
+    "raw Yew longbow 855 substituted for noted id 856",
+    "Rune chainbody enters the default-items fallback",
+    "pre-seeded Arrow shafts 52 or Headless arrows 53",
+    "BankFletcher first batch without deposit/restock/further production",
+    "closed, unloaded, stale, or wrong-generation bank evidence",
+    "further BankFletcher product without closed return, input decrease, and fresh XP"
+  ],
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "unchanged": true
+  },
+  "checks": [
+    "focused scenario remaining_production_options_are_registered_with_ordered_exact_proofs: 1 passed",
+    "focused scenario hostile_fields_follow_safe_pretele_precondition_acknowledgements: 1 passed",
+    "focused catalog remaining_production_options_require_exact_ordered_native_outcomes: 1 passed",
+    "focused catalog coal_trucks_requires_the_documented_native_combat_level: 1 passed",
+    "cargo test -p scenario: 104 passed",
+    "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 40 passed, 1 ignored LIVE",
+    "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed",
+    "cargo clippy -p scenario -p host-play --features host-play/memory-profile --tests -- -D warnings: passed",
+    "rustfmt --edition 2021 --check on both implementation files: passed",
+    "git diff --check on implementation commit: passed"
+  ],
+  "limits": [
+    "no LIVE client run",
+    "no product/client/engine/navigation/runtime/catalog-source/ledger/support-matrix/STATE changes",
+    "root owns both catalogs x both client revisions LIVE acceptance",
+    "partial CoalTrucks mine-truck cycle is not full-haul acceptance"
+  ]
+}

@@ -1,0 +1,54 @@
+task: t_19a3bdac R2 documentation correction
+verified UTC: 2026-09-11T13:51:33Z
+branch: codex/rs2b0t-multirevision
+implementation commit: 0c4f180276ca3eb2721bfb6d19e70f252afc14af
+implementation parent: c6d45f42a983c1b4209e29642b00c9803a1d7aaf
+campaign HEAD at verification: c0da29753c4bbf89da67df8411c708a84bd57a4d
+client: aef3952d1cd7bb3b93d39c497f0f476b68021c59
+exact export: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_19a3bdac-r1
+exclusive reused target: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_19a3bdac
+disk before verification: 324 GiB available
+source model: exact implementation-parent export plus the two implementation-file overlays
+
+Source byte equality:
+  crates/scenario/src/lib.rs
+    export/worktree sha256 90dd10d4529985adb7af485ead10754f65c8143dae27b19e96fc86f261c5b3bc
+  crates/host-play/tests/catalog_boundary_live.rs
+    export/worktree sha256 44fcd22a1901a14c1bbd5ed07101a11a5b3724c92a039379d57dd6e0dd4078b9
+  equality passed
+
+Focused checks on the exact export and reused exclusive target:
+  cargo test -p scenario tests::remaining_production_options_are_registered_with_ordered_exact_proofs -- --exact
+    1 passed; 0 failed; 103 filtered out
+  cargo test -p scenario tests::hostile_fields_follow_safe_pretele_precondition_acknowledgements -- --exact
+    1 passed; 0 failed; 103 filtered out
+  cargo test -p host-play --features memory-profile --test catalog_boundary_live tests::remaining_production_options_require_exact_ordered_native_outcomes -- --exact
+    1 passed; 0 failed; 40 filtered out
+  cargo test -p host-play --features memory-profile --test catalog_boundary_live tests::coal_trucks_requires_the_documented_native_combat_level -- --exact
+    1 passed; 0 failed; 40 filtered out
+
+Full scenario suite:
+  CARGO_TARGET_DIR=$PWD/target-t_19a3bdac cargo test --manifest-path $EXPORT/Cargo.toml -p scenario
+  104 passed; 0 failed; doc-tests 0 failed
+
+Full catalog harness:
+  CARGO_TARGET_DIR=$PWD/target-t_19a3bdac cargo test --manifest-path $EXPORT/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live
+  40 passed; 0 failed; 1 ignored LIVE
+  includes both focused catalog regressions and checked_in_frozen_core_sources_match_both_catalog_ledgers
+
+Strict lint:
+  CARGO_TARGET_DIR=$PWD/target-t_19a3bdac cargo clippy --manifest-path $EXPORT/Cargo.toml -p scenario -p host-play --features host-play/memory-profile --tests -- -D warnings
+  passed
+
+Formatting and diff:
+  rustfmt --edition 2021 --check $EXPORT/crates/scenario/src/lib.rs $EXPORT/crates/host-play/tests/catalog_boundary_live.rs
+  passed
+  git diff --check 0c4f180276ca3eb2721bfb6d19e70f252afc14af^ 0c4f180276ca3eb2721bfb6d19e70f252afc14af -- crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  passed
+
+Gold bounds read from crates/scenario/src/lib.rs:
+  SCRIPT_GOLD_DEADLINE = 180 seconds
+  SCRIPT_GOLD_WATCH_TICKS = 150
+  unchanged
+
+No LIVE process launched. No product, client, engine, runtime, ledger, support-matrix, or STATE change belongs to this task.
