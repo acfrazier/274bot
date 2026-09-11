@@ -84,3 +84,10 @@ or card/frontend acceptance is claimed.
 The bounded fixture correction lets WaitLoggedOut/WaitRelog observe during
 hold; those states issue no game actions. Other preparation and gameplay gates
 are unchanged. Root will repeat the two cells on a new isolated candidate.
+
+The c40c6c8c repeat also failed before Start at WaitLoggedOut. Allowing the
+held frame was insufficient: Play need not deliver a frame during the off-world
+interval. The fixture now uses the existing ScenarioRunner relog completion
+contract, SideTabAvailable index 3, and requires that bound tab at Start. It logs
+before/after relog and the latest actual observation on timeout. The first
+diagnosis was incomplete; both sets of failures remain.
