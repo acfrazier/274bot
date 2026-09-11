@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|rock_crab|green_dragon|fire_giant|ardy_fighter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -27,6 +27,7 @@ const CERT_ADAMANT_SCIMITAR_ID: i32 = 1332;
 const YEW_LONGBOW_ID: i32 = 855;
 const CERT_YEW_LONGBOW_ID: i32 = 856;
 const NATURE_RUNE_ID: i32 = 561;
+const MIND_RUNE_ID: i32 = 558;
 const COINS_ID: i32 = 995;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
@@ -131,6 +132,11 @@ const NOTED_BREAD_ID: i32 = 2310;
 const NOTED_CHOCOLATE_SLICE_ID: i32 = 1902;
 const ARDY_CAKES_STAND: (i32, i32, i32) = (2668, 3312, 0);
 const ARDY_THIEVER_STAND: (i32, i32, i32) = (2661, 3306, 0);
+const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
+const AUTO_FIGHTER_MAGE_CASTS: i32 = 150;
+const AUTO_FIGHTER_MAGE_AIR_RUNES: i32 = AUTO_FIGHTER_MAGE_CASTS * 2;
+const AUTOCAST_MAGIC_VARP: i32 = 108;
+const AUTOCAST_ARMED_VALUE: i32 = 3;
 const ARDY_BANK: (i32, i32, i32) = (2655, 3286, 0);
 const MAGIC_LOGS_ID: i32 = 1513;
 const NOTED_MAGIC_LOGS_ID: i32 = 1514;
@@ -291,6 +297,7 @@ enum CoreCase {
     MossGiant,
     HillGiant,
     AutoFighter,
+    AutoFighterMage,
     RockCrab,
     GreenDragon,
     FireGiant,
@@ -362,6 +369,7 @@ impl CoreCase {
             "moss_giant" => Ok(Self::MossGiant),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
+            "auto_fighter_mage" => Ok(Self::AutoFighterMage),
             "rock_crab" => Ok(Self::RockCrab),
             "green_dragon" => Ok(Self::GreenDragon),
             "fire_giant" => Ok(Self::FireGiant),
@@ -436,6 +444,7 @@ impl CoreCase {
             Self::MossGiant => "moss_giant",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
+            Self::AutoFighterMage => "auto_fighter_mage",
             Self::RockCrab => "rock_crab",
             Self::GreenDragon => "green_dragon",
             Self::FireGiant => "fire_giant",
@@ -487,7 +496,7 @@ impl CoreCase {
             Self::ChaosDruid => "ChaosDruidKiller",
             Self::MossGiant => "MossGiant",
             Self::HillGiant => "HillGiant",
-            Self::AutoFighter => "AutoFighter",
+            Self::AutoFighter | Self::AutoFighterMage => "AutoFighter",
             Self::RockCrab => "RockCrab",
             Self::GreenDragon => "GreenDragon",
             Self::FireGiant => "FireGiant",
@@ -883,7 +892,7 @@ impl Observation {
         let varps = snapshot
             .varps()
             .iter()
-            .filter(|varp| varp.index == BRIMHAVEN_ARENA_VARP)
+            .filter(|varp| matches!(varp.index, BRIMHAVEN_ARENA_VARP | AUTOCAST_MAGIC_VARP))
             .map(|varp| (varp.index, varp.value))
             .collect();
         let chat = snapshot
@@ -1683,6 +1692,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         | CoreCase::MossGiant
         | CoreCase::HillGiant
         | CoreCase::AutoFighter
+        | CoreCase::AutoFighterMage
         | CoreCase::RockCrab
         | CoreCase::GreenDragon
         | CoreCase::FireGiant
@@ -1845,6 +1855,9 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         }
         CoreCase::AutoFighter => {
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, banking None"
+        }
+        CoreCase::AutoFighterMage => {
+            "Ardougne Guard (2661,3306,0), Magic 13, Hitpoints 40, trout 8, worn Staff of fire 1387, exact Mind rune 558x150 and Air rune 556x300, banking None"
         }
         CoreCase::RockCrab => {
             "Rock crab spot (2704,3726,0), Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
@@ -2972,8 +2985,15 @@ struct CombatSpec {
     food_id: i32,
     food_count: i32,
     weapon_id: i32,
+    style: CombatStyleWitness,
     loot: CombatLoot,
     extra: CombatExtra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CombatStyleWitness {
+    Strength,
+    FireStrike,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3004,6 +3024,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: CHAOS_DRUID_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
         }),
@@ -3014,6 +3035,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: MOSS_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
         }),
@@ -3024,6 +3046,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: TROUT_ID,
             food_count: HILL_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBonesOrLimpwurt,
             extra: CombatExtra::DungeonKey,
         }),
@@ -3034,6 +3057,18 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: TROUT_ID,
             food_count: AUTO_FIGHTER_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::None,
+        }),
+        CoreCase::AutoFighterMage => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 8,
+            food_id: TROUT_ID,
+            food_count: AUTO_FIGHTER_FOOD,
+            weapon_id: STAFF_OF_FIRE_ID,
+            style: CombatStyleWitness::FireStrike,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
         }),
@@ -3044,6 +3079,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: ROCK_CRAB_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::RockActivation,
         }),
@@ -3054,6 +3090,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: GREEN_DRAGON_FOOD,
             weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
             extra: CombatExtra::WornShield,
         }),
@@ -3064,6 +3101,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: FIRE_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
         }),
@@ -3074,6 +3112,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: CAKE_ID,
             food_count: 0,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::StolenFood,
         }),
@@ -3131,10 +3170,25 @@ fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
 }
 
 fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
-    let food_ok = if spec.food_count == 0 {
-        true
-    } else {
-        baseline.item_id(spec.food_id) >= spec.food_count
+    let food_ok = match spec.style {
+        CombatStyleWitness::FireStrike => baseline.item_id(spec.food_id) == spec.food_count,
+        CombatStyleWitness::Strength if spec.food_count == 0 => true,
+        CombatStyleWitness::Strength => baseline.item_id(spec.food_id) >= spec.food_count,
+    };
+    let style_ok = match spec.style {
+        CombatStyleWitness::Strength => {
+            baseline.level("attack") >= COMBAT_ATTACK_LEVEL
+                && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
+                && held_id(baseline, spec.weapon_id) >= 1
+        }
+        CombatStyleWitness::FireStrike => {
+            baseline.level("magic") >= AUTO_FIGHTER_MAGE_LEVEL
+                && baseline.effective_level("magic") >= AUTO_FIGHTER_MAGE_LEVEL
+                && baseline.equipment_id(spec.weapon_id) == 1
+                && baseline.item_id(spec.weapon_id) == 0
+                && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
+                && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
+        }
     };
     let extra_ok = match spec.extra {
         CombatExtra::None | CombatExtra::RockActivation => true,
@@ -3155,11 +3209,9 @@ fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
         }
     };
     near(baseline.tile, spec.stand, spec.radius)
-        && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
-        && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
         && food_ok
-        && held_id(baseline, spec.weapon_id) >= 1
+        && style_ok
         && combat_loot_count(baseline, spec.loot) == 0
         && !combat_noted(baseline)
         && extra_ok
@@ -3222,6 +3274,9 @@ struct CombatCoreCycle {
     defeats: u32,
     further_work: bool,
     style_xp: bool,
+    autocast_armed: bool,
+    mind_rune_consumed: bool,
+    air_runes_consumed: bool,
     looted: bool,
     noted: bool,
     activated: bool,
@@ -3240,7 +3295,21 @@ struct CombatCoreCycle {
 impl CombatCoreCycle {
     fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
         self.noted |= combat_noted(now);
-        self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength");
+        match spec.style {
+            CombatStyleWitness::Strength => {
+                self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength");
+            }
+            CombatStyleWitness::FireStrike => {
+                self.style_xp |= now.skill_xp("magic") > baseline.skill_xp("magic");
+                self.autocast_armed |= now.varp(AUTOCAST_MAGIC_VARP) == AUTOCAST_ARMED_VALUE;
+                self.mind_rune_consumed |=
+                    now.item_id(MIND_RUNE_ID) < baseline.item_id(MIND_RUNE_ID);
+                self.air_runes_consumed |= baseline
+                    .item_id(AIR_RUNE_ID)
+                    .saturating_sub(now.item_id(AIR_RUNE_ID))
+                    >= 2;
+            }
+        }
         self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
         self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
             || now.item_id(RED_DRAGONHIDE_ID) > 0
@@ -3404,6 +3473,15 @@ impl CombatCoreCycle {
     }
 
     fn qualified(&self, spec: CombatSpec) -> bool {
+        let style_ok = match spec.style {
+            CombatStyleWitness::Strength => self.style_xp,
+            CombatStyleWitness::FireStrike => {
+                self.style_xp
+                    && self.autocast_armed
+                    && self.mind_rune_consumed
+                    && self.air_runes_consumed
+            }
+        };
         let extra_ok = match spec.extra {
             CombatExtra::None | CombatExtra::DungeonKey | CombatExtra::DungeonAmulet => true,
             CombatExtra::RockActivation => self.activated,
@@ -3413,7 +3491,7 @@ impl CombatCoreCycle {
         self.engagements >= 2
             && self.defeats >= 1
             && self.further_work
-            && self.style_xp
+            && style_ok
             && (spec.loot == CombatLoot::None || self.looted)
             && !self.noted
             && !self.wrong_item
@@ -4955,6 +5033,7 @@ impl CoreWitness {
             | CoreCase::MossGiant
             | CoreCase::HillGiant
             | CoreCase::AutoFighter
+            | CoreCase::AutoFighterMage
             | CoreCase::RockCrab
             | CoreCase::GreenDragon
             | CoreCase::FireGiant
@@ -10197,6 +10276,235 @@ mod tests {
 
     fn auto_fighter_spec() -> CombatSpec {
         combat_spec(CoreCase::AutoFighter).expect("auto fighter combat spec")
+    }
+
+    fn auto_fighter_mage_obs(
+        item_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        npcs: &[BoundedNpc],
+        local_in_combat: bool,
+        local_target_npc: Option<usize>,
+        autocast_varp: i32,
+    ) -> Observation {
+        let mut observation = combat_obs(
+            ARDY_THIEVER_STAND,
+            item_ids,
+            xp,
+            &[("magic", 13), ("hitpoints", 40)],
+            npcs,
+            local_in_combat,
+            local_target_npc,
+        );
+        observation.equipment_ids.clear();
+        observation.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        observation.varps.insert(AUTOCAST_MAGIC_VARP, autocast_varp);
+        observation
+    }
+
+    #[test]
+    fn auto_fighter_mage_requires_armed_rune_casts_on_selected_guard_lives() {
+        let case = CoreCase::parse("auto_fighter_mage").expect("mage case registered");
+        assert_eq!(case.scenario_name(), "auto_fighter_mage");
+        assert_eq!(case.card_name(), "AutoFighter");
+
+        let baseline = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[("magic", 100)],
+            &[],
+            false,
+            None,
+            0,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let first = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[("magic", 106)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            3,
+        );
+        let death_and_respawn = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 148), (AIR_RUNE_ID, 296)],
+            &[("magic", 112)],
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+            3,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &death_and_respawn, &death_and_respawn]
+        )
+        .qualify()
+        .is_ok());
+
+        let mut missing_staff = baseline.clone();
+        missing_staff.equipment_ids.clear();
+        assert!(validate_case_baseline(case, &missing_staff).is_err());
+        let mut wrong_staff = baseline.clone();
+        wrong_staff.equipment_ids.clear();
+        wrong_staff.equipment_ids.insert(1381, 1);
+        assert!(validate_case_baseline(case, &wrong_staff).is_err());
+        let mut staff_only_in_inventory = baseline.clone();
+        staff_only_in_inventory.equipment_ids.clear();
+        staff_only_in_inventory.item_ids.insert(STAFF_OF_FIRE_ID, 1);
+        assert!(validate_case_baseline(case, &staff_only_in_inventory).is_err());
+        let mut short_runes = baseline.clone();
+        short_runes.item_ids.insert(MIND_RUNE_ID, 149);
+        assert!(validate_case_baseline(case, &short_runes).is_err());
+        let mut surplus_runes = baseline.clone();
+        surplus_runes.item_ids.insert(MIND_RUNE_ID, 151);
+        assert!(validate_case_baseline(case, &surplus_runes).is_err());
+        let mut short_air_runes = baseline.clone();
+        short_air_runes.item_ids.insert(AIR_RUNE_ID, 298);
+        assert!(validate_case_baseline(case, &short_air_runes).is_err());
+
+        let selected_only = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[("magic", 100)],
+            &[],
+            false,
+            None,
+            2,
+        );
+        assert!(witness(case, &baseline, [&selected_only])
+            .qualify()
+            .is_err());
+
+        let selected_not_armed = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (MIND_RUNE_ID, 149), (AIR_RUNE_ID, 298)],
+            &[("magic", 106)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            2,
+        );
+        let selected_not_armed_death = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (MIND_RUNE_ID, 148), (AIR_RUNE_ID, 296)],
+            &[("magic", 112)],
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+            2,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &selected_not_armed,
+                &selected_not_armed_death,
+                &selected_not_armed_death,
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let direct_staff_melee = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[("magic", 100), ("strength", 108)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            3,
+        );
+        let direct_staff_death = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 300)],
+            &[("magic", 100), ("strength", 112)],
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+            3,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &direct_staff_melee,
+                &direct_staff_death,
+                &direct_staff_death
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let unchanged_xp = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[("magic", 100)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            3,
+        );
+        let unchanged_xp_death = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 148), (AIR_RUNE_ID, 296)],
+            &[("magic", 100)],
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+            3,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&unchanged_xp, &unchanged_xp_death, &unchanged_xp_death]
+        )
+        .qualify()
+        .is_err());
+
+        let missing_rune_use = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 298)],
+            &[("magic", 106)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            3,
+        );
+        let missing_rune_death = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 150), (AIR_RUNE_ID, 296)],
+            &[("magic", 112)],
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+            3,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&missing_rune_use, &missing_rune_death, &missing_rune_death]
+        )
+        .qualify()
+        .is_err());
+
+        let wrong_target = auto_fighter_mage_obs(
+            &[(TROUT_ID, 8), (558, 149), (AIR_RUNE_ID, 298)],
+            &[("magic", 106)],
+            &[combat_npc(5, "Knight", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+            3,
+        );
+        assert!(witness(case, &baseline, [&wrong_target]).qualify().is_err());
+        assert!(witness(case, &baseline, [&first, &death_and_respawn])
+            .qualify()
+            .is_err());
     }
 
     #[test]
