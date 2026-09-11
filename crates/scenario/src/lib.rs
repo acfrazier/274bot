@@ -2475,12 +2475,18 @@ fn bank_fletcher_open_seed_bank(name: &'static str, arm: Proof) -> Step {
     Step {
         name,
         kind: StepKind::Perform {
-            send: Box::new(|c, _| {
-                op_loc(
-                    c,
-                    VARROCK_WEST_BANK.x + 1,
-                    VARROCK_WEST_BANK.z,
-                    VARROCK_WEST_BANK_BOOTH_ID,
+            send: Box::new(|c, snapshot| {
+                // Use (OP_LOC1) starts banker dialogue. Resolve Use-quickly
+                // from the selected booth's published actions instead.
+                let booth = WorldTile {
+                    x: VARROCK_WEST_BANK.x + 1,
+                    z: VARROCK_WEST_BANK.z,
+                    level: VARROCK_WEST_BANK.level,
+                };
+                matches!(
+                    Interactions::new(snapshot, c)
+                        .open_booth_at(booth, VARROCK_WEST_BANK_BOOTH_ID),
+                    SendResult::Sent { .. }
                 )
             }),
         },
