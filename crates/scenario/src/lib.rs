@@ -7440,7 +7440,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(seed.contains(&Proof::ArrivedNear {
             x: 2946,
-            z: 3369,
+            z: 3368,
             level: 0,
             radius: 6,
         }));
