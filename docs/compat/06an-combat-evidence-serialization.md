@@ -49,3 +49,22 @@ paint. Fixture139 and native144 own those corrections. ArdyFighter289 makes
 Attack/Thieving progress but never reaches selected Strength style;139 tests
 its supported one-food target while preserving real theft and combat witnesses.
 All failures remain, and incomplete batches/options are not final acceptance.
+
+## Completed corrected-source batch (17:00 UTC)
+
+The batch ended with15PASS/11FAIL; ten newer-catalog cells were held after
+older-catalog failures. All processes are reaped. Ledger445 is append-only.
+MossGiant, HillGiant and AutoFighter pass all four revision/catalog cells.
+CoalTrucks passes three:274/newer mined/deposited, then failed to acquire
+further coal after four native Mine calls/swing messages within150ticks. This
+is not a demonstrated navigation/script defect. Fixture139 will explicitly
+qualify Mining60/Rune pickaxe preparation, preserving the one free coal slot,
+zero seed coal, ordinary ore rolls and complete mine/truck/further witness.
+Original Mining30/Steel failure stays in the ledger. Both ArdyFighter cells
+miss selected Strength style;274 gets no stolen food,289 gets and eats food.
+The one-food fixture change does not claim to solve guard/RNG failures.
+
+Exact source/binary identities and all26 process/log/result triplets are
+retained in catalog-headed and catalog-harness/live. This is a completed
+bounded batch, not complete support acceptance. Missing native/fixture work,
+remaining options, final integrated preservation and whole-branch review remain.

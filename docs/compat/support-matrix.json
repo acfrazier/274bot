@@ -13177,12 +13177,12 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Exact b18 ChaosDruid FAIL: nonempty ground-count map panicked during evidence JSON serialization. Original failure retained; root serializer correction verified separately, fresh LIVE pending.",
+      "status_detail": "Exact cffd62c59 FAIL. No selected herb/law/nature pickup before bounded timeout; combat evidence serialized successfully. No conclusive script defect.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-04d7b1f4.json",
@@ -13190,7 +13190,9 @@
         "docs/compat/06x-station-platform-and-remaining.md",
         "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatb18.json",
         "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatb18.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatcff.log"
       ]
     },
     {
@@ -13581,12 +13583,12 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Exact b18 ChaosDruid FAIL: nonempty ground-count map panicked during evidence JSON serialization. Original failure retained; root serializer correction verified separately, fresh LIVE pending.",
+      "status_detail": "Exact cffd62c59 FAIL. No selected herb/law/nature pickup before bounded timeout; combat evidence serialized successfully. No conclusive script defect.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-04d7b1f4.json",
@@ -13594,7 +13596,9 @@
         "docs/compat/06x-station-platform-and-remaining.md",
         "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatb18.json",
         "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatb18.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatcff.log"
       ]
     },
     {
@@ -14497,7 +14501,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -14515,7 +14519,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Already-awake baseline never produced required post-Start dormant activation; fixture139 owns repair.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -14526,7 +14530,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -15429,7 +15436,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -15447,7 +15454,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Already-awake baseline never produced required post-Start dormant activation; fixture139 owns repair.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -15458,7 +15465,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -16190,7 +16200,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -16200,7 +16210,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact b18 MossGiant core PASS under corrected combat observer136. Supported options and remaining catalog cells still require qualification.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.json",
@@ -16209,7 +16219,9 @@
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-21446414.json",
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatb18.json",
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatb18.log",
-        "docs/compat/06an-combat-evidence-serialization.md"
+        "docs/compat/06an-combat-evidence-serialization.md",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatcff.log"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -16949,7 +16961,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 34: not impl: ranged.rangeLoadoutOf",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -16959,13 +16971,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -17887,7 +17902,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Preparation failed before Start; no gameplay acceptance.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -17901,7 +17916,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -17912,7 +17927,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -18826,7 +18844,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Preparation failed before Start; no gameplay acceptance.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -18840,7 +18858,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -18851,7 +18869,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -19700,12 +19721,12 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Paint calls missing reader.npcBox; native144 owns projection capability.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -19716,7 +19737,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -20565,12 +20589,12 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Paint calls missing reader.npcBox; native144 owns projection capability.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -20581,7 +20605,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -21250,7 +21277,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -21268,7 +21295,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Selected Strength style not reached after stocking/guard combat; fixture139 bounds supported foodTarget1, without suppressing guards.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -21279,7 +21306,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -21948,7 +21978,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -21966,7 +21996,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 FAIL. Selected Strength style not reached after stocking/guard combat; fixture139 bounds supported foodTarget1, without suppressing guards.",
       "fixture_id": "local-289",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -21977,7 +22007,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -24052,7 +24085,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 34: SettingsStore.displayString is not a function",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -24066,13 +24099,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -25017,7 +25053,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 36: SettingsStore.displayString is not a function",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -25031,13 +25067,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -28002,12 +28041,12 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 11 (watch arrival at the mine coal truck after the pack fill): arrived_near(2575,3486,0,4) not seen within 150 ticks",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.json",
@@ -28015,7 +28054,10 @@
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "current_requalification_21446414": [
         {
@@ -28259,12 +28301,12 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 9 (watch Mining XP from coal rocks after Start): stat_xp_gain(14)>=1 not seen within 150 ticks",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.json",
@@ -28272,7 +28314,10 @@
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "current_requalification_21446414": [
         {
@@ -43225,7 +43270,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 38: not impl: foodCount",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -43235,13 +43280,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -43715,7 +43763,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 37: not impl: foodCount",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -43725,13 +43773,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -48680,9 +48731,13 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. No selected herb/law/nature pickup before bounded timeout; combat evidence serialized successfully. No conclusive script defect.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "ChaosDruidKiller",
@@ -49076,9 +49131,13 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. No selected herb/law/nature pickup before bounded timeout; combat evidence serialized successfully. No conclusive script defect.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "RockCrab",
@@ -49997,10 +50056,14 @@
           "source_evidence": "src/bot/scripts/RockCrab/RockCrab.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Already-awake baseline never produced required post-Start dormant activation; fixture139 owns repair.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "RockCrab",
@@ -50919,10 +50982,14 @@
           "source_evidence": "src/bot/scripts/RockCrab/RockCrab.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Already-awake baseline never produced required post-Start dormant activation; fixture139 owns repair.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "MossGiant",
@@ -51653,7 +51720,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -51663,7 +51730,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [
@@ -51674,7 +51741,10 @@
         }
       ],
       "proof_refs": [
-        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -52406,7 +52476,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -52415,10 +52485,15 @@
           "source_evidence": "src/bot/scripts/MossGiant/MossGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "GreenDragon",
@@ -53344,10 +53419,14 @@
           "source_evidence": "src/bot/scripts/GreenDragon/GreenDragon.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "GreenDragon",
@@ -54273,10 +54352,14 @@
           "source_evidence": "src/bot/scripts/GreenDragon/GreenDragon.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Repeated native shield wear rejected during pre-Start preparation; fixture139 owns repair.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "FireGiant",
@@ -55128,10 +55211,14 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Paint calls missing reader.npcBox; native144 owns projection capability.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "FireGiant",
@@ -55983,10 +56070,14 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Paint calls missing reader.npcBox; native144 owns projection capability.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "ArdyFighter",
@@ -56671,10 +56762,14 @@
           "source_evidence": "src/bot/scripts/ArdyFighter/ArdyFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Selected Strength style not reached after stocking/guard combat; fixture139 bounds supported foodTarget1, without suppressing guards.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "ArdyFighter",
@@ -57359,10 +57454,14 @@
           "source_evidence": "src/bot/scripts/ArdyFighter/ArdyFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cff newer-catalog cell held after older-catalog failure. Selected Strength style not reached after stocking/guard combat; fixture139 bounds supported foodTarget1, without suppressing guards.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/qualification-combatcff.json",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "Thiever",
@@ -59436,7 +59535,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -59449,10 +59548,15 @@
           "source_evidence": "src/bot/scripts/AutoFighter/AutoFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "AutoFighter",
@@ -60388,7 +60492,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -60401,10 +60505,15 @@
           "source_evidence": "src/bot/scripts/AutoFighter/AutoFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "ArdyThiever",
@@ -63254,13 +63363,18 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 FAIL. Mined and truck-deposited first Coal but no further ore within150tick watch; fixture139 qualifies an explicitly trained miner without altering RNG/clocks.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "CoalTrucks",
@@ -63496,13 +63610,18 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "RuneCrafter",
@@ -78350,7 +78469,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -78359,10 +78478,15 @@
           "source_evidence": "src/bot/scripts/HillGiant/HillGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "HillGiant",
@@ -78827,7 +78951,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Reached acknowledged post-preparation ingame/scene2 baseline before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -78836,10 +78960,15 @@
           "source_evidence": "src/bot/scripts/HillGiant/HillGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Exact cffd62c59 isolated core PASS. Supported branch accounting remains open under corrective audit145; no final card acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-8e7d965b-combatcff.json",
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-8e7d965b-combatcff.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
+      ]
     },
     {
       "display_name": "VialFiller",

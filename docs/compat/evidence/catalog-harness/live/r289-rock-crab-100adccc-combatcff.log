@@ -1,0 +1,209 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"RockCrab","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/RockCrab/RockCrab.ts","source_sha256":"7e12b775e0133353f5f45ab8bdca48c62eabe75adec7d09ade997f4f7c62a5ff","compiled_sha256":"62d9671cbc7d23eb6924ff7c6a8daa77439f0b1897df82a6e2aa432a3e582833","siblings":[{"module":"/rs2b0t/bot/scripts/bot/AmmoLogic.js","compiled_sha256":"e85e128548b38dd4f1e7808e2b39f6bd1b46016d06d2707ffd95edf8486e5f6b"},{"module":"/rs2b0t/bot/scripts/bot/RockCrabSpots.js","compiled_sha256":"46fdd03f94fa097d908cb780c4341381ca95614a6ac6c14b6796b7531f1cf0fe"}],"settings":{"combatStyle":"melee","meleeStyle":"strength","rangeStyle":"rapid","staff":"Staff of air","bow":"Maple shortbow","spell":"Wind Strike","runesWithdraw":150.0,"ammo":"Bronze arrow","ammoWithdraw":200.0,"minStack":1.0,"collectRange":12.0,"foodWithdraw":20.0,"fightHpGate":40.0,"restUntilHp":75.0,"fieldRadius":15.0,"stack":3.0,"loot":["half of a key","casket","clue scroll","small oyster pearls","oyster pearls","uncut sapphire","uncut emerald","uncut ruby","uncut diamond"],"solveClues":false,"bankStrategy":"Off"}},"account":"liveng1ui5_0","engine_speed_ms":null}
+[host-play] slot liveng1ui5_0: thread up
+289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot liveng1ui5_0: handshake begin reconnect=false
+[host-play] slot liveng1ui5_0: handshake ok
+[host] slot liveng1ui5_0: d_loop_us=3939 d_raster_us=0 d_observe_us=38179 max_observe_us=3592 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveng1ui5_0: queued mainland tele+setvar (scene 2)
+[host-play] slot liveng1ui5_0: handshake begin reconnect=true
+[host-play] slot liveng1ui5_0: handshake ok
+[host] slot liveng1ui5_0: d_loop_us=906 d_raster_us=0 d_observe_us=45487 max_observe_us=5514 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveng1ui5_0: queued mainland tele+setvar (scene 2)
+[host] slot liveng1ui5_0: d_loop_us=11448 d_raster_us=0 d_observe_us=87150 max_observe_us=7863 d_paints=0 d_skips=50 d_ticks=26 window_ms=5190
+{"phase":"baseline-after-preparation","scenario":"rock_crab","account":"liveng1ui5_0","observation":{"ingame":true,"scene_state":2,"player":"Liveng1ui5 0","tile":[2704,3726,0],"combat_level":36,"tick":39,"items":{"Adamant scimitar":1,"Lobster":8},"item_ids":{"379":8,"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"effective_levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":38,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37232,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37226,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":7360,"name":"Rock Crab","health":48,"total_health":50,"animation":1313,"in_combat":true,"targeting_local":true,"tile":[2704,3727,0],"distance":1},{"index":7362,"name":"Rock Crab","health":0,"total_health":0,"animation":1312,"in_combat":false,"targeting_local":true,"tile":[2705,3725,0],"distance":1}],"ground_loot":[],"local_in_combat":true,"local_target_npc":7360,"local_health":38,"local_animation":422,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script liveng1ui5_0] start load
+{"phase":"start","account":"liveng1ui5_0","count":1}
+[host] hitch liveng1ui5_0: observe_us=79874 paints=0 skips=127 ticks=39
+[script liveng1ui5_0] RockCrab starting — spots [2704,3726 | 2701,3719 | 2717,3720 | 2710,3717 | 2713,3727] starting at (2704, 3726, 0) r15, stack 3, food 'Lobster' (smart-eat), bank (2725, 3491, 0), style melee (strength)
+[script liveng1ui5_0] interact IfButton { component_id: 5862 }
+[script liveng1ui5_0] combat style: strength
+[host] slot liveng1ui5_0: d_loop_us=10763 d_raster_us=0 d_observe_us=157039 max_observe_us=79874 d_paints=0 d_skips=50 d_ticks=15 window_ms=3128
+[script liveng1ui5_0] interact WalkTo { x: 2701, z: 3728, level: 0 }
+[script liveng1ui5_0] woke a rock crab — stack now 3
+[script liveng1ui5_0] interact WalkTo { x: 2704, z: 3726, level: 0 }
+[host] slot liveng1ui5_0: d_loop_us=2020 d_raster_us=0 d_observe_us=129667 max_observe_us=15962 d_paints=0 d_skips=50 d_ticks=6 window_ms=1164
+[host] slot liveng1ui5_0: d_loop_us=1516 d_raster_us=0 d_observe_us=85694 max_observe_us=10401 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot liveng1ui5_0: d_loop_us=2190 d_raster_us=0 d_observe_us=104137 max_observe_us=10679 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot liveng1ui5_0: d_loop_us=2099 d_raster_us=0 d_observe_us=111000 max_observe_us=11066 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[host] slot liveng1ui5_0: d_loop_us=1825 d_raster_us=0 d_observe_us=91271 max_observe_us=11839 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot liveng1ui5_0: d_loop_us=2033 d_raster_us=0 d_observe_us=100562 max_observe_us=9627 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[host] slot liveng1ui5_0: d_loop_us=2073 d_raster_us=0 d_observe_us=106986 max_observe_us=12196 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot liveng1ui5_0: d_loop_us=1593 d_raster_us=0 d_observe_us=87554 max_observe_us=10041 d_paints=0 d_skips=50 d_ticks=6 window_ms=1157
+[host] slot liveng1ui5_0: d_loop_us=1474 d_raster_us=0 d_observe_us=79565 max_observe_us=8141 d_paints=0 d_skips=50 d_ticks=6 window_ms=1210
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=1 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1896 d_raster_us=0 d_observe_us=86987 max_observe_us=10694 d_paints=0 d_skips=50 d_ticks=5 window_ms=1180
+[host] slot liveng1ui5_0: d_loop_us=1925 d_raster_us=0 d_observe_us=100850 max_observe_us=11068 d_paints=0 d_skips=50 d_ticks=6 window_ms=1145
+[host] slot liveng1ui5_0: d_loop_us=1866 d_raster_us=0 d_observe_us=98624 max_observe_us=11566 d_paints=0 d_skips=50 d_ticks=6 window_ms=1181
+[host] slot liveng1ui5_0: d_loop_us=1503 d_raster_us=0 d_observe_us=76304 max_observe_us=8728 d_paints=0 d_skips=50 d_ticks=6 window_ms=1178
+[host] slot liveng1ui5_0: d_loop_us=1265 d_raster_us=0 d_observe_us=72141 max_observe_us=9366 d_paints=0 d_skips=50 d_ticks=6 window_ms=1191
+[host] slot liveng1ui5_0: d_loop_us=1264 d_raster_us=0 d_observe_us=60930 max_observe_us=7453 d_paints=0 d_skips=50 d_ticks=6 window_ms=1192
+[host] slot liveng1ui5_0: d_loop_us=1343 d_raster_us=0 d_observe_us=77733 max_observe_us=15006 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[script liveng1ui5_0] rock crab down — 1 kills total
+[host] slot liveng1ui5_0: d_loop_us=3359 d_raster_us=0 d_observe_us=136130 max_observe_us=14591 d_paints=0 d_skips=50 d_ticks=6 window_ms=1153
+[host] hitch liveng1ui5_0: observe_us=17120 paints=0 skips=1000 ticks=143
+[host] hitch liveng1ui5_0: observe_us=16434 paints=0 skips=1026 ticks=146
+[host] slot liveng1ui5_0: d_loop_us=2397 d_raster_us=0 d_observe_us=151919 max_observe_us=17120 d_paints=0 d_skips=50 d_ticks=5 window_ms=1137
+[host] slot liveng1ui5_0: d_loop_us=2299 d_raster_us=0 d_observe_us=140763 max_observe_us=13851 d_paints=0 d_skips=50 d_ticks=6 window_ms=1150
+[host] slot liveng1ui5_0: d_loop_us=2037 d_raster_us=0 d_observe_us=146863 max_observe_us=15609 d_paints=0 d_skips=50 d_ticks=6 window_ms=1126
+[host] slot liveng1ui5_0: d_loop_us=1998 d_raster_us=0 d_observe_us=117428 max_observe_us=14619 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot liveng1ui5_0: d_loop_us=1907 d_raster_us=0 d_observe_us=130920 max_observe_us=15637 d_paints=0 d_skips=50 d_ticks=5 window_ms=1155
+[host] slot liveng1ui5_0: d_loop_us=2074 d_raster_us=0 d_observe_us=144412 max_observe_us=15902 d_paints=0 d_skips=50 d_ticks=6 window_ms=1159
+[host] slot liveng1ui5_0: d_loop_us=1938 d_raster_us=0 d_observe_us=131647 max_observe_us=12773 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot liveng1ui5_0: d_loop_us=1941 d_raster_us=0 d_observe_us=137931 max_observe_us=13766 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] hitch liveng1ui5_0: observe_us=17473 paints=0 skips=1424 ticks=192
+[host] slot liveng1ui5_0: d_loop_us=1793 d_raster_us=0 d_observe_us=121614 max_observe_us=17473 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] slot liveng1ui5_0: d_loop_us=1775 d_raster_us=0 d_observe_us=81766 max_observe_us=10519 d_paints=0 d_skips=50 d_ticks=6 window_ms=1177
+[host] slot liveng1ui5_0: d_loop_us=1870 d_raster_us=0 d_observe_us=83879 max_observe_us=9183 d_paints=0 d_skips=50 d_ticks=5 window_ms=1164
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=2 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1781 d_raster_us=0 d_observe_us=95718 max_observe_us=12049 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[host] slot liveng1ui5_0: d_loop_us=2138 d_raster_us=0 d_observe_us=109599 max_observe_us=11519 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot liveng1ui5_0: d_loop_us=2212 d_raster_us=0 d_observe_us=106945 max_observe_us=11380 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot liveng1ui5_0: d_loop_us=1399 d_raster_us=0 d_observe_us=78321 max_observe_us=8749 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot liveng1ui5_0: d_loop_us=1982 d_raster_us=0 d_observe_us=99295 max_observe_us=12441 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[script liveng1ui5_0] rock crab down — 2 kills total
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot liveng1ui5_0: d_loop_us=1733 d_raster_us=0 d_observe_us=102607 max_observe_us=11694 d_paints=0 d_skips=50 d_ticks=6 window_ms=1191
+[host] slot liveng1ui5_0: d_loop_us=1698 d_raster_us=0 d_observe_us=82411 max_observe_us=10090 d_paints=0 d_skips=50 d_ticks=6 window_ms=1168
+[host] slot liveng1ui5_0: d_loop_us=1318 d_raster_us=0 d_observe_us=82838 max_observe_us=9122 d_paints=0 d_skips=50 d_ticks=5 window_ms=1166
+[host] slot liveng1ui5_0: d_loop_us=2092 d_raster_us=0 d_observe_us=104883 max_observe_us=11390 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=3 -> sent
+[host] slot liveng1ui5_0: d_loop_us=2320 d_raster_us=0 d_observe_us=111243 max_observe_us=10766 d_paints=0 d_skips=50 d_ticks=6 window_ms=1191
+[host] slot liveng1ui5_0: d_loop_us=1451 d_raster_us=0 d_observe_us=85306 max_observe_us=11458 d_paints=0 d_skips=50 d_ticks=6 window_ms=1191
+[host] slot liveng1ui5_0: d_loop_us=1644 d_raster_us=0 d_observe_us=98539 max_observe_us=10135 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[host] slot liveng1ui5_0: d_loop_us=1739 d_raster_us=0 d_observe_us=92318 max_observe_us=11158 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot liveng1ui5_0: d_loop_us=1140 d_raster_us=0 d_observe_us=74272 max_observe_us=8708 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot liveng1ui5_0: d_loop_us=1336 d_raster_us=0 d_observe_us=83500 max_observe_us=7863 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot liveng1ui5_0: d_loop_us=1853 d_raster_us=0 d_observe_us=88329 max_observe_us=10431 d_paints=0 d_skips=50 d_ticks=5 window_ms=1162
+[host] slot liveng1ui5_0: d_loop_us=1616 d_raster_us=0 d_observe_us=97262 max_observe_us=11274 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot liveng1ui5_0: d_loop_us=1378 d_raster_us=0 d_observe_us=86872 max_observe_us=12247 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot liveng1ui5_0: d_loop_us=2281 d_raster_us=0 d_observe_us=108942 max_observe_us=12189 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[script liveng1ui5_0] rock crab down — 3 kills total
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=4 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1119 d_raster_us=0 d_observe_us=57819 max_observe_us=5847 d_paints=0 d_skips=50 d_ticks=6 window_ms=1199
+[host] slot liveng1ui5_0: d_loop_us=1007 d_raster_us=0 d_observe_us=56467 max_observe_us=6905 d_paints=0 d_skips=50 d_ticks=6 window_ms=1216
+[host] slot liveng1ui5_0: d_loop_us=1092 d_raster_us=0 d_observe_us=59236 max_observe_us=5682 d_paints=0 d_skips=50 d_ticks=6 window_ms=1216
+[host] slot liveng1ui5_0: d_loop_us=1113 d_raster_us=0 d_observe_us=57714 max_observe_us=6149 d_paints=0 d_skips=50 d_ticks=6 window_ms=1207
+[host] slot liveng1ui5_0: d_loop_us=1025 d_raster_us=0 d_observe_us=55749 max_observe_us=5686 d_paints=0 d_skips=50 d_ticks=7 window_ms=1214
+[host] slot liveng1ui5_0: d_loop_us=1396 d_raster_us=0 d_observe_us=75050 max_observe_us=8614 d_paints=0 d_skips=50 d_ticks=5 window_ms=1197
+[host] slot liveng1ui5_0: d_loop_us=1392 d_raster_us=0 d_observe_us=86170 max_observe_us=9048 d_paints=0 d_skips=50 d_ticks=6 window_ms=1196
+[host] slot liveng1ui5_0: d_loop_us=2063 d_raster_us=0 d_observe_us=109952 max_observe_us=12599 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot liveng1ui5_0: d_loop_us=2035 d_raster_us=0 d_observe_us=94110 max_observe_us=9677 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot liveng1ui5_0: d_loop_us=1778 d_raster_us=0 d_observe_us=93667 max_observe_us=11841 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot liveng1ui5_0: d_loop_us=2090 d_raster_us=0 d_observe_us=120204 max_observe_us=12702 d_paints=0 d_skips=50 d_ticks=6 window_ms=1154
+[host] slot liveng1ui5_0: d_loop_us=2161 d_raster_us=0 d_observe_us=99456 max_observe_us=12170 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot liveng1ui5_0: d_loop_us=2070 d_raster_us=0 d_observe_us=88174 max_observe_us=10737 d_paints=0 d_skips=50 d_ticks=6 window_ms=1153
+[host] slot liveng1ui5_0: d_loop_us=2106 d_raster_us=0 d_observe_us=104477 max_observe_us=12946 d_paints=0 d_skips=50 d_ticks=5 window_ms=1165
+[host] slot liveng1ui5_0: d_loop_us=2240 d_raster_us=0 d_observe_us=97941 max_observe_us=11758 d_paints=0 d_skips=50 d_ticks=6 window_ms=1181
+[host] slot liveng1ui5_0: d_loop_us=1540 d_raster_us=0 d_observe_us=93674 max_observe_us=13061 d_paints=0 d_skips=50 d_ticks=6 window_ms=1178
+[script liveng1ui5_0] rock crab down — 4 kills total
+[host] slot liveng1ui5_0: d_loop_us=2078 d_raster_us=0 d_observe_us=115102 max_observe_us=12978 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[script liveng1ui5_0] interact WalkTo { x: 2701, z: 3728, level: 0 }
+[script liveng1ui5_0] woke a rock crab — stack now 1
+[script liveng1ui5_0] interact WalkTo { x: 2705, z: 3725, level: 0 }
+[host] slot liveng1ui5_0: d_loop_us=1708 d_raster_us=0 d_observe_us=109145 max_observe_us=15417 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[script liveng1ui5_0] woke a rock crab — stack now 2
+[script liveng1ui5_0] interact WalkTo { x: 2702, z: 3720, level: 0 }
+[host] hitch liveng1ui5_0: observe_us=16082 paints=0 skips=3431 ticks=429
+[script liveng1ui5_0] woke a rock crab — stack now 3
+[script liveng1ui5_0] interact WalkTo { x: 2704, z: 3726, level: 0 }
+[host] slot liveng1ui5_0: d_loop_us=1531 d_raster_us=0 d_observe_us=89614 max_observe_us=16082 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot liveng1ui5_0: d_loop_us=1945 d_raster_us=0 d_observe_us=94857 max_observe_us=13094 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot liveng1ui5_0: d_loop_us=1902 d_raster_us=0 d_observe_us=99815 max_observe_us=10519 d_paints=0 d_skips=50 d_ticks=5 window_ms=1172
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=5 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1747 d_raster_us=0 d_observe_us=97928 max_observe_us=12193 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot liveng1ui5_0: d_loop_us=1686 d_raster_us=0 d_observe_us=98317 max_observe_us=12099 d_paints=0 d_skips=50 d_ticks=6 window_ms=1155
+[host] slot liveng1ui5_0: d_loop_us=2259 d_raster_us=0 d_observe_us=106522 max_observe_us=11644 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot liveng1ui5_0: d_loop_us=2162 d_raster_us=0 d_observe_us=106677 max_observe_us=12430 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot liveng1ui5_0: d_loop_us=1761 d_raster_us=0 d_observe_us=85148 max_observe_us=9846 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot liveng1ui5_0: d_loop_us=2053 d_raster_us=0 d_observe_us=107719 max_observe_us=11507 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[host] slot liveng1ui5_0: d_loop_us=1732 d_raster_us=0 d_observe_us=77451 max_observe_us=9952 d_paints=0 d_skips=50 d_ticks=6 window_ms=1178
+[host] slot liveng1ui5_0: d_loop_us=1762 d_raster_us=0 d_observe_us=93538 max_observe_us=11261 d_paints=0 d_skips=50 d_ticks=6 window_ms=1189
+[host] slot liveng1ui5_0: d_loop_us=1789 d_raster_us=0 d_observe_us=96515 max_observe_us=10418 d_paints=0 d_skips=50 d_ticks=5 window_ms=1180
+[host] slot liveng1ui5_0: d_loop_us=1485 d_raster_us=0 d_observe_us=79510 max_observe_us=10279 d_paints=0 d_skips=50 d_ticks=6 window_ms=1163
+[host] slot liveng1ui5_0: d_loop_us=1175 d_raster_us=0 d_observe_us=78596 max_observe_us=9241 d_paints=0 d_skips=50 d_ticks=6 window_ms=1153
+[host] slot liveng1ui5_0: d_loop_us=1536 d_raster_us=0 d_observe_us=95323 max_observe_us=11319 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[script liveng1ui5_0] rock crab down — 5 kills total
+[host] slot liveng1ui5_0: d_loop_us=2742 d_raster_us=0 d_observe_us=118122 max_observe_us=12199 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot liveng1ui5_0: d_loop_us=1423 d_raster_us=0 d_observe_us=81113 max_observe_us=9632 d_paints=0 d_skips=50 d_ticks=6 window_ms=1173
+[host] slot liveng1ui5_0: d_loop_us=1685 d_raster_us=0 d_observe_us=82706 max_observe_us=11203 d_paints=0 d_skips=50 d_ticks=5 window_ms=1154
+[host] slot liveng1ui5_0: d_loop_us=2008 d_raster_us=0 d_observe_us=102860 max_observe_us=11331 d_paints=0 d_skips=50 d_ticks=6 window_ms=1163
+[host] slot liveng1ui5_0: d_loop_us=1041 d_raster_us=0 d_observe_us=62681 max_observe_us=10080 d_paints=0 d_skips=50 d_ticks=6 window_ms=1192
+[host] slot liveng1ui5_0: d_loop_us=1416 d_raster_us=0 d_observe_us=76852 max_observe_us=9606 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot liveng1ui5_0: d_loop_us=1748 d_raster_us=0 d_observe_us=84096 max_observe_us=9053 d_paints=0 d_skips=50 d_ticks=6 window_ms=1138
+[host] slot liveng1ui5_0: d_loop_us=1266 d_raster_us=0 d_observe_us=70183 max_observe_us=7802 d_paints=0 d_skips=50 d_ticks=6 window_ms=1171
+[host] slot liveng1ui5_0: d_loop_us=1691 d_raster_us=0 d_observe_us=92043 max_observe_us=10638 d_paints=0 d_skips=50 d_ticks=6 window_ms=1155
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=6 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1309 d_raster_us=0 d_observe_us=76989 max_observe_us=10648 d_paints=0 d_skips=50 d_ticks=5 window_ms=1197
+[host] slot liveng1ui5_0: d_loop_us=1178 d_raster_us=0 d_observe_us=79472 max_observe_us=10353 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[host] slot liveng1ui5_0: d_loop_us=1550 d_raster_us=0 d_observe_us=86851 max_observe_us=11533 d_paints=0 d_skips=50 d_ticks=6 window_ms=1192
+[host] slot liveng1ui5_0: d_loop_us=1681 d_raster_us=0 d_observe_us=83371 max_observe_us=10674 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot liveng1ui5_0: d_loop_us=1787 d_raster_us=0 d_observe_us=83785 max_observe_us=8821 d_paints=0 d_skips=50 d_ticks=6 window_ms=1189
+[host] slot liveng1ui5_0: d_loop_us=1863 d_raster_us=0 d_observe_us=92378 max_observe_us=10732 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot liveng1ui5_0: d_loop_us=2046 d_raster_us=0 d_observe_us=96444 max_observe_us=11520 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot liveng1ui5_0: d_loop_us=2138 d_raster_us=0 d_observe_us=110419 max_observe_us=12010 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot liveng1ui5_0: d_loop_us=2430 d_raster_us=0 d_observe_us=100914 max_observe_us=10834 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot liveng1ui5_0: d_loop_us=1964 d_raster_us=0 d_observe_us=91523 max_observe_us=14363 d_paints=0 d_skips=50 d_ticks=6 window_ms=1193
+[host] slot liveng1ui5_0: d_loop_us=1677 d_raster_us=0 d_observe_us=108491 max_observe_us=11647 d_paints=0 d_skips=50 d_ticks=5 window_ms=1155
+[host] slot liveng1ui5_0: d_loop_us=1547 d_raster_us=0 d_observe_us=98186 max_observe_us=12409 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot liveng1ui5_0: d_loop_us=1243 d_raster_us=0 d_observe_us=76611 max_observe_us=8558 d_paints=0 d_skips=50 d_ticks=6 window_ms=1202
+[host] slot liveng1ui5_0: d_loop_us=1323 d_raster_us=0 d_observe_us=79766 max_observe_us=8867 d_paints=0 d_skips=50 d_ticks=6 window_ms=1193
+[script liveng1ui5_0] rock crab down — 6 kills total
+[host] slot liveng1ui5_0: d_loop_us=1498 d_raster_us=0 d_observe_us=104951 max_observe_us=11745 d_paints=0 d_skips=50 d_ticks=6 window_ms=1187
+[host] slot liveng1ui5_0: d_loop_us=1283 d_raster_us=0 d_observe_us=96100 max_observe_us=10216 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot liveng1ui5_0: d_loop_us=1344 d_raster_us=0 d_observe_us=90903 max_observe_us=10348 d_paints=0 d_skips=50 d_ticks=6 window_ms=1198
+[host] slot liveng1ui5_0: d_loop_us=1374 d_raster_us=0 d_observe_us=86492 max_observe_us=8723 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[script liveng1ui5_0] rock crab down — 7 kills total
+[host] slot liveng1ui5_0: d_loop_us=1517 d_raster_us=0 d_observe_us=99675 max_observe_us=15925 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot liveng1ui5_0: d_loop_us=1497 d_raster_us=0 d_observe_us=90776 max_observe_us=11744 d_paints=0 d_skips=50 d_ticks=6 window_ms=1195
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=7 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1599 d_raster_us=0 d_observe_us=95283 max_observe_us=11501 d_paints=0 d_skips=50 d_ticks=6 window_ms=1193
+[host] slot liveng1ui5_0: d_loop_us=1215 d_raster_us=0 d_observe_us=85800 max_observe_us=12473 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot liveng1ui5_0: d_loop_us=1142 d_raster_us=0 d_observe_us=65763 max_observe_us=7340 d_paints=0 d_skips=50 d_ticks=6 window_ms=1201
+[host] slot liveng1ui5_0: d_loop_us=1273 d_raster_us=0 d_observe_us=100640 max_observe_us=12630 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot liveng1ui5_0: d_loop_us=1264 d_raster_us=0 d_observe_us=84285 max_observe_us=8965 d_paints=0 d_skips=50 d_ticks=5 window_ms=1152
+[host] slot liveng1ui5_0: d_loop_us=1448 d_raster_us=0 d_observe_us=85111 max_observe_us=8407 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot liveng1ui5_0: d_loop_us=1400 d_raster_us=0 d_observe_us=83094 max_observe_us=9265 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot liveng1ui5_0: d_loop_us=1475 d_raster_us=0 d_observe_us=89218 max_observe_us=9838 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot liveng1ui5_0: d_loop_us=1484 d_raster_us=0 d_observe_us=95848 max_observe_us=10771 d_paints=0 d_skips=50 d_ticks=6 window_ms=1145
+[host] slot liveng1ui5_0: d_loop_us=1200 d_raster_us=0 d_observe_us=75592 max_observe_us=9559 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot liveng1ui5_0: d_loop_us=1184 d_raster_us=0 d_observe_us=95503 max_observe_us=13210 d_paints=0 d_skips=50 d_ticks=5 window_ms=1174
+[host] slot liveng1ui5_0: d_loop_us=1185 d_raster_us=0 d_observe_us=80308 max_observe_us=8525 d_paints=0 d_skips=50 d_ticks=6 window_ms=1178
+[host] slot liveng1ui5_0: d_loop_us=1327 d_raster_us=0 d_observe_us=95325 max_observe_us=12293 d_paints=0 d_skips=50 d_ticks=6 window_ms=1187
+[host] slot liveng1ui5_0: d_loop_us=1253 d_raster_us=0 d_observe_us=77947 max_observe_us=9701 d_paints=0 d_skips=50 d_ticks=6 window_ms=1196
+[script liveng1ui5_0] rock crab down — 8 kills total
+[host] slot liveng1ui5_0: d_loop_us=1527 d_raster_us=0 d_observe_us=114950 max_observe_us=13118 d_paints=0 d_skips=50 d_ticks=6 window_ms=1150
+[host] slot liveng1ui5_0: d_loop_us=1555 d_raster_us=0 d_observe_us=101595 max_observe_us=13439 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot liveng1ui5_0: d_loop_us=1487 d_raster_us=0 d_observe_us=88398 max_observe_us=9924 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[host] slot liveng1ui5_0: d_loop_us=1514 d_raster_us=0 d_observe_us=92687 max_observe_us=12361 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] slot liveng1ui5_0: d_loop_us=1653 d_raster_us=0 d_observe_us=92641 max_observe_us=10445 d_paints=0 d_skips=50 d_ticks=5 window_ms=1169
+[host] slot liveng1ui5_0: d_loop_us=1316 d_raster_us=0 d_observe_us=84881 max_observe_us=8867 d_paints=0 d_skips=50 d_ticks=6 window_ms=1152
+[host] hitch liveng1ui5_0: observe_us=16015 paints=0 skips=6647 ticks=807
+[host] slot liveng1ui5_0: d_loop_us=1182 d_raster_us=0 d_observe_us=90394 max_observe_us=16015 d_paints=0 d_skips=50 d_ticks=6 window_ms=1155
+[host] slot liveng1ui5_0: d_loop_us=1293 d_raster_us=0 d_observe_us=92818 max_observe_us=11846 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot liveng1ui5_0: d_loop_us=1289 d_raster_us=0 d_observe_us=89753 max_observe_us=11377 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot liveng1ui5_0: d_loop_us=1211 d_raster_us=0 d_observe_us=79811 max_observe_us=13341 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot liveng1ui5_0: d_loop_us=1323 d_raster_us=0 d_observe_us=85727 max_observe_us=8957 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot liveng1ui5_0: d_loop_us=1565 d_raster_us=0 d_observe_us=94344 max_observe_us=10632 d_paints=0 d_skips=50 d_ticks=5 window_ms=1172
+[host] slot liveng1ui5_0: d_loop_us=1234 d_raster_us=0 d_observe_us=69780 max_observe_us=7352 d_paints=0 d_skips=50 d_ticks=6 window_ms=1194
+[host] slot liveng1ui5_0: d_loop_us=1251 d_raster_us=0 d_observe_us=59583 max_observe_us=6238 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot liveng1ui5_0: d_loop_us=1088 d_raster_us=0 d_observe_us=59722 max_observe_us=5712 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[script liveng1ui5_0] rock crab down — 9 kills total
+[script liveng1ui5_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=8 -> sent
+[host] slot liveng1ui5_0: d_loop_us=1085 d_raster_us=0 d_observe_us=59840 max_observe_us=7127 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot liveng1ui5_0: d_loop_us=1094 d_raster_us=0 d_observe_us=56983 max_observe_us=5613 d_paints=0 d_skips=50 d_ticks=6 window_ms=1171
+[host] slot liveng1ui5_0: d_loop_us=1090 d_raster_us=0 d_observe_us=60793 max_observe_us=7709 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot liveng1ui5_0: d_loop_us=1580 d_raster_us=0 d_observe_us=82153 max_observe_us=10913 d_paints=0 d_skips=50 d_ticks=5 window_ms=1148
+[host] slot liveng1ui5_0: d_loop_us=1107 d_raster_us=0 d_observe_us=65831 max_observe_us=7165 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot liveng1ui5_0: d_loop_us=1212 d_raster_us=0 d_observe_us=66932 max_observe_us=6700 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot liveng1ui5_0: d_loop_us=1413 d_raster_us=0 d_observe_us=91570 max_observe_us=8705 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+FAIL: catalog_boundary_live: bounded timeout; runner=Passed; core={"error":"rock_crab core post-Start delta incomplete","witness":{"case":"rock_crab","baseline":{"ingame":true,"scene_state":2,"player":"Liveng1ui5 0","tile":[2704,3726,0],"combat_level":36,"tick":39,"items":{"Adamant scimitar":1,"Lobster":8},"item_ids":{"379":8,"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"effective_levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":38,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37232,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37226,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":7360,"name":"Rock Crab","health":48,"total_health":50,"animation":1313,"in_combat":true,"targeting_local":true,"tile":[2704,3727,0],"distance":1},{"index":7362,"name":"Rock Crab","health":0,"total_health":0,"animation":1312,"in_combat":false,"targeting_local":true,"tile":[2705,3725,0],"distance":1}],"ground_loot":[],"local_in_combat":true,"local_target_npc":7360,"local_health":38,"local_animation":422,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"latest":{"ingame":true,"scene_state":2,"player":"Liveng1ui5 0","tile":[2704,3726,0],"combat_level":36,"tick":895,"items":{"Adamant scimitar":1},"item_ids":{"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"effective_levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":38,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37232,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37846,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":39112,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[23,"It heals some health."],[22,"You eat the lobster."],[21,"It heals some health."],[20,"You eat the lobster."],[19,"It heals some health."],[18,"You eat the lobster."],[17,"It heals some health."],[16,"You eat the lobster."],[15,"It heals some health."],[14,"You eat the lobster."],[13,"It heals some health."],[12,"You eat the lobster."],[11,"It heals some health."],[10,"You eat the lobster."],[9,"It heals some health."],[8,"You eat the lobster."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":7360,"name":"Rock Crab","health":36,"total_health":50,"animation":1313,"in_combat":true,"targeting_local":true,"tile":[2704,3727,0],"distance":1}],"ground_loot":[],"local_in_combat":true,"local_target_npc":7360,"local_health":38,"local_animation":423,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"max_items":{"Adamant scimitar":1,"Lobster":8},"max_xp":{"-unused-":0,"agility":0,"attack":37232,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37846,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":39112,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":7275,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_option_cycle":{"first":null,"deposited":null,"restocked":null,"further":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_defaults_cycle":{"withdrawn":null,"consumed":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"wildy_agility_cycle":{"ridge":null,"pipe":null,"rope":null,"stone":null,"log":null,"rocks":null,"further_pipe":false},"brimhaven_agility_cycle":{"paid":false,"entered":null,"moved":null,"first_tag":false,"ticket":null,"subsequent_work":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"tanner_bot_cycle":{"widget":null,"tanned":null,"deposited":null,"withdrawn":null,"returned":false,"further":false,"wrong_product":false,"shop":false},"rune_crafter_cycle":{"withdrawn":null,"entered":null,"crafted":null,"exited":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_cakes_cycle":{"stolen":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_thiever_cycle":{"pickpocketed":null,"deposited":null,"returned":false,"further":false},"gnome_chop_cycle":{"chopped":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"gnome_fletch_cycle":{"chopped":null,"fletched":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"coal_trucks_cycle":{"mined":null,"trucked":null,"further":false,"noted":false,"banked":false,"fixture_changed":false},"station_production_cycle":{"withdrawn":null,"produced":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_cycle":{"picked":null,"produced":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_pick_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_eggs_cycle":{"taken":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_newt_cycle":{"bought":false,"deposited":null,"returned":false,"further":false,"coins_spent":false,"coins_peak":0,"wrong_product":false,"noted":false},"combat_core_cycle":{"engagements":19,"defeats":9,"further_work":true,"style_xp":true,"looted":false,"noted":false,"activated":false,"shield_worn":false,"stolen_food":false,"wrong_item":false,"dormant_indexes":[],"dormant_tiles":{},"last":{"7357":{"name":"Rock Crab","health":0,"animation":1314,"tile":[2704,3725,0],"engaged":true,"defeated":true},"7358":{"name":"Rock Crab","health":0,"animation":1314,"tile":[2704,3725,0],"engaged":true,"defeated":true},"7360":{"name":"Rock Crab","health":36,"animation":1313,"tile":[2704,3727,0],"engaged":true,"defeated":false},"7362":{"name":"Rock Crab","health":0,"animation":1314,"tile":[2704,3725,0],"engaged":true,"defeated":true}},"currently_engaged":[7357,7358,7360,7362],"previous_ground":[],"facts":[{"kind":"engage","index":7360,"name":"Rock Crab","health":48,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"engage","index":7362,"name":"Rock Crab","health":0,"animation":1312,"loot_id":null,"zero_health":false},{"kind":"engage","index":7357,"name":"Rock Crab","health":0,"animation":-1,"loot_id":null,"zero_health":false},{"kind":"defeat","index":7360,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":true},{"kind":"engage","index":7360,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"defeat","index":7357,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":true},{"kind":"engage","index":7357,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"defeat","index":7362,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":true},{"kind":"engage","index":7362,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"engage","index":7360,"name":"Rock Crab","health":47,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"defeat","index":7360,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":true},{"kind":"engage","index":7360,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"engage","index":7358,"name":"Rock Crab","health":0,"animation":-1,"loot_id":null,"zero_health":false},{"kind":"engage","index":7362,"name":"Rock Crab","health":47,"animation":1313,"loot_id":null,"zero_health":false},{"kind":"defeat","index":7362,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":true},{"kind":"engage","index":7362,"name":"Rock Crab","health":0,"animation":1313,"loot_id":null,"zero_health":false}]},"ordered_first_exhausted":false}}; diagnostic={"observation":{"ingame":true,"scene_state":2,"player":"Liveng1ui5 0","tile":[2704,3726,0],"combat_level":36,"tick":895,"items":{"Adamant scimitar":1},"item_ids":{"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"effective_levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":38,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37232,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37846,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":39112,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[23,"It heals some health."],[22,"You eat the lobster."],[21,"It heals some health."],[20,"You eat the lobster."],[19,"It heals some health."],[18,"You eat the lobster."],[17,"It heals some health."],[16,"You eat the lobster."],[15,"It heals some health."],[14,"You eat the lobster."],[13,"It heals some health."],[12,"You eat the lobster."],[11,"It heals some health."],[10,"You eat the lobster."],[9,"It heals some health."],[8,"You eat the lobster."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":7360,"name":"Rock Crab","health":36,"total_health":50,"animation":1313,"in_combat":true,"targeting_local":true,"tile":[2704,3727,0],"distance":1}],"ground_loot":[],"local_in_combat":true,"local_target_npc":7360,"local_health":38,"local_animation":423,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"flax_aio_pick":null}

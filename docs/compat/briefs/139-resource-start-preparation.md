@@ -69,3 +69,26 @@ Strength. The change qualifies the explicitly recorded one-food setting, not
 Root will run corrected fixture once after review. Add proportional settings/
 baseline regression within this existing coherent fixture card, no runtime
 changes. Inspect the finalized274 counterpart before finishing if available.
+
+## Root addendum16:58: trained CoalTrucks mining preparation
+
+The complete cff batch gives CoalTrucks three PASSs and one274/newer FAIL.
+The failing actor mined one Coal453, deposited it into the truck, then made
+four further native Mine2096 calls and received four swing messages, but no
+second Coal within the original150tick watch. No navigation/interaction refusal
+or source defect is established. Keep the failure. Current preparation is the
+minimum Mining30 with Steel pickaxe1269; native coal chance is16..100 across
+levels1..99 (`skill_mining/configs/mine.dbrow`) and Steel rate5, Rune rate2
+(`pickaxes.obj`), with Rune requiring Mining41. These are ordinary engine rules.
+
+Use one representative trained-miner fixture: acknowledged base/effective
+Mining60 and Rune pickaxe1275, replacing Mining30/Steel1269. Preserve combat55
+preparation,26Knife ballast, exactly one free coal slot, zero starting coal,
+actual script mine -> truck deposit -> further mine and all existing clocks.
+No pre-Start mining/truck stock, no forced ore rolls, no engine/content change,
+no post-Start cheats. Record this as Mining60/Rune qualification, not evidence
+for low-level Mining30 throughput or proof the original failure was a host bug.
+Verify native identities/requirements on both caches and update the existing
+scenario/core baseline checks, comments and test fixtures together. Do not add
+mirrored metadata tests; existing exact-ID/fixture-invariant tests should suffice.
+Root runs the changed fixture once after review; any further failure stays FAIL.
