@@ -168,7 +168,7 @@ not a product behavior change.
   2026-09-11 11:40 UTC (07:40 Eastern). Hermes has no xai-oauth account-usage
   fetcher, but the operator provided the authenticated Grok Usage tab in the
   Codex in-app browser. Root refreshed at 03:55 UTC: 67% used / 33% remaining and September 11
-  7:40 AM reset there. Use that browser tab for actual quota checks; token
+  7:40 AM reset there. The 04:25 UTC refresh remained 67% used. Use that browser tab for actual quota checks; token
   activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.
 - Root started two N=1 sustained TUI Thiever prerequisites on 274 and 289 at
@@ -503,7 +503,9 @@ applicable; root owns twenty-four subsequent LIVE cells after review.
 
 Root exported exact 6c7075ce/client 56d80272 plus hash-verified immutable
 catalog/nav inputs into a new 77,884,042-byte archive. All 5,933 files verified
-on Windows and Linux; each is building in a new empty target. No platform LIVE
-launch yet. This candidate includes canStep 5612b265, whose source review must
+on Windows and Linux; both now built in new empty targets. Linux compilation
+succeeded but artifact copy filled disk; root verified no open references to the
+old compiler cache, removed that cache only and recovered the exact TUI binary
+copy, then reverified source/binary hashes. No platform LIVE launch yet. This candidate includes canStep 5612b265, whose source review must
 finish first, and the known ChickenKiller fixture correction remains pending.
 Evidence under platform-isolated/. No shared target or source overlay mutation.

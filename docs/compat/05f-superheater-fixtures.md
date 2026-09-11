@@ -53,3 +53,17 @@ inputs linked read-only). Isolated empty target:
 
 No LIVE or fixture process was launched. Root owns the catalog × revision
 cells after review. Source review does not grant live acceptance.
+
+## Alternative staff fixture correction
+
+Root correction 6c7075ce seeds Attack 30 only for Fire battlestaff, adds an
+acknowledged native stat proof before Start, and refuses an under-level
+Start baseline. The existing bank-cycle witness test now rejects the missing
+Attack requirement, then accepts a properly seeded baseline; its exact
+isolated binary passes that focused test. No gameplay policy or foreign
+script changed. Both earlier wield failures remain under the 6d750e65 run.
+
+Root built native/headless 6c7075ce in a new empty target, verifying all 2,240
+source files and binary hashes. This composed candidate also includes canStep
+5612b265 and DirectNavigator 5ce85959. DirectNavigator review 1221 passed;
+canStep review remains the gate before new LIVE launches on this candidate.
