@@ -34,8 +34,8 @@ pub use load::{
 };
 pub use loadouts_store::{
     copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
-    unique_loadout_name, worn_slot_label, CarryEntry, Loadout, LoadoutsStore, WORN_SLOTS,
-    WORN_SLOT_LAYOUT,
+    resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
+    LoadoutsStore, ResolvedSettingOptions, WORN_SLOTS, WORN_SLOT_LAYOUT,
 };
 pub use params::defaults;
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};
@@ -43,8 +43,8 @@ pub use rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
     rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
-    script_file_path, set_rs2b0t_import_deferred_at, settings_schema_from_source, RegistryCard,
-    ScriptKind, ScriptSource, SettingDef,
+    script_file_path, set_rs2b0t_import_deferred_at, settings_schema_from_source,
+    ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind, ScriptSource, SettingDef,
 };
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,

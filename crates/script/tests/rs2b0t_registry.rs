@@ -921,3 +921,137 @@ export const COMMENTED_ONLY = 'should_not_inline';
         "partial computed anyOf must stay unresolved, got {show:?}"
     );
 }
+
+const ALCHER_SHAPED_INDEX: &str = r#"
+import Alcher, { ALCHER_SETTINGS } from './Alcher/Alcher.js';
+ScriptRegistry.register({
+    name: 'Alcher',
+    settingsSchema: ALCHER_SETTINGS,
+    create: () => new Alcher()
+});
+"#;
+
+const ALCHER_SHAPED_SCRIPT: &str = r#"
+import { DEFAULT_ALCH_ITEMS, ALCH_OPTIONS, CUSTOM_ALCH_KEY } from './AlcherLogic.js';
+export const ALCHER_SETTINGS = {
+    items: { type: 'string[]', default: DEFAULT_ALCH_ITEMS, options: ALCH_OPTIONS },
+    customItem: { type: 'string', default: '', showIf: { key: 'items', anyOf: [CUSTOM_ALCH_KEY] } },
+};
+export default class Alcher {}
+"#;
+
+fn alcher_shaped_sources(logic: &str) -> HashMap<String, String> {
+    let mut sources = HashMap::new();
+    sources.insert(
+        "./Alcher/Alcher.js".to_string(),
+        ALCHER_SHAPED_SCRIPT.to_string(),
+    );
+    sources.insert("./Alcher/AlcherLogic.js".to_string(), logic.to_string());
+    sources
+}
+
+fn alcher_items_setting(logic: &str) -> script::SettingDef {
+    let cards =
+        script::parse_registry_with_sources(ALCHER_SHAPED_INDEX, &alcher_shaped_sources(logic))
+            .expect("alcher-shaped catalog parses");
+    cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "items")
+        .cloned()
+        .expect("items setting")
+}
+
+#[test]
+fn parse_registry_extracts_high_alchemy_item_option_spec() {
+    let logic = r#"
+const ALCH_RATE = 0.6;
+const FODDER: { obj: string; label?: string }[] = [
+    { obj: 'maple_longbow' },
+    { obj: 'rune_platebody' },
+    { obj: 'rune_2h_sword' },
+    { obj: 'rune_platelegs' },
+    { obj: 'dragonhide_body', label: "Green d'hide body" },
+];
+export const CUSTOM_ALCH_KEY = 'custom';
+const richestFirst = (a, b) => b.alchValue - a.alchValue || a.label.localeCompare(b.label);
+export const ALCH_ITEMS: readonly AlchItem[] = FODDER
+    .flatMap(({ obj, label }) => {
+        const rec = ITEM_DB.find(r => r.obj === obj);
+        return rec ? [{ key: obj, id: rec.id, name: rec.name, label: label ?? rec.name, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+    })
+    .sort(richestFirst);
+export const ALCH_OPTIONS: string[] = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+export const DEFAULT_ALCH_ITEMS: string[] = ['dragonhide_body'];
+"#;
+    let items = alcher_items_setting(logic);
+    assert!(
+        items.options.is_empty(),
+        "descriptor must not bake keys into options"
+    );
+    let spec = items.item_option_spec.as_ref().expect("high-alchemy spec");
+    assert_eq!(spec.prefix, vec!["custom".to_string()]);
+    assert_eq!(
+        spec.candidates
+            .iter()
+            .map(|c| (c.key.as_str(), c.label.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("maple_longbow", None),
+            ("rune_platebody", None),
+            ("rune_2h_sword", None),
+            ("rune_platelegs", None),
+            ("dragonhide_body", Some("Green d'hide body")),
+        ]
+    );
+}
+
+#[test]
+fn parse_registry_refuses_unsupported_item_option_expressions() {
+    let shop = r#"
+export const CUSTOM_ALCH_KEY = 'custom';
+export const DEFAULT_ALCH_ITEMS = ['keep'];
+const SHOP_PRESETS = [{ obj: 'maple_longbow' }];
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...SHOP_PRESETS.map(i => i.key)];
+"#;
+    let shop_items = alcher_items_setting(shop);
+    assert!(shop_items.options.is_empty());
+    assert!(
+        shop_items.item_option_spec.is_none(),
+        "SHOP_PRESETS.map is not the high-alchemy chain"
+    );
+
+    let wrong_rate = r#"
+const ALCH_RATE = 0.5;
+const FODDER = [{ obj: 'maple_longbow' }];
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = FODDER.flatMap(({ obj, label }) => {
+    const rec = ITEM_DB.find(r => r.obj === obj);
+    return rec ? [{ key: obj, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+}).sort(richestFirst);
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+export const DEFAULT_ALCH_ITEMS = ['maple_longbow'];
+"#;
+    let rate_items = alcher_items_setting(wrong_rate);
+    assert!(
+        rate_items.item_option_spec.is_none(),
+        "0.5 is not high-alchemy 0.6"
+    );
+
+    let malformed = r#"
+const ALCH_RATE = 0.6;
+const FODDER = [{ obj: 'maple_longbow' }, notALiteral];
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = FODDER.flatMap(({ obj, label }) => {
+    const rec = ITEM_DB.find(r => r.obj === obj);
+    return rec ? [{ key: obj, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+}).sort(richestFirst);
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+export const DEFAULT_ALCH_ITEMS = ['maple_longbow'];
+"#;
+    let bad = alcher_items_setting(malformed);
+    assert!(
+        bad.item_option_spec.is_none(),
+        "malformed FODDER must not partially succeed"
+    );
+}

@@ -498,6 +498,7 @@ impl TuiApp {
         &mut self,
         store: &mut script::ScriptSettingsStore,
         loadouts: &script::LoadoutsStore,
+        game_data: Option<&api::game_data::SelectedGameData>,
         key: KeyEvent,
     ) -> bool {
         if !self.params_state.open {
@@ -513,6 +514,7 @@ impl TuiApp {
             bag: &mut self.params_bag,
             store,
             loadouts,
+            game_data,
             source,
             name: &name,
             state: &mut self.params_state,
@@ -977,6 +979,7 @@ impl TuiApp {
         frame: &mut Frame<'_>,
         store: &mut script::ScriptSettingsStore,
         loadouts: &script::LoadoutsStore,
+        game_data: Option<&api::game_data::SelectedGameData>,
     ) {
         if !self.params_state.open {
             return;
@@ -990,6 +993,7 @@ impl TuiApp {
             bag: &mut self.params_bag,
             store,
             loadouts,
+            game_data,
             source,
             name: &name,
             state: &mut self.params_state,
@@ -1768,6 +1772,7 @@ mod tests {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         }];
         let mut app = TuiApp::new("274bot headless");
         app.script_sel = Some(ScriptSel::Loaded(
@@ -1785,7 +1790,7 @@ mod tests {
         );
         app.open_script_params(&store);
         assert!(app.params_state.open);
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char(' ')));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char(' ')));
         assert_eq!(
             app.params_bag.get("buryBones"),
             Some(&serde_json::json!(false))
@@ -1799,7 +1804,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 app.draw(frame);
-                app.draw_params_overlay(frame, &mut store, &loadouts);
+                app.draw_params_overlay(frame, &mut store, &loadouts, None);
             })
             .unwrap();
         let buf = terminal.backend().buffer();
@@ -1838,6 +1843,7 @@ mod tests {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         }];
         let mut app = TuiApp::new("274bot headless");
         app.script_sel = Some(ScriptSel::Loaded(ScriptSource::Catalog, "Alcher".into()));
@@ -1846,31 +1852,31 @@ mod tests {
         assert!(app.params_state.open);
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), AppAction::None);
         assert!(!app.quit, "params overlay must consume q");
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
         assert!(app.params_state.editing);
         while !app.params_state.scratch.is_empty() {
-            app.params_on_key(&mut store, &loadouts, key(KeyCode::Backspace));
+            app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Backspace));
         }
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char('5')));
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Esc));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char('5')));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Esc));
         assert!(!app.params_state.editing);
         assert_eq!(
             app.params_bag.get("alchs").and_then(|v| v.as_f64()),
             Some(27.0)
         );
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
         while !app.params_state.scratch.is_empty() {
-            app.params_on_key(&mut store, &loadouts, key(KeyCode::Backspace));
+            app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Backspace));
         }
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Char('5')));
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Enter));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Char('5')));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Enter));
         assert_eq!(
             app.params_bag.get("alchs").and_then(|v| v.as_f64()),
             Some(5.0)
         );
         let start_bag = app.merged_script_settings_bag(&store).expect("merged bag");
         assert_eq!(start_bag.get("alchs").and_then(|v| v.as_f64()), Some(5.0));
-        app.params_on_key(&mut store, &loadouts, key(KeyCode::Esc));
+        app.params_on_key(&mut store, &loadouts, None, key(KeyCode::Esc));
         assert!(!app.params_state.open);
         let _ = std::fs::remove_dir_all(&dir);
     }

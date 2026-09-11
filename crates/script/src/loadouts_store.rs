@@ -380,19 +380,104 @@ pub fn copy_equipment_preserving_supplies(
     loadout.unassigned = unassigned;
 }
 
+/// Combo values and identity labels in the same order. Labels fall back to
+/// values when the source does not supply a distinct identity string.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResolvedSettingOptions {
+    pub values: Vec<String>,
+    pub labels: Vec<String>,
+}
+
+impl ResolvedSettingOptions {
+    fn from_values(values: Vec<String>) -> Self {
+        let labels = values.clone();
+        Self { values, labels }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn label_for<'a>(&'a self, value: &'a str) -> &'a str {
+        self.values
+            .iter()
+            .position(|v| v == value)
+            .and_then(|i| self.labels.get(i))
+            .map(String::as_str)
+            .unwrap_or(value)
+    }
+}
+
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
-/// pulls names from the store.
+/// pulls names from the store; a high-alchemy item spec is resolved from
+/// borrowed selected facts without mutating the schema.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) -> Vec<String> {
+    resolve_setting_options_with_labels(def, loadouts, game_data).values
+}
+
+/// Like [`resolve_setting_options`], with parallel identity labels for UI.
+pub fn resolve_setting_options_with_labels(
+    def: &crate::rs2b0t_registry::SettingDef,
+    loadouts: &LoadoutsStore,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
     if !def.options.is_empty() {
-        return def.options.clone();
+        return ResolvedSettingOptions::from_values(def.options.clone());
     }
     if def.options_from.as_deref() == Some("loadouts") {
-        return loadouts.names();
+        return ResolvedSettingOptions::from_values(loadouts.names());
     }
-    Vec::new()
+    if let Some(spec) = def.item_option_spec.as_ref() {
+        return resolve_item_option_spec(spec, game_data);
+    }
+    ResolvedSettingOptions::default()
+}
+
+fn resolve_item_option_spec(
+    spec: &crate::rs2b0t_registry::ItemOptionSpec,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let mut values = spec.prefix.clone();
+    let mut labels = spec.prefix.clone();
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions { values, labels };
+    };
+    struct Row {
+        key: String,
+        label: String,
+        alch: i32,
+    }
+    let mut rows = Vec::new();
+    for candidate in &spec.candidates {
+        let Some(item) = data.item_by_alias(&candidate.key) else {
+            continue;
+        };
+        let Some(name) = item.name.as_deref().filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        let label = candidate
+            .label
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(name)
+            .to_string();
+        let alch = (f64::from(item.cost) * 0.6).floor() as i32;
+        rows.push(Row {
+            key: candidate.key.clone(),
+            label,
+            alch,
+        });
+    }
+    rows.sort_by(|a, b| b.alch.cmp(&a.alch).then_with(|| a.label.cmp(&b.label)));
+    for row in rows {
+        values.push(row.key);
+        labels.push(row.label);
+    }
+    ResolvedSettingOptions { values, labels }
 }
 
 /// Adapt the host's persisted loadout shape for script accessors.
@@ -498,7 +583,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::rs2b0t_registry::SettingDef;
+    use crate::rs2b0t_registry::{ItemOptionCandidate, ItemOptionSpec, SettingDef};
 
     static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -653,9 +738,257 @@ mod tests {
             options_from: Some("loadouts".into()),
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         };
-        let opts = resolve_setting_options(&def, &store);
+        let opts = resolve_setting_options(&def, &store, None);
         assert_eq!(opts, vec!["fish", "mine"]);
+    }
+
+    fn cand(key: &str, label: Option<&str>) -> ItemOptionCandidate {
+        ItemOptionCandidate {
+            key: key.into(),
+            label: label.map(str::to_string),
+        }
+    }
+
+    fn alcher_spec(extra: &[ItemOptionCandidate]) -> ItemOptionSpec {
+        let mut candidates = vec![
+            cand("maple_longbow", None),
+            cand("yew_longbow", None),
+            cand("magic_longbow", None),
+            cand("steel_platebody", None),
+            cand("steel_platelegs", None),
+            cand("steel_2h_sword", None),
+            cand("black_platebody", None),
+            cand("mithril_platebody", None),
+            cand("mithril_platelegs", None),
+            cand("mithril_kiteshield", None),
+            cand("mithril_2h_sword", None),
+            cand("adamant_platebody", None),
+            cand("adamant_platelegs", None),
+            cand("adamant_kiteshield", None),
+            cand("adamant_2h_sword", None),
+            cand("rune_platebody", None),
+            cand("rune_platelegs", None),
+            cand("rune_kiteshield", None),
+            cand("rune_chainbody", None),
+            cand("rune_full_helm", None),
+            cand("rune_sq_shield", None),
+            cand("rune_scimitar", None),
+            cand("rune_2h_sword", None),
+            cand("dragonhide_body", Some("Green d'hide body")),
+            cand("blue_dragonhide_body", Some("Blue d'hide body")),
+            cand("red_dragonhide_body", Some("Red d'hide body")),
+            cand("black_dragonhide_body", Some("Black d'hide body")),
+            cand("dragonhide_chaps", Some("Green d'hide chaps")),
+            cand("blue_dragonhide_chaps", Some("Blue d'hide chaps")),
+            cand("red_dragonhide_chaps", Some("Red d'hide chaps")),
+            cand("black_dragonhide_chaps", Some("Black d'hide chaps")),
+            cand("battlestaff", None),
+            cand("air_battlestaff", None),
+            cand("water_battlestaff", None),
+            cand("earth_battlestaff", None),
+            cand("fire_battlestaff", None),
+        ];
+        candidates.extend_from_slice(extra);
+        ItemOptionSpec {
+            prefix: vec!["custom".into()],
+            candidates,
+        }
+    }
+
+    fn item_def(spec: ItemOptionSpec) -> SettingDef {
+        SettingDef {
+            id: "items".into(),
+            ty: "string[]".into(),
+            default: None,
+            label: Some("Items".into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+            item_option_spec: Some(spec),
+        }
+    }
+
+    const FAITHFUL_ALCH_OPTIONS: &[&str] = &[
+        "custom",
+        "rune_platebody",
+        "rune_2h_sword",
+        "rune_platelegs",
+        "rune_kiteshield",
+        "rune_chainbody",
+        "rune_sq_shield",
+        "rune_full_helm",
+        "rune_scimitar",
+        "air_battlestaff",
+        "earth_battlestaff",
+        "fire_battlestaff",
+        "water_battlestaff",
+        "black_dragonhide_body",
+        "adamant_platebody",
+        "red_dragonhide_body",
+        "blue_dragonhide_body",
+        "dragonhide_body",
+        "battlestaff",
+        "adamant_2h_sword",
+        "adamant_platelegs",
+        "black_dragonhide_chaps",
+        "adamant_kiteshield",
+        "mithril_platebody",
+        "red_dragonhide_chaps",
+        "blue_dragonhide_chaps",
+        "dragonhide_chaps",
+        "black_platebody",
+        "mithril_2h_sword",
+        "mithril_platelegs",
+        "magic_longbow",
+        "mithril_kiteshield",
+        "steel_platebody",
+        "yew_longbow",
+        "steel_2h_sword",
+        "steel_platelegs",
+        "maple_longbow",
+    ];
+
+    #[test]
+    fn resolve_item_options_matches_both_pinned_revisions() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = item_def(alcher_spec(&[]));
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
+        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+        assert_eq!(
+            a.values.iter().map(String::as_str).collect::<Vec<_>>(),
+            FAITHFUL_ALCH_OPTIONS
+        );
+        assert_eq!(b.values, a.values);
+        assert_eq!(a.values[1], "rune_platebody");
+        let hide_ids: Vec<i32> = [
+            "dragonhide_body",
+            "blue_dragonhide_body",
+            "red_dragonhide_body",
+            "black_dragonhide_body",
+        ]
+        .iter()
+        .map(|k| r274.item_by_alias(k).unwrap().id)
+        .collect();
+        assert_eq!(hide_ids, vec![1135, 2499, 2501, 2503]);
+        assert!(!a.values.iter().any(|k| k == "castlewars_armour_body"));
+        assert!(!b.values.iter().any(|k| k == "castlewars_armour_body"));
+        assert!(def.options.is_empty());
+    }
+
+    #[test]
+    fn resolve_item_options_none_facts_prefix_only() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = item_def(alcher_spec(&[]));
+        let opts = resolve_setting_options(&def, &store, None);
+        assert_eq!(opts, vec!["custom".to_string()]);
+        assert!(!opts.iter().any(|k| k == "maple_longbow"));
+    }
+
+    #[test]
+    fn resolve_item_options_drops_missing_alias_and_keeps_sort() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = item_def(alcher_spec(&[cand("not_a_real_selected_item", None)]));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let opts = resolve_setting_options(&def, &store, Some(data.as_ref()));
+        assert!(!opts.iter().any(|k| k == "not_a_real_selected_item"));
+        assert_eq!(
+            opts.iter().map(String::as_str).collect::<Vec<_>>(),
+            FAITHFUL_ALCH_OPTIONS
+        );
+    }
+
+    #[test]
+    fn resolve_item_options_tie_order_and_identity_labels() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = item_def(alcher_spec(&[]));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let resolved = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        let two_h = resolved
+            .values
+            .iter()
+            .position(|k| k == "rune_2h_sword")
+            .unwrap();
+        let legs = resolved
+            .values
+            .iter()
+            .position(|k| k == "rune_platelegs")
+            .unwrap();
+        assert!(two_h < legs, "rune 2h before platelegs");
+        let staves = [
+            "air_battlestaff",
+            "earth_battlestaff",
+            "fire_battlestaff",
+            "water_battlestaff",
+        ];
+        let idx: Vec<_> = staves
+            .iter()
+            .map(|k| resolved.values.iter().position(|v| v == k).unwrap())
+            .collect();
+        assert!(idx.windows(2).all(|w| w[0] < w[1]), "Air/Earth/Fire/Water");
+        assert_eq!(resolved.label_for("dragonhide_body"), "Green d'hide body");
+        assert_ne!(resolved.label_for("dragonhide_body"), "Dragonhide body");
+        assert_eq!(resolved.label_for("custom"), "custom");
+    }
+
+    #[test]
+    fn resolve_item_options_rebounds_without_mutating_schema() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = item_def(alcher_spec(&[]));
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let none = resolve_setting_options(&def, &store, None);
+        let a = resolve_setting_options(&def, &store, Some(r274.as_ref()));
+        let b = resolve_setting_options(&def, &store, Some(r289.as_ref()));
+        assert_eq!(none, vec!["custom".to_string()]);
+        assert_eq!(a, b);
+        assert!(def.options.is_empty());
+        assert_eq!(def.item_option_spec.as_ref().unwrap().prefix, ["custom"]);
+    }
+
+    #[test]
+    fn resolve_item_options_leaves_literals_and_loadouts() {
+        let path = tmp_path();
+        let mut store = LoadoutsStore::at(path);
+        store.upsert(Loadout::new("fish"));
+        let literal = SettingDef {
+            id: "material".into(),
+            ty: "string".into(),
+            default: None,
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: vec!["Logs".into(), "Oak logs".into()],
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+            item_option_spec: Some(alcher_spec(&[])),
+        };
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        assert_eq!(
+            resolve_setting_options(&literal, &store, Some(data.as_ref())),
+            vec!["Logs".to_string(), "Oak logs".to_string()],
+            "inline options win over item spec"
+        );
     }
 
     #[test]

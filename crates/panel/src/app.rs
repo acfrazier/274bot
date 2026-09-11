@@ -2952,6 +2952,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         return;
     }
     let mut bag = session.merged_settings_bag(source, &name, &card.settings_schema);
+    let game_data = session.selected_game_data();
+    let game_data_ref = game_data.as_deref();
     let mut last_group: Option<String> = None;
     for def in &card.settings_schema {
         if !script::setting_visible(def.show_if.as_deref(), &bag) {
@@ -2965,6 +2967,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
             }
         }
         let label = def.label.as_deref().unwrap_or(&def.id).to_string();
+        let resolved =
+            script::resolve_setting_options_with_labels(def, &session.loadouts, game_data_ref);
         match def.ty.as_str() {
             "boolean" => {
                 let mut value = bag
@@ -2993,9 +2997,9 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     bag.insert(def.id.clone(), serde_json::json!(value));
                 }
             }
-            "string" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
+            "string" if !resolved.is_empty() => {
                 ui.text(&label);
-                let opts = script::resolve_setting_options(def, &session.loadouts);
+                let opts = &resolved.values;
                 let current = bag
                     .get(&def.id)
                     .and_then(|v| v.as_str())
@@ -3004,14 +3008,16 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .to_string();
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+                let preview = resolved.label_for(&current);
                 if let Some(_popup) = ui.begin_combo_with_flags(
                     format!("##param-{id}", id = def.id),
-                    &current,
+                    preview,
                     combo_opts,
                 ) {
-                    for opt in &opts {
+                    for opt in opts {
                         let selected = opt == &current;
-                        if ui.selectable_config(opt).selected(selected).build() {
+                        let shown = resolved.label_for(opt);
+                        if ui.selectable_config(shown).selected(selected).build() {
                             session.script_settings.set_str(source, &name, &def.id, opt);
                             let _ = session.script_settings.save();
                             bag.insert(def.id.clone(), serde_json::json!(opt));
@@ -3019,9 +3025,9 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     }
                 }
             }
-            "string[]" if !script::resolve_setting_options(def, &session.loadouts).is_empty() => {
+            "string[]" if !resolved.is_empty() => {
                 ui.text(&label);
-                let opts = script::resolve_setting_options(def, &session.loadouts);
+                let opts = &resolved.values;
                 let mut selected: Vec<String> = bag
                     .get(&def.id)
                     .and_then(|v| v.as_array())
@@ -3033,9 +3039,10 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     })
                     .unwrap_or_default();
                 let mut changed = false;
-                for opt in &opts {
+                for opt in opts {
                     let mut on = selected.iter().any(|s| s == opt);
-                    if ui.checkbox(format!("{opt}##param-{id}-{opt}", id = def.id), &mut on) {
+                    let shown = resolved.label_for(opt);
+                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id), &mut on) {
                         changed = true;
                         if on {
                             if !selected.iter().any(|s| s == opt) {
@@ -4912,9 +4919,10 @@ mod tests {
             options_from: Some("loadouts".into()),
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         };
         assert_eq!(
-            resolve_setting_options(&def, &store),
+            resolve_setting_options(&def, &store, None),
             vec!["guard".to_string(), "stall".to_string()]
         );
     }
