@@ -1,0 +1,66 @@
+{
+  "brief": "docs/compat/briefs/128-native-retaliate-controls.md",
+  "brief_sha256": "b7d1d234374716335b1b2b78c8d1dbf1ee2c1950a9bb3c7c9664145a4dd2d0c3",
+  "implementation_commit": "15e779cad1a7fb9cb148554857352ae0c7507726",
+  "implementation_parent": "21446414d21b50088aabf100df4392c3674b89fa",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "export": ".superpowers/review-exports/native-retaliate-controls-t_25d98ac4-15e779cad",
+  "cargo_target_dir": "target-t_25d98ac4",
+  "changed_files": [
+    "crates/host-play/src/lib.rs",
+    "crates/script/host-js/index.d.ts",
+    "crates/script/schema/isolate.fbs",
+    "crates/script/src/host_js.rs",
+    "crates/script/src/isolate_fb.rs",
+    "crates/script/src/load.rs",
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/tests/native_hint_overhead.rs",
+    "crates/script/tests/native_retaliate_controls.rs"
+  ],
+  "overlay_sha256": {
+    "crates/host-play/src/lib.rs": "a2b2ebcf9ed7f20d483b4ad9eee076893215453e971d64458bf58765b5b310db",
+    "crates/script/host-js/index.d.ts": "f1bbb5b0db6d50462f17e6224dbaec4f34fa77dcbb2c11851d1bef5f9517e432",
+    "crates/script/schema/isolate.fbs": "35c4dea43f851accf70dfbbbd4e41f38116221fb098167f0bfeccd75f47cb227",
+    "crates/script/src/host_js.rs": "f0c280c8e5c77df56c7fff69bee900b45c63f99da0f84ef416c157fec2a01dcb",
+    "crates/script/src/isolate_fb.rs": "6fa0e962da877d834bd0aa211bcc694b8681fadc22e1f98ee36e79f1b4ec1a37",
+    "crates/script/src/load.rs": "eaa821445b5e7b0a1483f4ce636cbf218348c459c4e3680dafd7eee6e8c76e83",
+    "crates/script/src/shim/client_adapter.js": "9bf1d2735cbad2a28de3f9318e60530db843fea954ef80ad7f8b3077b7999866",
+    "crates/script/tests/native_hint_overhead.rs": "ed37d8283be071d99460f17fc4ee9dbcb62fbc7f2373e16ff2e46016dbfa53e6",
+    "crates/script/tests/native_retaliate_controls.rs": "6018b54fc723c452555065d8d5c6017f643c94627798f23a42f5300fec1e609b"
+  },
+  "tests_run": [
+    "cargo test --locked --offline -p script --lib -- --test-threads=1",
+    "cargo test --locked --offline -p script --test native_retaliate_controls -- --test-threads=1",
+    "cargo test --locked --offline -p script --test native_hint_overhead -- --test-threads=1",
+    "cargo test --locked --offline -p script --test host_js -- --test-threads=1",
+    "cargo test --locked --offline -p host-play --lib script_snapshot -- --test-threads=1",
+    "cargo test --locked --offline -p api --test snapshot controls -- --test-threads=1"
+  ],
+  "tests_passed": 103,
+  "clippy_run": [
+    "cargo clippy --locked --offline --no-deps -p script --lib --test native_retaliate_controls -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings"
+  ],
+  "rustfmt": "passed for owned Rust paths",
+  "diff_check": "passed for implementation commit",
+  "tdd": {
+    "reader_red": "NativeFactsInput had no retaliate_controls field",
+    "host_red": "posted retaliate_controls was None instead of Some((103, 104))",
+    "green": "focused reader and host producer tests passed after implementation"
+  },
+  "non_blocking_attempt": "An overbroad workspace Clippy invocation with --tests also selected host-play LIVE integration tests without their required scenario feature and failed unresolved scenario imports; the task-scoped strict lib/test commands above passed.",
+  "semantics": [
+    "Rust GameSnapshot owns the on/off component identities",
+    "FlatBuffer fields are additive and delta-fingerprinted per slot",
+    "unavailable or cleared pair is transported as -1/-1 and materialized as null",
+    "reader returns exact onComId/offComId and does not infer from retaliate_enabled",
+    "old buffers and separate isolates do not retain another slot or session's pair"
+  ],
+  "live": false,
+  "limits": [
+    "no LIVE acceptance",
+    "no scenario, catalog, fixture, navigation, opcode, or client changes",
+    "root owns Wildy full-lap reruns after reviewer approval"
+  ],
+  "disk_available_after_checks": "307GiB"
+}
