@@ -13177,17 +13177,20 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks",
+      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 chaos_druid FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Exact b18 ChaosDruid FAIL: nonempty ground-count map panicked during evidence JSON serialization. Original failure retained; root serializer correction verified separately, fresh LIVE pending.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatb18.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chaos-druid-100adccc-combatb18.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -13578,17 +13581,20 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks",
+      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 chaos_druid FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (acknowledge prepared Attack 40): stat(0)>=40 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Exact b18 ChaosDruid FAIL: nonempty ground-count map panicked during evidence JSON serialization. Original failure retained; root serializer correction verified separately, fresh LIVE pending.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatb18.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chaos-druid-100adccc-combatb18.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ]
     },
     {
@@ -16184,7 +16190,7 @@
         "host-owned loadout gear/supplies/weapon resolution and provisioning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Latest run failed: FAIL: catalog_boundary_live: script error: tick 36: not impl: ranged.rangeLoadoutOf",
+      "fixture_readiness": "Exact b18 run reached ingame scene2 and acknowledged preparation before Start.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -16194,13 +16200,16 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 moss_giant FAIL: FAIL: catalog_boundary_live: script error: tick 36: not impl: ranged.rangeLoadoutOf. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Exact b18 MossGiant core PASS under corrected combat observer136. Supported options and remaining catalog cells still require qualification.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md",
-        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatb18.json",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-combatb18.log",
+        "docs/compat/06an-combat-evidence-serialization.md"
       ],
       "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
       "current_requalification_21446414": [

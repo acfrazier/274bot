@@ -1,0 +1,250 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"ChaosDruidKiller","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/ChaosDruidKiller/ChaosDruidKiller.ts","source_sha256":"51ed34065cb42a85680e122f01bd92903587ca117e3e5ed45e72e75f1a1eb2fa","compiled_sha256":"cce13f13585d4b862ba15b67505c0874f23f6f05e32a65cbdc56bca87edeb7fc","siblings":[{"module":"/rs2b0t/bot/scripts/bot/ChaosDruidLogic.js","compiled_sha256":"93b5753f9a9651043d1badf5ca8089ef43b8743088a170cf37fac418f528cd43"}],"settings":{"location":"Edgeville Dungeon","combatStyleIndex":"1","foodWithdraw":12.0,"panicHp":35.0}},"account":"livebp2z4i_0","engine_speed_ms":null}
+[host-play] slot livebp2z4i_0: thread up
+289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot livebp2z4i_0: handshake begin reconnect=false
+[host-play] slot livebp2z4i_0: handshake ok
+[host] slot livebp2z4i_0: d_loop_us=2819 d_raster_us=0 d_observe_us=33201 max_observe_us=3754 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livebp2z4i_0: queued mainland tele+setvar (scene 2)
+[host-play] slot livebp2z4i_0: handshake begin reconnect=true
+[host-play] slot livebp2z4i_0: handshake ok
+[host] slot livebp2z4i_0: d_loop_us=811 d_raster_us=0 d_observe_us=38609 max_observe_us=3753 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livebp2z4i_0: queued mainland tele+setvar (scene 2)
+[host] slot livebp2z4i_0: d_loop_us=12299 d_raster_us=0 d_observe_us=86935 max_observe_us=7224 d_paints=0 d_skips=50 d_ticks=26 window_ms=5186
+{"phase":"baseline-after-preparation","scenario":"chaos_druid","account":"livebp2z4i_0","observation":{"ingame":true,"scene_state":2,"player":"Livebp2z4i 0","tile":[3111,9935,0],"combat_level":36,"tick":37,"items":{"Adamant scimitar":1,"Lobster":12},"item_ids":{"379":12,"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"effective_levels":{"-unused-":0,"agility":1,"attack":37,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":38,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37236,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37227,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[9,"I can't reach that!"],[8,"You feel weakened."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":5379,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3110,9940,0],"distance":5},{"index":5375,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3110,9941,0],"distance":6},{"index":5374,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3106,9942,0],"distance":7},{"index":5380,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3110,9935,0],"distance":1},{"index":5370,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3104,9941,0],"distance":7},{"index":5373,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3105,9939,0],"distance":6},{"index":5384,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3117,9927,0],"distance":8},{"index":5386,"name":"Chaos druid","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[3113,9931,0],"distance":4}],"ground_loot":[],"local_in_combat":true,"local_target_npc":5381,"local_health":38,"local_animation":422,"equipment_ids":{},"main_modal":-1,"widget_ids":[197,198,199,200,3213,3214]}}
+[script livebp2z4i_0] start load
+{"phase":"start","account":"livebp2z4i_0","count":1}
+[host] hitch livebp2z4i_0: observe_us=86830 paints=0 skips=126 ticks=37
+[script livebp2z4i_0] ChaosDruidKiller starting — Edgeville Dungeon (Chaos druid), 12 Lobster, combat style 1, smart-eat, bank without food <35%, field 3110,9936
+[script livebp2z4i_0] interact IfButton { component_id: 5862 }
+[script livebp2z4i_0] combat style 1 = (Aggressive) (of (Accurate), (Aggressive), (Defensive))
+[host] slot livebp2z4i_0: d_loop_us=7742 d_raster_us=0 d_observe_us=173047 max_observe_us=86830 d_paints=0 d_skips=50 d_ticks=13 window_ms=2744
+[host] slot livebp2z4i_0: d_loop_us=2053 d_raster_us=0 d_observe_us=101927 max_observe_us=11628 d_paints=0 d_skips=50 d_ticks=6 window_ms=1159
+[host] slot livebp2z4i_0: d_loop_us=1651 d_raster_us=0 d_observe_us=77988 max_observe_us=8333 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1725 d_raster_us=0 d_observe_us=80468 max_observe_us=9376 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=3159 d_raster_us=0 d_observe_us=92298 max_observe_us=10853 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1711 d_raster_us=0 d_observe_us=88979 max_observe_us=10070 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot livebp2z4i_0: d_loop_us=1614 d_raster_us=0 d_observe_us=80586 max_observe_us=11310 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1727 d_raster_us=0 d_observe_us=79751 max_observe_us=10665 d_paints=0 d_skips=50 d_ticks=5 window_ms=1168
+[host] slot livebp2z4i_0: d_loop_us=1507 d_raster_us=0 d_observe_us=92086 max_observe_us=11203 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1547 d_raster_us=0 d_observe_us=85516 max_observe_us=10044 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1610 d_raster_us=0 d_observe_us=79697 max_observe_us=10847 d_paints=0 d_skips=50 d_ticks=6 window_ms=1156
+[host] slot livebp2z4i_0: d_loop_us=2005 d_raster_us=0 d_observe_us=91578 max_observe_us=10138 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1454 d_raster_us=0 d_observe_us=73349 max_observe_us=8705 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot livebp2z4i_0: d_loop_us=1734 d_raster_us=0 d_observe_us=70246 max_observe_us=7735 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1455 d_raster_us=0 d_observe_us=88163 max_observe_us=11278 d_paints=0 d_skips=50 d_ticks=5 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1248 d_raster_us=0 d_observe_us=83842 max_observe_us=14033 d_paints=0 d_skips=50 d_ticks=6 window_ms=1156
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=1 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1793 d_raster_us=0 d_observe_us=81092 max_observe_us=9694 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=1671 d_raster_us=0 d_observe_us=95309 max_observe_us=11971 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1858 d_raster_us=0 d_observe_us=81166 max_observe_us=8013 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[host] slot livebp2z4i_0: d_loop_us=1366 d_raster_us=0 d_observe_us=62132 max_observe_us=7398 d_paints=0 d_skips=50 d_ticks=6 window_ms=1168
+[host] slot livebp2z4i_0: d_loop_us=1505 d_raster_us=0 d_observe_us=76797 max_observe_us=8434 d_paints=0 d_skips=50 d_ticks=5 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=2874 d_raster_us=0 d_observe_us=86150 max_observe_us=10644 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[host] slot livebp2z4i_0: d_loop_us=1491 d_raster_us=0 d_observe_us=74749 max_observe_us=9360 d_paints=0 d_skips=50 d_ticks=6 window_ms=1159
+[host] slot livebp2z4i_0: d_loop_us=1375 d_raster_us=0 d_observe_us=60400 max_observe_us=6949 d_paints=0 d_skips=50 d_ticks=6 window_ms=1177
+[host] slot livebp2z4i_0: d_loop_us=1652 d_raster_us=0 d_observe_us=82280 max_observe_us=10894 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1620 d_raster_us=0 d_observe_us=86323 max_observe_us=12822 d_paints=0 d_skips=50 d_ticks=6 window_ms=1171
+[host] slot livebp2z4i_0: d_loop_us=1176 d_raster_us=0 d_observe_us=72986 max_observe_us=10163 d_paints=0 d_skips=50 d_ticks=5 window_ms=1171
+[host] slot livebp2z4i_0: d_loop_us=1726 d_raster_us=0 d_observe_us=85684 max_observe_us=9311 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=2243 d_raster_us=0 d_observe_us=88412 max_observe_us=9365 d_paints=0 d_skips=50 d_ticks=6 window_ms=1156
+[host] slot livebp2z4i_0: d_loop_us=2191 d_raster_us=0 d_observe_us=84222 max_observe_us=10690 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1316 d_raster_us=0 d_observe_us=72923 max_observe_us=9813 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot livebp2z4i_0: d_loop_us=1406 d_raster_us=0 d_observe_us=73815 max_observe_us=7489 d_paints=0 d_skips=50 d_ticks=6 window_ms=1173
+[host] slot livebp2z4i_0: d_loop_us=1539 d_raster_us=0 d_observe_us=82464 max_observe_us=9765 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=1446 d_raster_us=0 d_observe_us=72522 max_observe_us=8794 d_paints=0 d_skips=50 d_ticks=5 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1466 d_raster_us=0 d_observe_us=91103 max_observe_us=11456 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+test catalog_boundary_live has been running for over 60 seconds
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=2 -> sent
+[host] slot livebp2z4i_0: d_loop_us=2024 d_raster_us=0 d_observe_us=95639 max_observe_us=9692 d_paints=0 d_skips=50 d_ticks=6 window_ms=1163
+[host] slot livebp2z4i_0: d_loop_us=1245 d_raster_us=0 d_observe_us=72858 max_observe_us=7690 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1442 d_raster_us=0 d_observe_us=74111 max_observe_us=9495 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot livebp2z4i_0: d_loop_us=1505 d_raster_us=0 d_observe_us=79263 max_observe_us=8545 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] slot livebp2z4i_0: d_loop_us=1350 d_raster_us=0 d_observe_us=75072 max_observe_us=9772 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1372 d_raster_us=0 d_observe_us=82088 max_observe_us=9843 d_paints=0 d_skips=50 d_ticks=5 window_ms=1184
+[host] slot livebp2z4i_0: d_loop_us=1494 d_raster_us=0 d_observe_us=83791 max_observe_us=13936 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot livebp2z4i_0: d_loop_us=1298 d_raster_us=0 d_observe_us=76399 max_observe_us=8858 d_paints=0 d_skips=50 d_ticks=6 window_ms=1173
+[host] slot livebp2z4i_0: d_loop_us=1166 d_raster_us=0 d_observe_us=73184 max_observe_us=10142 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1602 d_raster_us=0 d_observe_us=88731 max_observe_us=10612 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[host] slot livebp2z4i_0: d_loop_us=1493 d_raster_us=0 d_observe_us=89388 max_observe_us=8779 d_paints=0 d_skips=50 d_ticks=6 window_ms=1156
+[host] slot livebp2z4i_0: d_loop_us=1551 d_raster_us=0 d_observe_us=85923 max_observe_us=10115 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot livebp2z4i_0: d_loop_us=1534 d_raster_us=0 d_observe_us=75894 max_observe_us=11059 d_paints=0 d_skips=50 d_ticks=6 window_ms=1177
+[host] slot livebp2z4i_0: d_loop_us=1576 d_raster_us=0 d_observe_us=91537 max_observe_us=8875 d_paints=0 d_skips=50 d_ticks=5 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1488 d_raster_us=0 d_observe_us=82777 max_observe_us=10786 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=1455 d_raster_us=0 d_observe_us=74544 max_observe_us=7822 d_paints=0 d_skips=50 d_ticks=6 window_ms=1187
+[host] slot livebp2z4i_0: d_loop_us=1556 d_raster_us=0 d_observe_us=101289 max_observe_us=10782 d_paints=0 d_skips=50 d_ticks=6 window_ms=1178
+[host] slot livebp2z4i_0: d_loop_us=1440 d_raster_us=0 d_observe_us=82592 max_observe_us=10080 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1259 d_raster_us=0 d_observe_us=76971 max_observe_us=9566 d_paints=0 d_skips=50 d_ticks=6 window_ms=1156
+[host] slot livebp2z4i_0: d_loop_us=1574 d_raster_us=0 d_observe_us=78066 max_observe_us=8886 d_paints=0 d_skips=50 d_ticks=5 window_ms=1136
+[host] slot livebp2z4i_0: d_loop_us=1636 d_raster_us=0 d_observe_us=86791 max_observe_us=9368 d_paints=0 d_skips=50 d_ticks=6 window_ms=1147
+[host] slot livebp2z4i_0: d_loop_us=1528 d_raster_us=0 d_observe_us=93375 max_observe_us=10929 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot livebp2z4i_0: d_loop_us=1292 d_raster_us=0 d_observe_us=78930 max_observe_us=8746 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=3 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1844 d_raster_us=0 d_observe_us=94762 max_observe_us=11724 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=1387 d_raster_us=0 d_observe_us=74023 max_observe_us=12529 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[host] slot livebp2z4i_0: d_loop_us=1342 d_raster_us=0 d_observe_us=62958 max_observe_us=7482 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=1541 d_raster_us=0 d_observe_us=75615 max_observe_us=7826 d_paints=0 d_skips=50 d_ticks=5 window_ms=1181
+[host] slot livebp2z4i_0: d_loop_us=1672 d_raster_us=0 d_observe_us=84046 max_observe_us=10937 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot livebp2z4i_0: d_loop_us=1528 d_raster_us=0 d_observe_us=81879 max_observe_us=9217 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1377 d_raster_us=0 d_observe_us=76254 max_observe_us=9264 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1660 d_raster_us=0 d_observe_us=86327 max_observe_us=12947 d_paints=0 d_skips=50 d_ticks=6 window_ms=1163
+[host] slot livebp2z4i_0: d_loop_us=1641 d_raster_us=0 d_observe_us=94952 max_observe_us=12249 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1204 d_raster_us=0 d_observe_us=57893 max_observe_us=7722 d_paints=0 d_skips=50 d_ticks=6 window_ms=1159
+[host] slot livebp2z4i_0: d_loop_us=1691 d_raster_us=0 d_observe_us=72059 max_observe_us=7526 d_paints=0 d_skips=50 d_ticks=5 window_ms=1184
+[host] slot livebp2z4i_0: d_loop_us=1401 d_raster_us=0 d_observe_us=76267 max_observe_us=9175 d_paints=0 d_skips=50 d_ticks=6 window_ms=1164
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=4 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1288 d_raster_us=0 d_observe_us=72157 max_observe_us=11199 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1238 d_raster_us=0 d_observe_us=63916 max_observe_us=7716 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=1166 d_raster_us=0 d_observe_us=58894 max_observe_us=7171 d_paints=0 d_skips=50 d_ticks=6 window_ms=1180
+[host] slot livebp2z4i_0: d_loop_us=1221 d_raster_us=0 d_observe_us=64181 max_observe_us=9404 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] slot livebp2z4i_0: d_loop_us=1231 d_raster_us=0 d_observe_us=63682 max_observe_us=7859 d_paints=0 d_skips=50 d_ticks=6 window_ms=1199
+[host] slot livebp2z4i_0: d_loop_us=1559 d_raster_us=0 d_observe_us=83051 max_observe_us=10997 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] hitch livebp2z4i_0: observe_us=17248 paints=0 skips=3933 ticks=484
+[host] slot livebp2z4i_0: d_loop_us=1550 d_raster_us=0 d_observe_us=101345 max_observe_us=17248 d_paints=0 d_skips=50 d_ticks=5 window_ms=1178
+[host] slot livebp2z4i_0: d_loop_us=1756 d_raster_us=0 d_observe_us=82282 max_observe_us=10686 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot livebp2z4i_0: d_loop_us=1795 d_raster_us=0 d_observe_us=93794 max_observe_us=13497 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1698 d_raster_us=0 d_observe_us=85986 max_observe_us=9685 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=2579 d_raster_us=0 d_observe_us=86488 max_observe_us=8899 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1179 d_raster_us=0 d_observe_us=72111 max_observe_us=9844 d_paints=0 d_skips=50 d_ticks=6 window_ms=1160
+[host] slot livebp2z4i_0: d_loop_us=1729 d_raster_us=0 d_observe_us=78529 max_observe_us=7953 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1591 d_raster_us=0 d_observe_us=86901 max_observe_us=10676 d_paints=0 d_skips=50 d_ticks=5 window_ms=1151
+[host] slot livebp2z4i_0: d_loop_us=1204 d_raster_us=0 d_observe_us=52960 max_observe_us=5982 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1254 d_raster_us=0 d_observe_us=63825 max_observe_us=8681 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[host] slot livebp2z4i_0: d_loop_us=1643 d_raster_us=0 d_observe_us=84570 max_observe_us=11233 d_paints=0 d_skips=50 d_ticks=6 window_ms=1159
+[host] slot livebp2z4i_0: d_loop_us=1696 d_raster_us=0 d_observe_us=75579 max_observe_us=9888 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot livebp2z4i_0: d_loop_us=1432 d_raster_us=0 d_observe_us=70689 max_observe_us=8783 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1792 d_raster_us=0 d_observe_us=79738 max_observe_us=10042 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1853 d_raster_us=0 d_observe_us=86137 max_observe_us=10159 d_paints=0 d_skips=50 d_ticks=5 window_ms=1155
+[host] slot livebp2z4i_0: d_loop_us=1525 d_raster_us=0 d_observe_us=67046 max_observe_us=8387 d_paints=0 d_skips=50 d_ticks=6 window_ms=1179
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=5 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1528 d_raster_us=0 d_observe_us=71686 max_observe_us=9631 d_paints=0 d_skips=50 d_ticks=6 window_ms=1189
+[host] slot livebp2z4i_0: d_loop_us=1828 d_raster_us=0 d_observe_us=80654 max_observe_us=10911 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot livebp2z4i_0: d_loop_us=1827 d_raster_us=0 d_observe_us=82610 max_observe_us=10210 d_paints=0 d_skips=50 d_ticks=6 window_ms=1145
+[host] slot livebp2z4i_0: d_loop_us=1566 d_raster_us=0 d_observe_us=65431 max_observe_us=7117 d_paints=0 d_skips=50 d_ticks=6 window_ms=1176
+[host] slot livebp2z4i_0: d_loop_us=1781 d_raster_us=0 d_observe_us=65577 max_observe_us=7457 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1269 d_raster_us=0 d_observe_us=54606 max_observe_us=5436 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1180 d_raster_us=0 d_observe_us=53254 max_observe_us=5964 d_paints=0 d_skips=50 d_ticks=5 window_ms=1182
+[host] slot livebp2z4i_0: d_loop_us=1357 d_raster_us=0 d_observe_us=55402 max_observe_us=6240 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot livebp2z4i_0: d_loop_us=1303 d_raster_us=0 d_observe_us=55013 max_observe_us=5487 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot livebp2z4i_0: d_loop_us=1354 d_raster_us=0 d_observe_us=58431 max_observe_us=6204 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1458 d_raster_us=0 d_observe_us=66175 max_observe_us=8981 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1845 d_raster_us=0 d_observe_us=86904 max_observe_us=9976 d_paints=0 d_skips=50 d_ticks=6 window_ms=1149
+[host] slot livebp2z4i_0: d_loop_us=1797 d_raster_us=0 d_observe_us=72384 max_observe_us=10454 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[host] slot livebp2z4i_0: d_loop_us=1681 d_raster_us=0 d_observe_us=71308 max_observe_us=8519 d_paints=0 d_skips=50 d_ticks=6 window_ms=1181
+[host] slot livebp2z4i_0: d_loop_us=1665 d_raster_us=0 d_observe_us=77442 max_observe_us=10276 d_paints=0 d_skips=50 d_ticks=5 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1896 d_raster_us=0 d_observe_us=81567 max_observe_us=9236 d_paints=0 d_skips=50 d_ticks=6 window_ms=1181
+[host] slot livebp2z4i_0: d_loop_us=1779 d_raster_us=0 d_observe_us=79186 max_observe_us=7905 d_paints=0 d_skips=50 d_ticks=6 window_ms=1170
+[host] slot livebp2z4i_0: d_loop_us=1704 d_raster_us=0 d_observe_us=72519 max_observe_us=7586 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=6 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1797 d_raster_us=0 d_observe_us=90655 max_observe_us=9092 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1820 d_raster_us=0 d_observe_us=99515 max_observe_us=12123 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1577 d_raster_us=0 d_observe_us=77029 max_observe_us=8078 d_paints=0 d_skips=50 d_ticks=6 window_ms=1181
+[host] slot livebp2z4i_0: d_loop_us=2097 d_raster_us=0 d_observe_us=87971 max_observe_us=9265 d_paints=0 d_skips=50 d_ticks=5 window_ms=1154
+[host] slot livebp2z4i_0: d_loop_us=1673 d_raster_us=0 d_observe_us=70618 max_observe_us=7868 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot livebp2z4i_0: d_loop_us=1871 d_raster_us=0 d_observe_us=81965 max_observe_us=8396 d_paints=0 d_skips=50 d_ticks=6 window_ms=1165
+[host] slot livebp2z4i_0: d_loop_us=1767 d_raster_us=0 d_observe_us=87963 max_observe_us=9983 d_paints=0 d_skips=50 d_ticks=6 window_ms=1138
+[host] slot livebp2z4i_0: d_loop_us=1785 d_raster_us=0 d_observe_us=79562 max_observe_us=8895 d_paints=0 d_skips=50 d_ticks=6 window_ms=1171
+[host] slot livebp2z4i_0: d_loop_us=1694 d_raster_us=0 d_observe_us=75499 max_observe_us=9890 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot livebp2z4i_0: d_loop_us=1409 d_raster_us=0 d_observe_us=72829 max_observe_us=12666 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=2059 d_raster_us=0 d_observe_us=82869 max_observe_us=9685 d_paints=0 d_skips=50 d_ticks=5 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1642 d_raster_us=0 d_observe_us=76217 max_observe_us=7742 d_paints=0 d_skips=50 d_ticks=6 window_ms=1153
+[host] slot livebp2z4i_0: d_loop_us=1504 d_raster_us=0 d_observe_us=57842 max_observe_us=6998 d_paints=0 d_skips=50 d_ticks=6 window_ms=1199
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=7 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1424 d_raster_us=0 d_observe_us=68921 max_observe_us=12926 d_paints=0 d_skips=50 d_ticks=6 window_ms=1192
+[host] slot livebp2z4i_0: d_loop_us=3087 d_raster_us=0 d_observe_us=69915 max_observe_us=8129 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1460 d_raster_us=0 d_observe_us=66088 max_observe_us=10569 d_paints=0 d_skips=50 d_ticks=6 window_ms=1194
+[host] slot livebp2z4i_0: d_loop_us=1898 d_raster_us=0 d_observe_us=82721 max_observe_us=11109 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1643 d_raster_us=0 d_observe_us=69121 max_observe_us=7536 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[host] slot livebp2z4i_0: d_loop_us=1778 d_raster_us=0 d_observe_us=81550 max_observe_us=10769 d_paints=0 d_skips=50 d_ticks=5 window_ms=1157
+[host] slot livebp2z4i_0: d_loop_us=1730 d_raster_us=0 d_observe_us=82963 max_observe_us=9502 d_paints=0 d_skips=50 d_ticks=6 window_ms=1174
+[host] slot livebp2z4i_0: d_loop_us=1520 d_raster_us=0 d_observe_us=74483 max_observe_us=10573 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+[host] slot livebp2z4i_0: d_loop_us=1685 d_raster_us=0 d_observe_us=79044 max_observe_us=10114 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[host] slot livebp2z4i_0: d_loop_us=1536 d_raster_us=0 d_observe_us=72739 max_observe_us=8859 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1497 d_raster_us=0 d_observe_us=70202 max_observe_us=7380 d_paints=0 d_skips=50 d_ticks=6 window_ms=1186
+[host] slot livebp2z4i_0: d_loop_us=1902 d_raster_us=0 d_observe_us=72495 max_observe_us=9741 d_paints=0 d_skips=50 d_ticks=6 window_ms=1184
+[host] slot livebp2z4i_0: d_loop_us=1651 d_raster_us=0 d_observe_us=73388 max_observe_us=8122 d_paints=0 d_skips=50 d_ticks=6 window_ms=1162
+[host] slot livebp2z4i_0: d_loop_us=1856 d_raster_us=0 d_observe_us=84180 max_observe_us=7713 d_paints=0 d_skips=50 d_ticks=5 window_ms=1173
+[host] slot livebp2z4i_0: d_loop_us=1551 d_raster_us=0 d_observe_us=64089 max_observe_us=7049 d_paints=0 d_skips=50 d_ticks=6 window_ms=1182
+[host] slot livebp2z4i_0: d_loop_us=2132 d_raster_us=0 d_observe_us=85761 max_observe_us=8370 d_paints=0 d_skips=50 d_ticks=6 window_ms=1153
+[host] slot livebp2z4i_0: d_loop_us=1725 d_raster_us=0 d_observe_us=84893 max_observe_us=10311 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1525 d_raster_us=0 d_observe_us=71949 max_observe_us=10966 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[host] slot livebp2z4i_0: d_loop_us=1277 d_raster_us=0 d_observe_us=51953 max_observe_us=5248 d_paints=0 d_skips=50 d_ticks=6 window_ms=1193
+[host] slot livebp2z4i_0: d_loop_us=1441 d_raster_us=0 d_observe_us=77586 max_observe_us=11308 d_paints=0 d_skips=50 d_ticks=6 window_ms=1192
+[host] slot livebp2z4i_0: d_loop_us=1551 d_raster_us=0 d_observe_us=77724 max_observe_us=11969 d_paints=0 d_skips=50 d_ticks=6 window_ms=1161
+[host] slot livebp2z4i_0: d_loop_us=1829 d_raster_us=0 d_observe_us=82719 max_observe_us=8877 d_paints=0 d_skips=50 d_ticks=5 window_ms=1164
+[host] slot livebp2z4i_0: d_loop_us=1513 d_raster_us=0 d_observe_us=68238 max_observe_us=7528 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[script livebp2z4i_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=8 -> sent
+[host] slot livebp2z4i_0: d_loop_us=1582 d_raster_us=0 d_observe_us=72371 max_observe_us=9977 d_paints=0 d_skips=50 d_ticks=6 window_ms=1166
+
+thread 'catalog_boundary_live' (10862616) panicked at crates/host-play/tests/catalog_boundary_live.rs:5312:41:
+called `Result::unwrap()` on an `Err` value: Error("key must be a string", line: 0, column: 0)
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/result.rs:1870:5
+   3: <core::result::Result<serde_json::value::Value, serde_json::error::Error>>::unwrap
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/result.rs:1231:23
+   4: catalog_boundary_live::accumulated_core::{closure#0}::{closure#0}
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5312:41
+   5: <core::result::Result<serde_json::value::Value, alloc::string::String>>::unwrap_or_else::<catalog_boundary_live::accumulated_core::{closure#0}::{closure#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/result.rs:1620:23
+   6: catalog_boundary_live::accumulated_core::{closure#0}
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5312:18
+   7: <core::option::Option<&catalog_boundary_live::CoreWitness>>::map::<serde_json::value::Value, catalog_boundary_live::accumulated_core::{closure#0}>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/option.rs:1163:29
+   8: catalog_boundary_live::accumulated_core
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5309:10
+   9: catalog_boundary_live::run_cell
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5490:24
+  10: <catalog_boundary_live::run_cell as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  11: <core::panic::unwind_safe::AssertUnwindSafe<catalog_boundary_live::run_cell> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panic/unwind_safe.rs:275:9
+  12: std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<catalog_boundary_live::run_cell>, core::result::Result<(), alloc::string::String>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:576:43
+  13: ___rust_try
+  14: std::panicking::catch_unwind::<core::result::Result<(), alloc::string::String>, core::panic::unwind_safe::AssertUnwindSafe<catalog_boundary_live::run_cell>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:544:19
+  15: std::panic::catch_unwind::<core::panic::unwind_safe::AssertUnwindSafe<catalog_boundary_live::run_cell>, core::result::Result<(), alloc::string::String>>
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panic.rs:359:14
+  16: catalog_boundary_live::catalog_boundary_live
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5510:18
+  17: catalog_boundary_live::catalog_boundary_live::{closure#0}
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5509:27
+  18: <catalog_boundary_live::catalog_boundary_live::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+  19: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+thread 'livebp2z4i_0' (10862824) panicked at crates/host-play/tests/catalog_boundary_live.rs:5398:48:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/panicking.rs:80:14
+   2: core::result::unwrap_failed
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/result.rs:1870:5
+   3: <core::result::Result<std::sync::poison::mutex::MutexGuard<catalog_boundary_live::LiveState>, std::sync::poison::PoisonError<std::sync::poison::mutex::MutexGuard<catalog_boundary_live::LiveState>>>>::unwrap
+             at /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/result.rs:1231:23
+   4: catalog_boundary_live::run_cell::{closure#7}
+             at ./crates/host-play/tests/catalog_boundary_live.rs:5398:48
+   5: host_play::spawn_slot_thread::{closure#0}::{closure#3}
+   6: <host::Host>::client_tick::<host_play::spawn_slot_thread::{closure#0}::{closure#3}>
+   7: <host::Host>::run_client::<host_play::spawn_slot_thread::{closure#0}::{closure#3}, host_play::spawn_slot_thread::{closure#0}::{closure#4}, host_play::spawn_slot_thread::{closure#0}::{closure#2}>
+   8: host_play::spawn_slot_thread::{closure#0}
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+FAIL: catalog_boundary_live: Any { .. }

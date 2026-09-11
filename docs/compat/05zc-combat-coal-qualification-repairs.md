@@ -1,6 +1,6 @@
 # Combat and Coal Trucks qualification repairs
 
-Status: complete locally; independent review pending
+Status: implementation reviewed; root LIVE requalification pending
 
 Task: `t_76f5e046`
 
@@ -56,7 +56,7 @@ The task-136 live runs were diagnostic inputs, not post-repair proof. Their exit
 
 The run summaries and logs remain under `docs/compat/evidence/catalog-harness/live/` with suffix `100adccc-21446414`.
 
-No live rerun was performed for this repair. The brief explicitly permits omitting new live evidence when the stale failures explain the repaired fixture/oracle defects; the implementation was instead verified from an exact committed export with deterministic qualification tests. New live runs should be reserved for any ambiguity identified by independent review.
+No LIVE was run by the implementer, as brief136 assigns fresh qualification to root after review. Deterministic tests verify the observer and fixture contracts; they do not prove gameplay. Root will requalify the affected cells before accepting those cycles.
 
 ## Verification
 
@@ -79,4 +79,6 @@ Owned-file SHA-256 values in the export:
 
 ## Qualification boundary
 
-This batch proves only the named combat-core cycles and the Coal Trucks truck-deposit cycle. It does not claim combat banking, death recovery, Hill Giant key retrieval, Green Dragon escape/banking, or any JavaScript runtime/policy recreation. No client or frozen-source changes were required.
+This batch repairs the qualification logic for the named combat-core cycles and Coal Trucks truck-deposit cycle. Actual gameplay remains unqualified until fresh root LIVE evidence passes. It does not claim combat banking, death recovery, Hill Giant key retrieval, Green Dragon escape/banking, or any JavaScript runtime/policy recreation. No client or frozen-source changes were required.
+
+Root verified Grok4.5 / xai-oauth review1372 (12 API calls), approval of code6dd6f9102 and report3818aa662. The initial report incorrectly described LIVE as optional and fixture tests as cycle proof; root corrected those claims above to match the brief and review metadata. Original reviewed report remains in Git history.

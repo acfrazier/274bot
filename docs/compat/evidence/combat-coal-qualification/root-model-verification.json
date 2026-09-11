@@ -1,0 +1,75 @@
+{
+  "actual_model_verified": true,
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_call_count": 12,
+  "verified_at": "2026-09-11T16:13:40.163421+00:00",
+  "run": {
+    "id": 1372,
+    "task_id": "t_76f5e046",
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved 6dd6f9102 (+ docs 3818aa662) for brief 136 combat observer and Coal/Hill/GreenDragon fixture repairs (R1 artifact cold read + independent exclusive-target re-run). Sticky zero-health/engagement oracle fixed; Coal ballast 26 knives +1 free slot; Brass key 983 and pre-tele worn shield 1540 prepared; full XP/loot/further-work retained; no LIVE.",
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "branch": "codex/rs2b0t-multirevision",
+      "brief": "docs/compat/briefs/136-combat-coal-qualification-repairs.md",
+      "implementation_commit": "6dd6f9102b1111fdcadf551ccfd3a24658d81661",
+      "documentation_commit": "3818aa662cc44a8c1a67fa52216eefc17b1c799d",
+      "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_76f5e046-r1",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_76f5e046-r1-reviewer",
+      "overlay_sha256": {
+        "crates/scenario/src/lib.rs": "32df2c82653a33bbd54e670569d2276db86b5f6000f27e21c2a9c64a481a94fb",
+        "crates/host-play/tests/catalog_boundary_live.rs": "52f12f8df416a85dcb8d3b34369a5a2b970302de9d4824a21beec6e528644def"
+      },
+      "documentation_sha256": {
+        "docs/compat/05zc-combat-coal-qualification-repairs.md": "9f3a3e88f29b6fa1eed85e360a48e53b1b9926b22334c8437f387a2dd9c88a06",
+        "docs/compat/evidence/combat-coal-qualification/isolated-checks.log": "8d4e318fc60964d2b0c749f5eb7b5218760ba5a75d0ac435afee97830e11a586",
+        "docs/compat/evidence/combat-coal-qualification/verification.json": "6bc4aad480bdcf2deb1801402e94822da9a96ce0e2a9b37d7100c0f951811ecc"
+      },
+      "source_sha256": {
+        "AutoFighter.ts_both": "d82972d038849d4a7f897a264ead850b4de218239d54eab16007a4e0c12266c2",
+        "CoalTrucks.ts_both": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36",
+        "CoalTrucksLogic.ts_both": "d6ed36c14e276cc9f85ffdc59fe910a1ec00eb63c162cd19c7cd27a021bc97b5",
+        "HillGiant.ts_both": "615436b5fd4b3a727c6593d3e18a86e592b5fc160164b1ca823d9eb1d4c70c00",
+        "GreenDragon.ts_both": "46b667c46e82ca8f4d4c7461b93f6be8af05b021bd18126e82784d4264bf1fe9",
+        "GreenDragonLogic.ts_both": "d31023052e0bc86b98441657ffb28fd3eb9090abbaefdab00acf00f3687930fd"
+      },
+      "live": false,
+      "limits": [
+        "no LIVE client run",
+        "fixture/oracle/evidence only",
+        "root owns fresh cell requalification after this correction"
+      ],
+      "non_blocking_notes": [
+        "scenario Coal pre-Start acks exact knife count but not inventory sum==27; catalog baseline carries the free-slot sum",
+        "scenario GreenDragon wear wait arms ItemIdAtMost 0 only; catalog Start requires equipment_id 1540 after hostile tele",
+        "further_work needs a later already-engaged selected frame after defeat (tests use second frame of second engagement)"
+      ],
+      "reviewer_checks": [
+        "r1 artifact cold read of brief 136 vs 6dd6f9102 + 3818aa662 before handoff narrative",
+        "export t_76f5e046-r1 byte-equal to workspace and commit overlay for scenario+catalog (sha256 32df2c82... / 52f12f8d...)",
+        "client gitlink aef3952d unchanged; implementation scoped to scenario+catalog; docs in follow-up commit only",
+        "CombatCoreCycle: selected_combat only (targeting_local or local_target+local_in_combat); no generic in_combat; unknown total_health0 not sticky-dead; one engagement per life; defeat needs known-positive life then zero-health with prior engaged health>0, or disappearance with fresh matching drop vs baseline and previous_ground; stale global looted no longer qualifies disappearance; further_work after defeats; tests cover sticky-zero, disappear/reappear, other-actor, stale/fresh drop, respawn+later work",
+        "retained live r274-auto-fighter-100adccc-21446414: engagements 5234 defeats 0 with health0/total0 sticky defeated \u2014 matches repaired defect class",
+        "AutoFighter TRACKED_GEAR = Equipment.items() at start; ReequipGear restores only that set \u2014 held unworn Adamant scimitar decision correct",
+        "HillGiant extra_give Brass key 983; catalog CombatExtra::DungeonKey baseline; source goGetKey when missing \u2014 key-fetch not claimed",
+        "GreenDragon wear_id 1540 via Interactions::wear before hostile tele; catalog baseline equipment_id==1 in wilderness; GearEquip branch not credited",
+        "CoalTrucks 26 Knife ballast + steel pick; catalog sum item_ids==27; cycle fixture_changed + banked reject; mined/truck/further with 1 coal full-pack route; source packFull=>deposit",
+        "source hashes byte-identical across 100adccc and 8e7d965b for AF/CT/HG/GD files; match verification.json",
+        "cargo test -p scenario exclusive target-review-t_76f5e046-r1-reviewer: 104 passed",
+        "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 46 passed / 1 ignored LIVE",
+        "clippy -p scenario -p host-play --features host-play/memory-profile --tests -D warnings passed",
+        "rustfmt --check on implementation files passed",
+        "no LIVE launched"
+      ],
+      "worker_session_id": "20260911_115840_1ae4f6"
+    }
+  },
+  "scope": "Reviewed fixture/oracle correction; no gameplay acceptance until root requalification."
+}

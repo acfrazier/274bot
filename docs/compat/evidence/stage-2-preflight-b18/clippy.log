@@ -1,0 +1,81 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/vendor/fr-client-rust/crates/client)
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/vault)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/panel)
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/api)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/script)
+    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/nav)
+    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/host)
+    Checking scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/scenario)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/host-play)
+    Checking tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/tui)
+    Checking e2e v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-combatb18/crates/e2e)
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:177:17
+    |
+177 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:188:17
+    |
+188 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/tui/src/bin.rs:201:17
+    |
+201 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: could not compile `tui` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/panel/src/session.rs:975:17
+    |
+975 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> crates/panel/src/session.rs:989:17
+    |
+989 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/panel/src/session.rs:1004:17
+     |
+1004 |     travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: could not compile `panel` (lib) due to 3 previous errors
+error: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/panel/src/session.rs:4527:30
+     |
+4527 |       fn frontend_fixture() -> (
+     |  ______________________________^
+4528 | |         Arc<Mutex<std::collections::HashMap<String, client::client::ClientGens>>>,
+4529 | |         Arc<Mutex<std::collections::HashMap<String, (GameSnapshot, WorldState)>>>,
+4530 | |         Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<WalkArm>>>>>,
+4531 | |         Arc<Mutex<std::collections::HashMap<String, (u64, Tile)>>>,
+4532 | |     ) {
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+error: could not compile `panel` (lib test) due to 4 previous errors

@@ -1,0 +1,51 @@
+{
+  "host_commit": "b18f28383e4ae462e21fe0b48e167bb46d87595c",
+  "overlays": {
+    "crates/panel/src/app.rs": "155d859e41427cff9457b2e20b64a3a28041d372c6174b5a6e0c920b3da54541",
+    "crates/panel/src/session.rs": "bf116f06c4f725ed832b75580bc25fb7d4e536c4449a6bb831eae46810eef739",
+    "crates/tui/src/bin.rs": "1750bf46cc64894bc27ef26dab59f370ca19bc2e7ca23f835c5d1eaafedc2a4c",
+    "crates/script/tests/catalog_run.rs": "1ba20c1ce94440c17b6872f5a81307846d2bc99ddbb548d97e4214bd6a885b42",
+    "crates/script/tests/rs2b0t_registry.rs": "26e2e28dfbf4f28f0cde604dc67dbe4f9e646516f86fb44e0980e68154517bb8"
+  },
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-preflightb18fix",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "cache_reused": true,
+  "rs2b0t": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+  "frozen_test_inputs_copied_and_all_bytes_verified": true,
+  "checks": [
+    {
+      "label": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.666,
+      "log": "docs/compat/evidence/stage-2-preflight-b18/fixes/fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "memory-profile",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 101,
+      "elapsed_seconds": 13.525,
+      "log": "docs/compat/evidence/stage-2-preflight-b18/fixes/clippy.log",
+      "sha256": "789476a1cf71033adfc1d4e7e2563dea2856e986257ac2f287f1345a6c963395"
+    }
+  ],
+  "all_passed": false
+}
