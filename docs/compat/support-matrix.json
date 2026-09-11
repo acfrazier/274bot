@@ -11519,7 +11519,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Core melee passes; Loot-count banking returns but further-feather deadline fails.",
+      "fixture_readiness": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -11533,7 +11533,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Both old-catalog revision cells complete the periodic bank trip but lack required fresh Feather314 before unchanged 180 seconds. Fixture/travel/combat diagnosis pending; no card defect established.",
+      "status_detail": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-c933f37c.json"
@@ -11544,7 +11544,10 @@
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -12221,7 +12224,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Core melee passes; Loot-count banking returns but further-feather deadline fails.",
+      "fixture_readiness": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -12235,7 +12238,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Both old-catalog revision cells complete the periodic bank trip but lack required fresh Feather314 before unchanged 180 seconds. Fixture/travel/combat diagnosis pending; no card defect established.",
+      "status_detail": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-c933f37c.json"
@@ -12246,7 +12249,10 @@
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -32937,13 +32943,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
       "observable_proof_requirement": "Herblore XP plus vial/herb/secondary-to-potion transitions and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-named-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-named-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "PotionMaker",
@@ -33167,13 +33180,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
       "observable_proof_requirement": "Herblore XP plus vial/herb/secondary-to-potion transitions and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-named-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-named-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "BoneBurier",
@@ -36009,17 +36029,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Actual picking observed; adapter mapping and native static-loc freshness investigation pending.",
+      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "289 fails on reader.toLocal after picking. 274 has seven flax at full-pack deadline; source audit suspects native cache invalidation. Neither is accepted or classified as a foreign-script defect.",
+      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -36314,17 +36337,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Actual picking observed; adapter mapping and native static-loc freshness investigation pending.",
+      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "289 fails on reader.toLocal after picking. 274 has seven flax at full-pack deadline; source audit suspects native cache invalidation. Neither is accepted or classified as a foreign-script defect.",
+      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -37982,12 +38008,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
+      "fixture_readiness": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
+      "status_detail": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.json",
@@ -37995,7 +38021,27 @@
         "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-radius-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-radius-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/05k-flax-course-ownership.md"
+      ],
+      "branch_limits": [
+        {
+          "case": "gnome_course_radius",
+          "settings": {
+            "searchRadius": 8
+          },
+          "course": "default Gnome obstacle order",
+          "status": "UNSUPPORTED_FOREIGN_OPTION",
+          "reason": "Imported AgilityBot default Gnome course with searchRadius=8 loses the next log at Chebyshev distance10 after pipe exit and resyncs to the pipe from its wrong side. Default radius20 passes full lap and next log. No host distance/navigation change is warranted.",
+          "source_sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+          "evidence": "docs/compat/05k-flax-course-ownership.md",
+          "live_scope": "Both old-catalog revisions fail on B1. New-catalog source is byte-identical; same-policy earlier failures retained. No new-catalog B1 radius run claimed."
+        }
       ]
     },
     {
@@ -38201,12 +38247,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
+      "fixture_readiness": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
+      "status_detail": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.json",
@@ -38214,7 +38260,27 @@
         "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-radius-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-radius-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/05k-flax-course-ownership.md"
+      ],
+      "branch_limits": [
+        {
+          "case": "gnome_course_radius",
+          "settings": {
+            "searchRadius": 8
+          },
+          "course": "default Gnome obstacle order",
+          "status": "UNSUPPORTED_FOREIGN_OPTION",
+          "reason": "Imported AgilityBot default Gnome course with searchRadius=8 loses the next log at Chebyshev distance10 after pipe exit and resyncs to the pipe from its wrong side. Default radius20 passes full lap and next log. No host distance/navigation change is warranted.",
+          "source_sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+          "evidence": "docs/compat/05k-flax-course-ownership.md",
+          "live_scope": "Both old-catalog revisions fail on B1. New-catalog source is byte-identical; same-policy earlier failures retained. No new-catalog B1 radius run claimed."
+        }
       ]
     },
     {
@@ -43190,13 +43256,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "VialFiller",
@@ -43431,13 +43504,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-100adccc-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-100adccc-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "LeatherCrafter",
@@ -46227,7 +46307,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
+      "fixture_readiness": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46241,7 +46321,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-c933f37c.json"
@@ -46249,7 +46329,10 @@
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -46926,7 +47009,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
+      "fixture_readiness": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46940,7 +47023,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "B1 all four Loot-count bank cycles prove deposited feathers, closed-bank return and fresh feathers with further StrengthXP. Core melee and these cycles pass; other settings/frontends separate.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-c933f37c.json"
@@ -46948,7 +47031,10 @@
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
       ]
     },
     {
@@ -67671,13 +67757,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
       "observable_proof_requirement": "Herblore XP plus vial/herb/secondary-to-potion transitions and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-named-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-potion-maker-named-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "PotionMaker",
@@ -67901,13 +67994,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
       "observable_proof_requirement": "Herblore XP plus vial/herb/secondary-to-potion transitions and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "B1 all eight default/named recipe cells prove exact unfinished and finished potions, HerbloreXP, deposit14, input restock and further finished output. Named Ranarr preserves14 unselected Guam in bank. Other branches/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-named-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-potion-maker-named-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "BoneBurier",
@@ -71055,13 +71155,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+      ]
     },
     {
       "display_name": "FlaxSpinner",
@@ -72718,12 +72823,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
+      "fixture_readiness": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
+      "status_detail": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.json",
@@ -72731,7 +72836,25 @@
         "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/05k-flax-course-ownership.md"
+      ],
+      "branch_limits": [
+        {
+          "case": "gnome_course_radius",
+          "settings": {
+            "searchRadius": 8
+          },
+          "course": "default Gnome obstacle order",
+          "status": "UNSUPPORTED_FOREIGN_OPTION",
+          "reason": "Imported AgilityBot default Gnome course with searchRadius=8 loses the next log at Chebyshev distance10 after pipe exit and resyncs to the pipe from its wrong side. Default radius20 passes full lap and next log. No host distance/navigation change is warranted.",
+          "source_sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+          "evidence": "docs/compat/05k-flax-course-ownership.md",
+          "live_scope": "Both old-catalog revisions fail on B1. New-catalog source is byte-identical; same-policy earlier failures retained. No new-catalog B1 radius run claimed."
+        }
       ]
     },
     {
@@ -72937,12 +73060,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
+      "fixture_readiness": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
+      "status_detail": "B1 all four default cells prove94XP and completed next log. The radius8/default-course combination has an independently diagnosed imported resync defect (05k); only that option is excluded from a support claim. Card remains enabled and PARTIAL for remaining settings/frontends.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.json",
@@ -72950,7 +73073,25 @@
         "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-3be68eaf.log",
-        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-b1cff8a7.log",
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/05k-flax-course-ownership.md"
+      ],
+      "branch_limits": [
+        {
+          "case": "gnome_course_radius",
+          "settings": {
+            "searchRadius": 8
+          },
+          "course": "default Gnome obstacle order",
+          "status": "UNSUPPORTED_FOREIGN_OPTION",
+          "reason": "Imported AgilityBot default Gnome course with searchRadius=8 loses the next log at Chebyshev distance10 after pipe exit and resyncs to the pipe from its wrong side. Default radius20 passes full lap and next log. No host distance/navigation change is warranted.",
+          "source_sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+          "evidence": "docs/compat/05k-flax-course-ownership.md",
+          "live_scope": "Both old-catalog revisions fail on B1. New-catalog source is byte-identical; same-policy earlier failures retained. No new-catalog B1 radius run claimed."
+        }
       ]
     },
     {

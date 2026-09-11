@@ -1,0 +1,235 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"FlaxPicker","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/FlaxPicker/FlaxPicker.ts","source_sha256":"e24b0d794e4bb83a0616a841999b28f036da47a48a3bd1e8825316616bbfd83a","compiled_sha256":"4628cb4ca592cbb87fbaeb7c2302d0c6242563ee487482f203ebd6dac5520d33","siblings":[],"settings":{"flaxName":"Flax","pickOp":"Pick","bankBooth":"Bank booth"}},"account":"live8ut47w_0","engine_speed_ms":null}
+[host-play] slot live8ut47w_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot live8ut47w_0: handshake begin reconnect=false
+[host-play] slot live8ut47w_0: handshake ok
+[host] slot live8ut47w_0: d_loop_us=3240 d_raster_us=0 d_observe_us=37267 max_observe_us=2567 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live8ut47w_0: queued mainland tele+setvar (scene 2)
+[host-play] slot live8ut47w_0: handshake begin reconnect=true
+[host-play] slot live8ut47w_0: handshake ok
+[host] slot live8ut47w_0: d_loop_us=1034 d_raster_us=0 d_observe_us=44977 max_observe_us=3589 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live8ut47w_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"flax_picker","account":"live8ut47w_0","observation":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2741,3444,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}}}
+[script live8ut47w_0] start load
+{"phase":"start","account":"live8ut47w_0","count":1}
+[host] hitch live8ut47w_0: observe_us=101810 paints=0 skips=87 ticks=15
+[script live8ut47w_0] FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+[host] slot live8ut47w_0: d_loop_us=29325 d_raster_us=0 d_observe_us=205649 max_observe_us=101810 d_paints=0 d_skips=50 d_ticks=15 window_ms=9298
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] hitch live8ut47w_0: observe_us=26961 paints=0 skips=136 ticks=18
+[host] slot live8ut47w_0: d_loop_us=843 d_raster_us=0 d_observe_us=92331 max_observe_us=26961 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] hitch live8ut47w_0: observe_us=17999 paints=0 skips=161 ticks=19
+[host] hitch live8ut47w_0: observe_us=30143 paints=0 skips=186 ticks=20
+[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=736 d_raster_us=0 d_observe_us=113376 max_observe_us=30143 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=894 d_raster_us=0 d_observe_us=63118 max_observe_us=15994 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] hitch live8ut47w_0: observe_us=16729 paints=0 skips=261 ticks=23
+[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=825 d_raster_us=0 d_observe_us=75188 max_observe_us=16729 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] hitch live8ut47w_0: observe_us=24424 paints=0 skips=336 ticks=26
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=829 d_raster_us=0 d_observe_us=93278 max_observe_us=24424 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] hitch live8ut47w_0: observe_us=23689 paints=0 skips=361 ticks=27
+[host] hitch live8ut47w_0: observe_us=17992 paints=0 skips=386 ticks=28
+[host] slot live8ut47w_0: d_loop_us=789 d_raster_us=0 d_observe_us=93555 max_observe_us=23689 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[host] hitch live8ut47w_0: observe_us=28173 paints=0 skips=411 ticks=29
+[host] hitch live8ut47w_0: observe_us=16584 paints=0 skips=436 ticks=30
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=838 d_raster_us=0 d_observe_us=95213 max_observe_us=28173 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] hitch live8ut47w_0: observe_us=16997 paints=0 skips=461 ticks=31
+[host] hitch live8ut47w_0: observe_us=20270 paints=0 skips=487 ticks=32
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=861 d_raster_us=0 d_observe_us=98869 max_observe_us=20270 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch live8ut47w_0: observe_us=20518 paints=0 skips=537 ticks=34
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=804 d_raster_us=0 d_observe_us=90440 max_observe_us=20518 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch live8ut47w_0: observe_us=29261 paints=0 skips=562 ticks=35
+[host] hitch live8ut47w_0: observe_us=20133 paints=0 skips=588 ticks=36
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=827 d_raster_us=0 d_observe_us=105239 max_observe_us=29261 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] hitch live8ut47w_0: observe_us=20803 paints=0 skips=638 ticks=38
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=835 d_raster_us=0 d_observe_us=95889 max_observe_us=20803 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch live8ut47w_0: observe_us=16855 paints=0 skips=664 ticks=39
+[host] hitch live8ut47w_0: observe_us=22922 paints=0 skips=689 ticks=40
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=860 d_raster_us=0 d_observe_us=96338 max_observe_us=22922 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] hitch live8ut47w_0: observe_us=16316 paints=0 skips=714 ticks=41
+[host] hitch live8ut47w_0: observe_us=16358 paints=0 skips=739 ticks=42
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=873 d_raster_us=0 d_observe_us=84336 max_observe_us=16358 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] hitch live8ut47w_0: observe_us=19027 paints=0 skips=790 ticks=44
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=805 d_raster_us=0 d_observe_us=88074 max_observe_us=19027 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[host] hitch live8ut47w_0: observe_us=23105 paints=0 skips=841 ticks=46
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=786 d_raster_us=0 d_observe_us=103536 max_observe_us=23105 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live8ut47w_0: observe_us=16339 paints=0 skips=867 ticks=47
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] hitch live8ut47w_0: observe_us=19355 paints=0 skips=892 ticks=48
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=797 d_raster_us=0 d_observe_us=89923 max_observe_us=19355 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[host] hitch live8ut47w_0: observe_us=21227 paints=0 skips=943 ticks=50
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=678 d_raster_us=0 d_observe_us=73274 max_observe_us=21227 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] hitch live8ut47w_0: observe_us=25557 paints=0 skips=994 ticks=52
+[script live8ut47w_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=788 d_raster_us=0 d_observe_us=88770 max_observe_us=25557 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[host] hitch live8ut47w_0: observe_us=17092 paints=0 skips=1019 ticks=53
+[host] hitch live8ut47w_0: observe_us=16961 paints=0 skips=1044 ticks=54
+[host] slot live8ut47w_0: d_loop_us=901 d_raster_us=0 d_observe_us=88487 max_observe_us=17092 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[host] hitch live8ut47w_0: observe_us=28708 paints=0 skips=1069 ticks=55
+[host] hitch live8ut47w_0: observe_us=17245 paints=0 skips=1094 ticks=56
+[host] slot live8ut47w_0: d_loop_us=886 d_raster_us=0 d_observe_us=95571 max_observe_us=28708 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] hitch live8ut47w_0: observe_us=16914 paints=0 skips=1119 ticks=57
+[host] slot live8ut47w_0: d_loop_us=836 d_raster_us=0 d_observe_us=88527 max_observe_us=16914 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] hitch live8ut47w_0: observe_us=18868 paints=0 skips=1170 ticks=59
+[host] hitch live8ut47w_0: observe_us=16703 paints=0 skips=1195 ticks=60
+[host] slot live8ut47w_0: d_loop_us=879 d_raster_us=0 d_observe_us=92669 max_observe_us=18868 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[host] hitch live8ut47w_0: observe_us=27962 paints=0 skips=1221 ticks=61
+[host] hitch live8ut47w_0: observe_us=17491 paints=0 skips=1246 ticks=62
+[host] slot live8ut47w_0: d_loop_us=692 d_raster_us=0 d_observe_us=89513 max_observe_us=27962 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=682 d_raster_us=0 d_observe_us=67983 max_observe_us=10956 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=536 d_raster_us=0 d_observe_us=63083 max_observe_us=10281 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+[host] hitch live8ut47w_0: observe_us=20457 paints=0 skips=1371 ticks=67
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] hitch live8ut47w_0: observe_us=16432 paints=0 skips=1396 ticks=68
+[host] slot live8ut47w_0: d_loop_us=808 d_raster_us=0 d_observe_us=89088 max_observe_us=20457 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] hitch live8ut47w_0: observe_us=20574 paints=0 skips=1421 ticks=69
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=787 d_raster_us=0 d_observe_us=83381 max_observe_us=20574 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] hitch live8ut47w_0: observe_us=22207 paints=0 skips=1472 ticks=71
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] hitch live8ut47w_0: observe_us=16908 paints=0 skips=1497 ticks=72
+[host] slot live8ut47w_0: d_loop_us=788 d_raster_us=0 d_observe_us=91764 max_observe_us=22207 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+test catalog_boundary_live has been running for over 60 seconds
+[host] hitch live8ut47w_0: observe_us=28712 paints=0 skips=1522 ticks=73
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=812 d_raster_us=0 d_observe_us=90727 max_observe_us=28712 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch live8ut47w_0: observe_us=17955 paints=0 skips=1573 ticks=75
+[script live8ut47w_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=665 d_raster_us=0 d_observe_us=54543 max_observe_us=17955 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] slot live8ut47w_0: d_loop_us=562 d_raster_us=0 d_observe_us=42888 max_observe_us=7894 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[host] slot live8ut47w_0: d_loop_us=551 d_raster_us=0 d_observe_us=42480 max_observe_us=7741 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] slot live8ut47w_0: d_loop_us=596 d_raster_us=0 d_observe_us=54444 max_observe_us=15290 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[host] hitch live8ut47w_0: observe_us=16047 paints=0 skips=1799 ticks=84
+[host] slot live8ut47w_0: d_loop_us=588 d_raster_us=0 d_observe_us=54001 max_observe_us=16047 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] slot live8ut47w_0: d_loop_us=597 d_raster_us=0 d_observe_us=46442 max_observe_us=8165 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=618 d_raster_us=0 d_observe_us=40814 max_observe_us=7997 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=618 d_raster_us=0 d_observe_us=54288 max_observe_us=11040 d_paints=0 d_skips=50 d_ticks=1 window_ms=1180
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=667 d_raster_us=0 d_observe_us=55851 max_observe_us=10577 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=812 d_raster_us=0 d_observe_us=65385 max_observe_us=12932 d_paints=0 d_skips=50 d_ticks=2 window_ms=1162
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=671 d_raster_us=0 d_observe_us=58982 max_observe_us=11967 d_paints=0 d_skips=50 d_ticks=2 window_ms=1150
+[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=686 d_raster_us=0 d_observe_us=64791 max_observe_us=13717 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[host] slot live8ut47w_0: d_loop_us=660 d_raster_us=0 d_observe_us=63480 max_observe_us=14216 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=718 d_raster_us=0 d_observe_us=59403 max_observe_us=15300 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[host] hitch live8ut47w_0: observe_us=20337 paints=0 skips=2259 ticks=102
+[host] hitch live8ut47w_0: observe_us=18396 paints=0 skips=2285 ticks=103
+[host] slot live8ut47w_0: d_loop_us=778 d_raster_us=0 d_observe_us=81021 max_observe_us=20337 d_paints=0 d_skips=50 d_ticks=2 window_ms=1160
+[host] hitch live8ut47w_0: observe_us=17556 paints=0 skips=2310 ticks=104
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live8ut47w_0: observe_us=18645 paints=0 skips=2336 ticks=105
+[host] slot live8ut47w_0: d_loop_us=666 d_raster_us=0 d_observe_us=79065 max_observe_us=18645 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[host] hitch live8ut47w_0: observe_us=17877 paints=0 skips=2361 ticks=106
+[host] hitch live8ut47w_0: observe_us=16209 paints=0 skips=2387 ticks=107
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=783 d_raster_us=0 d_observe_us=70803 max_observe_us=17877 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live8ut47w_0: observe_us=17569 paints=0 skips=2413 ticks=108
+[host] hitch live8ut47w_0: observe_us=21262 paints=0 skips=2439 ticks=109
+[host] slot live8ut47w_0: d_loop_us=828 d_raster_us=0 d_observe_us=79665 max_observe_us=21262 d_paints=0 d_skips=50 d_ticks=2 window_ms=1148
+[host] hitch live8ut47w_0: observe_us=16022 paints=0 skips=2465 ticks=110
+[host] hitch live8ut47w_0: observe_us=17163 paints=0 skips=2490 ticks=111
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=716 d_raster_us=0 d_observe_us=69234 max_observe_us=17163 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] hitch live8ut47w_0: observe_us=19691 paints=0 skips=2516 ticks=112
+[host] hitch live8ut47w_0: observe_us=20387 paints=0 skips=2541 ticks=113
+[host] slot live8ut47w_0: d_loop_us=884 d_raster_us=0 d_observe_us=84940 max_observe_us=20387 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] hitch live8ut47w_0: observe_us=17147 paints=0 skips=2567 ticks=114
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live8ut47w_0: observe_us=19591 paints=0 skips=2592 ticks=115
+[host] slot live8ut47w_0: d_loop_us=802 d_raster_us=0 d_observe_us=72197 max_observe_us=19591 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] hitch live8ut47w_0: observe_us=16342 paints=0 skips=2617 ticks=116
+[host] hitch live8ut47w_0: observe_us=18024 paints=0 skips=2643 ticks=117
+[host] slot live8ut47w_0: d_loop_us=830 d_raster_us=0 d_observe_us=73625 max_observe_us=18024 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=875 d_raster_us=0 d_observe_us=67396 max_observe_us=15979 d_paints=0 d_skips=50 d_ticks=2 window_ms=1146
+[host] hitch live8ut47w_0: observe_us=20515 paints=0 skips=2732 ticks=121
+[host] hitch live8ut47w_0: observe_us=16063 paints=0 skips=2733 ticks=122
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=11967 d_raster_us=0 d_observe_us=101283 max_observe_us=20515 d_paints=0 d_skips=50 d_ticks=3 window_ms=2088
+[host] hitch live8ut47w_0: observe_us=17279 paints=0 skips=2759 ticks=123
+[script live8ut47w_0] interact WalkTo { x: 2721, z: 3493, level: 0 }
+[host] hitch live8ut47w_0: observe_us=17042 paints=0 skips=2785 ticks=124
+[host] slot live8ut47w_0: d_loop_us=961 d_raster_us=0 d_observe_us=70680 max_observe_us=17279 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live8ut47w_0: observe_us=16389 paints=0 skips=2810 ticks=125
+[script live8ut47w_0] interact WalkTo { x: 2721, z: 3493, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=1159 d_raster_us=0 d_observe_us=70066 max_observe_us=16389 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[script live8ut47w_0] interact OpenBooth { x: 2721, z: 3494, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot live8ut47w_0: d_loop_us=1097 d_raster_us=0 d_observe_us=66189 max_observe_us=15194 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] slot live8ut47w_0: d_loop_us=1101 d_raster_us=0 d_observe_us=59065 max_observe_us=12855 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] slot live8ut47w_0: d_loop_us=975 d_raster_us=0 d_observe_us=54146 max_observe_us=8700 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[script live8ut47w_0] banked 28 Flax (+ any junk)
+[script live8ut47w_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live8ut47w_0: observe_us=17293 paints=0 skips=3037 ticks=134
+[host] slot live8ut47w_0: d_loop_us=1017 d_raster_us=0 d_observe_us=64302 max_observe_us=17293 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] hitch live8ut47w_0: observe_us=16258 paints=0 skips=3063 ticks=135
+[host] hitch live8ut47w_0: observe_us=17444 paints=0 skips=3088 ticks=136
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=1077 d_raster_us=0 d_observe_us=68266 max_observe_us=17444 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] hitch live8ut47w_0: observe_us=22070 paints=0 skips=3113 ticks=137
+[host] hitch live8ut47w_0: observe_us=16817 paints=0 skips=3138 ticks=138
+[host] slot live8ut47w_0: d_loop_us=1195 d_raster_us=0 d_observe_us=77542 max_observe_us=22070 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] hitch live8ut47w_0: observe_us=18078 paints=0 skips=3188 ticks=140
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=1073 d_raster_us=0 d_observe_us=67164 max_observe_us=18078 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live8ut47w_0: observe_us=19220 paints=0 skips=3214 ticks=141
+[host] hitch live8ut47w_0: observe_us=17211 paints=0 skips=3239 ticks=142
+[host] slot live8ut47w_0: d_loop_us=955 d_raster_us=0 d_observe_us=73329 max_observe_us=19220 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] hitch live8ut47w_0: observe_us=17877 paints=0 skips=3264 ticks=143
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=928 d_raster_us=0 d_observe_us=69451 max_observe_us=17877 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] hitch live8ut47w_0: observe_us=21997 paints=0 skips=3314 ticks=145
+[host] hitch live8ut47w_0: observe_us=17067 paints=0 skips=3339 ticks=146
+[host] slot live8ut47w_0: d_loop_us=975 d_raster_us=0 d_observe_us=81734 max_observe_us=21997 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live8ut47w_0: observe_us=20599 paints=0 skips=3390 ticks=148
+[host] slot live8ut47w_0: d_loop_us=923 d_raster_us=0 d_observe_us=76037 max_observe_us=20599 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] hitch live8ut47w_0: observe_us=20389 paints=0 skips=3414 ticks=149
+[host] hitch live8ut47w_0: observe_us=18510 paints=0 skips=3440 ticks=150
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=941 d_raster_us=0 d_observe_us=76980 max_observe_us=20389 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch live8ut47w_0: observe_us=18719 paints=0 skips=3465 ticks=151
+[host] hitch live8ut47w_0: observe_us=17896 paints=0 skips=3491 ticks=152
+[host] slot live8ut47w_0: d_loop_us=854 d_raster_us=0 d_observe_us=71722 max_observe_us=18719 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] hitch live8ut47w_0: observe_us=20377 paints=0 skips=3516 ticks=153
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live8ut47w_0: observe_us=17103 paints=0 skips=3541 ticks=154
+[host] slot live8ut47w_0: d_loop_us=816 d_raster_us=0 d_observe_us=76745 max_observe_us=20377 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=724 d_raster_us=0 d_observe_us=60957 max_observe_us=14671 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] hitch live8ut47w_0: observe_us=16366 paints=0 skips=3629 ticks=159
+[script live8ut47w_0] interact WalkTo { x: 2741, z: 3444, level: 0 }
+[host] slot live8ut47w_0: d_loop_us=9852 d_raster_us=0 d_observe_us=93971 max_observe_us=16366 d_paints=0 d_skips=50 d_ticks=3 window_ms=2068
+[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+[host] slot live8ut47w_0: d_loop_us=782 d_raster_us=0 d_observe_us=60747 max_observe_us=14498 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] slot live8ut47w_0: d_loop_us=860 d_raster_us=0 d_observe_us=59013 max_observe_us=14136 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+PASS: catalog_boundary_live: {"scenario":"flax_picker","runner":"Some(Evidence { scenario: \"flax_picker\", outcome: \"PASS\", predicate: \"has_item_id(1779)>=1\", ticks: 189, elapsed_ms: 111808, message: None, tile: Some([2739, 3443, 0]), inv: [InvRow { id: 1779, name: Some(\"Flax\"), count: 1 }], stat: Some(StatRow { runenergy: 60 }), chat: [ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"flax_picker","baseline":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2741,3444,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"latest":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2739,3443,0],"tick":164,"items":{"Flax":1},"item_ids":{"1779":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[36,"You pick some flax."],[35,"You pick some flax."],[34,"You pick some flax."],[33,"You pick some flax."],[32,"You pick some flax."],[31,"You pick some flax."],[30,"You pick some flax."],[29,"You pick some flax."],[28,"You pick some flax."],[27,"You pick some flax."],[26,"You pick some flax."],[25,"You pick some flax."],[24,"You pick some flax."],[23,"You pick some flax."],[22,"You pick some flax."],[21,"You pick some flax."],[20,"You pick some flax."],[19,"You pick some flax."],[18,"You pick some flax."],[17,"You pick some flax."],[16,"You pick some flax."],[15,"You pick some flax."],[14,"You pick some flax."],[13,"You pick some flax."],[12,"You pick some flax."],[11,"You pick some flax."],[10,"You pick some flax."],[9,"You pick some flax."],[8,"You pick some flax."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"max_items":{"Flax":28},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":3648,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":true,"deposited":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2721,3493,0],"tick":130,"items":{},"item_ids":{},"bank":{"Flax":28},"bank_ids":{"1779":28},"bank_open":true,"bank_loaded":true,"bank_generation":1,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[35,"You pick some flax."],[34,"You pick some flax."],[33,"You pick some flax."],[32,"You pick some flax."],[31,"You pick some flax."],[30,"You pick some flax."],[29,"You pick some flax."],[28,"You pick some flax."],[27,"You pick some flax."],[26,"You pick some flax."],[25,"You pick some flax."],[24,"You pick some flax."],[23,"You pick some flax."],[22,"You pick some flax."],[21,"You pick some flax."],[20,"You pick some flax."],[19,"You pick some flax."],[18,"You pick some flax."],[17,"You pick some flax."],[16,"You pick some flax."],[15,"You pick some flax."],[14,"You pick some flax."],[13,"You pick some flax."],[12,"You pick some flax."],[11,"You pick some flax."],[10,"You pick some flax."],[9,"You pick some flax."],[8,"You pick some flax."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"returned":true,"further":true},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 114.96s
+

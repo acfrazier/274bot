@@ -1,0 +1,32 @@
+{
+  "host_commit": "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "platform": "linux",
+  "revision": "289",
+  "case": "alcher",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "binary_sha256": "066948554f6d4fc4d8ee599b9c599c058c4ca5986f6fd440054289fda9ed59f9",
+  "command": [
+    "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/bin/catalog_boundary_live-b1cff8a7",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "289",
+    "CATALOG_SCENARIO": "alcher",
+    "CATALOG_COMMIT": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_ROOT": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_NAV_PACK": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/nav/289/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/home/builder/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/nav/289/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/home/builder/274bot-campaign/multirevision-20260910/server-289"
+  },
+  "started_at": "2026-09-11T06:17:38.518500+00:00",
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 53784
+}

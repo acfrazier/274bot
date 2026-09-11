@@ -1,0 +1,306 @@
+{
+  "verified_at": "2026-09-11T06:53:16.388579+00:00",
+  "mac_native": [
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-cpu.json",
+      "outcome": "PASS",
+      "scene_state": 2,
+      "inventory": {
+        "1114": 26,
+        "561": 26,
+        "995": 30000
+      },
+      "route": "CPU pixmap",
+      "final_counters": [
+        7457,
+        0,
+        0,
+        0
+      ],
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-cpu/shots/2026-09-11T06-17-08_22534/2026-09-11T06-17-31_alcher_terminal.json",
+      "snapshot_sha256": "48f62a88abfb24b943fbe6ecacf77d09335d2594dfd719824cb1c93a2a67953c",
+      "png": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-cpu/shots/2026-09-11T06-17-08_22534/2026-09-11T06-17-31_alcher_terminal.png",
+      "png_sha256": "ad7de5eeab318b6e077293bdbfe095601acb7722c046ef99f7c3284619e55ff1",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    },
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-gpu.json",
+      "outcome": "PASS",
+      "scene_state": 2,
+      "inventory": {
+        "1114": 26,
+        "561": 26,
+        "995": 30000
+      },
+      "route": "GPU texture",
+      "final_counters": [
+        0,
+        7516,
+        7513,
+        3
+      ],
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-gpu/shots/2026-09-11T06-41-03_48639/2026-09-11T06-41-25_alcher_terminal.json",
+      "snapshot_sha256": "ceee739e84a6ec33bc890017f87a57550fe283620ebb7f7f688cb8d23ea21e6e",
+      "png": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-b1cff8a7-gpu/shots/2026-09-11T06-41-03_48639/2026-09-11T06-41-25_alcher_terminal.png",
+      "png_sha256": "d87de68f04ae9d294617a8d97f9717beee90e9f8cf094c13923a93691d03bcc5",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    },
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-b1cff8a7-gpu-diagnostic.json",
+      "outcome": "FAIL",
+      "scene_state": 2,
+      "inventory": {
+        "1779": 6
+      },
+      "route": "GPU texture",
+      "final_counters": [
+        0,
+        3949,
+        3947,
+        2
+      ],
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-b1cff8a7-gpu-diagnostic/shots/2026-09-11T06-21-11_29226/2026-09-11T06-22-46_flax_picker.json",
+      "snapshot_sha256": "23ef181e8c0ba70c46e60348904a7d0fd3f0f89635798a235d31625dec7eab98",
+      "png": "docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-b1cff8a7-gpu-diagnostic/shots/2026-09-11T06-21-11_29226/2026-09-11T06-22-46_flax_picker.png",
+      "png_sha256": "36499950540d621ef7dd3d56b23e8a51238288411ec27d1ba02ebe4e795bda62",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    },
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu-r2.json",
+      "outcome": "PASS",
+      "scene_state": 2,
+      "inventory": {
+        "1114": 26,
+        "561": 26,
+        "995": 30000
+      },
+      "route": "not sampled",
+      "final_counters": null,
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu-r2/shots/2026-09-11T06-12-13_15631/2026-09-11T06-12-38_alcher_terminal.json",
+      "snapshot_sha256": "f229f54f6edd53f44c2ad259c22e16f92aa20aaf96e3f7f09d8fce3a765dce9e",
+      "png": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu-r2/shots/2026-09-11T06-12-13_15631/2026-09-11T06-12-38_alcher_terminal.png",
+      "png_sha256": "8f233a499cd1a39edd0cc2e5b620d76dccd88ff3d33687597c67742a3cbaca69",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    },
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu.json",
+      "outcome": "PASS",
+      "scene_state": 2,
+      "inventory": {
+        "1114": 26,
+        "561": 26,
+        "995": 30000
+      },
+      "route": "GPU texture",
+      "final_counters": [
+        0,
+        7594,
+        7592,
+        2
+      ],
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu/shots/2026-09-11T06-07-23_13620/2026-09-11T06-07-47_alcher_terminal.json",
+      "snapshot_sha256": "24df36be388ef16227e2296a3778a73011a2f8f5dba68e75f8dc7128389a5f2b",
+      "png": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-controls-gpu/shots/2026-09-11T06-07-23_13620/2026-09-11T06-07-47_alcher_terminal.png",
+      "png_sha256": "fcf31cc2d3196b9c63fcad2c5ea33638f58934d84dceae41031b54331ecfb582",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    },
+    {
+      "receipt": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-cpu.json",
+      "outcome": "PASS",
+      "scene_state": 2,
+      "inventory": {
+        "1114": 26,
+        "561": 26,
+        "995": 30000
+      },
+      "route": "CPU pixmap",
+      "final_counters": [
+        7125,
+        0,
+        0,
+        0
+      ],
+      "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+      "snapshot": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-cpu/shots/2026-09-11T06-34-11_36821/2026-09-11T06-34-37_alcher_terminal.json",
+      "snapshot_sha256": "16402190674691545f7add350af75b212af35468df8dcd0765359de92324db0c",
+      "png": "docs/compat/evidence/catalog-headed/r289-alcher-8e7d965b-b1cff8a7-cpu/shots/2026-09-11T06-34-11_36821/2026-09-11T06-34-37_alcher_terminal.png",
+      "png_sha256": "d2853f2005ad76b50dfc9b9adff883d5672bd71dd4d9c8ff12180b5d78a8f5e4",
+      "visual_read": true,
+      "scope": "Core/native rendering observation only; every PNG read by root. Terminal paint can lag paired inventory snapshot. Flax failure remains unqualified gameplay. No performance or complete rendering-equivalence claim."
+    }
+  ],
+  "windows_native": {
+    "outcome": "PASS",
+    "receipt": "docs/compat/evidence/platform-isolated/windows-native-b1cff8a7/receipt.json",
+    "inventory": {
+      "1114": 26,
+      "561": 26,
+      "995": 30000
+    },
+    "magic_xp": 166701,
+    "adapter": "[panel] adapter name=NVIDIA GeForce RTX 5060 Laptop GPU backend=Vulkan device_type=DiscreteGpu vendor=0x10de device=0x2d59",
+    "visual_read": true,
+    "probe_count": 225,
+    "startup_timeouts": [
+      {
+        "elapsed_seconds": 1.348,
+        "pid": 17404,
+        "hwnd": 393476,
+        "responsive": false,
+        "probe_ms": 506.568,
+        "error": 1460
+      },
+      {
+        "elapsed_seconds": 3.832,
+        "pid": 17404,
+        "hwnd": 393476,
+        "responsive": false,
+        "probe_ms": 511.322,
+        "error": 1460
+      }
+    ],
+    "scope": "289 old-catalog Alcher core and read internal rendered PNG. No frame counters sampled, so actual client GPU routing and complete frontend controls remain unqualified. Owned one-off task removed."
+  },
+  "linux_headless": {
+    "outcome": "PASS",
+    "receipt": "docs/compat/evidence/platform-isolated/linux-b1cff8a7/live/r289-alcher-8e7d965b.json",
+    "magic_xp_delta": 65,
+    "item_ids": {
+      "561": 26,
+      "995": 30000,
+      "1114": 26
+    },
+    "scope": "289 new-catalog Alcher core in isolated Linux build, not TUI/frontend/performance proof."
+  },
+  "concord_tui": [
+    {
+      "outcome": "PASS",
+      "receipt": "docs/compat/evidence/platform-isolated/concord-tui-b1cff8a7/r289-alcher/receipt.json",
+      "pass_evidence": {
+        "scenario": "alcher",
+        "outcome": "PASS",
+        "predicate": "stat_xp_gain(6)>=1",
+        "ticks": 46,
+        "elapsed_ms": 28769,
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "inv": [
+          {
+            "id": 1114,
+            "name": "Rune chainbody",
+            "count": 26
+          },
+          {
+            "id": 561,
+            "name": "Nature rune",
+            "count": 26
+          },
+          {
+            "id": 995,
+            "name": "Coins",
+            "count": 30000
+          }
+        ],
+        "stat": {
+          "runenergy": 100
+        },
+        "chat": [
+          {
+            "text": "This item can not be withdrawn as a note."
+          },
+          {
+            "text": "set tutorial: to 1000"
+          },
+          {
+            "text": "Welcome to RuneScape."
+          }
+        ],
+        "scene": 2
+      },
+      "scope": "Actual B1 289 new-catalog PTY TUI core. First run stderr interleaves display; separate-controls run still exposes PASS stdout corruption. No full clean-screen acceptance."
+    },
+    {
+      "outcome": "PASS",
+      "receipt": "docs/compat/evidence/platform-isolated/concord-tui-b1cff8a7/r289-alcher-controls/receipt.json",
+      "pass_evidence": {
+        "scenario": "alcher",
+        "outcome": "PASS",
+        "predicate": "stat_xp_gain(6)>=1",
+        "ticks": 45,
+        "elapsed_ms": 27896,
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "inv": [
+          {
+            "id": 1114,
+            "name": "Rune chainbody",
+            "count": 26
+          },
+          {
+            "id": 561,
+            "name": "Nature rune",
+            "count": 26
+          },
+          {
+            "id": 995,
+            "name": "Coins",
+            "count": 30000
+          }
+        ],
+        "stat": {
+          "runenergy": 100
+        },
+        "chat": [
+          {
+            "text": "This item can not be withdrawn as a note."
+          },
+          {
+            "text": "set tutorial: to 1000"
+          },
+          {
+            "text": "Welcome to RuneScape."
+          }
+        ],
+        "scene": 2
+      },
+      "scope": "Actual B1 289 new-catalog PTY TUI core. First run stderr interleaves display; separate-controls run still exposes PASS stdout corruption. No full clean-screen acceptance."
+    }
+  ],
+  "tui_controls": {
+    "pause_inventory_stable": true,
+    "post_resume_coins": 780000,
+    "paused_coins": 600000,
+    "stopped_coins_after_inflight": 810000,
+    "stop_idle": true,
+    "forwarded_inputs": 3,
+    "scope": "Actual terminal mouse Pause/Resume/Stop and observed UI/inventory states. Start/Browse/settings/reconnect remain separate. PASS output display defect assigned t_35ee61ac."
+  },
+  "concord_engine_stopped": true,
+  "native_controls": {
+    "observations": "docs/compat/evidence/catalog-headed/native-controls-b1-actions.jsonl",
+    "sha256": "5f1d7ab8eb2d85f6f0c0f330b54a5e13bcd250a9bfe7c69b34bcdf7b9dd07e1c",
+    "qualified": [
+      "Pause after drain",
+      "Resume with new work",
+      "Stop idle/paint clear",
+      "Start with new work"
+    ],
+    "limits": "CUA native production controls observed by root; durable terminal internal captures identify the same binary/session but are not screenshots of each action. First run ended before Resume/Stop."
+  }
+}

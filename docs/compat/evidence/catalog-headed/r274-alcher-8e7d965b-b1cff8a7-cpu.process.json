@@ -1,0 +1,30 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/Catalog Integration Proof.app/Contents/MacOS/catalog_watch",
+    "--live",
+    "script_alcher",
+    "--profile",
+    "local-274",
+    "--revision",
+    "274",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "43594",
+    "--asset-host",
+    "127.0.0.1",
+    "--http-port",
+    "80",
+    "--engine",
+    "/Users/acfrazier/experiments/Server/engine",
+    "--nav-pack",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "--nav-flags",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+    "--catalog",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a"
+  ],
+  "pid": 22534,
+  "started_at": "2026-09-11T06:17:04.038607+00:00",
+  "runner_script_sha256": "207fd0eb95b10cdd51afd6bb787498bac72b438b0260e6714da5c6ec2df5eb68"
+}

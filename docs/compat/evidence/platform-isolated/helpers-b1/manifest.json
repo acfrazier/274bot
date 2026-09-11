@@ -1,0 +1,60 @@
+{
+  "purpose": "Exact as-used support scripts, retained with receipts. Root-relative helpers expect their original .superpowers path. read-terminal.py used private pyte0.8.2 in terminal-reader. No binaries, caches, credentials or changes to remote configuration included.",
+  "files": [
+    {
+      "original_path": ".superpowers/platform-preparation/pack-platform-b1.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/pack-platform-b1.py",
+      "sha256": "2c7fd735c5e14dc4a89b88035d9cbcd3826d4705582dd0b1a8d12249face3463"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/unpack-platform-regular.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/unpack-platform-regular.py",
+      "sha256": "b7278cc72549698ed7024b48742688fd8ce1322cdaed8484fdddfc52cb6777a6"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/build-platform-b1.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/build-platform-b1.py",
+      "sha256": "b3799da80ae19fcea72dfae3ffd7381913f46b34d657c58f26468c9431d27e51"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/run-platform-catalog.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/run-platform-catalog.py",
+      "sha256": "fcf6c17f449198e170ff7dbc27adaf9e26a557cc64948c00d7a9ecfadba62b89"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/run-concord-tui-b1.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/run-concord-tui-b1.py",
+      "sha256": "1ea6fd21687d71567efb6f0a7590eb94945acafac8f346168e1817975a784295"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/run-concord-tui-b1-controls.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/run-concord-tui-b1-controls.py",
+      "sha256": "df72211307af94550d3bac5fe62f77addb7b8b40462f0b946ffce9db7f819e8e"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/read-terminal.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/read-terminal.py",
+      "sha256": "5ebe79f837d8783468371cd15b63ab39341f8ce1cbcbf335f6423b6a181a5920"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/send-tui-input.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/send-tui-input.py",
+      "sha256": "c86202b53865d96c27c8dacc642b1f356ebe2f5a756dadc89b0eba4145ef04bb"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/fetch-tui-screen.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/fetch-tui-screen.py",
+      "sha256": "fd9309358b1805c3717acbd8bacfe3ba00fdfc5517d7c005e86fc4e1fc8b458a"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/windows-native-prepare-b1cff8a7.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/windows-native-prepare-b1cff8a7.py",
+      "sha256": "515a820fcc542a94a48266ef595603e20aeef936d9e8cb6695d215881150543f"
+    },
+    {
+      "original_path": ".superpowers/platform-preparation/windows-native-watch-b1cff8a7.py",
+      "stored_path": "docs/compat/evidence/platform-isolated/helpers-b1/windows-native-watch-b1cff8a7.py",
+      "sha256": "239a68825e25fdc01c0dd04c6e82d08aa3fed7cdeaa4ce07c34f9373a0fbb4c8"
+    }
+  ]
+}

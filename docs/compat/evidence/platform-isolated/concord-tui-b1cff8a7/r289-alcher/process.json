@@ -1,0 +1,53 @@
+{
+  "command": [
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/bin/platform_proof-b1cff8a7",
+    "--live",
+    "script_alcher",
+    "--profile",
+    "local-289",
+    "--revision",
+    "289",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "44594",
+    "--asset-host",
+    "127.0.0.1",
+    "--http-port",
+    "1080",
+    "--engine",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/server-289",
+    "--nav-pack",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/nav/289/274bot.navpack",
+    "--nav-flags",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/nav/289/274bot.navflags",
+    "--catalog",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "--vault",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/live/r289-alcher/private-vault",
+    "--unpack",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-b1cff8a7/live/r289-alcher/unpack"
+  ],
+  "pid": 138910,
+  "started_at": "2026-09-11T06:31:46.335929+00:00",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "BUDGET_S": "180",
+    "RUST_BACKTRACE": "1",
+    "TERM": "xterm-256color"
+  },
+  "host_commit": "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "a8a00e966071b2c016dd9ad6fa665e5aafa33dff458d373760971107e327fe8e",
+  "overlay": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "289",
+  "case": "alcher",
+  "source_files_verified": 6242,
+  "package_files_verified": 6242,
+  "elapsed_is_not_performance_measurement": true
+}
