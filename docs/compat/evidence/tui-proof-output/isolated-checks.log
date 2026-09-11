@@ -1,0 +1,34 @@
+host=1d202ef8dd72cb6f2dd24e0aab77ccb78ceb97b3
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+export=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t35ee61ac-tui-proof
+target=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t35ee61ac-tui-proof-target
+overlay=crates/tui/src/bin.rs
+overlay_sha256=17a65a60995e813a245265bc231162d5e8bcc280beee933c74c9e98e518e6fe4
+target_existed_before_checks=false
+files_exported=2595
+
+=== rustfmt --check crates/tui/src/bin.rs (worktree) ===
+passed
+
+=== cargo test -p tui --lib live_ ===
+Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 02s
+running 6 tests
+test bin::tests::live_running_emits_no_proof ... ok
+test bin::tests::live_pass_is_stdout_and_exit_0 ... ok
+test bin::tests::live_fail_is_stderr_and_exit_1 ... ok
+test bin::tests::live_pass_is_held_once_across_soak_then_exits_0 ... ok
+test bin::tests::live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting ... ok
+test bin::tests::live_prepare_thiever_posts_guard_target_when_schema_empty ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 92 filtered out; finished in 2.32s
+
+=== cargo test -p tui --lib ===
+test result: ok. 98 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.64s
+
+=== cargo clippy -p tui --lib --tests -- -D warnings ===
+error: clippy::type_complexity at crates/tui/src/bin.rs:177,188,201 (publish/reset frontend helpers) and 1633 (frontend_fixture)
+not in live_proof / restore_terminal / run_loop
+could not compile `tui` (pre-existing)
+
+=== cargo clippy -p tui --lib --tests -- -D warnings -A clippy::type_complexity ===
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.23s
+passed
