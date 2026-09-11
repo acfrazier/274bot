@@ -1,0 +1,27 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/loadout-provision/loadout-proof-c40c6c8c",
+    "loadout_provision_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "BOT_TARGET": "local",
+    "LOADOUT_REVISION": "289",
+    "LOADOUT_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "LOADOUT_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "LOADOUT_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "host_commit": "c40c6c8cba11aaaa647d8ea7f15a195b95e0e495",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "binary_sha256": "4873587249edad1137d0712a40de69f33f79f9eac8682e396dde1fe77cf2c3e9",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-c40c6c8c-56d8027",
+  "started_at": "2026-09-11T04:01:08.129988+00:00",
+  "pid": 79041,
+  "finished_at": "2026-09-11T04:02:43.852973+00:00",
+  "elapsed_seconds": 95.721,
+  "exit_code": 1,
+  "log_sha256": "36d524582ebfe1ca14465dc69bb92622eceebbe58de342d4c26f4f9cbc4bf80a"
+}

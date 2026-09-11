@@ -43,6 +43,7 @@ struct Observation {
     tile: Option<(i32, i32, i32)>,
     tick: u32,
     attack: i32,
+    inventory_tab_available: bool,
     bank_open: bool,
     bank_loaded: bool,
     bank_generation: u64,
@@ -74,6 +75,10 @@ impl Observation {
                 .find(|stat| stat.name.eq_ignore_ascii_case("attack"))
                 .map(|stat| stat.base)
                 .unwrap_or(0),
+            inventory_tab_available: snapshot
+                .side_tabs()
+                .iter()
+                .any(|tab| tab.index == 3 && tab.available),
             bank_open: snapshot.bank_component_id() >= 0,
             bank_loaded: snapshot.bank_loaded(),
             bank_generation: snapshot.bank_session_generation(),
@@ -252,7 +257,6 @@ enum Prep {
     TutSkip,
     WaitTutorial,
     Relog,
-    WaitLoggedOut,
     WaitRelog,
     Seed,
     WaitSeed,
@@ -306,6 +310,9 @@ impl LiveState {
                 "Start baseline attack {} is below required {ATTACK_LEVEL}",
                 observation.attack
             ));
+        }
+        if !observation.inventory_tab_available {
+            return Err("Start baseline inventory tab is not bound after relog".into());
         }
         if !observation.lacks_configured_gear() {
             return Err(
@@ -390,9 +397,7 @@ impl LiveState {
 
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let observation = self.publish(client);
-        // Production hold is true while disconnected. Relog preparation must
-        // observe that boundary; these two states issue no game actions.
-        if hold && !matches!(self.prep, Prep::WaitLoggedOut | Prep::WaitRelog) {
+        if hold {
             return;
         }
         if self.started {
@@ -430,20 +435,28 @@ impl LiveState {
                 }
             }
             Prep::Relog => {
+                println!(
+                    "{}",
+                    json!({"phase": "before-relog", "observation": observation})
+                );
                 let ifaces = Arc::clone(&client.ifaces);
                 if !interact::logout(client, &ifaces) {
                     return Err("logout iface missing (side icons still tutorial-locked?)".into());
                 }
                 self.last_action = now;
-                self.prep = Prep::WaitLoggedOut;
-            }
-            Prep::WaitLoggedOut => {
-                if !observation.ingame {
-                    self.prep = Prep::WaitRelog;
-                }
+                self.prep = Prep::WaitRelog;
             }
             Prep::WaitRelog => {
-                if observation.ingame && observation.scene_state == 2 {
+                // Use the shared ScenarioRunner's SideTabAvailable contract:
+                // a Play frame need not arrive during the off-world interval.
+                if observation.ingame
+                    && observation.scene_state == 2
+                    && observation.inventory_tab_available
+                {
+                    println!(
+                        "{}",
+                        json!({"phase": "after-relog", "observation": observation})
+                    );
                     self.prep = Prep::Seed;
                 }
             }
@@ -718,7 +731,8 @@ fn run_cell() -> Result<(), String> {
             if Instant::now() >= prep_deadline {
                 break Err(format!(
                     "preparation timeout; prep={:?}; observation={:?}",
-                    state.prep, state.baseline
+                    state.prep,
+                    Observation::from_snapshot(&state.snapshot)
                 ));
             }
         } else if let Some(witness) = state.witness.as_ref() {
@@ -774,6 +788,7 @@ mod tests {
             tile: Some((3185, 3440, 0)),
             tick: 10,
             attack: 40,
+            inventory_tab_available: true,
             bank_open: false,
             bank_loaded: false,
             bank_generation: 0,
