@@ -824,6 +824,7 @@ fn wait(arm: Proof, budget_ticks: u32) -> Wait {
 mod tests {
     use super::*;
     use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ComponentType, IfTypeMut};
     use client::config::IfType;
     use client::dash3d::ClientPlayer;
     use client::io::{ClientProt, ServerProt};
@@ -1929,5 +1930,203 @@ mod tests {
             matches!(runner.status(), RunnerStatus::Running { .. }),
             "still waiting to come back; we do not DC-wait"
         );
+    }
+
+    const AIR_RUINS: (i32, i32, i32) = (2988, 3294, 0);
+    const AIR_RUNE_ID: i32 = 556;
+    const RUNE_ESSENCE_ID: i32 = 1436;
+    const RUNECRAFT_STAT: i32 = 20;
+    const CRAFT_XP: i32 = 5;
+
+    fn set_inv(c: &mut Client, stacks: &[(i32, i32)]) {
+        let types: Vec<i32> = stacks.iter().map(|(id, _)| id + 1).collect();
+        let numbers: Vec<i32> = stacks.iter().map(|(_, n)| *n).collect();
+        match c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            Some(id) => {
+                let inv = c.iface_mut(id).unwrap();
+                inv.link_obj_type = Some(types);
+                inv.link_obj_number = Some(numbers);
+            }
+            None => {
+                let id = c.push_iface(IfType {
+                    r#type: ComponentType::TYPE_INV,
+                    ..Default::default()
+                });
+                c.set_iface_mut(
+                    id,
+                    IfTypeMut {
+                        link_obj_type: Some(types),
+                        link_obj_number: Some(numbers),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    }
+
+    fn ruins_client() -> Client {
+        let mut c = seeded_client();
+        c.map_build_base_x = AIR_RUINS.0;
+        c.map_build_base_z = AIR_RUINS.1;
+        c.local_player = Some(ClientPlayer::at(0, 0));
+        c.stat_xp[RUNECRAFT_STAT as usize] = 0;
+        c.stat_effective_level[RUNECRAFT_STAT as usize] = 1;
+        c.stat_base_level[RUNECRAFT_STAT as usize] = 1;
+        set_inv(&mut c, &[(RUNE_ESSENCE_ID, 27)]);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        c
+    }
+
+    fn apply_simultaneous_craft(c: &mut Client) {
+        set_inv(c, &[(AIR_RUNE_ID, 27)]);
+        c.stat_xp[RUNECRAFT_STAT as usize] = CRAFT_XP;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+    }
+
+    fn rune_watch_scenario(arms: &[Proof]) -> Scenario {
+        Scenario {
+            name: "rune-observation-order",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: arms
+                .iter()
+                .enumerate()
+                .map(|(i, arm)| Step {
+                    name: match i {
+                        0 => "watch arrival at the selected mysterious ruins after Start",
+                        1 if matches!(arm, Proof::StatXpGain { .. }) => {
+                            "watch Runecraft XP from the selected craft"
+                        }
+                        1 => "watch essence become the selected rune after altar entry",
+                        2 if matches!(arm, Proof::StatXpGain { .. }) => {
+                            "watch Runecraft XP from the selected craft"
+                        }
+                        _ => "watch essence become the selected rune after altar entry",
+                    },
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: wait(*arm, 4),
+                })
+                .collect(),
+            proof: Proof::ItemId {
+                id: AIR_RUNE_ID,
+                count: 1,
+            },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        }
+    }
+
+    fn rc_baseline(runner: &ScenarioRunner) -> Option<i32> {
+        runner
+            .xp_baselines
+            .iter()
+            .find(|(id, _)| *id == RUNECRAFT_STAT)
+            .map(|(_, xp)| *xp)
+    }
+
+    fn tick_until_done(runner: &mut ScenarioRunner, c: &mut Client) {
+        for _ in 0..8 {
+            if matches!(
+                runner.status(),
+                RunnerStatus::Passed | RunnerStatus::Failed(_)
+            ) {
+                return;
+            }
+            c.bump_gens(ServerProt::UPDATE_STAT);
+            runner.tick(c);
+        }
+    }
+
+    #[test]
+    fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
+        let ruins = Proof::ArrivedNear {
+            x: AIR_RUINS.0,
+            z: AIR_RUINS.1,
+            level: AIR_RUINS.2,
+            radius: 4,
+        };
+        let crafted = Proof::ItemId {
+            id: AIR_RUNE_ID,
+            count: 1,
+        };
+        let xp = Proof::StatXpGain {
+            id: RUNECRAFT_STAT,
+            min: 1,
+        };
+
+        let mut late_client = ruins_client();
+        let mut late = ScenarioRunner::with_world(rune_watch_scenario(&[ruins, crafted, xp]), None);
+        late.set_scene_settle(Duration::ZERO);
+        late.tick(&mut late_client);
+        assert_eq!(
+            late.status(),
+            RunnerStatus::Running { step: 1, total: 3 },
+            "ruins arrival must arm the crafted-item watch first in the late order"
+        );
+        assert_eq!(rc_baseline(&late), None);
+        apply_simultaneous_craft(&mut late_client);
+        late.tick(&mut late_client);
+        assert_eq!(
+            rc_baseline(&late),
+            Some(CRAFT_XP),
+            "item-then-XP captures the already-applied craft XP as its baseline"
+        );
+        tick_until_done(&mut late, &mut late_client);
+        match late.status() {
+            RunnerStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("stat_xp_gain(20)>=1"),
+                    "late XP watch must name the missed arm: {msg}"
+                );
+                assert!(
+                    msg.contains("not seen within"),
+                    "late XP watch must miss the same-snapshot gain: {msg}"
+                );
+            }
+            other => panic!("late item-then-XP order must fail, got {other:?}"),
+        }
+
+        let mut corrected_client = ruins_client();
+        let mut corrected =
+            ScenarioRunner::with_world(rune_watch_scenario(&[ruins, xp, crafted]), None);
+        corrected.set_scene_settle(Duration::ZERO);
+        corrected.tick(&mut corrected_client);
+        assert_eq!(
+            corrected.status(),
+            RunnerStatus::Running { step: 1, total: 3 },
+            "ruins arrival must arm the XP watch before product"
+        );
+        assert_eq!(rc_baseline(&corrected), Some(0));
+        apply_simultaneous_craft(&mut corrected_client);
+        corrected.tick(&mut corrected_client);
+        assert_eq!(
+            rc_baseline(&corrected),
+            Some(0),
+            "XP armed at ruins keeps the pre-craft baseline"
+        );
+        tick_until_done(&mut corrected, &mut corrected_client);
+        assert_eq!(corrected.status(), RunnerStatus::Passed);
+
+        let mut seed_client = ruins_client();
+        let mut seed_only =
+            ScenarioRunner::with_world(rune_watch_scenario(&[ruins, xp, crafted]), None);
+        seed_only.set_scene_settle(Duration::ZERO);
+        seed_only.tick(&mut seed_client);
+        tick_until_done(&mut seed_only, &mut seed_client);
+        match seed_only.status() {
+            RunnerStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("stat_xp_gain(20)>=1"),
+                    "seed-only essence at ruins must not satisfy XP: {msg}"
+                );
+            }
+            other => panic!("seed-only input must not pass, got {other:?}"),
+        }
     }
 }

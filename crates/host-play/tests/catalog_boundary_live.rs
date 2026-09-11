@@ -2960,6 +2960,18 @@ fn prepare_catalog_card(
     ))
 }
 
+/// Accumulated CoreWitness plus latest observation for catalog FAIL/timeout
+/// receipts. Does not change success, deadline, or lifecycle policy.
+fn accumulated_core(witness: Option<&CoreWitness>) -> Value {
+    witness
+        .map(|witness| {
+            witness
+                .qualify()
+                .unwrap_or_else(|error| json!({"error": error, "witness": witness}))
+        })
+        .unwrap_or_else(|| json!({"error": "no Start baseline"}))
+}
+
 fn run_cell() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -3101,8 +3113,9 @@ fn run_cell() -> Result<(), String> {
         }
         match state.runner.status() {
             RunnerStatus::Failed(error) => {
+                let core = accumulated_core(state.witness.as_ref());
                 break Err(format!(
-                    "scenario failed: {error}; evidence={:?}",
+                    "scenario failed: {error}; evidence={:?}; core={core}",
                     state.runner.evidence()
                 ));
             }
@@ -3128,15 +3141,7 @@ fn run_cell() -> Result<(), String> {
             RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
         }
         if Instant::now() >= outer_deadline {
-            let core = state
-                .witness
-                .as_ref()
-                .map(|witness| {
-                    witness
-                        .qualify()
-                        .unwrap_or_else(|error| json!({"error": error, "witness": witness}))
-                })
-                .unwrap_or_else(|| json!({"error": "no Start baseline"}));
+            let core = accumulated_core(state.witness.as_ref());
             break Err(format!(
                 "bounded timeout; runner={:?}; core={core}",
                 state.runner.status()
@@ -5362,6 +5367,57 @@ mod tests {
             seeded.item_ids.insert(rune, 1);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
+    }
+
+    #[test]
+    fn catalog_failure_emits_accumulated_core_witness_and_latest_observation() {
+        assert_eq!(
+            accumulated_core(None),
+            json!({"error": "no Start baseline"})
+        );
+
+        let baseline = runecraft_obs(VARROCK_EAST_BANK, &[], &[], 0, 9);
+        let withdrawn = runecraft_obs(
+            VARROCK_EAST_BANK,
+            &[(RUNE_ESSENCE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[],
+            0,
+            9,
+        );
+        let entered = runecraft_obs(
+            EARTH_ALTAR,
+            &[(RUNE_ESSENCE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[],
+            0,
+            9,
+        );
+        let crafted = runecraft_obs(
+            EARTH_ALTAR,
+            &[(EARTH_RUNE_ID, 27), (EARTH_TALISMAN_ID, 1)],
+            &[],
+            5,
+            9,
+        );
+        let witness = witness(
+            CoreCase::RuneCrafterEarth,
+            &baseline,
+            [&withdrawn, &entered, &crafted],
+        );
+        assert!(witness.qualify().is_err());
+        let core = accumulated_core(Some(&witness));
+        assert_eq!(
+            core["error"],
+            json!("rune_crafter_earth core post-Start delta incomplete")
+        );
+        assert!(core["witness"]["rune_crafter_cycle"]["crafted"].is_object());
+        assert!(core["witness"]["rune_crafter_cycle"]["deposited"].is_null());
+        assert_eq!(
+            core["witness"]["rune_crafter_cycle"]["further"],
+            json!(false)
+        );
+        assert_eq!(core["witness"]["latest"]["item_ids"]["557"], json!(27));
+        assert_eq!(core["witness"]["latest"]["xp"]["runecraft"], json!(5));
+        assert_eq!(core["witness"]["post_start_observations"], json!(3));
     }
 
     fn ardy_obs(
