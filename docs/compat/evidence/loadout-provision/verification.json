@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-11T03:51:17Z",
+  "verification_base": {
+    "git_head": "c19e3170efe62bd38a39ea64f7ce62bef63780c8",
+    "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "mode": "git archive of committed host HEAD plus owned overlay and frozen client archive; shared-worktree sibling edits were excluded",
+    "export": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-src-20260910234748",
+    "target": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-target-20260910234748",
+    "isolated_build": true
+  },
+  "brief": {
+    "path": "docs/compat/briefs/63-loadout-provision-proof.md",
+    "sha256": "cd46953da15394aa6abf1c99dd29b681d0e0c09186536310a645a9ee207c0cc2"
+  },
+  "harness": {
+    "path": "crates/host-play/tests/loadout_provision_live.rs",
+    "sha256": "de4d971986e8e14f2bb1bf4e3bb3f21b1f63f14646e5c73691b319e7fea13f48"
+  },
+  "fixture": {
+    "path": "crates/host-play/tests/fixtures/loadout_provision/provision.js",
+    "sha256": "bf0eafccdf1f934cf66462174453eb28e14f7cf663a2dddb0baded07bf0c9e74"
+  },
+  "report": {
+    "path": "docs/compat/05h-loadout-provision-proof.md",
+    "sha256": "3e2531194539a717b8955140d5193f1673f674f3758fb149270cb5b04fc44bee"
+  },
+  "live_launch_performed": false,
+  "checks": [
+    {
+      "command": "cargo fmt --check -- crates/host-play/tests/loadout_provision_live.rs",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test loadout_provision_live -- --skip loadout_provision_live",
+      "exit_code": 0,
+      "result": "5 passed; 0 failed; 1 filtered out"
+    },
+    {
+      "command": "cargo clippy -p host-play --test loadout_provision_live --no-deps -- -D warnings",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test loadout_provision_live loadout_provision_live",
+      "exit_code": 0,
+      "result": "0 passed; 0 failed; 1 ignored; 5 filtered out"
+    }
+  ],
+  "notes": [
+    "Offline checks are implementation verification, not live provisioning evidence.",
+    "Witness tests reject seeded equipment, stale/empty bank, queued-only requests, and missing bank decrement.",
+    "No live client was launched by this task.",
+    "Component proof is separate from catalog and frontend acceptance."
+  ]
+}
