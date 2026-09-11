@@ -1,0 +1,455 @@
+{
+  "r289": {
+    "file": "r289-flax-aio-pick-100adccc-resource2d589.log",
+    "sha256": "a705c21cce409339e82f97217314cec35d7281b210cfb4b45cfa5bf1305a43ee",
+    "bytes": 40161,
+    "identity_keys": [
+      "account",
+      "cache_id",
+      "card",
+      "catalog_commit",
+      "catalog_identity",
+      "catalog_read_only_path",
+      "catalog_root",
+      "engine_speed_ms",
+      "nav_pack",
+      "nav_sha256",
+      "phase",
+      "profile",
+      "registry_path",
+      "registry_sha256",
+      "revision"
+    ],
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 289,
+    "card": {
+      "card": "FlaxAIO",
+      "source_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/FlaxAIO/flaxaio.ts",
+      "source_sha256": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "compiled_sha256": "6f1851aa49ce152da36147f1cfd9f6425eb1be80b6b850da0a87cfb9f6a125dc",
+      "siblings": [
+        {
+          "module": "/rs2b0t/bot/scripts/bot/spinning.js",
+          "compiled_sha256": "f12aafddc75ce425bb2cdc46d43b8d61175be4aa863bcd91f953d7a53f752886"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/walking.js",
+          "compiled_sha256": "68c71306942161e5273a147072f06585d83d54888864ab7d5df22ba0ebceb469"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/banking.js",
+          "compiled_sha256": "adb7045b3c0986451b9366292536f7a4043c28de05e42528add29b8d7454baff"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/picking.js",
+          "compiled_sha256": "ed7e6686b2e9d5a12dea3e1a95bde14053b381626fbef4e20ff2c4712e99a247"
+        }
+      ],
+      "settings": {
+        "picking": true,
+        "spinning": false
+      }
+    },
+    "pick_chat_count": 112,
+    "walk_open_lines": [
+      "[script liveu6sisp_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liveu6sisp_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liveu6sisp_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liveu6sisp_0] interact OpenBooth { x: 2721, z: 3494, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"
+    ],
+    "facts_meta": {
+      "player_tile": [
+        2721,
+        3493,
+        0
+      ],
+      "field_center": [
+        2741,
+        3444,
+        0
+      ],
+      "field_scope": 12,
+      "at_field": false,
+      "bank_open": true,
+      "bank_loaded": true,
+      "bank_generation": 1,
+      "reachability_source": "api::query::SceneQuery::flood_reach().at(tile)",
+      "adapter_query": "Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})",
+      "reachability_available": true,
+      "nearest_reachable": [
+        2742,
+        3452,
+        0
+      ]
+    },
+    "loc_count": 48,
+    "player_distance_min": 41,
+    "player_distance_max": 55,
+    "field_distance_min": 2,
+    "field_distance_max": 9,
+    "reachable_true": 48,
+    "reachable_adj_true": 48,
+    "all_adj_true": true,
+    "nearest_adj": {
+      "id": 2646,
+      "tile": [
+        2742,
+        3452,
+        0
+      ],
+      "name": "Flax",
+      "actions": [
+        "Pick"
+      ],
+      "field_distance": 8,
+      "player_distance": 41,
+      "reachable": true,
+      "reachable_adj": true
+    },
+    "farthest_adj": {
+      "id": 2646,
+      "tile": [
+        2749,
+        3438,
+        0
+      ],
+      "name": "Flax",
+      "actions": [
+        "Pick"
+      ],
+      "field_distance": 8,
+      "player_distance": 55,
+      "reachable": true,
+      "reachable_adj": true
+    },
+    "sample_first3": [
+      {
+        "id": 2646,
+        "tile": [
+          2742,
+          3452,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 8,
+        "player_distance": 41,
+        "reachable": true,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2741,
+          3451,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 7,
+        "player_distance": 42,
+        "reachable": true,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2742,
+          3451,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 7,
+        "player_distance": 42,
+        "reachable": true,
+        "reachable_adj": true
+      }
+    ],
+    "sample_last3": [
+      {
+        "id": 2646,
+        "tile": [
+          2739,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 6,
+        "player_distance": 55,
+        "reachable": true,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2744,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 6,
+        "player_distance": 55,
+        "reachable": true,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2749,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 8,
+        "player_distance": 55,
+        "reachable": true,
+        "reachable_adj": true
+      }
+    ]
+  },
+  "r274": {
+    "file": "r274-flax-aio-pick-100adccc-resource2d589.log",
+    "sha256": "812e3e2224461a9e9b617081c015a22671e3bdc7ee58e72322bb85cb25906bee",
+    "bytes": 61729,
+    "identity_keys": [
+      "account",
+      "cache_id",
+      "card",
+      "catalog_commit",
+      "catalog_identity",
+      "catalog_read_only_path",
+      "catalog_root",
+      "engine_speed_ms",
+      "nav_pack",
+      "nav_sha256",
+      "phase",
+      "profile",
+      "registry_path",
+      "registry_sha256",
+      "revision"
+    ],
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 274,
+    "card": {
+      "card": "FlaxAIO",
+      "source_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/FlaxAIO/flaxaio.ts",
+      "source_sha256": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "compiled_sha256": "6f1851aa49ce152da36147f1cfd9f6425eb1be80b6b850da0a87cfb9f6a125dc",
+      "siblings": [
+        {
+          "module": "/rs2b0t/bot/scripts/bot/spinning.js",
+          "compiled_sha256": "f12aafddc75ce425bb2cdc46d43b8d61175be4aa863bcd91f953d7a53f752886"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/walking.js",
+          "compiled_sha256": "68c71306942161e5273a147072f06585d83d54888864ab7d5df22ba0ebceb469"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/banking.js",
+          "compiled_sha256": "adb7045b3c0986451b9366292536f7a4043c28de05e42528add29b8d7454baff"
+        },
+        {
+          "module": "/rs2b0t/bot/scripts/bot/picking.js",
+          "compiled_sha256": "ed7e6686b2e9d5a12dea3e1a95bde14053b381626fbef4e20ff2c4712e99a247"
+        }
+      ],
+      "settings": {
+        "picking": true,
+        "spinning": false
+      }
+    },
+    "pick_chat_count": 112,
+    "walk_open_lines": [
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact WalkTo { x: 2721, z: 3493, level: 0 }",
+      "[script liverm3ame_0] interact OpenBooth { x: 2721, z: 3494, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"
+    ],
+    "facts_meta": {
+      "player_tile": [
+        2721,
+        3493,
+        0
+      ],
+      "field_center": [
+        2741,
+        3444,
+        0
+      ],
+      "field_scope": 12,
+      "at_field": false,
+      "bank_open": true,
+      "bank_loaded": true,
+      "bank_generation": 1,
+      "reachability_source": "api::query::SceneQuery::flood_reach().at(tile)",
+      "adapter_query": "Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})",
+      "reachability_available": true,
+      "nearest_reachable": [
+        2742,
+        3452,
+        0
+      ]
+    },
+    "loc_count": 46,
+    "player_distance_min": 41,
+    "player_distance_max": 55,
+    "field_distance_min": 2,
+    "field_distance_max": 9,
+    "reachable_true": 0,
+    "reachable_adj_true": 40,
+    "all_adj_true": false,
+    "nearest_adj": {
+      "id": 2646,
+      "tile": [
+        2742,
+        3452,
+        0
+      ],
+      "name": "Flax",
+      "actions": [
+        "Pick"
+      ],
+      "field_distance": 8,
+      "player_distance": 41,
+      "reachable": false,
+      "reachable_adj": true
+    },
+    "farthest_adj": {
+      "id": 2646,
+      "tile": [
+        2749,
+        3438,
+        0
+      ],
+      "name": "Flax",
+      "actions": [
+        "Pick"
+      ],
+      "field_distance": 8,
+      "player_distance": 55,
+      "reachable": false,
+      "reachable_adj": true
+    },
+    "sample_first3": [
+      {
+        "id": 2646,
+        "tile": [
+          2742,
+          3452,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 8,
+        "player_distance": 41,
+        "reachable": false,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2741,
+          3451,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 7,
+        "player_distance": 42,
+        "reachable": false,
+        "reachable_adj": false
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2742,
+          3451,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 7,
+        "player_distance": 42,
+        "reachable": false,
+        "reachable_adj": true
+      }
+    ],
+    "sample_last3": [
+      {
+        "id": 2646,
+        "tile": [
+          2739,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 6,
+        "player_distance": 55,
+        "reachable": false,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2744,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 6,
+        "player_distance": 55,
+        "reachable": false,
+        "reachable_adj": true
+      },
+      {
+        "id": 2646,
+        "tile": [
+          2749,
+          3438,
+          0
+        ],
+        "name": "Flax",
+        "actions": [
+          "Pick"
+        ],
+        "field_distance": 8,
+        "player_distance": 55,
+        "reachable": false,
+        "reachable_adj": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "hashes": [
+    {
+      "file": "src/bot/scripts/FlaxAIO/picking.ts",
+      "old": "c0955fac57da78d375857e4d5e1629ad61b933f3fabbdce9edafa9af4b1124b5",
+      "new": "c0955fac57da78d375857e4d5e1629ad61b933f3fabbdce9edafa9af4b1124b5",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/FlaxAIO/flaxaio.ts",
+      "old": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "new": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/FlaxAIO/banking.ts",
+      "old": "f7b2b65a78a5c57b7abb6a2be9006efd7d2391883829fc7354559e4cf4cd5f64",
+      "new": "f7b2b65a78a5c57b7abb6a2be9006efd7d2391883829fc7354559e4cf4cd5f64",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/FlaxAIO/walking.ts",
+      "old": "824e3b76044c95d71daf7064ce05eedd179a77e0c475858cb2fae5b9a311157e",
+      "new": "824e3b76044c95d71daf7064ce05eedd179a77e0c475858cb2fae5b9a311157e",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/FlaxPicker/FlaxPicker.ts",
+      "old": "e24b0d794e4bb83a0616a841999b28f036da47a48a3bd1e8825316616bbfd83a",
+      "new": "e24b0d794e4bb83a0616a841999b28f036da47a48a3bd1e8825316616bbfd83a",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/FlaxRunner/FlaxRunner.ts",
+      "old": "6edae2ae773b73b907b5a3d4c020052075f7b32f9c2872ca78246eead9dfff34",
+      "new": "6edae2ae773b73b907b5a3d4c020052075f7b32f9c2872ca78246eead9dfff34",
+      "identical": true
+    },
+    {
+      "file": "src/bot/event/webwalk/geometry/localReach.ts",
+      "old": "4b2884b305e2daa94d72ef065c2c8613fdd4b1485b3a389c8ca8be13558af1d4",
+      "new": "4b2884b305e2daa94d72ef065c2c8613fdd4b1485b3a389c8ca8be13558af1d4",
+      "identical": true
+    },
+    {
+      "file": "src/bot/event/webwalk/geometry/Reachability.ts",
+      "old": "4388d15d919249dd4468aa740345168fcf0d7e2068b13a08a38c87cc8a3b36ec",
+      "new": "4388d15d919249dd4468aa740345168fcf0d7e2068b13a08a38c87cc8a3b36ec",
+      "identical": true
+    },
+    {
+      "file": "src/bot/scripts/BrimhavenAgility/BrimhavenAgility.ts",
+      "old": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+      "new": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+      "identical": true
+    }
+  ],
+  "expansions": {
+    "flax_offset_dx20_dz49": {
+      "status": "adj",
+      "expansions": 9255,
+      "dequeued": 9256
+    },
+    "flax_offset_cap400": {
+      "status": "capped",
+      "expansions": 401,
+      "dequeued": 401
+    },
+    "cheb8": {
+      "status": "adj",
+      "expansions": 182,
+      "dequeued": 183
+    },
+    "cheb8_cap400": {
+      "status": "adj",
+      "expansions": 182,
+      "dequeued": 183
+    },
+    "cheb9": {
+      "status": "adj",
+      "expansions": 240,
+      "dequeued": 241
+    },
+    "cheb10": {
+      "status": "adj",
+      "expansions": 306,
+      "dequeued": 307
+    },
+    "cheb10_cap400": {
+      "status": "adj",
+      "expansions": 306,
+      "dequeued": 307
+    },
+    "cheb11_cap400": {
+      "status": "adj",
+      "expansions": 380,
+      "dequeued": 381
+    },
+    "cheb1_cap1": {
+      "status": "adj",
+      "expansions": 0,
+      "dequeued": 1
+    },
+    "cheb2_cap1": {
+      "status": "capped",
+      "expansions": 2,
+      "dequeued": 2
+    },
+    "far59_1d_cap10": {
+      "status": "capped",
+      "expansions": 11,
+      "dequeued": 11
+    }
+  },
+  "radii": {
+    "0": 1,
+    "1": 9,
+    "2": 25,
+    "3": 49,
+    "4": 81,
+    "5": 121,
+    "6": 169,
+    "7": 225,
+    "8": 289,
+    "9": 361,
+    "10": 441,
+    "11": 529,
+    "12": 625,
+    "13": 729,
+    "14": 841,
+    "15": 961
+  },
+  "logs": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-resource2d589.log",
+      "sha256": "a705c21cce409339e82f97217314cec35d7281b210cfb4b45cfa5bf1305a43ee",
+      "bytes": 40161,
+      "counts": {
+        "flax_aio_pick": 6,
+        "nearest_reachable": 1,
+        "relevant_locs": 1,
+        "reachable_adj": 48,
+        "bank_closed": 3,
+        "WalkTo": 3,
+        "OpenBooth": 1,
+        "depositInventory": 0,
+        "You pick some flax": 112,
+        "You can't carry any more flax": 0
+      },
+      "flax_snippet": "\"flax_aio_pick\":{\"player_tile\":[2721,3493,0],\"field_center\":[2741,3444,0],\"field_scope\":12,\"at_field\":false,\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"reachability_source\":\"api::query::SceneQuery::flood_reach().at(tile)\",\"adapter_query\":\"Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})\",\"reachability_available\":true,\"relevant_locs\":[{\"id\":2646,\"tile\":[2742,3452,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":8,\"player_distance\":41,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2742,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":true,\"reachable_adj\":true},{\"id\":264",
+      "relevant_locs_idx": 33192,
+      "relevant_locs_context": "5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"flax_aio_pick\":{\"player_tile\":[2721,3493,0],\"field_center\":[2741,3444,0],\"field_scope\":12,\"at_field\":false,\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"reachability_source\":\"api::query::SceneQuery::flood_reach().at(tile)\",\"adapter_query\":\"Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})\",\"reachability_available\":true,\"relevant_locs\":[{\"id\":2646,\"tile\":[2742,3452,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":8,\"player_distance\":41,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2742,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2738,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2745,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2747,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2739,3449,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":5,\"player_distance\":44,\"reachable\":true,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2740,3449,0],",
+      "fail_line": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch the flax bank close after deposit): bank_closed not seen within 150 ticks; evidence=Some(Evidence { scenario: \"flax_aio_pick\", outcome: \"FAIL\", predicate: \"bank_closed\", ticks: 275, elapsed_ms: 64461, message: Some(\"step 11 (watch the flax bank close after deposit): bank_closed not seen within 150 ticks\"), tile: Some([2721, 3493, 0]), inv: [], stat: Some(StatRow { runenergy: 90 }), chat: [ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username:",
+      "row_pairs_n": 48,
+      "json_idx": 3033
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-resource2d589.log",
+      "sha256": "812e3e2224461a9e9b617081c015a22671e3bdc7ee58e72322bb85cb25906bee",
+      "bytes": 61729,
+      "counts": {
+        "flax_aio_pick": 8,
+        "nearest_reachable": 1,
+        "relevant_locs": 1,
+        "reachable_adj": 46,
+        "bank_closed": 1,
+        "WalkTo": 8,
+        "OpenBooth": 1,
+        "depositInventory": 0,
+        "You pick some flax": 112,
+        "You can't carry any more flax": 4
+      },
+      "flax_snippet": "\"flax_aio_pick\":{\"player_tile\":[2721,3493,0],\"field_center\":[2741,3444,0],\"field_scope\":12,\"at_field\":false,\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"reachability_source\":\"api::query::SceneQuery::flood_reach().at(tile)\",\"adapter_query\":\"Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})\",\"reachability_available\":true,\"relevant_locs\":[{\"id\":2646,\"tile\":[2742,3452,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":8,\"player_distance\":41,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":false,\"reachable_adj\":false},{\"id\":2646,\"tile\":[2742,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":false,\"reachable_adj\":true},{\"id\"",
+      "relevant_locs_idx": 54996,
+      "relevant_locs_context": "5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},\"flax_aio_pick\":{\"player_tile\":[2721,3493,0],\"field_center\":[2741,3444,0],\"field_scope\":12,\"at_field\":false,\"bank_open\":true,\"bank_loaded\":true,\"bank_generation\":1,\"reachability_source\":\"api::query::SceneQuery::flood_reach().at(tile)\",\"adapter_query\":\"Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})\",\"reachability_available\":true,\"relevant_locs\":[{\"id\":2646,\"tile\":[2742,3452,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":8,\"player_distance\":41,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":false,\"reachable_adj\":false},{\"id\":2646,\"tile\":[2742,3451,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":7,\"player_distance\":42,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2738,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2741,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2745,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2747,3450,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":6,\"player_distance\":43,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2739,3449,0],\"name\":\"Flax\",\"actions\":[\"Pick\"],\"field_distance\":5,\"player_distance\":44,\"reachable\":false,\"reachable_adj\":true},{\"id\":2646,\"tile\":[2740",
+      "fail_line": "FAIL: catalog_boundary_live: scenario failed: flax_aio_pick: deadline 180s exceeded; evidence=Some(Evidence { scenario: \"flax_aio_pick\", outcome: \"FAIL\", predicate: \"bank_closed\", ticks: 344, elapsed_ms: 180014, message: Some(\"flax_aio_pick: deadline 180s exceeded\"), tile: Some([2721, 3493, 0]), inv: [], stat: Some(StatRow { runenergy: 88 }), chat: [ChatRow { text: \"You can't carry any more flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pic",
+      "row_pairs_n": 46,
+      "json_idx": 2805
+    }
+  ]
+}

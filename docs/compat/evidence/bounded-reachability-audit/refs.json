@@ -1,0 +1,33 @@
+{
+  "task": "t_9f605084",
+  "brief": "docs/compat/briefs/138-bounded-reachability-audit.md",
+  "brief_sha256": "e0b288aafa2674b78ce02043e8625bfe0896f140bcdb49be2c961aadd74076e3",
+  "campaign_head_at_writeup": "ac3dd3ada64a5a336091dfca5de08653383a7aaf",
+  "live_host": "2d589c7bacfef32140060e663407b3c364000579",
+  "client_gitlink": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "branch": "codex/rs2b0t-multirevision",
+  "catalogs": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "new": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "named_scripts_byte_identical": true
+  },
+  "live_logs": {
+    "r289": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-resource2d589.log",
+      "sha256": "a705c21cce409339e82f97217314cec35d7281b210cfb4b45cfa5bf1305a43ee"
+    },
+    "r274": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-resource2d589.log",
+      "sha256": "812e3e2224461a9e9b617081c015a22671e3bdc7ee58e72322bb85cb25906bee"
+    }
+  },
+  "catalog_hashes": {
+    "picking.ts": "c0955fac57da78d375857e4d5e1629ad61b933f3fabbdce9edafa9af4b1124b5",
+    "flaxaio.ts": "6fd81a87dc88822298f5f5557e3f6163a5dadf46480e7f686fc4892001b608a1",
+    "banking.ts": "f7b2b65a78a5c57b7abb6a2be9006efd7d2391883829fc7354559e4cf4cd5f64",
+    "walking.ts": "824e3b76044c95d71daf7064ce05eedd179a77e0c475858cb2fae5b9a311157e",
+    "localReach.ts": "4b2884b305e2daa94d72ef065c2c8613fdd4b1485b3a389c8ca8be13558af1d4",
+    "Reachability.ts": "4388d15d919249dd4468aa740345168fcf0d7e2068b13a08a38c87cc8a3b36ec"
+  },
+  "shim_reachability_js_sha256": "ee4127f41dc18b3a8cdc773b962733e1b41afa8eca21319d6ef6479a711b230c"
+}
