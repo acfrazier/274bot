@@ -520,7 +520,10 @@ pub(crate) fn remap_catalog_imports(source: &str) -> String {
 
 /// Host-owned policy plus optional selected-revision generated facts, posted
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
-pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
+pub(crate) fn content_json(
+    game_data: Option<&api::game_data::SelectedGameData>,
+    named_banks: &api::named_banks::NamedBankFacts,
+) -> String {
     use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES};
     let items = game_data
         .map(|data| {
@@ -617,6 +620,14 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
                 "name": s.name,
                 "bank": {"x": s.bank.x, "z": s.bank.z, "level": s.bank.level},
                 "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
+            })
+        }).collect::<Vec<_>>(),
+        "named_banks": named_banks.banks().iter().map(|b| {
+            serde_json::json!({
+                "name": b.name,
+                "x": b.tile.x,
+                "z": b.tile.z,
+                "level": b.tile.level
             })
         }).collect::<Vec<_>>(),
         "items": items,

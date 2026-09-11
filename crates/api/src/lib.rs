@@ -7,6 +7,7 @@ pub use snapshot::{LocalTile, WorldTile};
 pub mod content;
 pub mod game_data;
 pub mod interact;
+pub mod named_banks;
 pub mod obj_names;
 pub mod prot;
 pub mod query;
