@@ -1,0 +1,67 @@
+{
+  "task": "t_7dd2b216",
+  "brief": "docs/compat/briefs/67-tanner-fixtures.md",
+  "brief_sha256": "babe007c15cb5057654c35dd4668e7581a20066baa3afb4ff6d5171f1c42c655",
+  "host_commit": "4b69c0e965333c55d5d67322b2ec6e425d9b1f30",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t7dd2b216-tanner",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t7dd2b216-tanner-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "shared_campaign_target": false,
+  "live": false,
+  "scenarios": [
+    "tanner_bot",
+    "tanner_bot_hard"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "TannerBot.ts": "b8038b17ac72eec3cf7b2e84f8323e4cd898f1975de7d210cfba333e552b8d7f"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "TannerBot.ts": "b8038b17ac72eec3cf7b2e84f8323e4cd898f1975de7d210cfba333e552b8d7f"
+    }
+  },
+  "selected_ids": {
+    "cow_hide": 1739,
+    "leather": 1741,
+    "hard_leather": 1743,
+    "coins": 995,
+    "tanner_if": 679,
+    "soft_tan_all": 8686,
+    "hard_tan_all": 8690
+  },
+  "display_names": {
+    "274": "Cow hide",
+    "289": "Cowhide"
+  },
+  "game_data": {
+    "274.json": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
+    "289.json": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9"
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "10c8a61190bc0926f7733478b75638e5bf8495ac262f1a111f5335ffeb06e163",
+    "crates/host-play/tests/catalog_boundary_live.rs": "a1860c7d9d841efcc7afe891e21ad212da4b922be91676d2a329f8a960a9068e",
+    "docs/compat/05j-tanner-fixtures.md": "bc8fb22255c67eb6de9f560c50c0e2f89ca4f35e507a31b2f81747cd93c78cda"
+  },
+  "checks": [
+    "cargo test -p scenario: 90 passed",
+    "tanner_bot_cases_register_conversion_and_bank_cycles: passed",
+    "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 24 passed, 1 ignored",
+    "tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan: passed",
+    "cargo clippy -p scenario -- -D warnings: pass",
+    "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
+    "cargo fmt --check -p scenario: clean",
+    "cargo fmt --check -- crates/host-play/tests/catalog_boundary_live.rs: clean"
+  ],
+  "limits": [
+    "no live client run",
+    "TannerBot buyThread/Dommik Shop.buy remains pending",
+    "seed uses existing open_nearest_booth at Al-Kharid stand; bank helper semantics unchanged",
+    "IF_CLOSE bank generation 1->2 preserved from f33703d5e",
+    "Superheater Attack-30 6c7075ce preserved",
+    "vial/potion e4f5352ab preserved",
+    "8fd0f138 chicken melee hunks preserved",
+    "1ec25b521 seed-order preserved"
+  ]
+}

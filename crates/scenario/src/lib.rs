@@ -415,6 +415,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "vial_filler_east" => Some(vial_filler_east_scenario()),
         "potion_maker" => Some(potion_maker_scenario()),
         "potion_maker_named" => Some(potion_maker_named_scenario()),
+        "tanner_bot" => Some(tanner_bot_scenario()),
+        "tanner_bot_hard" => Some(tanner_bot_hard_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -465,6 +467,8 @@ pub fn names() -> Vec<&'static str> {
         "vial_filler_east",
         "potion_maker",
         "potion_maker_named",
+        "tanner_bot",
+        "tanner_bot_hard",
         "script_trade",
     ]
 }
@@ -4786,6 +4790,45 @@ const POTION_MAKER_NAMED_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const COW_HIDE_ID: i32 = 1739;
+const SOFT_LEATHER_ID: i32 = 1741;
+const HARD_LEATHER_ID: i32 = 1743;
+const TANNER_HIDE_SEED: i32 = 28;
+const TANNER_COIN_SEED: i32 = 5000;
+
+const AL_KHARID_BANK: WorldTile = WorldTile {
+    x: 3269,
+    z: 3167,
+    level: 0,
+};
+const TANNER_STAND: WorldTile = WorldTile {
+    x: 3277,
+    z: 3191,
+    level: 0,
+};
+
+const TANNER_BOT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "hideType",
+        value: ScriptInjectValue::Str("Soft leather"),
+    },
+    ScriptSettingInject {
+        id: "buyThread",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
+const TANNER_BOT_HARD_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "hideType",
+        value: ScriptInjectValue::Str("Hard leather"),
+    },
+    ScriptSettingInject {
+        id: "buyThread",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
 fn open_seed_booth(name: &'static str, booth: WorldTile, arm: Proof) -> Step {
     Step {
         name,
@@ -5372,6 +5415,209 @@ fn potion_maker_variant(
     }
 }
 
+fn tanner_open_seed_bank(name: &'static str, arm: Proof) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c).open_nearest_booth(),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
+fn tanner_bot_scenario() -> Scenario {
+    tanner_bot_variant(
+        "tanner_bot",
+        TANNER_BOT_INJECT,
+        SOFT_LEATHER_ID,
+        HARD_LEATHER_ID,
+    )
+}
+
+fn tanner_bot_hard_scenario() -> Scenario {
+    tanner_bot_variant(
+        "tanner_bot_hard",
+        TANNER_BOT_HARD_INJECT,
+        HARD_LEATHER_ID,
+        SOFT_LEATHER_ID,
+    )
+}
+
+/// Empty pack at Al-Kharid bank. Banked cowhides 1739 and coins, never leather.
+/// Script withdraws, tans at the Tanner widget (not a shop), deposits produced
+/// leather, empties the pack of leather, restocks hides, returns and tans again.
+/// Dommik thread-buy stays pending.
+fn tanner_bot_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    product_id: i32,
+    wrong_product_id: i32,
+) -> Scenario {
+    let tanner = Proof::ArrivedNear {
+        x: TANNER_STAND.x,
+        z: TANNER_STAND.z,
+        level: TANNER_STAND.level,
+        radius: 4,
+    };
+    let leather = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let bank = AL_KHARID_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed cowhides, coins, and tele to Al-Kharid bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("givebank cow_hide {TANNER_HIDE_SEED}"));
+                cheat(c, &format!("givebank coins {TANNER_COIN_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm no seeded cowhides in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COW_HIDE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded soft leather in pack before Start",
+            Proof::ItemIdAtMost {
+                id: SOFT_LEATHER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded hard leather in pack before Start",
+            Proof::ItemIdAtMost {
+                id: HARD_LEATHER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact cowhide seed bank",
+        Proof::BankItemId {
+            id: COW_HIDE_ID,
+            count: TANNER_HIDE_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the exact coin seed bank",
+        Proof::BankItemId {
+            id: COINS_ID,
+            count: TANNER_COIN_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded leather in bank",
+        Proof::BankItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded wrong leather in bank",
+        Proof::BankItemIdAtMost {
+            id: wrong_product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch arrival at the Tanner after Start", tanner),
+        (
+            "watch cowhides become the selected leather at the Tanner",
+            leather,
+        ),
+        (
+            "watch the withdrawn cowhides finish converting",
+            Proof::ItemIdAtMost {
+                id: COW_HIDE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-created leather enter a fresh bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of leather after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of exact cowhides",
+            Proof::ItemId {
+                id: COW_HIDE_ID,
+                count: 1,
+            },
+        ),
+        ("watch the script close its tanner bank", Proof::BankClosed),
+        ("watch return to the Tanner after restock", tanner),
+        ("watch another exact leather after restock", leather),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: leather,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("TannerBot"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -5902,6 +6148,8 @@ mod tests {
                 "vial_filler_east",
                 "potion_maker",
                 "potion_maker_named",
+                "tanner_bot",
+                "tanner_bot_hard",
                 "script_trade",
             ]
         );
@@ -7494,6 +7742,148 @@ mod tests {
     }
 
     #[test]
+    fn tanner_bot_cases_register_conversion_and_bank_cycles() {
+        let soft = get("tanner_bot").expect("tanner_bot");
+        assert_eq!(soft.settings.start_script, Some("TannerBot"));
+        assert_eq!(soft.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(soft.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("hideType"),
+            Some(&Value::String("Soft leather".into()))
+        );
+        assert_eq!(inject.get("buyThread"), Some(&Value::Bool(false)));
+        let start = soft
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(soft.steps[start - 1].wait.arm, Proof::BankClosed);
+        let seed = soft.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 3269,
+            z: 3167,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(seed.contains(&Proof::BankItemId {
+            id: COW_HIDE_ID,
+            count: TANNER_HIDE_SEED,
+        }));
+        assert!(seed.contains(&Proof::BankItemId {
+            id: COINS_ID,
+            count: TANNER_COIN_SEED,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: SOFT_LEATHER_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::BankItemIdAtMost {
+            id: SOFT_LEATHER_ID,
+            count: 0,
+        }));
+        let watch = soft.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let tanner = Proof::ArrivedNear {
+            x: 3277,
+            z: 3191,
+            level: 0,
+            radius: 4,
+        };
+        let leather = Proof::ItemId {
+            id: SOFT_LEATHER_ID,
+            count: 1,
+        };
+        let pack_empty_leather = Proof::ItemIdAtMost {
+            id: SOFT_LEATHER_ID,
+            count: 0,
+        };
+        assert_eq!(
+            watch,
+            vec![
+                tanner,
+                leather,
+                Proof::ItemIdAtMost {
+                    id: COW_HIDE_ID,
+                    count: 0,
+                },
+                Proof::BankItemId {
+                    id: SOFT_LEATHER_ID,
+                    count: 1,
+                },
+                pack_empty_leather,
+                Proof::ItemId {
+                    id: COW_HIDE_ID,
+                    count: 1,
+                },
+                Proof::BankClosed,
+                tanner,
+                leather,
+            ]
+        );
+        let first_leather = watch.iter().position(|arm| *arm == leather).unwrap();
+        let bank_leather = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: SOFT_LEATHER_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let pack_empty = watch
+            .iter()
+            .position(|arm| *arm == pack_empty_leather)
+            .unwrap();
+        let further_leather = watch.iter().rposition(|arm| *arm == leather).unwrap();
+        assert!(first_leather < bank_leather);
+        assert!(bank_leather < pack_empty);
+        assert!(pack_empty < further_leather);
+        assert_ne!(first_leather, further_leather);
+        assert_eq!(soft.proof, leather);
+
+        let hard = get("tanner_bot_hard").expect("tanner_bot_hard");
+        let inject = settings_inject_map(hard.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("hideType"),
+            Some(&Value::String("Hard leather".into()))
+        );
+        assert_eq!(inject.get("buyThread"), Some(&Value::Bool(false)));
+        let hard_start = hard
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let hard_watch = hard.steps[hard_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let hard_leather = Proof::ItemId {
+            id: HARD_LEATHER_ID,
+            count: 1,
+        };
+        assert_eq!(hard_watch[1], hard_leather);
+        assert!(hard_watch.contains(&Proof::BankItemId {
+            id: HARD_LEATHER_ID,
+            count: 1,
+        }));
+        assert!(hard_watch.contains(&Proof::ItemIdAtMost {
+            id: HARD_LEATHER_ID,
+            count: 0,
+        }));
+        assert!(!hard_watch.contains(&leather));
+        assert_eq!(hard.proof, hard_leather);
+
+        for name in ["tanner_bot", "tanner_bot_hard"] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -7567,6 +7957,8 @@ mod tests {
             "vial_filler_east",
             "potion_maker",
             "potion_maker_named",
+            "tanner_bot",
+            "tanner_bot_hard",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
