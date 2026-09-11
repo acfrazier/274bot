@@ -1,0 +1,6 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","account":"liveuzx0j2_0","preset":"provision-proof","weapon_id":1333,"supply_id":379,"qty":17,"script_sha256":"bf0eafccdf1f934cf66462174453eb28e14f7cf663a2dddb0baded07bf0c9e74"}
+274bot: loaded snapshot (4556 models, 336 anim records)
+test loadout_provision_live has been running for over 60 seconds
+FAIL: loadout_provision_live: preparation timeout; prep=WaitLoggedOut; observation=None

@@ -1,0 +1,6 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","account":"livetga5no_0","preset":"provision-proof","weapon_id":1333,"supply_id":379,"qty":17,"script_sha256":"bf0eafccdf1f934cf66462174453eb28e14f7cf663a2dddb0baded07bf0c9e74"}
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+test loadout_provision_live has been running for over 60 seconds
+FAIL: loadout_provision_live: preparation timeout; prep=WaitLoggedOut; observation=None

@@ -1,0 +1,23 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/loadout-provision/loadout-proof-064de2cf",
+    "loadout_provision_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "BOT_TARGET": "local",
+    "LOADOUT_REVISION": "274",
+    "LOADOUT_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "LOADOUT_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+    "LOADOUT_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine"
+  },
+  "host_commit": "064de2cfcd7f09db1a5f30e91f269efaf6e0c7af",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "binary_sha256": "a800f4f6af7f9f3781d2fd603d7cb21c6435fe7b6000953d9dbf11ac4bb22406",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-064de2cf-56d8027",
+  "started_at": "2026-09-11T03:57:41.352014+00:00",
+  "pid": 66030
+}

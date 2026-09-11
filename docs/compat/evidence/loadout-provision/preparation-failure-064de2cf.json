@@ -1,0 +1,21 @@
+{
+  "rows": [
+    {
+      "revision": "274",
+      "receipt": "docs/compat/evidence/loadout-provision/r274-064de2cf/receipt.json",
+      "outcome": "FAIL",
+      "stage": "preparation-before-Start",
+      "reason": "fixture returned on production hold before observing the off-world logout transition"
+    },
+    {
+      "revision": "289",
+      "receipt": "docs/compat/evidence/loadout-provision/r289-064de2cf/receipt.json",
+      "outcome": "FAIL",
+      "stage": "preparation-before-Start",
+      "reason": "fixture returned on production hold before observing the off-world logout transition"
+    }
+  ],
+  "ownership": "Standalone fixture observation gate; no host or script failure established",
+  "correction": "Allow only WaitLoggedOut and WaitRelog state observation during hold; these states send no game actions",
+  "source_review": "Original actual Grok 4.5 review 1218 retained; offline checks did not exercise this live boundary"
+}

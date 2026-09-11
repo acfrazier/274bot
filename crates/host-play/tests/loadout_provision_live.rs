@@ -390,7 +390,9 @@ impl LiveState {
 
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let observation = self.publish(client);
-        if hold {
+        // Production hold is true while disconnected. Relog preparation must
+        // observe that boundary; these two states issue no game actions.
+        if hold && !matches!(self.prep, Prep::WaitLoggedOut | Prep::WaitRelog) {
             return;
         }
         if self.started {
