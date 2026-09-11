@@ -1,0 +1,19 @@
+{
+  "outcome": "PASS",
+  "revision": 289,
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "case": "mule_crafter",
+  "host_commit": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "receipt": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-9cc6adb1-gpu.json",
+  "snapshot": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-9cc6adb1-gpu/shots/2026-09-11T10-25-50_45874/2026-09-11T10-28-06_mule_crafter.json",
+  "snapshot_sha256": "eaabac0b08546be5dbbb842856c6104cf93ee71e801f63c94d699ab7feebbb69",
+  "png": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-9cc6adb1-gpu/shots/2026-09-11T10-25-50_45874/2026-09-11T10-28-06_mule_crafter.png",
+  "png_sha256": "afbd8ada1d9c0f54fddbf1d99278ac4637e47c90a2f50b223f147de6774bf67d",
+  "visual_read": true,
+  "visual_observation": "CUA observed Falador East bank200 essence, first27 Air runes and return to bank, then second trip cumulative54 crafted/270XP at Air altar. Saved PASS PNG separately read shows held talisman+27Air and altar; script paint is one tick behind inventory.",
+  "process_elapsed_seconds": 184.86,
+  "scenario_elapsed_ms": 135678,
+  "renderer_claim": "GPU requested; no presentation counters emitted. No texture-routing or performance claim.",
+  "scope": "Solo Air crafting/bank/restock/return/further work. Paired trade and other settings require separate proof."
+}

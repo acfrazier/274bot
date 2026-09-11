@@ -1,13 +1,56 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 10:24 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 11:05 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (10:24 UTC)
+## Disk capacity follow-up (2026-09-11 10:56 UTC)
+
+- Operator reported overnight browser crash after build artifacts exhausted disk.
+  Live disk check found 4.7 GiB available. Root removed only unused compiler
+  outputs: completed root cache, 43 completed-task build directories within this
+  checkout, 19 completed-task build directories beside it, and old harvest debug
+  cache. Sources, proof artifacts, release binaries and active workers retained.
+  Cleanup receipts: evidence/build-isolation/cache-cleanup-20260911-1052.json,
+  cache-cleanup-20260911-1054.json, cache-cleanup-20260911-1057-outer.json and
+  cache-cleanup-20260911-1058-harvest.json. Available space afterward 321 GiB.
+- Root must check free disk before new compilation, reuse a completed exclusively
+  owned cache where appropriate, and remove completed task compiler outputs at
+  review boundaries after checking process references and retaining source/evidence.
+  Exact source isolation remains required; an empty cache is not mandatory.
+  Completed root28 target was removed: future scripts can recreate it but must not
+  claim previous cache reuse unless it actually exists. Do not delete active targets.
+
+## Current follow-ups (11:05 UTC)
+
+- Root9cc Mule solo Air all4 revision/catalog core cells PASS and native289
+  newer full cycle PASS. Ledger276 retains all previous failures; all four
+  matrix rows remain PARTIAL for paired trade and other supported settings.
+  Report06w also records actual TUI274 save/reopen/fresh Start and private
+  native274 Params save/reopen/fresh20casts. Private native9ccui is diagnostic
+  only, with gold unchanged until PASS then script stopped/injection cleared.
+  All prior incomplete UI runs retained; no full-card completion claimed.
+- Root912 exact source3733files/client9d, headless/native/paired binaries and
+  affected cake/catalog/scenario/paired tests plus strict Clippy passed using
+  the then-existing exclusive root28 cache. That cache is now deleted as below.
+  289 station/Ardy loop is finishing; 274 counterpart started11:01. Completed
+  289 pickpocket Guard/Knight and bronze/steel smelting both catalogs PASS;
+  cake misses unchanged bank-return deadline after real stealing; both cook
+  variants stop early. Raw harvest waits completion. Paired Air912 next.
+- Cook107 t_16aac9ce is a bounded disjoint shim-shape correction: existing
+  native cook_stands mapped bank:Tile/range:Tile while CookBot consumes
+  bank.tile/surface. Source inference explains likely startup stop; raw log
+  did not preserve its stop reason. No new host navigation policy authorized.
+- Tools105 2744b8be4 approved actualGrok4.5 run1311 (10 calls); FlaxAIO98
+  d854321b8 approved actualGrok4.5 run1309 (16 calls). Root receipts verified.
+  These are review evidence only, not LIVE. Combat99 and tick106 remain active.
+  Existing special/teleport/shop/Make-X/fire queue remains. No final branch
+  review or full campaign acceptance yet.
+
+## Earlier follow-up snapshot (10:24 UTC)
 
 - Full45card/180row implementation remains active. Main, remotes and releases
   remain unchanged. Final integrated N32, remaining supported branches and

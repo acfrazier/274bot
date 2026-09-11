@@ -1,0 +1,31 @@
+{
+  "mode": "native",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "catalog_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T10:43:27.545122+00:00",
+  "elapsed_seconds": 12.163,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38",
+  "target_started_empty": false,
+  "cache_reuse": "Completed root28 compiler cache reused with new exact9cc source; no empty-started claim",
+  "host_commit": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-panel-params-9cc",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-9ccui",
+  "binary_sha256": "17dd19cfa56a8f7ffaad1e67a37951f9a29e1cbd7713a62f39624256441366c6",
+  "binary_bytes": 189476848,
+  "source_files_verified": 3536,
+  "elapsed_is_not_performance_measurement": true,
+  "diagnostic_only": true,
+  "acceptance_eligible": false,
+  "source_manifest": "docs/compat/evidence/catalog-headed/source-9ccui.json",
+  "scope": "Private native parameter controls only. Original gold actions and deadline unchanged; after gold PASS stop script and release fixed scenario inject. Product/editor/runtime code otherwise exact9cc; production checkout untouched."
+}

@@ -1,0 +1,37 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-9cc6adb1",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T10:22:29.863826+00:00",
+  "host_commit": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "d3d405947b3d49e1cd9e24c16d79a13ef28c6a6ce7fcc929d49973f4d3f2005e",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "274",
+  "case": "mule_crafter",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "274",
+    "CATALOG_SCENARIO": "mule_crafter",
+    "CATALOG_COMMIT": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 45284,
+  "finished_at": "2026-09-11T10:25:04.541779+00:00",
+  "elapsed_seconds": 154.678,
+  "exit_code": 0,
+  "log_sha256": "a61454a08440c38be8b8292857aa861883e865481e67e4649db0fdc3f30e538b",
+  "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+  "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a"
+}

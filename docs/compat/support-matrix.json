@@ -40388,18 +40388,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-6750713b.json",
         "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-9cc6adb1.json",
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
       ]
     },
     {
@@ -40695,18 +40697,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_readiness": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-6750713b.json",
         "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-28d97f38.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-9cc6adb1.json",
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
       ]
     },
     {
@@ -75271,13 +75275,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-8e7d965b-9cc6adb1.json",
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
+      ]
     },
     {
       "display_name": "MuleCrafter",
@@ -75572,16 +75580,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Native28: FAIL reader.inventory at actual Falador East bank. Air talisman held; essence not withdrawn. No core accepted.",
+      "fixture_readiness": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Native28: FAIL reader.inventory at actual Falador East bank. Air talisman held; essence not withdrawn. No core accepted.",
+      "status_detail": "Isolated9cc: mule_crafter=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu.json",
-        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-8e7d965b-9cc6adb1.json",
+        "docs/compat/evidence/catalog-harness/mule-9cc6adb1.json"
       ]
     },
     {

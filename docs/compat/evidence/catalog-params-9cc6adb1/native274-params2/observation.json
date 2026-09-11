@@ -1,0 +1,26 @@
+{
+  "recorded_at": "2026-09-11T11:00:47.703936+00:00",
+  "scope": "Private native Params proof only; exported diagnostic overlay, not catalog acceptance",
+  "source_identity": "docs/compat/evidence/catalog-headed/source-9ccui.json",
+  "binary_identity": "docs/compat/evidence/catalog-headed/binary-9ccui.json",
+  "raw_run": "docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-9ccui-params2",
+  "observed": [
+    "Original gold completed before private override released; actor then stopped",
+    "Opened Script prefs; Rune chainbody selected",
+    "Selected Air battlestaff; switched tabs and reopened: both checked",
+    "Saved source keys rune_chainbody and air_battlestaff",
+    "Fresh Start from idle; actual native screenshot at Runtime 58s, Alchs 20, Notes 6, Runes 6, Profit 600k",
+    "Reopened preferences during fresh run: both remain checked"
+  ],
+  "limits": [
+    "No Air battlestaff stock seeded; no Air conversion claim",
+    "reopened-selected.png captured main tab before successful tab switch; reopened-selected-2.png is the actual preferences capture",
+    "Rendering requested GPU; no presentation counter claim"
+  ],
+  "artifacts": {
+    "reopened-selected-2.png": "ca587b5af9adfd21f17e82b03a6276d8d86929ca04cbcea1b41c97dacd92fd50",
+    "fresh-start.png": "7d3ca0519e0b6ec638d653b3d2dd1bdbdd16421c596a30a6274d3411ef1243b4",
+    "saved-settings.json": "285586f04650821c609bfc8367815fc9b0b31e09ef9a4f1f417fa891c345aae1",
+    "reopened-selected.png": "6535d2ad2b25956614748889a0005294065556078f2a50e8d781c2fcc5969f2f"
+  }
+}
