@@ -1,0 +1,37 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-combatcff",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T16:53:20.256823+00:00",
+  "host_commit": "cffd62c598ceab2ea80b9bcc29e0eaf58f4dd885",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "binary_sha256": "c69edb25b4e792cd08b9e7c3b751abc456eae922972b43fbed9b8f6c0558f5f8",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "274",
+  "case": "coal_trucks",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "274",
+    "CATALOG_SCENARIO": "coal_trucks",
+    "CATALOG_COMMIT": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 15388,
+  "finished_at": "2026-09-11T16:55:12.321032+00:00",
+  "elapsed_seconds": 112.063,
+  "exit_code": 1,
+  "log_sha256": "a059b079123cbab8dadf9fdcb0bea2213549dabb2ac20cd75a6ffbf89a1a294b",
+  "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+  "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a"
+}
