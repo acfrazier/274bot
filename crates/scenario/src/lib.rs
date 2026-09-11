@@ -6161,7 +6161,7 @@ mod tests {
             "chicken_killer_bank StartScript follows empty-feather ack"
         );
         assert_eq!(
-            bank.steps[i - 2].wait.arm,
+            bank.steps[i - 4].wait.arm,
             Proof::ArrivedNear {
                 x: 3029,
                 z: 3294,
