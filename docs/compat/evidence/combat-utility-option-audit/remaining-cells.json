@@ -1,0 +1,77 @@
+{
+  "still_needed_named_scenarios": [
+    {
+      "name": "thiever_bank",
+      "card": "Thiever",
+      "why": "Default banking=None is isolated f6 PASS. Auto is a different generated trip: bank non-food, withdraw food, return to the pickpocket stand. Not NPC-name substitution.",
+      "inject": {"banking": "Auto", "target": "Man", "action": "Pickpocket"},
+      "seed": "Thieving 1+, named food in bank, empty pack of that food, tele to a Man stand. No suicide.",
+      "witness": "Pickpocket XP, food withdraw from a fresh bank generation, closed bank, return to stand, further pickpocket. Name-only or food-seeded pack fail. Other target names stay substitution.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "chaos_druid_tower",
+      "card": "ChaosDruidKiller",
+      "why": "DRUID_SPOTS second key. Surface (2562,3356,0) r4, same Chaos druid npc, Thieving 46 required, Ardougne bank 2616,3332. Not wilderness-z dungeon and not Edgeville trapdoor approach.",
+      "inject": {"location": "Chaos Druid Tower", "combatStyleIndex": "1"},
+      "seed": "Thieving 46, Attack/Strength/Hitpoints 40, Adamant scimitar, lobster in pack, tele tower field. No post-Start aggro/loot RNG cheat.",
+      "witness": "Script Attack on Chaos druid, style XP, honest loot if it lands. Do not treat Edgeville wilderness loot-timeout as this cell. Do not force loot.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "chaos_druid_yanille",
+      "card": "ChaosDruidKiller",
+      "why": "DRUID_SPOTS third key. Yanille Dungeon (2580,9501,0) r8, npc Chaos druid warrior (not Chaos druid), Agility 40 required. Different target identity than Edgeville/Tower.",
+      "inject": {"location": "Yanille Dungeon", "combatStyleIndex": "1"},
+      "seed": "Agility 40, Attack/Strength/Hitpoints 40, Adamant scimitar, lobster, already inside the warrior room. Approach is not this cell.",
+      "witness": "Attack on Chaos druid warrior by display name, style XP, honest loot if it lands. Chaos druid (non-warrior) identity fails.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "ardy_cakes_fight",
+      "card": "ArdyCakes",
+      "why": "guardResponse Fight constructs FightBack instead of Flee. Only two real settings; clues are a stub. Flee core is a separate still-needed existing cell.",
+      "inject": {"guardResponse": "Fight", "solveClues": false},
+      "seed": "Thieving 5, combat stats, empty pack, Baker stall (2668,3312,0). No seeded cake.",
+      "witness": "Post-Start stall steal of 1891/2309/1901, then FightBack kill of the catching guard (not Flee kite). Chocolate cake 1897 fails. Do not dim Flee FAILs to skip this.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "ardy_thiever_fight",
+      "card": "ArdyThiever",
+      "why": "912 isolated PASS used Flee. Fight is the other guardResponse task, not Paladin/Hero name substitution.",
+      "inject": {"thieveTarget": "Guard", "guardResponse": "Fight", "solveClues": false, "bankAtLootSlots": 1},
+      "seed": "Thieving 40, combat stats, stand (2661,3306,0). Same bank-cycle shape as ardy_thiever, but a catching-guard kill instead of kite.",
+      "witness": "Stall food restock, Guard pickpocket coins+XP, FightBack on catch, then bank/return/further pickpocket. Flee-only path fails this cell.",
+      "cells": "both catalogs x 274 and 289"
+    }
+  ],
+  "cell_count": 20,
+  "still_needed_existing_cores": [
+    {"name": "chaos_druid", "card": "ChaosDruidKiller", "note": "Default Edgeville Dungeon 3110,9936,0. Isolated FAILs retained. Named cff diagnostics: looted=false, no serializer panic, 274 has 6 script Attack calls, 289 has 0 Attack and 0 Ground on both. Orch wilderness/hunt/Loot.validate note is not a source defect and is not a fixture-location cheat. Leave cff refresh to root."},
+    {"name": "moss_giant", "card": "MossGiant", "note": "Default melee core. b18/214 274-old PASS is diagnostic, not card acceptance. Newer-catalog and 289 cells lack accepted isolated PASS. Leave cff refresh to root."},
+    {"name": "hill_giant", "card": "HillGiant", "note": "Default melee Giant in pit. 04d7/214 FAIL retained. In-progress cff rows are not a complete batch."},
+    {"name": "auto_fighter", "card": "AutoFighter", "note": "Melee/strength Guard banking=None useSpecial/solveClues off. 04d7/214 FAIL retained. auto_fighter_mage is Mage132, not this audit."},
+    {"name": "rock_crab", "card": "RockCrab", "note": "Default melee, Rocks activation into Rock Crab. 214 FAIL retained."},
+    {"name": "green_dragon", "card": "GreenDragon", "note": "Default melee, worn 1540, bones 536 or hide 1753. 214 FAIL retained. Escape/bank not this core."},
+    {"name": "fire_giant", "card": "FireGiant", "note": "Default melee already in east room, Waterfall Quest, Glarial 295, rope 954, escapeTele Barrel. 214 FAIL retained (Quests transport was native137). Approach/barrel/bank not this core."},
+    {"name": "ardy_fighter", "card": "ArdyFighter", "note": "Default Guard/strength, post-Start stall steal then combat. 214 FAIL retained."},
+    {"name": "ardy_cakes", "card": "ArdyCakes", "note": "Default Flee stall+bank cycle. All isolated FAIL retained. audit142 native guard LOS; keep enabled. Fight is the extra named scenario above."}
+  ],
+  "explicit_none": ["ChickenKiller melee+Loot-count bank", "Thiever banking=None core", "GnomeCourse default radius-20", "DoorOpener door", "DoorOpener gate", "ArdyThiever knight Flee bank cycle", "WildyAgility default course except retained 289-old FAIL"],
+  "not_this_audit": {
+    "mage132": "auto_fighter_mage fixture exists on 7706f053. Autocast.arm is native. Do not add Chicken/Moss/Rock/Fire/Green mage cells; same ArmAutocast dispatch.",
+    "range": "melee vs range is a real combat-mode split (ammo/rangeStyle) but identical CombatStyleLogic+Attack. Do not cartesian ammo names or add per-card range cells on unqualified cores. RockCrab AmmoLogic.sweepPlan is later, after rock_crab melee.",
+    "bank_time_either": "Chicken Time/Either only flip shouldBankNow; Loot-count already witnessed the PeriodicBank trip.",
+    "melee_xp_fields": "attack/strength/controlled/defence are the same setCombatStyle/setCombatMode dispatch.",
+    "npc_name_substitution": "Thiever Man vs Farmer/Paladin/Hero and ArdyThiever Paladin/Hero are Pickpocket on another row.",
+    "death_recovery": "Native DeathRecovery exists. Idle construction is not a missing capability. Do not BLOCK cards for it. A walk-back/regear LIVE cell is not required to close these option bounds.",
+    "clues": "SolveClue remains an honest unavailable stub. Do not independently dim.",
+    "firegiant_teles": "Camelot/Ardougne/Falador/Varrock and GreenDragon Teleport to Varrock await existing teleport work. Barrel remains the FireGiant core escape.",
+    "gnome_radius8": "05k imported AgilityBot defect. Not remaining host work. Do not dim default GnomeCourse.",
+    "brimhaven": "Already source-pair dimmed. No re-audit.",
+    "cff_refresh": "Root owns unfinished cffd62c59 combat. Do not declare batch PASS/FAIL from changing summaries.",
+    "wilderness_aggro": "Edgeville 3110,9936 is inside Player.isInWilderness (underground z>=9920). Hunt nottoostrong is outside wilderness only; frozen Loot.validate requires !inCombat. Explains loot starvation under continuous combat. Not a conclusive script defect. Do not alter aggro/RNG or move the fixture after Start.",
+    "campaign_gates": "Final frontend/N32/lifecycle/fleet/platform stay campaign-wide."
+  }
+}

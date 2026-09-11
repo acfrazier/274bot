@@ -1,0 +1,14 @@
+{
+  "kind": "read-only remaining-option inventory",
+  "brief": "143-combat-utility-option-audit.md",
+  "brief_sha256": "8e9da0c2512f7312e23582adc54bdd3280cd7de36047eb3ad1ed3875ccf58ff4",
+  "kanban_task": "t_46d26f49",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "7706f053b2a71069e4487cd990784b7258e97552",
+  "client_gitlink": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "written_utc": "2026-09-11 16:42 UTC",
+  "old_catalog": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "newer_catalog": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "evidence_cutoff": "Named finalized catalog-harness core-results plus named receipts listed in isolated-pass.json. Fresh cff batch is not a complete acceptance set; cite only docs/compat/evidence/combat-ground-serialization/fresh-chaos-diagnostics.json for those two ChaosDruid cells.",
+  "note": "Campaign HEAD is the working tree at write-up, not a tested isolated binary. Isolated PASS hosts below are the named harvests. Matrix/source/LIVE were not edited. Mage132 fixture auto_fighter_mage exists on this HEAD; this audit does not duplicate it or claim LIVE."
+}
