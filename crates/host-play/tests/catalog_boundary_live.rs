@@ -4,7 +4,7 @@
 //! scenario has completed all preparation waits. The production slot thread
 //! remains the sole owner of gameplay actions; this harness observes snapshots.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -80,6 +80,16 @@ const PRAYER_POTION_3_ID: i32 = 139;
 const FALADOR_WEST_BANK: (i32, i32, i32) = (2946, 3369, 0);
 const FALADOR_EAST_BANK: (i32, i32, i32) = (3013, 3355, 0);
 const FALADOR_FOUNTAIN: (i32, i32, i32) = (2949, 3381, 0);
+const COW_HIDE_ID: i32 = 1739;
+const SOFT_LEATHER_ID: i32 = 1741;
+const HARD_LEATHER_ID: i32 = 1743;
+const TANNER_IF: i32 = 679;
+const SOFT_TAN_ALL_COM: i32 = 8686;
+const HARD_TAN_ALL_COM: i32 = 8690;
+const SHOPMAIN: i32 = 3824;
+const AL_KHARID_BANK: (i32, i32, i32) = (3269, 3167, 0);
+const TANNER_STAND: (i32, i32, i32) = (3277, 3191, 0);
+const DOMMIK_STAND: (i32, i32, i32) = (3316, 3192, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +125,8 @@ enum CoreCase {
     VialFillerEast,
     PotionMaker,
     PotionMakerNamed,
+    TannerBot,
+    TannerBotHard,
 }
 
 impl CoreCase {
@@ -151,6 +163,8 @@ impl CoreCase {
             "vial_filler_east" => Ok(Self::VialFillerEast),
             "potion_maker" => Ok(Self::PotionMaker),
             "potion_maker_named" => Ok(Self::PotionMakerNamed),
+            "tanner_bot" => Ok(Self::TannerBot),
+            "tanner_bot_hard" => Ok(Self::TannerBotHard),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -190,6 +204,8 @@ impl CoreCase {
             Self::VialFillerEast => "vial_filler_east",
             Self::PotionMaker => "potion_maker",
             Self::PotionMakerNamed => "potion_maker_named",
+            Self::TannerBot => "tanner_bot",
+            Self::TannerBotHard => "tanner_bot_hard",
         }
     }
 
@@ -218,6 +234,7 @@ impl CoreCase {
             }
             Self::VialFiller | Self::VialFillerEast => "VialFiller",
             Self::PotionMaker | Self::PotionMakerNamed => "PotionMaker",
+            Self::TannerBot | Self::TannerBotHard => "TannerBot",
         }
     }
 }
@@ -394,6 +411,8 @@ struct Observation {
     chat: Vec<(i32, String)>,
     loc_facts: Vec<BoundedLoc>,
     equipment_ids: BTreeMap<i32, i32>,
+    main_modal: i32,
+    widget_ids: BTreeSet<i32>,
 }
 
 /// One loc retained for these named cases. The live loc sweep is not copied.
@@ -493,6 +512,12 @@ impl Observation {
             chat,
             loc_facts,
             equipment_ids,
+            main_modal: snapshot.modals().main,
+            widget_ids: snapshot
+                .widgets()
+                .iter()
+                .map(|widget| widget.component_id)
+                .collect(),
         }
     }
 
@@ -522,6 +547,10 @@ impl Observation {
 
     fn equipment_id(&self, id: i32) -> i32 {
         self.equipment_ids.get(&id).copied().unwrap_or(0)
+    }
+
+    fn has_widget(&self, id: i32) -> bool {
+        self.widget_ids.contains(&id)
     }
 }
 
@@ -759,6 +788,13 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.item_id(GUAM_LEAF_ID) == 0
                 && baseline.level("herblore") >= 38
         }
+        CoreCase::TannerBot | CoreCase::TannerBotHard => {
+            near(baseline.tile, AL_KHARID_BANK, 6)
+                && baseline.item_id(COW_HIDE_ID) == 0
+                && baseline.item_id(SOFT_LEATHER_ID) == 0
+                && baseline.item_id(HARD_LEATHER_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+        }
     };
     if ready {
         return Ok(());
@@ -827,6 +863,9 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::PotionMakerNamed => {
             "Varrock West bank, Herblore 38, empty pack of 257/227/231/99/139/249"
         }
+        CoreCase::TannerBot | CoreCase::TannerBotHard => {
+            "Al-Kharid bank (3269,3167,0) and empty pack of 1739/1741/1743/995"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -858,6 +897,7 @@ struct CoreWitness {
     chicken_killer_bank_cycle: ChickenKillerBankCycle,
     vial_filler_cycle: VialFillerCycle,
     potion_maker_cycle: PotionMakerCycle,
+    tanner_bot_cycle: TannerBotCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -1702,6 +1742,100 @@ impl PotionMakerCycle {
     }
 }
 
+/// Tan at the Tanner widget, deposit produced leather, restock hides, tan again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct TannerBotCycle {
+    widget: Option<Observation>,
+    tanned: Option<Observation>,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    shop: bool,
+}
+
+struct TannerBotSpec {
+    product: i32,
+    wrong_product: i32,
+    tan_all: i32,
+}
+
+impl TannerBotCycle {
+    fn observe(&mut self, spec: TannerBotSpec, baseline: &Observation, now: &Observation) {
+        let TannerBotSpec {
+            product,
+            wrong_product,
+            tan_all,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong_product) > 0 || now.bank_item_id(wrong_product) > 0;
+        self.shop |= now.main_modal == SHOPMAIN;
+        if self.widget.is_none()
+            && now.main_modal == TANNER_IF
+            && now.has_widget(tan_all)
+            && now.item_id(COW_HIDE_ID) >= 1
+            && now.item_id(product) == 0
+            && now.item_id(COINS_ID) >= 1
+            && near(now.tile, TANNER_STAND, 4)
+            && now.main_modal != SHOPMAIN
+        {
+            self.widget = Some(now.clone());
+        }
+        if let Some(widget) = &self.widget {
+            if self.tanned.is_none()
+                && near(now.tile, TANNER_STAND, 4)
+                && now.item_id(product) >= 1
+                && now.item_id(COW_HIDE_ID) == 0
+                && now.item_id(COINS_ID) < widget.item_id(COINS_ID)
+                && now.item_id(wrong_product) == 0
+                && now.main_modal != SHOPMAIN
+                && !near(now.tile, DOMMIK_STAND, 4)
+            {
+                self.tanned = Some(now.clone());
+            }
+        }
+        if self.tanned.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(product) == 0
+            && now.bank_item_id(product) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(COW_HIDE_ID) >= 1
+                && now.bank_item_id(COW_HIDE_ID) < deposited.bank_item_id(COW_HIDE_ID)
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.withdrawn.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                // Closing the modal advances the bank session generation.
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, TANNER_STAND, 4);
+        }
+        if self.returned {
+            self.further |= !now.bank_open
+                && now.item_id(product) >= 1
+                && now.item_id(COW_HIDE_ID) == 0
+                && now.item_id(wrong_product) == 0;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && !self.wrong_product && !self.shop && self.tanned.is_some()
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -1727,6 +1861,7 @@ impl CoreWitness {
             chicken_killer_bank_cycle: ChickenKillerBankCycle::default(),
             vial_filler_cycle: VialFillerCycle::default(),
             potion_maker_cycle: PotionMakerCycle::default(),
+            tanner_bot_cycle: TannerBotCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -1902,6 +2037,28 @@ impl CoreWitness {
                 observation,
             );
         }
+        if matches!(self.case, CoreCase::TannerBot) {
+            self.tanner_bot_cycle.observe(
+                TannerBotSpec {
+                    product: SOFT_LEATHER_ID,
+                    wrong_product: HARD_LEATHER_ID,
+                    tan_all: SOFT_TAN_ALL_COM,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::TannerBotHard) {
+            self.tanner_bot_cycle.observe(
+                TannerBotSpec {
+                    product: HARD_LEATHER_ID,
+                    wrong_product: SOFT_LEATHER_ID,
+                    tan_all: HARD_TAN_ALL_COM,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -2018,6 +2175,7 @@ impl CoreWitness {
             CoreCase::PotionMaker | CoreCase::PotionMakerNamed => {
                 self.potion_maker_cycle.qualified()
             }
+            CoreCase::TannerBot | CoreCase::TannerBotHard => self.tanner_bot_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -2048,6 +2206,7 @@ impl CoreWitness {
             "chicken_killer_bank_cycle": self.chicken_killer_bank_cycle,
             "vial_filler_cycle": self.vial_filler_cycle,
             "potion_maker_cycle": self.potion_maker_cycle,
+            "tanner_bot_cycle": self.tanner_bot_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -2581,7 +2740,7 @@ fn catalog_boundary_live() {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2622,6 +2781,8 @@ mod tests {
                 .collect(),
             loc_facts: Vec::new(),
             equipment_ids: BTreeMap::new(),
+            main_modal: -1,
+            widget_ids: BTreeSet::new(),
         }
     }
 
@@ -4329,6 +4490,216 @@ mod tests {
         }
     }
 
+    fn tanner_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        main_modal: i32,
+        widgets: &[i32],
+    ) -> Observation {
+        let mut observation = observation(&[], &[], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.main_modal = main_modal;
+        observation.widget_ids = widgets.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan() {
+        for (case, product, wrong, tan_all) in [
+            (
+                CoreCase::TannerBot,
+                SOFT_LEATHER_ID,
+                HARD_LEATHER_ID,
+                SOFT_TAN_ALL_COM,
+            ),
+            (
+                CoreCase::TannerBotHard,
+                HARD_LEATHER_ID,
+                SOFT_LEATHER_ID,
+                HARD_TAN_ALL_COM,
+            ),
+        ] {
+            let baseline = tanner_obs(AL_KHARID_BANK, &[], &[], -1, &[]);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let widget = tanner_obs(
+                TANNER_STAND,
+                &[(COW_HIDE_ID, 27), (COINS_ID, 2000)],
+                &[],
+                TANNER_IF,
+                &[tan_all],
+            );
+            let tanned = tanner_obs(
+                TANNER_STAND,
+                &[(product, 27), (COINS_ID, 1973)],
+                &[],
+                TANNER_IF,
+                &[tan_all],
+            );
+            let mut deposited = tanner_obs(
+                AL_KHARID_BANK,
+                &[(COINS_ID, 1973)],
+                &[(product, 27), (COW_HIDE_ID, 1), (COINS_ID, 3000)],
+                -1,
+                &[],
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn = tanner_obs(
+                AL_KHARID_BANK,
+                &[(COW_HIDE_ID, 1), (COINS_ID, 1973)],
+                &[(product, 27), (COINS_ID, 3000)],
+                -1,
+                &[],
+            );
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let mut returned = tanner_obs(
+                TANNER_STAND,
+                &[(COW_HIDE_ID, 1), (COINS_ID, 1973)],
+                &[],
+                -1,
+                &[],
+            );
+            returned.bank_generation = 2;
+            let mut further = tanner_obs(
+                TANNER_STAND,
+                &[(product, 1), (COINS_ID, 1972)],
+                &[],
+                -1,
+                &[],
+            );
+            further.bank_generation = 2;
+
+            assert!(witness(
+                case,
+                &baseline,
+                [&widget, &tanned, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&widget]).qualify().is_err());
+            assert!(witness(case, &baseline, [&widget, &tanned])
+                .qualify()
+                .is_err());
+            assert!(witness(
+                case,
+                &baseline,
+                [&widget, &tanned, &deposited, &withdrawn, &returned]
+            )
+            .qualify()
+            .is_err());
+
+            let mut unclosed_return = returned.clone();
+            unclosed_return.bank_generation = deposited.bank_generation;
+            let mut unclosed_further = further.clone();
+            unclosed_further.bank_generation = deposited.bank_generation;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &widget,
+                    &tanned,
+                    &deposited,
+                    &withdrawn,
+                    &unclosed_return,
+                    &unclosed_further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = tanned.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Leather".into(), 27);
+            assert!(witness(
+                case,
+                &baseline,
+                [&widget, &name_only, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&widget, &tanned, &stale, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut coins_only = tanned.clone();
+            coins_only.item_ids.remove(&product);
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &widget,
+                    &coins_only,
+                    &deposited,
+                    &withdrawn,
+                    &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let queued = widget.clone();
+            assert!(witness(
+                case,
+                &baseline,
+                [&queued, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut shop = widget.clone();
+            shop.tile = Some(DOMMIK_STAND);
+            shop.main_modal = SHOPMAIN;
+            shop.widget_ids.clear();
+            let mut shop_tanned = tanned.clone();
+            shop_tanned.tile = Some(DOMMIK_STAND);
+            shop_tanned.main_modal = SHOPMAIN;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &shop,
+                    &shop_tanned,
+                    &deposited,
+                    &withdrawn,
+                    &returned,
+                    &further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut wrong_obs = tanned.clone();
+            wrong_obs.item_ids.insert(wrong, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&widget, &wrong_obs, &deposited, &withdrawn, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(product, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -4367,6 +4738,8 @@ mod tests {
             CoreCase::VialFillerEast,
             CoreCase::PotionMaker,
             CoreCase::PotionMakerNamed,
+            CoreCase::TannerBot,
+            CoreCase::TannerBotHard,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
