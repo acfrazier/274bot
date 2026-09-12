@@ -777,6 +777,9 @@ mod tests {
             equipment_ids: BTreeMap::new(),
             main_modal: -1,
             widget_ids: BTreeSet::new(),
+            shop_open: false,
+            shop_stock: Vec::new(),
+            main_make_ids: BTreeSet::new(),
         }
     }
 
@@ -6690,6 +6693,17 @@ mod tests {
             CoreCase::GreenDragonTele,
             CoreCase::FireGiantApproach,
             CoreCase::FireGiantBank,
+            CoreCase::AioTeleport,
+            CoreCase::AioTeleportFalador,
+            CoreCase::AioTeleportNoStaff,
+            CoreCase::ShopBuyout,
+            CoreCase::ShopBuyoutAubury,
+            CoreCase::SmithingBot,
+            CoreCase::SmithingBotPlatebody,
+            CoreCase::LeatherCrafter,
+            CoreCase::LeatherCrafterHardBody,
+            CoreCase::Firemaker,
+            CoreCase::FiremakerOak,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
@@ -9049,6 +9063,572 @@ mod tests {
                 }
             }
             other => panic!("{context}: unsupported injected value {other:?}"),
+        }
+    }
+
+    fn noncombat_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        equipment_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        levels: &[(&str, i32)],
+    ) -> Observation {
+        let mut observation = observation(&[], xp, &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.equipment_ids = equipment_ids.iter().copied().collect();
+        for (name, level) in levels {
+            observation.levels.insert((*name).into(), *level);
+        }
+        observation
+    }
+
+    #[test]
+    fn noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths() {
+        // aio_teleport: Magic XP + Varrock land + law spend, then bank restock
+        // and a further tele. Walking or a seeded land without XP fails.
+        let case = CoreCase::parse("aio_teleport").unwrap();
+        assert_eq!(case.card_name(), "AIO Teleport");
+        let baseline = noncombat_obs(
+            LUMBRIDGE_BANK,
+            &[(LAW_RUNE_ID, 2), (FIRE_RUNE_ID, 20)],
+            &[],
+            &[(STAFF_OF_AIR_ID, 1)],
+            &[("magic", 0)],
+            &[("magic", VARROCK_TELE_MAGIC)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut already = baseline.clone();
+        already.tile = Some(VARROCK_TELE_LAND);
+        assert!(validate_case_baseline(case, &already).is_err());
+        let mut teleported = baseline.clone();
+        teleported.tile = Some(VARROCK_TELE_LAND);
+        teleported.xp.insert("magic".into(), 35);
+        teleported.item_ids.insert(LAW_RUNE_ID, 1);
+        let mut deposited = teleported.clone();
+        deposited.tile = Some(VARROCK_EAST_BANK);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.bank_ids.insert(LAW_RUNE_ID, 200);
+        deposited.item_ids.insert(LAW_RUNE_ID, 0);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(LAW_RUNE_ID, 20);
+        restocked.bank_ids.insert(LAW_RUNE_ID, 180);
+        let mut closed = restocked.clone();
+        closed.bank_open = false;
+        closed.bank_loaded = false;
+        closed.bank_generation = 2;
+        let mut further = closed.clone();
+        further.xp.insert("magic".into(), 70);
+        further.item_ids.insert(LAW_RUNE_ID, 19);
+        assert!(witness(
+            case,
+            &baseline,
+            [&teleported, &deposited, &restocked, &closed, &further]
+        )
+        .qualify()
+        .is_ok());
+        let mut walked = baseline.clone();
+        walked.tile = Some(VARROCK_TELE_LAND);
+        assert!(witness(case, &baseline, [&walked]).qualify().is_err());
+        assert!(witness(case, &baseline, [&teleported, &closed])
+            .qualify()
+            .is_err());
+
+        // aio_teleport_falador: Falador land + packed Air, not already there.
+        let case = CoreCase::parse("aio_teleport_falador").unwrap();
+        let baseline = noncombat_obs(
+            LUMBRIDGE_BANK,
+            &[(LAW_RUNE_ID, 2), (AIR_RUNE_ID, 20)],
+            &[],
+            &[(STAFF_OF_WATER_ID, 1)],
+            &[("magic", 0)],
+            &[("magic", FALADOR_TELE_MAGIC)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut already = baseline.clone();
+        already.tile = Some(FALADOR_TELE_LAND);
+        assert!(validate_case_baseline(case, &already).is_err());
+        let mut no_air = baseline.clone();
+        no_air.item_ids.remove(&AIR_RUNE_ID);
+        assert!(validate_case_baseline(case, &no_air).is_err());
+
+        // aio_teleport_no_staff: covering air staff must not satisfy Air.
+        let case = CoreCase::parse("aio_teleport_no_staff").unwrap();
+        let baseline = noncombat_obs(
+            LUMBRIDGE_BANK,
+            &[(LAW_RUNE_ID, 2), (AIR_RUNE_ID, 20), (FIRE_RUNE_ID, 20)],
+            &[],
+            &[],
+            &[("magic", 0)],
+            &[("magic", VARROCK_TELE_MAGIC)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut staffed = baseline.clone();
+        staffed.equipment_ids.insert(STAFF_OF_AIR_ID, 1);
+        assert!(validate_case_baseline(case, &staffed).is_err());
+
+        // shop_buyout: posted stock down + inv up + coins down, then restock.
+        let case = CoreCase::parse("shop_buyout").unwrap();
+        assert_eq!(case.card_name(), "ShopBuyout");
+        let baseline = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(EMPTY_VIAL_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+        let mut opened = baseline.clone();
+        opened.shop_open = true;
+        opened.main_modal = SHOPMAIN;
+        opened.shop_stock = vec![BoundedShopItem {
+            id: EMPTY_VIAL_ID,
+            count: 10,
+        }];
+        opened.item_ids.insert(COINS_ID, 2000);
+        let mut bought = opened.clone();
+        bought.shop_stock[0].count = 5;
+        bought.item_ids.insert(EMPTY_VIAL_ID, 5);
+        bought.item_ids.insert(COINS_ID, 1900);
+        let mut deposited = bought.clone();
+        deposited.shop_open = false;
+        deposited.main_modal = -1;
+        deposited.shop_stock.clear();
+        deposited.tile = Some(ARDOUGNE_EAST_BANK);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.item_ids.remove(&EMPTY_VIAL_ID);
+        deposited.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        deposited.bank_ids.insert(COINS_ID, 18000);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(COINS_ID, 3900);
+        restocked.bank_ids.insert(COINS_ID, 16100);
+        let mut returned = restocked.clone();
+        returned.bank_open = false;
+        returned.bank_loaded = false;
+        returned.bank_generation = 2;
+        returned.tile = Some(AEMAD_STAND);
+        let mut reopened = returned.clone();
+        reopened.shop_open = true;
+        reopened.main_modal = SHOPMAIN;
+        reopened.shop_stock = vec![BoundedShopItem {
+            id: EMPTY_VIAL_ID,
+            count: 5,
+        }];
+        let mut further = reopened.clone();
+        further.shop_stock[0].count = 4;
+        further.item_ids.insert(EMPTY_VIAL_ID, 1);
+        further.item_ids.insert(COINS_ID, 3880);
+        assert!(witness(
+            case,
+            &baseline,
+            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(case, &baseline, [&opened, &bought])
+            .qualify()
+            .is_err());
+        let mut queued = opened.clone();
+        queued.item_ids.insert(COINS_ID, 2000);
+        assert!(witness(case, &baseline, [&opened, &queued])
+            .qualify()
+            .is_err());
+
+        let case = CoreCase::parse("shop_buyout_aubury").unwrap();
+        let aemad = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
+        assert!(validate_case_baseline(case, &aemad).is_err());
+        let aubury = noncombat_obs(AUBURY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(case, &aubury).unwrap();
+
+        // smithing_bot: anvil panel row, not chat make.
+        let case = CoreCase::parse("smithing_bot").unwrap();
+        assert_eq!(case.card_name(), "SmithingBot");
+        let baseline = noncombat_obs(
+            VARROCK_WEST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &[("smithing", 1)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(BRONZE_DAGGER_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+        let mut panel = baseline.clone();
+        panel.tile = Some(VARROCK_ANVIL);
+        panel.item_ids.insert(BRONZE_BAR_ID, 5);
+        panel.item_ids.insert(HAMMER_ID, 1);
+        panel.main_make_ids.insert(BRONZE_DAGGER_ID);
+        let mut produced = panel.clone();
+        produced.item_ids.insert(BRONZE_DAGGER_ID, 1);
+        produced.item_ids.insert(BRONZE_BAR_ID, 4);
+        produced.xp.insert("smithing".into(), 12);
+        let mut deposited = produced.clone();
+        deposited.tile = Some(VARROCK_WEST_BANK);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.item_ids.remove(&BRONZE_DAGGER_ID);
+        deposited.item_ids.remove(&BRONZE_BAR_ID);
+        deposited.bank_ids.insert(BRONZE_DAGGER_ID, 1);
+        deposited.bank_ids.insert(BRONZE_BAR_ID, 23);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(BRONZE_BAR_ID, 5);
+        restocked.bank_ids.insert(BRONZE_BAR_ID, 18);
+        let mut returned = restocked.clone();
+        returned.bank_open = false;
+        returned.bank_loaded = false;
+        returned.bank_generation = 2;
+        returned.tile = Some(VARROCK_ANVIL);
+        let mut further = returned.clone();
+        further.item_ids.insert(BRONZE_DAGGER_ID, 1);
+        further.item_ids.insert(BRONZE_BAR_ID, 4);
+        further.xp.insert("smithing".into(), 24);
+        assert!(witness(
+            case,
+            &baseline,
+            [&panel, &produced, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        let mut chat_only = produced.clone();
+        chat_only.main_make_ids.clear();
+        assert!(witness(case, &baseline, [&chat_only, &deposited, &further])
+            .qualify()
+            .is_err());
+
+        let case = CoreCase::parse("smithing_bot_platebody").unwrap();
+        let low = noncombat_obs(
+            VARROCK_WEST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &[("smithing", 1)],
+        );
+        assert!(validate_case_baseline(case, &low).is_err());
+        let ready = noncombat_obs(
+            VARROCK_WEST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &[("smithing", BRONZE_PLATEBODY_SMITHING)],
+        );
+        validate_case_baseline(case, &ready).unwrap();
+
+        // leather_crafter: selected 2311/8636 interface.
+        let case = CoreCase::parse("leather_crafter").unwrap();
+        assert_eq!(case.card_name(), "LeatherCrafter");
+        let baseline = noncombat_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &[("crafting", 1)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(LEATHER_GLOVES_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+        let mut iface = baseline.clone();
+        iface.item_ids.insert(SOFT_LEATHER_ID, 5);
+        iface.item_ids.insert(NEEDLE_ID, 1);
+        iface.item_ids.insert(THREAD_ID, 10);
+        iface.main_modal = LEATHER_IF;
+        iface.widget_ids.insert(LEATHER_GLOVES_MAKE10);
+        let mut produced = iface.clone();
+        produced.item_ids.insert(LEATHER_GLOVES_ID, 5);
+        produced.item_ids.insert(SOFT_LEATHER_ID, 0);
+        produced.xp.insert("crafting".into(), 13);
+        let mut deposited = produced.clone();
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.item_ids.remove(&LEATHER_GLOVES_ID);
+        deposited.bank_ids.insert(LEATHER_GLOVES_ID, 5);
+        deposited.bank_ids.insert(SOFT_LEATHER_ID, 23);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(SOFT_LEATHER_ID, 5);
+        restocked.bank_ids.insert(SOFT_LEATHER_ID, 18);
+        let mut returned = restocked.clone();
+        returned.bank_open = false;
+        returned.bank_loaded = false;
+        returned.bank_generation = 2;
+        let mut further = returned.clone();
+        further.item_ids.insert(LEATHER_GLOVES_ID, 1);
+        further.xp.insert("crafting".into(), 26);
+        assert!(witness(
+            case,
+            &baseline,
+            [&iface, &produced, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        let mut no_if = produced.clone();
+        no_if.main_modal = -1;
+        no_if.widget_ids.clear();
+        assert!(witness(
+            case,
+            &baseline,
+            [&no_if, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        // leather_crafter_hard_body: no-modal burst; 2311 fails this cell.
+        let case = CoreCase::parse("leather_crafter_hard_body").unwrap();
+        let baseline = noncombat_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &[("crafting", HARD_LEATHER_CRAFTING)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut withdrawn = baseline.clone();
+        withdrawn.item_ids.insert(HARD_LEATHER_ID, 5);
+        withdrawn.item_ids.insert(NEEDLE_ID, 1);
+        withdrawn.item_ids.insert(THREAD_ID, 10);
+        let mut produced = withdrawn.clone();
+        produced.item_ids.insert(HARDLEATHER_BODY_ID, 5);
+        produced.item_ids.insert(HARD_LEATHER_ID, 0);
+        produced.xp.insert("crafting".into(), 35);
+        let mut deposited = produced.clone();
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.item_ids.remove(&HARDLEATHER_BODY_ID);
+        deposited.bank_ids.insert(HARDLEATHER_BODY_ID, 5);
+        deposited.bank_ids.insert(HARD_LEATHER_ID, 23);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(HARD_LEATHER_ID, 5);
+        restocked.bank_ids.insert(HARD_LEATHER_ID, 18);
+        let mut returned = restocked.clone();
+        returned.bank_open = false;
+        returned.bank_loaded = false;
+        returned.bank_generation = 2;
+        let mut further = returned.clone();
+        further.item_ids.insert(HARDLEATHER_BODY_ID, 1);
+        further.xp.insert("crafting".into(), 70);
+        assert!(witness(
+            case,
+            &baseline,
+            [&withdrawn, &produced, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        let mut via_if = withdrawn.clone();
+        via_if.main_modal = LEATHER_IF;
+        via_if.widget_ids.insert(LEATHER_GLOVES_MAKE10);
+        assert!(witness(
+            case,
+            &baseline,
+            [&via_if, &produced, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        // firemaker: Fire loc in posted AABB, not walking the bank tile.
+        let case = CoreCase::parse("firemaker").unwrap();
+        assert_eq!(case.card_name(), "Firemaker");
+        let baseline = noncombat_obs(
+            VARROCK_EAST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("firemaking", 0)],
+            &[("firemaking", 1)],
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded_fire = baseline.clone();
+        seeded_fire.loc_facts.push(BoundedLoc {
+            id: 1,
+            x: 3236,
+            z: 3420,
+            level: 0,
+            name: Some("Fire".into()),
+            open: false,
+        });
+        assert!(validate_case_baseline(case, &seeded_fire).is_err());
+        let mut withdrawn = baseline.clone();
+        withdrawn.item_ids.insert(LOGS_ID, 5);
+        withdrawn.item_ids.insert(TINDERBOX_ID, 1);
+        let mut lit = withdrawn.clone();
+        lit.item_ids.insert(LOGS_ID, 4);
+        lit.xp.insert("firemaking".into(), 40);
+        lit.loc_facts.push(BoundedLoc {
+            id: 1,
+            x: 3236,
+            z: 3420,
+            level: 0,
+            name: Some("Fire".into()),
+            open: false,
+        });
+        let mut deposited = lit.clone();
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.item_ids.insert(LOGS_ID, 0);
+        deposited.bank_ids.insert(LOGS_ID, 23);
+        let mut restocked = deposited.clone();
+        restocked.item_ids.insert(LOGS_ID, 5);
+        restocked.bank_ids.insert(LOGS_ID, 18);
+        let mut returned = restocked.clone();
+        returned.bank_open = false;
+        returned.bank_loaded = false;
+        returned.bank_generation = 2;
+        let mut further = returned.clone();
+        further.xp.insert("firemaking".into(), 80);
+        further.item_ids.insert(LOGS_ID, 4);
+        assert!(witness(
+            case,
+            &baseline,
+            [&withdrawn, &lit, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        let mut walked = withdrawn.clone();
+        walked.xp.insert("firemaking".into(), 40);
+        walked.item_ids.insert(LOGS_ID, 4);
+        let mut walked_deposited = walked.clone();
+        walked_deposited.bank_open = true;
+        walked_deposited.bank_loaded = true;
+        walked_deposited.bank_generation = 1;
+        walked_deposited.item_ids.insert(LOGS_ID, 0);
+        walked_deposited.bank_ids.insert(LOGS_ID, 23);
+        let mut walked_restocked = walked_deposited.clone();
+        walked_restocked.item_ids.insert(LOGS_ID, 5);
+        walked_restocked.bank_ids.insert(LOGS_ID, 18);
+        let mut walked_returned = walked_restocked.clone();
+        walked_returned.bank_open = false;
+        walked_returned.bank_loaded = false;
+        walked_returned.bank_generation = 2;
+        let mut walked_further = walked_returned.clone();
+        walked_further.xp.insert("firemaking".into(), 80);
+        walked_further.item_ids.insert(LOGS_ID, 4);
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &withdrawn,
+                &walked,
+                &walked_deposited,
+                &walked_restocked,
+                &walked_returned,
+                &walked_further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let case = CoreCase::parse("firemaker_oak").unwrap();
+        let low = noncombat_obs(
+            VARROCK_EAST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("firemaking", 0)],
+            &[("firemaking", 1)],
+        );
+        assert!(validate_case_baseline(case, &low).is_err());
+        let ready = noncombat_obs(
+            VARROCK_EAST_BANK,
+            &[],
+            &[],
+            &[],
+            &[("firemaking", 0)],
+            &[("firemaking", OAK_FIREMAKING)],
+        );
+        validate_case_baseline(case, &ready).unwrap();
+    }
+
+    #[test]
+    fn noncombat_core_injects_match_frozen_card_schemas() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (name, card, path_tail) in [
+            (
+                "aio_teleport",
+                "AIO Teleport",
+                "src/bot/scripts/AIOTeleport/AIOTeleport.ts",
+            ),
+            (
+                "aio_teleport_falador",
+                "AIO Teleport",
+                "src/bot/scripts/AIOTeleport/AIOTeleport.ts",
+            ),
+            (
+                "aio_teleport_no_staff",
+                "AIO Teleport",
+                "src/bot/scripts/AIOTeleport/AIOTeleport.ts",
+            ),
+            (
+                "shop_buyout",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_aubury",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "smithing_bot",
+                "SmithingBot",
+                "src/bot/scripts/SmithingBot/SmithingBot.ts",
+            ),
+            (
+                "smithing_bot_platebody",
+                "SmithingBot",
+                "src/bot/scripts/SmithingBot/SmithingBot.ts",
+            ),
+            (
+                "leather_crafter",
+                "LeatherCrafter",
+                "src/bot/scripts/LeatherCrafter/LeatherCrafter.ts",
+            ),
+            (
+                "leather_crafter_hard_body",
+                "LeatherCrafter",
+                "src/bot/scripts/LeatherCrafter/LeatherCrafter.ts",
+            ),
+            (
+                "firemaker",
+                "Firemaker",
+                "src/bot/scripts/Firemaker/Firemaker.ts",
+            ),
+            (
+                "firemaker_oak",
+                "Firemaker",
+                "src/bot/scripts/Firemaker/Firemaker.ts",
+            ),
+        ] {
+            let case = CoreCase::parse(name).expect("noncombat case registered");
+            assert_eq!(case.card_name(), card);
+            let scenario = scenario::get(name).expect("noncombat scenario registered");
+            assert_eq!(scenario.settings.start_script, Some(card));
+            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+                .unwrap_or_default();
+            for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+                let path = repo
+                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                    .join(path_tail);
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
+                let declared = declared_source_settings(&source);
+                for id in inject.keys() {
+                    assert!(
+                        declared.contains(id),
+                        "{name}: {card} at {commit} does not declare setting {id:?}"
+                    );
+                }
+            }
         }
     }
 }

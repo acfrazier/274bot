@@ -470,6 +470,17 @@ pub fn get(name: &str) -> Option<Scenario> {
         "green_dragon_tele" => Some(green_dragon_tele_scenario()),
         "fire_giant_approach" => Some(fire_giant_approach_scenario()),
         "fire_giant_bank" => Some(fire_giant_bank_scenario()),
+        "aio_teleport" => Some(aio_teleport_scenario()),
+        "aio_teleport_falador" => Some(aio_teleport_falador_scenario()),
+        "aio_teleport_no_staff" => Some(aio_teleport_no_staff_scenario()),
+        "shop_buyout" => Some(shop_buyout_scenario()),
+        "shop_buyout_aubury" => Some(shop_buyout_aubury_scenario()),
+        "smithing_bot" => Some(smithing_bot_scenario()),
+        "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
+        "leather_crafter" => Some(leather_crafter_scenario()),
+        "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
+        "firemaker" => Some(firemaker_scenario()),
+        "firemaker_oak" => Some(firemaker_oak_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -574,6 +585,17 @@ pub fn names() -> Vec<&'static str> {
         "green_dragon_tele",
         "fire_giant_approach",
         "fire_giant_bank",
+        "aio_teleport",
+        "aio_teleport_falador",
+        "aio_teleport_no_staff",
+        "shop_buyout",
+        "shop_buyout_aubury",
+        "smithing_bot",
+        "smithing_bot_platebody",
+        "leather_crafter",
+        "leather_crafter_hard_body",
+        "firemaker",
+        "firemaker_oak",
         "script_trade",
     ]
 }
@@ -12679,6 +12701,945 @@ struct TradeAcceptSlot {
     tele_sent: bool,
 }
 
+const FIREMAKING_STAT: i32 = 11;
+const STAFF_OF_AIR_ID: i32 = 1381;
+const STAFF_OF_WATER_ID: i32 = 1383;
+const HAMMER_ID: i32 = 2347;
+const BRONZE_DAGGER_ID: i32 = 1205;
+const BRONZE_PLATEBODY_ID: i32 = 1117;
+const NEEDLE_ID: i32 = 1733;
+const THREAD_ID: i32 = 1734;
+const LEATHER_GLOVES_ID: i32 = 1059;
+const HARDLEATHER_BODY_ID: i32 = 1131;
+const OAK_LOGS_ID: i32 = 1521;
+const TINDERBOX_ID: i32 = 590;
+const LUMBRIDGE_BANK: WorldTile = WorldTile {
+    x: 3092,
+    z: 3245,
+    level: 0,
+};
+const FALADOR_TELE_LAND: WorldTile = WorldTile {
+    x: 2965,
+    z: 3378,
+    level: 0,
+};
+const AEMAD_STAND: WorldTile = WorldTile {
+    x: 2613,
+    z: 3294,
+    level: 0,
+};
+const AUBURY_STAND: WorldTile = WorldTile {
+    x: 3253,
+    z: 3401,
+    level: 0,
+};
+const AEMAD_BANK: WorldTile = WorldTile {
+    x: 2655,
+    z: 3283,
+    level: 0,
+};
+const VARROCK_ANVIL: WorldTile = WorldTile {
+    x: 3188,
+    z: 3425,
+    level: 0,
+};
+
+const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
+const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "teleportName",
+    value: ScriptInjectValue::Str("falador"),
+}];
+const AIO_TELEPORT_NO_STAFF_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "useStaffRunes",
+    value: ScriptInjectValue::Bool(false),
+}];
+const SHOP_BUYOUT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(2000.0),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(2000.0),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[]),
+    },
+];
+const SHOP_BUYOUT_AUBURY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str("Aubury's runes — Varrock (Varrock East bank)"),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(2000.0),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(2000.0),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[]),
+    },
+];
+const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "bar",
+        value: ScriptInjectValue::Str("Bronze"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Dagger"),
+    },
+];
+const SMITHING_BOT_PLATEBODY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "bar",
+        value: ScriptInjectValue::Str("Bronze"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Platebody"),
+    },
+];
+const LEATHER_CRAFTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "leatherType",
+    value: ScriptInjectValue::Str("Leather"),
+}];
+const LEATHER_CRAFTER_HARD_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "leatherType",
+    value: ScriptInjectValue::Str("Hard leather"),
+}];
+const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "logType",
+        value: ScriptInjectValue::Str("Logs"),
+    },
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Varrock East"),
+    },
+];
+const FIREMAKER_OAK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "logType",
+        value: ScriptInjectValue::Str("Oak logs"),
+    },
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Varrock East"),
+    },
+];
+
+struct AioTeleportPlan {
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    magic: i32,
+    staff_id: Option<i32>,
+    staff_alias: Option<&'static str>,
+    pack_air: bool,
+    pack_fire: bool,
+    landing: WorldTile,
+    restock: WorldTile,
+}
+
+fn aio_teleport_scenario() -> Scenario {
+    aio_teleport_variant(AioTeleportPlan {
+        name: "aio_teleport",
+        inject: AIO_TELEPORT_INJECT,
+        magic: 25,
+        staff_id: Some(STAFF_OF_AIR_ID),
+        staff_alias: Some("staff_of_air"),
+        pack_air: false,
+        pack_fire: true,
+        landing: VARROCK_TELE_LAND,
+        restock: VARROCK_EAST_BANK,
+    })
+}
+
+fn aio_teleport_falador_scenario() -> Scenario {
+    aio_teleport_variant(AioTeleportPlan {
+        name: "aio_teleport_falador",
+        inject: AIO_TELEPORT_FALADOR_INJECT,
+        magic: 37,
+        staff_id: Some(STAFF_OF_WATER_ID),
+        staff_alias: Some("staff_of_water"),
+        pack_air: true,
+        pack_fire: false,
+        landing: FALADOR_TELE_LAND,
+        restock: FALADOR_WEST_BANK,
+    })
+}
+
+fn aio_teleport_no_staff_scenario() -> Scenario {
+    aio_teleport_variant(AioTeleportPlan {
+        name: "aio_teleport_no_staff",
+        inject: AIO_TELEPORT_NO_STAFF_INJECT,
+        magic: 25,
+        staff_id: None,
+        staff_alias: None,
+        pack_air: true,
+        pack_fire: true,
+        landing: VARROCK_TELE_LAND,
+        restock: VARROCK_EAST_BANK,
+    })
+}
+
+/// Pack two laws so the default 1000-law withdraw never runs inside 180s.
+/// Falador also packs Air: water staff covers Water, not Air.
+fn aio_teleport_variant(plan: AioTeleportPlan) -> Scenario {
+    let AioTeleportPlan {
+        name,
+        inject,
+        magic,
+        staff_id,
+        staff_alias,
+        pack_air,
+        pack_fire,
+        landing,
+        restock,
+    } = plan;
+    let first_xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::FreshStatXpGain {
+        id: MAGIC_STAT,
+        min: 1,
+    };
+    let land = Proof::ArrivedNear {
+        x: landing.x,
+        z: landing.z,
+        level: landing.level,
+        radius: 8,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic, packed laws, and Lumbridge bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat magic {magic}"));
+                cheat(c, "give lawrune 2");
+                if pack_air {
+                    cheat(c, "give airrune 20");
+                }
+                if pack_fire {
+                    cheat(c, "give firerune 20");
+                }
+                if let Some(alias) = staff_alias {
+                    cheat(c, &format!("give {alias} 1"));
+                }
+                cheat(c, "givebank lawrune 200");
+                cheat(
+                    c,
+                    &tele_args(LUMBRIDGE_BANK.level, LUMBRIDGE_BANK.x, LUMBRIDGE_BANK.z),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: LUMBRIDGE_BANK.x,
+                z: LUMBRIDGE_BANK.z,
+                level: LUMBRIDGE_BANK.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm Magic before Start",
+        Proof::Stat {
+            id: MAGIC_STAT,
+            min: magic,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "confirm packed laws before Start",
+        Proof::ItemId {
+            id: LAW_RUNE_ID,
+            count: 2,
+        },
+    ));
+    if let Some(id) = staff_id {
+        steps.push(wear_combat_item_step(
+            "wield and acknowledge the covering staff before Start",
+            id,
+        ));
+    } else {
+        steps.push(bank_fletcher_watch(
+            "confirm no covering air staff before Start",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_AIR_ID,
+                count: 0,
+            },
+        ));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the banked law restock",
+        Proof::BankItemId {
+            id: LAW_RUNE_ID,
+            count: 200,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Magic XP from Game.teleport after Start", first_xp),
+        (
+            "watch arrival at the selected teleport land after Start",
+            land,
+        ),
+        (
+            "watch a packed law consumed after Start",
+            Proof::ItemIdAtMost {
+                id: LAW_RUNE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch law restock at the destination bank after Start",
+            Proof::BankItemId {
+                id: LAW_RUNE_ID,
+                count: 1,
+            },
+        ),
+        ("watch the teleport bank close", Proof::BankClosed),
+        ("watch a further Magic XP after restock", further_xp),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    let _ = restock;
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("AIO Teleport"),
+            script_settings_inject: if inject.is_empty() {
+                None
+            } else {
+                Some(inject)
+            },
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn shop_buyout_scenario() -> Scenario {
+    shop_buyout_variant("shop_buyout", SHOP_BUYOUT_INJECT, AEMAD_STAND, AEMAD_BANK)
+}
+
+fn shop_buyout_aubury_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_aubury",
+        SHOP_BUYOUT_AUBURY_INJECT,
+        AUBURY_STAND,
+        VARROCK_EAST_BANK,
+    )
+}
+
+fn shop_buyout_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    stand: WorldTile,
+    bank: WorldTile,
+) -> Scenario {
+    let coins = Proof::ItemId {
+        id: COINS_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed banked coins and tele to the keeper before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "givebank coins 20000");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm empty pack of coins before Start",
+        Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the coin seed bank",
+        Proof::BankItemId {
+            id: COINS_ID,
+            count: 20000,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch coins withdrawn after Start", coins),
+        (
+            "watch coins spent on posted stock after Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 1999,
+            },
+        ),
+        (
+            "watch the buyout bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch coins after restock for a further buy", coins),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    let _ = bank;
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: coins,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ShopBuyout"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn smithing_bot_scenario() -> Scenario {
+    smithing_bot_variant(
+        "smithing_bot",
+        SMITHING_BOT_INJECT,
+        1,
+        BRONZE_DAGGER_ID,
+        BRONZE_PLATEBODY_ID,
+    )
+}
+
+fn smithing_bot_platebody_scenario() -> Scenario {
+    smithing_bot_variant(
+        "smithing_bot_platebody",
+        SMITHING_BOT_PLATEBODY_INJECT,
+        18,
+        BRONZE_PLATEBODY_ID,
+        BRONZE_DAGGER_ID,
+    )
+}
+
+fn smithing_bot_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    smithing: i32,
+    product_id: i32,
+    wrong_id: i32,
+) -> Scenario {
+    let anvil = Proof::ArrivedNear {
+        x: VARROCK_ANVIL.x,
+        z: VARROCK_ANVIL.z,
+        level: VARROCK_ANVIL.level,
+        radius: 8,
+    };
+    let product = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let xp = Proof::StatXpGain {
+        id: SMITHING_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::FreshStatXpGain {
+        id: SMITHING_STAT,
+        min: 1,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Smithing, banked hammer/bars, and tele to Varrock West before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat smithing {smithing}"));
+                cheat(c, "givebank hammer 1");
+                cheat(c, "givebank bronze_bar 28");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Smithing before Start",
+            Proof::Stat {
+                id: SMITHING_STAT,
+                min: smithing,
+            },
+        ),
+        (
+            "confirm no seeded bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BRONZE_BAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the bar seed bank",
+        Proof::BankItemId {
+            id: BRONZE_BAR_ID,
+            count: 28,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the hammer seed bank",
+        Proof::BankItemId {
+            id: HAMMER_ID,
+            count: 1,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch arrival at the Varrock anvil after Start", anvil),
+        ("watch Smithing XP from the anvil panel after Start", xp),
+        ("watch the selected smithing product after Start", product),
+        (
+            "watch script-smithed product enter a fresh bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of product after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of bronze bars",
+            Proof::ItemId {
+                id: BRONZE_BAR_ID,
+                count: 1,
+            },
+        ),
+        ("watch the smithing bank close", Proof::BankClosed),
+        ("watch return to the anvil after restock", anvil),
+        ("watch further Smithing XP after restock", further_xp),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("SmithingBot"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn leather_crafter_scenario() -> Scenario {
+    leather_crafter_variant(
+        "leather_crafter",
+        LEATHER_CRAFTER_INJECT,
+        1,
+        "leather",
+        SOFT_LEATHER_ID,
+        LEATHER_GLOVES_ID,
+        HARDLEATHER_BODY_ID,
+    )
+}
+
+fn leather_crafter_hard_body_scenario() -> Scenario {
+    leather_crafter_variant(
+        "leather_crafter_hard_body",
+        LEATHER_CRAFTER_HARD_INJECT,
+        28,
+        "hard_leather",
+        HARD_LEATHER_ID,
+        HARDLEATHER_BODY_ID,
+        LEATHER_GLOVES_ID,
+    )
+}
+
+fn leather_crafter_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    crafting: i32,
+    leather_alias: &'static str,
+    leather_id: i32,
+    product_id: i32,
+    wrong_id: i32,
+) -> Scenario {
+    let product = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let xp = Proof::StatXpGain {
+        id: CRAFTING_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::FreshStatXpGain {
+        id: CRAFTING_STAT,
+        min: 1,
+    };
+    let bank = AL_KHARID_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Crafting, banked needle/thread/leather, and tele to Al-Kharid before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat crafting {crafting}"));
+                cheat(c, "givebank needle 1");
+                cheat(c, "givebank thread 100");
+                cheat(c, &format!("givebank {leather_alias} 28"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Crafting before Start",
+            Proof::Stat {
+                id: CRAFTING_STAT,
+                min: crafting,
+            },
+        ),
+        (
+            "confirm no seeded leather in pack before Start",
+            Proof::ItemIdAtMost {
+                id: leather_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded needle in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded thread in pack before Start",
+            Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the leather seed bank",
+        Proof::BankItemId {
+            id: leather_id,
+            count: 28,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Crafting XP after Start", xp),
+        ("watch the leather product after Start", product),
+        (
+            "watch script-crafted product enter a fresh bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of product after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of leather",
+            Proof::ItemId {
+                id: leather_id,
+                count: 1,
+            },
+        ),
+        ("watch the leather bank close", Proof::BankClosed),
+        ("watch further Crafting XP after restock", further_xp),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("LeatherCrafter"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn firemaker_scenario() -> Scenario {
+    firemaker_variant(
+        "firemaker",
+        FIREMAKER_INJECT,
+        1,
+        "logs",
+        LOGS_ID,
+        OAK_LOGS_ID,
+    )
+}
+
+fn firemaker_oak_scenario() -> Scenario {
+    firemaker_variant(
+        "firemaker_oak",
+        FIREMAKER_OAK_INJECT,
+        15,
+        "oak_logs",
+        OAK_LOGS_ID,
+        LOGS_ID,
+    )
+}
+
+fn firemaker_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    firemaking: i32,
+    log_alias: &'static str,
+    log_id: i32,
+    wrong_id: i32,
+) -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: FIREMAKING_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::FreshStatXpGain {
+        id: FIREMAKING_STAT,
+        min: 1,
+    };
+    let bank = VARROCK_EAST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Firemaking, banked tinderbox/logs, and tele to Varrock East before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat firemaking {firemaking}"));
+                cheat(c, "givebank tinderbox 1");
+                cheat(c, &format!("givebank {log_alias} 28"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Firemaking before Start",
+            Proof::Stat {
+                id: FIREMAKING_STAT,
+                min: firemaking,
+            },
+        ),
+        (
+            "confirm no seeded logs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: log_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded tinderbox in pack before Start",
+            Proof::ItemIdAtMost {
+                id: TINDERBOX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong logs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the log seed bank",
+        Proof::BankItemId {
+            id: log_id,
+            count: 28,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Firemaking XP after Start", xp),
+        (
+            "watch logs consumed after Start",
+            Proof::ItemIdAtMost {
+                id: log_id,
+                count: 27,
+            },
+        ),
+        (
+            "watch a restock of logs",
+            Proof::ItemId {
+                id: log_id,
+                count: 1,
+            },
+        ),
+        ("watch the fire bank close", Proof::BankClosed),
+        ("watch further Firemaking XP after restock", further_xp),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Firemaker"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// The `script_trade` scenario: a two-bot fleet — both profiles Start the
 /// in-tree `TradeBot` fixture (Compat `Trade.request` / `offerAll` /
 /// `accept`) with reciprocal `partner` inject; profile 1 also rust-teles
@@ -13249,6 +14210,17 @@ mod tests {
                 "green_dragon_tele",
                 "fire_giant_approach",
                 "fire_giant_bank",
+                "aio_teleport",
+                "aio_teleport_falador",
+                "aio_teleport_no_staff",
+                "shop_buyout",
+                "shop_buyout_aubury",
+                "smithing_bot",
+                "smithing_bot_platebody",
+                "leather_crafter",
+                "leather_crafter_hard_body",
+                "firemaker",
+                "firemaker_oak",
                 "script_trade",
             ]
         );
