@@ -7592,6 +7592,937 @@ mod tests {
         }
     }
 
+    /// Bank-cell observation helper: the shared combat shape plus the trip's
+    /// bank session fields (open/loaded/generation).
+    #[allow(clippy::too_many_arguments)]
+    fn bank_obs(
+        case: CoreCase,
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        npcs: &[BoundedNpc],
+        local_in_combat: bool,
+        local_target_npc: Option<usize>,
+        generation: u64,
+        open: bool,
+    ) -> Observation {
+        assert!(
+            combat_bank_spec(case).is_some(),
+            "{case:?} declares a bank spec"
+        );
+        let levels = [
+            ("attack", COMBAT_ATTACK_LEVEL),
+            ("strength", COMBAT_ATTACK_LEVEL),
+            ("hitpoints", COMBAT_ATTACK_LEVEL),
+            ("thieving", 5),
+            ("agility", 1),
+        ];
+        let mut observation = combat_obs(
+            tile,
+            item_ids,
+            xp,
+            &levels,
+            npcs,
+            local_in_combat,
+            local_target_npc,
+        );
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.bank_open = open;
+        observation.bank_loaded = open;
+        observation.bank_generation = generation;
+        observation
+    }
+
+    /// Every bank cell has to execute its card's own trip: the pack stock that
+    /// belongs in the bank actually lands there, the card's restock line is met
+    /// from that bank's own stock, the modal closes on a later session, the trip
+    /// returns to the card's tile, and work resumes there. Seed-only banks,
+    /// wrong-stand booths and dropped stages must all fail.
+    #[test]
+    fn bank_cells_require_their_own_deposit_restock_close_return_and_further_work() {
+        // --- auto_fighter_bank: `banking=Auto`, East Ardougne, trout restock.
+        let case = CoreCase::parse("auto_fighter_bank").expect("bank case registered");
+        assert_eq!(case.card_name(), "AutoFighter");
+        let baseline = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut no_prepared_loot = baseline.clone();
+        no_prepared_loot.item_ids.remove(&UNCUT_SAPPHIRE_ID);
+        assert!(validate_case_baseline(case, &no_prepared_loot).is_err());
+        let mut carried_weapon_only = baseline.clone();
+        carried_weapon_only.equipment_ids.clear();
+        assert!(validate_case_baseline(case, &carried_weapon_only).is_err());
+        let mut short_food = baseline.clone();
+        short_food.item_ids.insert(TROUT_ID, AUTO_FIGHTER_FOOD - 1);
+        assert!(validate_case_baseline(case, &short_food).is_err());
+
+        let first = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 12)],
+            &[combat_npc(1, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(1),
+            0,
+            false,
+        );
+        let defeat = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 40)],
+            &[
+                combat_npc(1, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(2, "Guard", 20, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(2),
+            0,
+            false,
+        );
+        let deposited = bank_obs(
+            case,
+            ARDOUGNE_EAST_BANK,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(TROUT_ID, 20), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let restocked = bank_obs(
+            case,
+            ARDOUGNE_EAST_BANK,
+            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let closed = bank_obs(
+            case,
+            ARDOUGNE_EAST_BANK,
+            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let returned = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let further = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
+            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 60)],
+            &[combat_npc(3, "Guard", 20, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(3),
+            6,
+            false,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &defeat, &deposited, &restocked, &closed, &returned, &further, &further]
+        )
+        .qualify()
+        .is_ok());
+        // The bank never took the pack stock: no deposit, nothing to qualify.
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &defeat, &first, &defeat, &first, &defeat]
+        )
+        .qualify()
+        .is_err());
+        // A bank that only ever opened (readiness/seed) fails: same pack loot,
+        // no deposit move, no close, no return.
+        let open_only = bank_obs(
+            case,
+            ARDOUGNE_EAST_BANK,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &defeat, &deposited, &open_only, &open_only]
+        )
+        .qualify()
+        .is_err());
+        // A loaded booth away from the card's own bank fails the cell.
+        let wrong_bank = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(TROUT_ID, 20), (UNCUT_SAPPHIRE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &first,
+                &defeat,
+                &wrong_bank,
+                &restocked,
+                &closed,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // The return without further work is not a completed trip.
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &defeat, &deposited, &restocked, &closed, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
+        let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");
+        assert_eq!(case.card_name(), "MossGiant");
+        let baseline = bank_obs(
+            case,
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_FOOD)],
+            &[(LOBSTER_ID, 24)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded_loot = baseline.clone();
+        seeded_loot.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_loot).is_err());
+        let mut full_pack = baseline.clone();
+        full_pack.item_ids.insert(LOBSTER_ID, MOSS_GIANT_FOOD + 1);
+        assert!(validate_case_baseline(case, &full_pack).is_err());
+        let mut foreign_stand = baseline.clone();
+        foreign_stand.tile = Some(HILL_GIANT_PIT);
+        assert!(validate_case_baseline(case, &foreign_stand).is_err());
+
+        let first = bank_obs(
+            case,
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_FOOD)],
+            &[(LOBSTER_ID, 24)],
+            &[("strength", 12)],
+            &[combat_npc(4, "Moss giant", 22, true, MOSS_GIANT_SAFESPOT)],
+            true,
+            Some(4),
+            0,
+            false,
+        );
+        let bones_in_pack = bank_obs(
+            case,
+            MOSS_GIANT_SAFESPOT,
+            &[(BIG_BONES_ID, 1)],
+            &[(LOBSTER_ID, 24)],
+            &[("strength", 44)],
+            &[
+                combat_npc(4, "Moss giant", 0, false, MOSS_GIANT_SAFESPOT),
+                combat_npc(5, "Moss giant", 20, true, MOSS_GIANT_SAFESPOT),
+            ],
+            true,
+            Some(5),
+            0,
+            false,
+        );
+        let deposited = bank_obs(
+            case,
+            MOSS_GIANT_BANK,
+            &[],
+            &[(LOBSTER_ID, 24), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let restocked = bank_obs(
+            case,
+            MOSS_GIANT_BANK,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
+            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let closed = bank_obs(
+            case,
+            MOSS_GIANT_BANK,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
+            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let returned = bank_obs(
+            case,
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
+            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let further = bank_obs(
+            case,
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_BANK_RESTOCK)],
+            &[(LOBSTER_ID, 4), (BIG_BONES_ID, 1)],
+            &[("strength", 68)],
+            &[combat_npc(6, "Moss giant", 20, true, MOSS_GIANT_SAFESPOT)],
+            true,
+            Some(6),
+            6,
+            false,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &first,
+                &bones_in_pack,
+                &deposited,
+                &restocked,
+                &closed,
+                &returned,
+                &further,
+                &further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        // A trip with no close/return is not the declared bank round trip.
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &bones_in_pack, &deposited, &restocked]
+        )
+        .qualify()
+        .is_err());
+        // Depositing without restocking the card's food line fails the cell.
+        let loot_only_bank = bank_obs(
+            case,
+            MOSS_GIANT_BANK,
+            &[],
+            &[(LOBSTER_ID, 24), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &first,
+                &bones_in_pack,
+                &deposited,
+                &loot_only_bank,
+                &closed,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        // --- hill_giant_bank: `lootSlots=1` trip end, Varrock West, trout restock.
+        let case = CoreCase::parse("hill_giant_bank").expect("bank case registered");
+        assert_eq!(case.card_name(), "HillGiant");
+        let baseline = bank_obs(
+            case,
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[(TROUT_ID, 12)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut no_key = baseline.clone();
+        no_key.item_ids.remove(&BRASS_KEY_ID);
+        assert!(validate_case_baseline(case, &no_key).is_err());
+        let mut note_holding = baseline.clone();
+        note_holding.item_ids.insert(NOTED_BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(case, &note_holding).is_err());
+
+        let first = bank_obs(
+            case,
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[(TROUT_ID, 12)],
+            &[("strength", 12)],
+            &[combat_npc(7, "Giant", 22, true, HILL_GIANT_PIT)],
+            true,
+            Some(7),
+            0,
+            false,
+        );
+        let looted = bank_obs(
+            case,
+            HILL_GIANT_PIT,
+            &[
+                (TROUT_ID, HILL_GIANT_FOOD),
+                (BRASS_KEY_ID, 1),
+                (BIG_BONES_ID, 1),
+            ],
+            &[(TROUT_ID, 12)],
+            &[("strength", 44)],
+            &[
+                combat_npc(7, "Giant", 0, false, HILL_GIANT_PIT),
+                combat_npc(8, "Giant", 20, true, HILL_GIANT_PIT),
+            ],
+            true,
+            Some(8),
+            0,
+            false,
+        );
+        let deposited = bank_obs(
+            case,
+            HILL_GIANT_BANK,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[(TROUT_ID, 12), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let restocked = bank_obs(
+            case,
+            HILL_GIANT_BANK,
+            &[
+                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
+                (BRASS_KEY_ID, 1),
+            ],
+            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let closed = bank_obs(
+            case,
+            HILL_GIANT_BANK,
+            &[
+                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
+                (BRASS_KEY_ID, 1),
+            ],
+            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let returned = bank_obs(
+            case,
+            HILL_GIANT_PIT,
+            &[
+                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
+                (BRASS_KEY_ID, 1),
+            ],
+            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[("strength", 44)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let further = bank_obs(
+            case,
+            HILL_GIANT_PIT,
+            &[
+                (TROUT_ID, HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK),
+                (BRASS_KEY_ID, 1),
+            ],
+            &[(TROUT_ID, 8), (BIG_BONES_ID, 1)],
+            &[("strength", 68)],
+            &[combat_npc(9, "Giant", 20, true, HILL_GIANT_PIT)],
+            true,
+            Some(9),
+            6,
+            false,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &looted, &deposited, &restocked, &closed, &returned, &further, &further]
+        )
+        .qualify()
+        .is_ok());
+        // A banked drop with no return to the pit is incomplete.
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &looted, &deposited, &restocked, &closed]
+        )
+        .qualify()
+        .is_err());
+        // Every pit spot is a legitimate return; a surface bank tile is not.
+        let mut surface_return = returned.clone();
+        surface_return.tile = Some(HILL_GIANT_BANK);
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &first,
+                &looted,
+                &deposited,
+                &restocked,
+                &closed,
+                &surface_return,
+                &surface_return
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        // --- chaos_druid_bank: `prepare-trip` end, Edgeville booth and trapdoor.
+        let case = CoreCase::parse("chaos_druid_bank").expect("bank case registered");
+        assert_eq!(case.card_name(), "ChaosDruidKiller");
+        let baseline = bank_obs(
+            case,
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut full_trip_food = baseline.clone();
+        full_trip_food.item_ids.insert(LOBSTER_ID, CHAOS_DRUID_FOOD);
+        assert!(validate_case_baseline(case, &full_trip_food).is_err());
+        let mut seeded_herb = baseline.clone();
+        seeded_herb.item_ids.insert(UNIDENTIFIED_GUAM_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_herb).is_err());
+
+        let deposited = bank_obs(
+            case,
+            CHAOS_DRUID_BANK,
+            &[],
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let restocked = bank_obs(
+            case,
+            CHAOS_DRUID_BANK,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let closed = bank_obs(
+            case,
+            CHAOS_DRUID_BANK,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let returned = bank_obs(
+            case,
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let first = bank_obs(
+            case,
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 12)],
+            &[combat_npc(10, "Chaos druid", 22, true, CHAOS_DRUID_FIELD)],
+            true,
+            Some(10),
+            6,
+            false,
+        );
+        let looted = bank_obs(
+            case,
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 44)],
+            &[
+                combat_npc(10, "Chaos druid", 0, false, CHAOS_DRUID_FIELD),
+                combat_npc(11, "Chaos druid", 20, true, CHAOS_DRUID_FIELD),
+            ],
+            true,
+            Some(11),
+            6,
+            false,
+        );
+        let further = bank_obs(
+            case,
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[(LOBSTER_ID, CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 68)],
+            &[combat_npc(12, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
+            true,
+            Some(12),
+            6,
+            false,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&deposited, &restocked, &closed, &returned, &first, &looted, &further, &further]
+        )
+        .qualify()
+        .is_ok());
+        // Depositing the pack but never withdrawing the food back fails.
+        let no_restock = bank_obs(
+            case,
+            CHAOS_DRUID_BANK,
+            &[],
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD + CHAOS_DRUID_BANK_FOOD)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &deposited,
+                &no_restock,
+                &closed,
+                &returned,
+                &first,
+                &looted,
+                &further,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        // --- ardy_fighter_bank: `bankStrategy=Loot count` PeriodicBank.
+        let case = CoreCase::parse("ardy_fighter_bank").expect("bank case registered");
+        assert_eq!(case.card_name(), "ArdyFighter");
+        let baseline = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[],
+            &[],
+            &[("strength", 0), ("thieving", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded_cake = baseline.clone();
+        seeded_cake.item_ids.insert(CAKE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_cake).is_err());
+        let mut low_thieving = baseline.clone();
+        low_thieving.levels.insert("thieving".into(), 4);
+        assert!(validate_case_baseline(case, &low_thieving).is_err());
+        let mut no_weapon = baseline.clone();
+        no_weapon.equipment_ids.clear();
+        assert!(validate_case_baseline(case, &no_weapon).is_err());
+
+        let stolen = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4)],
+            &[],
+            &[("strength", 0), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        let first = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4)],
+            &[],
+            &[("strength", 12), ("thieving", 60)],
+            &[combat_npc(13, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(13),
+            0,
+            false,
+        );
+        let looted = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4), (STEEL_ARROW_ID, 5)],
+            &[],
+            &[("strength", 44), ("thieving", 60)],
+            &[
+                combat_npc(13, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(14, "Guard", 20, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(14),
+            0,
+            false,
+        );
+        let deposited = bank_obs(
+            case,
+            ARDY_BANK,
+            &[(CAKE_ID, 4)],
+            &[(STEEL_ARROW_ID, 5)],
+            &[("strength", 44), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        let closed = bank_obs(
+            case,
+            ARDY_BANK,
+            &[(CAKE_ID, 4)],
+            &[(STEEL_ARROW_ID, 5)],
+            &[("strength", 44), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let returned = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4)],
+            &[(STEEL_ARROW_ID, 5)],
+            &[("strength", 44), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            6,
+            false,
+        );
+        let further = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4)],
+            &[(STEEL_ARROW_ID, 5)],
+            &[("strength", 68), ("thieving", 60)],
+            &[combat_npc(15, "Guard", 20, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(15),
+            6,
+            false,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&stolen, &first, &looted, &deposited, &closed, &returned, &further, &further]
+        )
+        .qualify()
+        .is_ok());
+        // The stall steal alone (no Guard kill, no trip) is the Flee/Off core,
+        // not this bank cell.
+        assert!(
+            witness(case, &baseline, [&stolen, &stolen, &stolen, &stolen])
+                .qualify()
+                .is_err()
+        );
+        // A deposit that never closes and returns is not the declared trip.
+        assert!(witness(
+            case,
+            &baseline,
+            [&stolen, &first, &looted, &deposited, &deposited]
+        )
+        .qualify()
+        .is_err());
+        // Loot left in the pack (no deposit move) fails even with a close.
+        let no_deposit = bank_obs(
+            case,
+            ARDY_BANK,
+            &[(CAKE_ID, 4), (STEEL_ARROW_ID, 5)],
+            &[],
+            &[("strength", 44), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &stolen,
+                &first,
+                &looted,
+                &no_deposit,
+                &closed,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    /// Bank-cell inject keys and values must be declared by their own frozen
+    /// card (schema key or `settings.*` accessor).
+    #[test]
+    fn bank_cell_injects_match_frozen_card_schemas() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (name, card, path_tail) in [
+            (
+                "auto_fighter_bank",
+                "AutoFighter",
+                "src/bot/scripts/AutoFighter/AutoFighter.ts",
+            ),
+            (
+                "moss_giant_bank",
+                "MossGiant",
+                "src/bot/scripts/MossGiant/MossGiant.ts",
+            ),
+            (
+                "hill_giant_bank",
+                "HillGiant",
+                "src/bot/scripts/HillGiant/HillGiant.ts",
+            ),
+            (
+                "chaos_druid_bank",
+                "ChaosDruidKiller",
+                "src/bot/scripts/ChaosDruidKiller/ChaosDruidKiller.ts",
+            ),
+            (
+                "ardy_fighter_bank",
+                "ArdyFighter",
+                "src/bot/scripts/ArdyFighter/ArdyFighter.ts",
+            ),
+        ] {
+            let case = CoreCase::parse(name).expect("bank case registered");
+            assert_eq!(case.card_name(), card);
+            let scenario = scenario::get(name).expect("bank scenario registered");
+            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+                .unwrap_or_else(|| panic!("{name} injects no settings"));
+            for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+                let path = repo
+                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                    .join(path_tail);
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
+                let declared = declared_source_settings(&source);
+                assert!(
+                    !declared.is_empty(),
+                    "{name}: {card} at {commit} declares no SETTINGS schema"
+                );
+                for id in inject.keys() {
+                    assert!(
+                        declared.contains(id),
+                        "{name}: {card} at {commit} does not declare setting {id:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// The identifiers a frozen card actually reads as settings: the keys of its
     /// own `SETTINGS` schema plus the keys it pulls through `this.settings.<kind>`
     /// accessors, because a card can read a key it never lists in the schema
@@ -7600,7 +8531,7 @@ mod tests {
     /// and a spread (the loadout schema) is not a setting id.
     fn declared_source_settings(source: &str) -> BTreeSet<String> {
         let start = source
-            .find("export const SETTINGS: SettingsSchema = {")
+            .find(": SettingsSchema = {")
             .expect("card declares a SETTINGS schema");
         let rest = &source[start..];
         let end = rest.find("\n};").expect("SETTINGS schema terminates");

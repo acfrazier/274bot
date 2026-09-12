@@ -460,6 +460,11 @@ pub fn get(name: &str) -> Option<Scenario> {
         "green_dragon_potions" => Some(green_dragon_potions_scenario()),
         "fire_giant" => Some(fire_giant_scenario()),
         "ardy_fighter" => Some(ardy_fighter_scenario()),
+        "auto_fighter_bank" => Some(auto_fighter_bank_scenario()),
+        "moss_giant_bank" => Some(moss_giant_bank_scenario()),
+        "hill_giant_bank" => Some(hill_giant_bank_scenario()),
+        "chaos_druid_bank" => Some(chaos_druid_bank_scenario()),
+        "ardy_fighter_bank" => Some(ardy_fighter_bank_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -554,6 +559,11 @@ pub fn names() -> Vec<&'static str> {
         "green_dragon_potions",
         "fire_giant",
         "ardy_fighter",
+        "auto_fighter_bank",
+        "moss_giant_bank",
+        "hill_giant_bank",
+        "chaos_druid_bank",
+        "ardy_fighter_bank",
         "script_trade",
     ]
 }
@@ -8550,6 +8560,17 @@ const CHAOS_DRUID_FOOD: i32 = 12;
 const MOSS_GIANT_FOOD: i32 = 10;
 const HILL_GIANT_FOOD: i32 = 8;
 const AUTO_FIGHTER_FOOD: i32 = 8;
+/// Bank-cell preparation: MossGiant only banks once the pack's food is gone, so
+/// the bank cell carries a shortfall instead of a full pack; ChaosDruidKiller's
+/// own `tripPrepared` needs `foodWithdraw` (12) in the field, so 8 forces its
+/// declared `prepare-trip` end.
+const MOSS_GIANT_BANK_FOOD: i32 = 2;
+const CHAOS_DRUID_BANK_FOOD: i32 = 8;
+/// Restock lines the cards themselves withdraw to (MossGiant's declared
+/// `foodWithdraw` default 20, AutoFighter's 10, HillGiant's 12).
+const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
+const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
+const HILL_GIANT_BANK_RESTOCK: i32 = 4;
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
 const AUTO_FIGHTER_MAGE_CASTS: i32 = 150;
 const AUTO_FIGHTER_MAGE_AIR_RUNES: i32 = AUTO_FIGHTER_MAGE_CASTS * 2;
@@ -11549,6 +11570,538 @@ fn ardy_fighter_scenario() -> Scenario {
     })
 }
 
+/// `banking=Auto` on AutoFighter: BankRun walks to the nearest bank from the
+/// anchor, deposits everything its keep-list does not hold and restocks food.
+/// `bankAtLootSlots=1` so the prepared trip loot is what ends the trip.
+const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("Auto"),
+    },
+    ScriptSettingInject {
+        id: "bankAtLootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
+/// HillGiant's always-on trip end, reached on the first loot slot so the cell
+/// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
+const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "lootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+/// ArdyFighter's `bankStrategy=Loot count` PeriodicBank after it has looted a
+/// Guard drop. `foodTarget=1` keeps the stall restock short so the cell has
+/// room for the loot the bank trip deposits.
+const ARDY_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Loot count"),
+    },
+    ScriptSettingInject {
+        id: "bankEveryItems",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+/// Shared bank-cell fixture: the same safe-tile preparation and acknowledgement
+/// order as `combat_core_scenario`, plus the acknowledged bank stock the trip
+/// has to draw from, a wielded (never carried) weapon so the card's own deposit
+/// cannot stash it, and the bank/return watch chain after Start.
+#[allow(clippy::too_many_arguments)]
+fn combat_bank_scenario(
+    name: &'static str,
+    card: &'static str,
+    tele: WorldTile,
+    radius: i32,
+    food_alias: &'static str,
+    food_id: i32,
+    food_count: i32,
+    weapon_id: i32,
+    extra_give: &'static [(&'static str, i32, i32)],
+    loot_empty: &'static [i32],
+    inject: &'static [ScriptSettingInject],
+    thieving: i32,
+    bank_alias: &'static str,
+    bank_food_count: i32,
+    prepared_stock: Option<(&'static str, i32, i32)>,
+    watches: &[(&'static str, Proof)],
+) -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare melee stats, trip stock and bank stock on the safe tile before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                if thieving > 0 {
+                    cheat(c, &format!("setstat thieving {thieving}"));
+                }
+                cheat(c, "~clearinv");
+                cheat(c, &format!("give {food_alias} {food_count}"));
+                for &(alias, _, count) in extra_give {
+                    cheat(c, &format!("give {alias} {count}"));
+                }
+                if let Some((alias, _, count)) = prepared_stock {
+                    cheat(c, &format!("give {alias} {count}"));
+                }
+                if bank_food_count > 0 {
+                    cheat(c, &format!("givebank {bank_alias} {bank_food_count}"));
+                }
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: 0,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "acknowledge prepared Attack 40",
+            Proof::Stat {
+                id: 0,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge prepared Strength 40",
+            Proof::Stat {
+                id: STRENGTH_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge prepared Hitpoints 40",
+            Proof::Stat {
+                id: 3,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    if thieving > 0 {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared Thieving before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: thieving,
+            },
+        ));
+    }
+    if food_count > 0 {
+        steps.push(bank_fletcher_watch(
+            "acknowledge the trip's carried food before Start",
+            Proof::ItemId {
+                id: food_id,
+                count: food_count,
+            },
+        ));
+    }
+    for &(_, id, count) in extra_give {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared extra gear before Start",
+            Proof::ItemId { id, count },
+        ));
+    }
+    if let Some((_, id, count)) = prepared_stock {
+        steps.push(bank_fletcher_watch(
+            "acknowledge the prepared trip loot before Start",
+            Proof::ItemId { id, count },
+        ));
+    }
+    for &id in loot_empty {
+        steps.push(bank_fletcher_watch(
+            "confirm no seeded kill loot in pack before Start",
+            Proof::ItemIdAtMost { id, count: 0 },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "acknowledge the weapon carried onto the safe tile",
+        Proof::ItemId {
+            id: weapon_id,
+            count: 1,
+        },
+    ));
+    steps.push(wear_combat_item_step(
+        "wield and acknowledge the weapon before the hostile-field teleport",
+        weapon_id,
+    ));
+    steps.push(Step {
+        name: "teleport into the hostile field only after preparation is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(bank_fletcher_watch(
+        "watch Strength XP from the selected melee style after Start",
+        xp,
+    ));
+    for (step_name, arm) in watches {
+        steps.push(bank_fletcher_watch(step_name, *arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some(card),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// `banking=Auto` on the Guard anchor: one prepared listed-loot gem is the
+/// trip's loot slot (`bankAtLootSlots=1`), East Ardougne is the nearest bank,
+/// and the BankRun has to deposit it, restock trout to its declared 10, close,
+/// walk back to the anchor and fight again. Guards expose no gem-table drop in
+/// the frozen content, so the trip loot is prepared input and said so here and
+/// in the options-149 report; the witness still refuses a seed-only pass.
+fn auto_fighter_bank_scenario() -> Scenario {
+    combat_bank_scenario(
+        "auto_fighter_bank",
+        "AutoFighter",
+        ARDOUGNE_GUARD,
+        8,
+        "trout",
+        TROUT_ID,
+        AUTO_FIGHTER_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[],
+        &[],
+        AUTO_FIGHTER_BANK_INJECT,
+        0,
+        "trout",
+        20,
+        Some(("uncut_sapphire", UNCUT_SAPPHIRE_ID, 1)),
+        &[
+            (
+                "watch the trip loot enter a fresh Ardougne East bank",
+                Proof::BankItemId {
+                    id: UNCUT_SAPPHIRE_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the BankRun restock Trout to its declared ten",
+                Proof::ItemId {
+                    id: TROUT_ID,
+                    count: AUTO_FIGHTER_BANK_RESTOCK,
+                },
+            ),
+            ("watch the BankRun close the booth", Proof::BankClosed),
+            (
+                "watch return to the Guard anchor after banking",
+                Proof::ArrivedNear {
+                    x: ARDOUGNE_GUARD.x,
+                    z: ARDOUGNE_GUARD.z,
+                    level: ARDOUGNE_GUARD.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
+/// MossGiant's own trip end (no food left) reached after a looted Big bones,
+/// so the Ardougne West booth deposit and lobster restock are the source's
+/// transitions, not a seeded stock move.
+fn moss_giant_bank_scenario() -> Scenario {
+    combat_bank_scenario(
+        "moss_giant_bank",
+        "MossGiant",
+        MOSS_GIANT_SAFESPOT,
+        10,
+        "lobster",
+        LOBSTER_ID,
+        MOSS_GIANT_BANK_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[],
+        MOSS_GIANT_LOOT_EMPTY,
+        MOSS_GIANT_INJECT,
+        0,
+        "lobster",
+        24,
+        None,
+        &[
+            (
+                "watch the trip's Big bones enter a fresh Ardougne West bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the restock of Lobster to the card's declared line",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: MOSS_GIANT_BANK_RESTOCK,
+                },
+            ),
+            ("watch MossGiant close its bank", Proof::BankClosed),
+            (
+                "watch return to the moss-giant safespot after banking",
+                Proof::ArrivedNear {
+                    x: MOSS_GIANT_SAFESPOT.x,
+                    z: MOSS_GIANT_SAFESPOT.z,
+                    level: MOSS_GIANT_SAFESPOT.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
+/// HillGiant's always-on trip end (`lootSlots=1`): one looted Giant drop ends
+/// the trip, Varrock West banks it and withdraws trout back, then the pit
+/// fight resumes.
+fn hill_giant_bank_scenario() -> Scenario {
+    combat_bank_scenario(
+        "hill_giant_bank",
+        "HillGiant",
+        HILL_GIANT_PIT,
+        16,
+        "trout",
+        TROUT_ID,
+        HILL_GIANT_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
+        HILL_GIANT_LOOT_EMPTY,
+        HILL_GIANT_BANK_INJECT,
+        0,
+        "trout",
+        12,
+        None,
+        &[
+            (
+                "watch the trip's Big bones enter a fresh Varrock West bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the restock of Trout to the card's declared twelve",
+                Proof::ItemId {
+                    id: TROUT_ID,
+                    count: HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                },
+            ),
+            ("watch HillGiant close its bank", Proof::BankClosed),
+            (
+                "watch return to the giant pit after banking",
+                Proof::ArrivedNear {
+                    x: HILL_GIANT_PIT.x,
+                    z: HILL_GIANT_PIT.z,
+                    level: HILL_GIANT_PIT.level,
+                    radius: 16,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
+/// ChaosDruidKiller's own `prepare-trip` end: the pack carries less than
+/// `foodWithdraw`, so the card climbs out, deposits the pack at the Edgeville
+/// booth, withdraws its twelve lobster, closes and returns through the trapdoor
+/// to the field, where the kills, loot and further work have to follow.
+fn chaos_druid_bank_scenario() -> Scenario {
+    combat_bank_scenario(
+        "chaos_druid_bank",
+        "ChaosDruidKiller",
+        CHAOS_DRUID_FIELD,
+        14,
+        "lobster",
+        LOBSTER_ID,
+        CHAOS_DRUID_BANK_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[],
+        CHAOS_DRUID_LOOT_EMPTY,
+        CHAOS_DRUID_INJECT,
+        0,
+        "lobster",
+        12,
+        None,
+        &[
+            (
+                "watch the prepare-trip restock of exactly twelve Lobster",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: CHAOS_DRUID_FOOD,
+                },
+            ),
+            ("watch the Edgeville bank close", Proof::BankClosed),
+            (
+                "watch return through the trapdoor into the druid field",
+                Proof::ArrivedNear {
+                    x: CHAOS_DRUID_FIELD.x,
+                    z: CHAOS_DRUID_FIELD.z,
+                    level: CHAOS_DRUID_FIELD.level,
+                    radius: 14,
+                },
+            ),
+            (
+                "watch fresh Strength XP inside the field after the return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
+/// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
+/// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
+/// card's own loot list and returns to the market anchor for further work.
+fn ardy_fighter_bank_scenario() -> Scenario {
+    combat_bank_scenario(
+        "ardy_fighter_bank",
+        "ArdyFighter",
+        ARDOUGNE_GUARD,
+        12,
+        "cake",
+        CAKE_ID,
+        0,
+        COMBAT_SCIMITAR_ID,
+        &[],
+        ARDY_FIGHTER_LOOT_EMPTY,
+        ARDY_FIGHTER_BANK_INJECT,
+        5,
+        "",
+        0,
+        None,
+        &[
+            ("watch the periodic bank close", Proof::BankClosed),
+            (
+                "watch return to the market anchor after banking",
+                Proof::ArrivedNear {
+                    x: ARDOUGNE_GUARD.x,
+                    z: ARDOUGNE_GUARD.z,
+                    level: ARDOUGNE_GUARD.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -12123,6 +12676,11 @@ mod tests {
                 "green_dragon_potions",
                 "fire_giant",
                 "ardy_fighter",
+                "auto_fighter_bank",
+                "moss_giant_bank",
+                "hill_giant_bank",
+                "chaos_druid_bank",
+                "ardy_fighter_bank",
                 "script_trade",
             ]
         );
@@ -12649,6 +13207,95 @@ mod tests {
             );
             assert!(names().contains(&name));
         }
+    }
+
+    #[test]
+    fn bank_cells_register_their_cards_injects_and_watch_chain() {
+        for (name, card) in [
+            ("auto_fighter_bank", "AutoFighter"),
+            ("moss_giant_bank", "MossGiant"),
+            ("hill_giant_bank", "HillGiant"),
+            ("chaos_druid_bank", "ChaosDruidKiller"),
+            ("ardy_fighter_bank", "ArdyFighter"),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(scenario.settings.start_script, Some(card));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert_eq!(scenario.settings.terminal_shot, Some(name));
+            assert!(scenario.settings.full_rate && scenario.seed.mainland);
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name} starts the card"));
+            assert!(
+                scenario.steps[..start].iter().any(|step| step.wait.arm
+                    == Proof::EquipmentId {
+                        id: COMBAT_SCIMITAR_ID
+                    }),
+                "{name} wields its weapon before the hostile-field teleport"
+            );
+            let watch = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(
+                watch.contains(&Proof::BankClosed),
+                "{name} watches its own bank close"
+            );
+            assert!(
+                watch.iter().any(|arm| matches!(
+                    arm,
+                    Proof::FreshStatXpGain {
+                        id: STRENGTH_STAT,
+                        min: 1
+                    }
+                )),
+                "{name} needs fresh work after the bank return"
+            );
+        }
+        let auto = settings_inject_map(
+            get("auto_fighter_bank")
+                .unwrap()
+                .settings
+                .script_settings_inject,
+        )
+        .unwrap();
+        assert_eq!(auto.get("banking"), Some(&Value::String("Auto".into())));
+        assert_eq!(auto.get("bankAtLootSlots"), Some(&Value::from(1.0)));
+        let hill = settings_inject_map(
+            get("hill_giant_bank")
+                .unwrap()
+                .settings
+                .script_settings_inject,
+        )
+        .unwrap();
+        assert_eq!(hill.get("lootSlots"), Some(&Value::from(1.0)));
+        assert_eq!(hill.get("buryBones"), Some(&Value::Bool(false)));
+        let chaos = settings_inject_map(
+            get("chaos_druid_bank")
+                .unwrap()
+                .settings
+                .script_settings_inject,
+        )
+        .unwrap();
+        assert_eq!(
+            chaos.get("location"),
+            Some(&Value::String("Edgeville Dungeon".into()))
+        );
+        let ardy = settings_inject_map(
+            get("ardy_fighter_bank")
+                .unwrap()
+                .settings
+                .script_settings_inject,
+        )
+        .unwrap();
+        assert_eq!(
+            ardy.get("bankStrategy"),
+            Some(&Value::String("Loot count".into()))
+        );
+        assert_eq!(ardy.get("bankEveryItems"), Some(&Value::from(1.0)));
+        assert_eq!(ardy.get("target"), Some(&Value::String("Guard".into())));
     }
 
     #[test]
