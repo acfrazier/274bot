@@ -1,8 +1,0 @@
-
-running 1 test
-274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
-{"phase":"identity","profile":"local-289 · 127.0.0.1:44594 · revision 289","revision":289,"cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","username":"h28968822161","shared_binding":true,"production_operation_gate":"host-boundary-not-qualified: revision 289 bot operation awaits host action qualification (plan step 4)","navigation_used":false,"play_slots_started":false}
-{"phase":"initial-scene2","state":{"ingame":true,"attached":true,"scene_state":2,"tile":[3094,3106,0],"tick":1,"npc_count":0,"loc_count":3369,"inventory":[],"modals":{"main":-1,"side":-1,"chat":-1,"tutorial":6179},"chat_texts":[]},"detail":{}}
-{"phase":"baseline-after-preparation","state":{"ingame":true,"attached":true,"scene_state":2,"tile":[3220,3212,0],"tick":1,"npc_count":0,"loc_count":4344,"inventory":[],"modals":{"main":-1,"side":-1,"chat":-1,"tutorial":-1},"chat_texts":[]},"detail":{}}
-{"phase":"walk-applied","state":{"ingame":true,"attached":true,"scene_state":2,"tile":[3221,3212,0],"tick":3,"npc_count":19,"loc_count":4344,"inventory":[],"modals":{"main":-1,"side":-1,"chat":-1,"tutorial":-1},"chat_texts":[]},"detail":{"before":[3220,3212,0],"target":{"x":3221,"z":3212,"level":0}}}
-FAIL: revision_boundary_live: fixture missing visible Hans with Talk-to

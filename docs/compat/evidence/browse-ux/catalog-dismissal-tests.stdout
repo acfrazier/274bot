@@ -1,7 +1,0 @@
-
-running 2 tests
-test session::tests::defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards ... ok
-test session::tests::import_rs2b0t_catalog_persists_path_and_registers_cards ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 387 filtered out; finished in 0.03s
-

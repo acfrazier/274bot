@@ -1,7 +1,0 @@
-{
-  "recorded_at": "2026-09-11T11:15:39.556848+00:00",
-  "link": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/.superpowers/inputs",
-  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs",
-  "scope": "Existing frozen read-only inputs for catalog identity test; no exported Git source changes",
-  "previous_failure": "checks-04d7b1f4-catalog.log: missing input index.ts"
-}

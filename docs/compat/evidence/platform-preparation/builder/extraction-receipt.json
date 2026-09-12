@@ -1,8 +1,0 @@
-{
-  "archive_sha256": "d8361199f7f3af851c175e030b1e787cb62137de1ce62b6701bcde07cd75f2e8",
-  "destination": "/home/builder/274bot-campaign/multirevision-20260910/server-289",
-  "verified_files": 1212,
-  "revision": 289,
-  "engine_commit": "a275ea812f34342cbaf7faf2e3558dcd6ca187d0",
-  "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944"
-}

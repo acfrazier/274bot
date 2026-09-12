@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
-     Running tests/host_js.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/host_js-071de5906ebf8c0f)
-
-running 3 tests
-test regen_host_js ... ignored
-test host_js_dts_is_fresh ... ok
-test host_js_dts_includes_required_interfaces ... ok
-
-test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s

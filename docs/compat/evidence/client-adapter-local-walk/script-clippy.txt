@@ -1,3 +1,0 @@
-Checking script v0.1.0 (.superpowers/task-exports/t_15c05b42-d903cc88/crates/script)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 33.49s
-exit 0

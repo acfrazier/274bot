@@ -1,9 +1,0 @@
-   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
-     Running tests/interact.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/interact-f2fa6f9749d1a9ff)
-
-running 1 test
-test revision_289_forged_typed_send_refuses_before_any_mutation ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.15s
-

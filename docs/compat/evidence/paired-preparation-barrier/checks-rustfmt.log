@@ -1,3 +1,0 @@
-rustfmt --check --edition 2021 crates/host-play/tests/paired_catalog_live.rs crates/host-play/tests/support/paired_catalog.rs
-exit_code=0
-result=pass

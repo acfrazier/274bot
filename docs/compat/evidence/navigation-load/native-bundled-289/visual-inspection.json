@@ -1,9 +1,0 @@
-{
-  "reviewer": "Codex root",
-  "files": {
-    "2026-09-11T02-20-05_manual-2026-09-11T02-20-05.png": "29efdbf436046597d8f92b5c67b207e0bf2e7fa3b3db0840d1558c24118850c9",
-    "2026-09-11T02-20-05_manual-2026-09-11T02-20-05.json": "b0c5b60977798e7300805557073277526f73d7dac2b6cd2e59aa4aea0ea20e76"
-  },
-  "observed": "Native 274bot ready panel, no slots, no pending loading bar, empty private vault. No bot login. CUA screenshot directly read.",
-  "limit": "Startup had completed before capture; hash avoidance is demonstrated by the matched source probe counters, not inferred from the image."
-}

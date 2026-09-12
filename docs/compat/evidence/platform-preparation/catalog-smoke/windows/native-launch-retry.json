@@ -1,7 +1,0 @@
-{
-  "at": "2026-09-10T23:34:08.538224+00:00",
-  "exit_code": 0,
-  "stdout": "{\"LastRunTime\":\"\\/Date(1789083110000)\\/\",\"LastTaskResult\":1}\n{\"TaskName\":\"274bot-Catalog-289-584d05bc-Native-20260910\",\"State\":3}\n",
-  "stderr": "",
-  "scope": "First task exited 1 without creating launcher log or runtime folder; place launch log in dedicated interactive user profile"
-}

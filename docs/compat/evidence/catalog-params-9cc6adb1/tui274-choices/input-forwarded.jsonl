@@ -1,6 +1,0 @@
-{"elapsed_seconds": 81.875, "request": {"action": "click", "x": 28, "y": 39, "label": "stop", "at": "2026-09-11T10:29:24.890346+00:00"}, "terminal_bytes_hex": "1b5b3c303b32383b33394d1b5b3c303b32383b33396d"}
-{"elapsed_seconds": 81.875, "request": {"action": "click", "x": 6, "y": 39, "label": "browse", "at": "2026-09-11T10:29:24.890486+00:00"}, "terminal_bytes_hex": "1b5b3c303b363b33394d1b5b3c303b363b33396d"}
-{"elapsed_seconds": 98.425, "request": {"action": "click", "x": 10, "y": 31, "label": "selectalcher"}, "terminal_bytes_hex": "1b5b3c303b31303b33314d1b5b3c303b31303b33316d"}
-{"elapsed_seconds": 127.055, "request": {"action": "click", "x": 6, "y": 25, "label": "closebrowse"}, "terminal_bytes_hex": "1b5b3c303b363b32354d1b5b3c303b363b32356d"}
-{"elapsed_seconds": 139.797, "request": {"action": "click", "x": 6, "y": 39, "label": "openparams"}, "terminal_bytes_hex": "1b5b3c303b363b33394d1b5b3c303b363b33396d"}
-{"elapsed_seconds": 163.434, "request": {"action": "key", "key": "enter", "label": "itemchoices"}, "terminal_bytes_hex": "0d"}

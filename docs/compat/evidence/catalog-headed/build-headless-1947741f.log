@@ -1,7 +1,0 @@
-   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-1947741f-56d8027/crates/api)
-   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-1947741f-56d8027/crates/host)
-   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-1947741f-56d8027/crates/nav)
-   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-1947741f-56d8027/crates/script)
-   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-1947741f-56d8027/crates/host-play)
-error: could not compile `host-play` (test "catalog_boundary_live") due to 4 previous errors
-warning: build failed, waiting for other jobs to finish...

@@ -1,8 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
-     Running tests/rs2b0t_registry.rs (target-t_63138b8b/debug/deps/rs2b0t_registry-1fbca706aec9874d)
-
-running 1 test
-test parse_settings_inlines_shim_food_banking_and_spell_keys ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
-

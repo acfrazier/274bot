@@ -1,9 +1,0 @@
-   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.02s
-     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/script-b1ad8a9c29fa4c59)
-
-running 1 test
-test slot::tests::script_requested_stop_cleans_slot_work_and_allows_fresh_restart ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.09s
-

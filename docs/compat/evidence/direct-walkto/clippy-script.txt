@@ -1,5 +1,0 @@
-CARGO_TARGET_DIR=.../target-t_f7fd9f55 cargo clippy --locked --offline --no-deps -p script --all-targets -- -D warnings
-cwd=.superpowers/task-exports/t_f7fd9f55-4be90843
-
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 28s
-exit 0

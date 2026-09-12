@@ -1,6 +1,0 @@
-{
-  "at": "2026-09-10T23:41:09.135576+00:00",
-  "exit_code": 0,
-  "stdout": "{\"task\":\"274bot-Catalog-289-584d05bc-Native-20260910\",\"state\":\"Ready\",\"result\":0,\"last_run\":\"\\/Date(1789083326000)\\/\"}\n{\"task\":\"274bot-Catalog-Capture-584d05bc-20260910\",\"state\":\"Ready\",\"result\":0,\"last_run\":\"\\/Date(1789083430000)\\/\"}\n",
-  "stderr": ""
-}

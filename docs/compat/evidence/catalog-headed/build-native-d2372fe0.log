@@ -1,6 +1,0 @@
-    Blocking waiting for file lock on build directory
-   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-d2372fe0-56d8027/crates/host)
-   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-d2372fe0-56d8027/crates/panel)
-   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-d2372fe0-56d8027/crates/script)
-   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-d2372fe0-56d8027/crates/host-play)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 03s

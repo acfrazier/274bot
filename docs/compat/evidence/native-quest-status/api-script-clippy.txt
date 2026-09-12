@@ -1,3 +1,0 @@
-    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
-    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.56s

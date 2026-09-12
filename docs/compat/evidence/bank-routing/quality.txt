@@ -1,2 +1,0 @@
-    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.76s

@@ -1,8 +1,0 @@
-{
-  "captured_at": "2026-09-10T13:10:13.428212+00:00",
-  "argv": [
-    "/Users/acfrazier/experiments/lostcity-289/status-289.sh"
-  ],
-  "exit_code": 1,
-  "output": "289 engine: stopped (stale pid 49444)\n"
-}

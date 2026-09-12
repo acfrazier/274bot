@@ -1,7 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
-     Running unittests src/lib.rs (target-t_95823e19/debug/deps/host_play-e209afcb78bbd8cb)
-
-running 1 test
-test tests::script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 143 filtered out; finished in 0.00s

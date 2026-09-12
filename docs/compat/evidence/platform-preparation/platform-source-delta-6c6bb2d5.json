@@ -1,9 +1,0 @@
-{
-  "host_commit": "6c6bb2d5c25d51f5b339d6bb5f73d68b3b7296cb",
-  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
-  "archive": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-source-delta-6c6bb2d5.tar.gz",
-  "archive_sha256": "0515388aa8447533b7803caad2975930e5c4c01746512a797d36b51d5859f9ba",
-  "archive_bytes": 14465356,
-  "files": 5010,
-  "changed_files": 227
-}
