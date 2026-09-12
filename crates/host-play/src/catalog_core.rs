@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -211,6 +211,20 @@ pub const CHAOS_DRUID_FOOD: i32 = 12;
 pub const MOSS_GIANT_FOOD: i32 = 10;
 pub const HILL_GIANT_FOOD: i32 = 8;
 pub const AUTO_FIGHTER_FOOD: i32 = 8;
+/// Bank cells prepare the pack below the card's own restock line so the bank
+/// trip itself has to withdraw: MossGiant only banks once its food is gone.
+pub const MOSS_GIANT_BANK_FOOD: i32 = 2;
+/// ChaosDruidKiller's `tripPrepared` needs `foodWithdraw` (12) carried in the
+/// field; below that its own first trip end is `prepare-trip`, so the bank cell
+/// prepares the shortfall instead of a full pack.
+pub const CHAOS_DRUID_BANK_FOOD: i32 = 8;
+/// AutoFighter's BankRun withdraws food up to its declared `foodWithdraw`
+/// default of 10.
+pub const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
+/// Restock lines the other bank cards withdraw to: MossGiant's declared
+/// `foodWithdraw` default 20 and HillGiant's 12 (8 carried + 4 withdrawn).
+pub const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
+pub const HILL_GIANT_BANK_RESTOCK: i32 = 4;
 pub const ROCK_CRAB_FOOD: i32 = 8;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
 pub const FIRE_GIANT_FOOD: i32 = 12;
@@ -254,6 +268,26 @@ pub const SUPER_STRENGTH_3_ID: i32 = 157;
 pub const SUPER_STRENGTH_2_ID: i32 = 159;
 /// Ranged level both range branches need before Start.
 pub const RANGED_LEVEL: i32 = 40;
+/// The bank stands the five bank cells have to reach. These are the frozen
+/// cards' own declared walk targets (MossGiant `bankTile`, HillGiant
+/// WEST_BANK, ChaosDruidKiller Edgeville `bankStand`) or the nearest bank the
+/// card's own `nearestBank(here)` ranking resolves from its anchor (the two
+/// Ardougne cards: East Ardougne, 3 tiles from `ARDY_BANK`).
+pub const MOSS_GIANT_BANK: (i32, i32, i32) = (2615, 3332, 0);
+pub const HILL_GIANT_BANK: (i32, i32, i32) = (3185, 3440, 0);
+pub const CHAOS_DRUID_BANK: (i32, i32, i32) = (3094, 3491, 0);
+pub const ARDOUGNE_EAST_BANK: (i32, i32, i32) = (2655, 3283, 0);
+/// AutoFighter's loot list: the gem-table names its own DEFAULT_LOOT holds.
+pub const UNCUT_DIAMOND_ID: i32 = 1617;
+pub const UNCUT_RUBY_ID: i32 = 1619;
+pub const UNCUT_EMERALD_ID: i32 = 1621;
+/// ArdyFighter's own DEFAULT_LOOT names, minus `clue scroll` (the card keeps
+/// clue items in its deposit matcher and one id per scroll tier would be a
+/// guess). These are the Guard drop-table rows the card's list was written for.
+pub const STEEL_ARROW_ID: i32 = 886;
+pub const BODY_TALISMAN_ID: i32 = 1446;
+pub const BLOOD_RUNE_ID: i32 = 565;
+pub const CHAOS_RUNE_ID: i32 = 562;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -333,6 +367,11 @@ pub enum CoreCase {
     GreenDragonPotions,
     FireGiant,
     ArdyFighter,
+    AutoFighterBank,
+    MossGiantBank,
+    HillGiantBank,
+    ChaosDruidBank,
+    ArdyFighterBank,
 }
 
 impl CoreCase {
@@ -413,6 +452,11 @@ impl CoreCase {
             "green_dragon_potions" => Ok(Self::GreenDragonPotions),
             "fire_giant" => Ok(Self::FireGiant),
             "ardy_fighter" => Ok(Self::ArdyFighter),
+            "auto_fighter_bank" => Ok(Self::AutoFighterBank),
+            "moss_giant_bank" => Ok(Self::MossGiantBank),
+            "hill_giant_bank" => Ok(Self::HillGiantBank),
+            "chaos_druid_bank" => Ok(Self::ChaosDruidBank),
+            "ardy_fighter_bank" => Ok(Self::ArdyFighterBank),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -496,6 +540,11 @@ impl CoreCase {
             Self::GreenDragonPotions => "green_dragon_potions",
             Self::FireGiant => "fire_giant",
             Self::ArdyFighter => "ardy_fighter",
+            Self::AutoFighterBank => "auto_fighter_bank",
+            Self::MossGiantBank => "moss_giant_bank",
+            Self::HillGiantBank => "hill_giant_bank",
+            Self::ChaosDruidBank => "chaos_druid_bank",
+            Self::ArdyFighterBank => "ardy_fighter_bank",
         }
     }
 
@@ -540,18 +589,22 @@ impl CoreCase {
             Self::FlaxSpinner => "FlaxSpinner",
             Self::FlaxAio | Self::FlaxAioPick | Self::FlaxAioSpin => "FlaxAIO",
             Self::HerbloreSecondaries | Self::HerbloreSecondariesNewt => "HerbloreSecondaries",
-            Self::ChaosDruid | Self::ChaosDruidTower | Self::ChaosDruidYanille => {
-                "ChaosDruidKiller"
-            }
-            Self::MossGiant => "MossGiant",
-            Self::HillGiant => "HillGiant",
-            Self::AutoFighter | Self::AutoFighterMage | Self::AutoFighterRange => "AutoFighter",
+            Self::ChaosDruid
+            | Self::ChaosDruidTower
+            | Self::ChaosDruidYanille
+            | Self::ChaosDruidBank => "ChaosDruidKiller",
+            Self::MossGiant | Self::MossGiantBank => "MossGiant",
+            Self::HillGiant | Self::HillGiantBank => "HillGiant",
+            Self::AutoFighter
+            | Self::AutoFighterMage
+            | Self::AutoFighterRange
+            | Self::AutoFighterBank => "AutoFighter",
             Self::RockCrab | Self::RockCrabRange => "RockCrab",
             Self::GreenDragon | Self::GreenDragonSpecial | Self::GreenDragonPotions => {
                 "GreenDragon"
             }
             Self::FireGiant => "FireGiant",
-            Self::ArdyFighter => "ArdyFighter",
+            Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
         }
     }
 }
@@ -1678,11 +1731,40 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         | CoreCase::GreenDragonSpecial
         | CoreCase::GreenDragonPotions
         | CoreCase::FireGiant
-        | CoreCase::ArdyFighter => combat_spec(case).is_some_and(|spec| {
+        | CoreCase::ArdyFighter
+        | CoreCase::AutoFighterBank
+        | CoreCase::MossGiantBank
+        | CoreCase::HillGiantBank
+        | CoreCase::ChaosDruidBank
+        | CoreCase::ArdyFighterBank => combat_spec(case).is_some_and(|spec| {
             combat_baseline_ready(baseline, spec)
                 && match case {
                     CoreCase::ChaosDruidTower => baseline.level("thieving") >= 46,
                     CoreCase::ChaosDruidYanille => baseline.level("agility") >= 40,
+                    // Bank cells start from a wielded melee weapon: every one of
+                    // these cards deposits (or is told to deposit) the pack, so a
+                    // carried weapon would be stashed instead of used.
+                    CoreCase::AutoFighterBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.item_id(UNCUT_SAPPHIRE_ID) == 1
+                    }
+                    CoreCase::MossGiantBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.item_id(LOBSTER_ID) == MOSS_GIANT_BANK_FOOD
+                    }
+                    CoreCase::HillGiantBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.item_id(TROUT_ID) == HILL_GIANT_FOOD
+                    }
+                    CoreCase::ChaosDruidBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.item_id(LOBSTER_ID) == CHAOS_DRUID_BANK_FOOD
+                    }
+                    CoreCase::ArdyFighterBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.item_id(CAKE_ID) == 0
+                            && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+                    }
                     _ => true,
                 }
         }),
@@ -1882,6 +1964,21 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::ArdyFighter => {
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
         }
+        CoreCase::AutoFighterBank => {
+            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, prepared gem 1623, banking Auto"
+        }
+        CoreCase::MossGiantBank => {
+            "Moss safespot (2553,3406,0) r10, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 2 (below its restock line), empty 532/225"
+        }
+        CoreCase::HillGiantBank => {
+            "Giant pit (3110,9832,0) r16, Attack/Strength/Hitpoints 40, worn scimitar 1331, trout 8, brass key 983, lootSlots 1, empty 532/225"
+        }
+        CoreCase::ChaosDruidBank => {
+            "Edgeville dungeon (3110,9936,0) r14, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8 (under foodWithdraw 12)"
+        }
+        CoreCase::ArdyFighterBank => {
+            "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, bankStrategy Loot count"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -1932,6 +2029,7 @@ pub struct CoreWitness {
     pub herblore_eggs_cycle: HerbloreEggsCycle,
     pub herblore_newt_cycle: HerbloreNewtCycle,
     pub combat_core_cycle: CombatCoreCycle,
+    pub combat_bank_cycle: CombatBankCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -3257,6 +3355,164 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        // The five bank cells keep their card's combat shape; the bank trip
+        // itself is declared in `combat_bank_spec`. Prepared food differs from
+        // the plain core where the card's own trip rule needs a shortfall
+        // (MossGiant banks when the pack runs dry, ChaosDruidKiller when the
+        // carried food is under `foodWithdraw`).
+        CoreCase::AutoFighterBank => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 8,
+            food_id: TROUT_ID,
+            food_count: AUTO_FIGHTER_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::MossGiantBank => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: MOSS_GIANT_BANK_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::HillGiantBank => Some(CombatSpec {
+            target: "Giant",
+            stand: HILL_GIANT_PIT,
+            radius: 16,
+            food_id: TROUT_ID,
+            food_count: HILL_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBonesOrLimpwurt,
+            extra: CombatExtra::DungeonKey,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::ChaosDruidBank => Some(CombatSpec {
+            target: "Chaos druid",
+            stand: CHAOS_DRUID_FIELD,
+            radius: 14,
+            food_id: LOBSTER_ID,
+            food_count: CHAOS_DRUID_BANK_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::HerbLawNature,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::ArdyFighterBank => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 12,
+            food_id: CAKE_ID,
+            food_count: 0,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::StolenFood,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        _ => None,
+    }
+}
+
+/// The declared bank trip a bank cell has to execute: the pack stock that has
+/// to land in the bank, the card's own booth stand, the food the card restocks
+/// there (when it restocks at all) and the tile the trip returns to before
+/// further work. Values are the frozen cards' own tiles and keep-lists; see
+/// `docs/compat/05-options-149.md`.
+#[derive(Debug, Clone, Copy)]
+pub struct CombatBankSpec {
+    /// Pack-to-bank stock: the card's own loot or carried-food class. Any one
+    /// of these ids counts, because the source's matcher is per item.
+    pub deposit: &'static [i32],
+    /// The bank the card's own walk opens a booth at.
+    pub stand: (i32, i32, i32),
+    pub stand_radius: i32,
+    /// Food the trip withdraws back into the pack, when the card restocks.
+    pub restock: Option<i32>,
+    /// Where the trip returns before further work.
+    pub ret: (i32, i32, i32),
+    pub ret_radius: i32,
+}
+
+pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
+    match case {
+        // `banking=Auto`: BankRun walks to the nearest bank from the anchor and
+        // deposits everything its keep-list does not hold, then restocks food.
+        CoreCase::AutoFighterBank => Some(CombatBankSpec {
+            deposit: &[
+                UNCUT_SAPPHIRE_ID,
+                UNCUT_EMERALD_ID,
+                UNCUT_RUBY_ID,
+                UNCUT_DIAMOND_ID,
+            ],
+            stand: ARDOUGNE_EAST_BANK,
+            stand_radius: 6,
+            restock: Some(TROUT_ID),
+            ret: ARDY_THIEVER_STAND,
+            ret_radius: 6,
+        }),
+        // Script-owned Ardougne West trip: deposits everything but
+        // food/runes/ammo/weapon and withdraws lobster back to the safespot.
+        CoreCase::MossGiantBank => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            stand: MOSS_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            ret: MOSS_GIANT_SAFESPOT,
+            ret_radius: 6,
+        }),
+        // Always-on trip end: Varrock West keeps only trout and the Brass key.
+        CoreCase::HillGiantBank => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            stand: HILL_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(TROUT_ID),
+            ret: HILL_GIANT_PIT,
+            ret_radius: 16,
+        }),
+        // Edgeville trip end: `depositInventory` empties the pack, then the
+        // card withdraws exactly its food back and returns through the trapdoor.
+        CoreCase::ChaosDruidBank => Some(CombatBankSpec {
+            deposit: &[LOBSTER_ID],
+            stand: CHAOS_DRUID_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            ret: CHAOS_DRUID_FIELD,
+            ret_radius: 14,
+        }),
+        // `bankStrategy=Loot count`: PeriodicBank deposits the card's own loot
+        // list and walks back to the market anchor. No food restock (the
+        // Baker's stall is this card's food).
+        CoreCase::ArdyFighterBank => Some(CombatBankSpec {
+            deposit: &[
+                IRON_ORE_ID,
+                STEEL_ARROW_ID,
+                BODY_TALISMAN_ID,
+                BLOOD_RUNE_ID,
+                CHAOS_RUNE_ID,
+                NATURE_RUNE_ID,
+            ],
+            stand: ARDY_BANK,
+            stand_radius: 6,
+            restock: None,
+            ret: ARDY_THIEVER_STAND,
+            ret_radius: 6,
+        }),
         _ => None,
     }
 }
@@ -3751,6 +4007,99 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
         CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
         CombatLoot::None => false,
+    }
+}
+
+/// Bank/return cycle for the five bank cells: the reviewed combat witness plus
+/// the declared bank trip the card itself has to execute — pack stock moves to
+/// the booth's bank, the card's restock line is met from that bank's own stock,
+/// the modal closes on a later bank session, the trip returns to the card's
+/// tile, and work resumes there. A booth opened away from the card's stand, a
+/// deposit the card never made, a return without further work, or a bank that
+/// only ever opened (seed/readiness) cannot qualify it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CombatBankCycle {
+    /// The same reviewed combat witness the plain card core uses.
+    pub combat: CombatCoreCycle,
+    /// The observation that proved the trip's deposit: pack empty of the
+    /// deposit class, bank's own stock above its pre-Start level.
+    pub banked: Option<Observation>,
+    /// Pack food count when the deposit was observed; the restock has to beat it.
+    pub food_at_deposit: i32,
+    /// The card's restock line was met from the bank's own stock.
+    pub restocked: bool,
+    /// The modal closed on a later bank session than the deposit.
+    pub closed: bool,
+    /// The trip returned to the card's own tile.
+    pub returned: bool,
+    /// Further work after that return.
+    pub further: bool,
+    /// Strength XP when the return landed; `further` must beat it.
+    pub return_xp: Option<i32>,
+    /// A loaded booth opened away from the card's declared stand.
+    pub wrong_bank: bool,
+}
+
+impl CombatBankCycle {
+    fn deposit_count(observation: &Observation, deposit: &[i32]) -> i32 {
+        deposit.iter().map(|id| observation.item_id(*id)).sum()
+    }
+
+    fn bank_count(observation: &Observation, deposit: &[i32]) -> i32 {
+        deposit.iter().map(|id| observation.bank_item_id(*id)).sum()
+    }
+
+    pub fn observe(
+        &mut self,
+        spec: CombatSpec,
+        bank: CombatBankSpec,
+        baseline: &Observation,
+        now: &Observation,
+    ) {
+        self.combat.observe(spec, baseline, now);
+        let open = now.bank_open && now.bank_loaded;
+        let at_stand = near(now.tile, bank.stand, bank.stand_radius);
+        if open && !at_stand {
+            self.wrong_bank = true;
+        }
+        if self.banked.is_none()
+            && open
+            && at_stand
+            // A fresh session: the pre-Start bank state cannot satisfy this.
+            && now.bank_generation > baseline.bank_generation
+            && Self::deposit_count(now, bank.deposit) == 0
+            && Self::bank_count(now, bank.deposit) > Self::bank_count(baseline, bank.deposit)
+        {
+            self.food_at_deposit = bank.restock.map_or(0, |food| now.item_id(food));
+            self.banked = Some(now.clone());
+        }
+        if let Some(banked) = &self.banked {
+            if let Some(food) = bank.restock {
+                self.restocked |= open
+                    && now.item_id(food) > self.food_at_deposit
+                    && now.bank_item_id(food) < baseline.bank_item_id(food);
+            }
+            self.closed |=
+                !now.bank_open && !now.bank_loaded && now.bank_generation > banked.bank_generation;
+        }
+        if self.closed {
+            self.returned |= !now.bank_open && near(now.tile, bank.ret, bank.ret_radius);
+            if self.returned {
+                let xp = now.skill_xp("strength");
+                let reference = *self.return_xp.get_or_insert(xp);
+                self.further |= !now.bank_open && xp > reference;
+            }
+        }
+    }
+
+    pub fn qualified(&self, spec: CombatSpec, bank: CombatBankSpec) -> bool {
+        self.combat.qualified(spec)
+            && self.banked.is_some()
+            && (bank.restock.is_none() || self.restocked)
+            && self.closed
+            && self.returned
+            && self.further
+            && !self.wrong_bank
     }
 }
 
@@ -4996,6 +5345,7 @@ impl CoreWitness {
             herblore_eggs_cycle: HerbloreEggsCycle::default(),
             herblore_newt_cycle: HerbloreNewtCycle::default(),
             combat_core_cycle: CombatCoreCycle::default(),
+            combat_bank_cycle: CombatBankCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -5134,6 +5484,10 @@ impl CoreWitness {
         if let Some(spec) = combat_spec(self.case) {
             self.combat_core_cycle
                 .observe(spec, &self.baseline, observation);
+        }
+        if let (Some(spec), Some(bank)) = (combat_spec(self.case), combat_bank_spec(self.case)) {
+            self.combat_bank_cycle
+                .observe(spec, bank, &self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -5461,6 +5815,16 @@ impl CoreWitness {
             CoreCase::FlaxAioPick => self.flax_aio_pick_cycle.qualified(),
             CoreCase::HerbloreSecondaries => self.herblore_eggs_cycle.qualified(),
             CoreCase::HerbloreSecondariesNewt => self.herblore_newt_cycle.qualified(),
+            CoreCase::AutoFighterBank
+            | CoreCase::MossGiantBank
+            | CoreCase::HillGiantBank
+            | CoreCase::ChaosDruidBank
+            | CoreCase::ArdyFighterBank => {
+                match (combat_spec(self.case), combat_bank_spec(self.case)) {
+                    (Some(spec), Some(bank)) => self.combat_bank_cycle.qualified(spec, bank),
+                    _ => false,
+                }
+            }
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -5534,6 +5898,7 @@ impl CoreWitness {
             "herblore_eggs_cycle": self.herblore_eggs_cycle,
             "herblore_newt_cycle": self.herblore_newt_cycle,
             "combat_core_cycle": self.combat_core_cycle,
+            "combat_bank_cycle": self.combat_bank_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
