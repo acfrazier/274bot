@@ -1,0 +1,34 @@
+task: t_30bc0807
+branch: codex/rs2b0t-multirevision
+implementation: c5102901b37f836e4c41681461abc7941c4c93fb
+parent: 73a6dd6f1fbf8ccf6f1bc5dbe9d305b1f665fbfc
+client gitlink: 52c37f9ce50d1f184656d5b4469c007ec8a5791a
+exact export: .superpowers/review-exports/t_30bc0807-r1b
+export contents: git archive of c5102901b (tracked files only, no concurrent
+worktree edits) with .superpowers/inputs and vendor/fr-client-rust symlinked to
+the canonical frozen inputs and submodule checkout
+exclusive target: .superpowers/review-exports/t_30bc0807-r1b/target
+raw verbose log: .superpowers/review-exports/t_30bc0807-r1b/checks.log
+verified UTC: 2026-09-12T12:25:52Z
+
+$ cd .superpowers/review-exports/t_30bc0807-r1b && cargo test --offline --locked -p scenario
+result: PASS; 108 passed, 0 failed, 0 ignored; doc-tests 0 failed
+includes: tests::ranged_and_consumable_options_prepare_the_exact_frozen_script_branches
+
+$ cargo test --offline --locked -p host-play --features memory-profile --lib
+result: PASS; 177 passed, 0 failed, 0 ignored
+
+$ cargo test --offline --locked -p host-play --features memory-profile --test catalog_boundary_live
+result: PASS; 53 passed, 0 failed, 1 ignored LIVE
+
+$ cargo clippy --offline --locked -p scenario -p host-play --features host-play/memory-profile --all-targets -- -D warnings
+result: PASS
+
+$ cargo fmt --all -- --check
+result: PASS
+
+$ git diff --check c5102901b^ c5102901b -- crates/scenario/src/lib.rs crates/host-play/src/catalog_core.rs crates/host-play/tests/catalog_boundary_live.rs
+result: PASS (exit 0; run in the worktree against the committed range)
+
+No LIVE process was launched. The single ignored host-play test is the
+LIVE-gated catalog_boundary_live cell, which root owns.
