@@ -8528,13 +8528,12 @@ const EGG_FIELD: WorldTile = WorldTile {
     z: 9952,
     level: 0,
 };
-/// Safe native approach stand for the selected Edgeville booth. The bank
-/// anchor is west of the booth, but its first walk target (3095,3493) is
-/// blocked in both selected revision packs. This diagonal stand makes the
-/// existing exact opener approach (3096,3492) without changing bank APIs.
+/// Safe native approach stand for the selected Edgeville booth. Headed shots
+/// for both selected revision packs show this south-adjacent tile as
+/// walkable, immediately next to booth 2213, without changing bank APIs.
 const EDGEVILLE_BANK_APPROACH: WorldTile = WorldTile {
-    x: 3095,
-    z: 3491,
+    x: 3096,
+    z: 3494,
     level: 0,
 };
 /// Selected 274/289 packs both contain this Edgeville booth as id 2213 with
