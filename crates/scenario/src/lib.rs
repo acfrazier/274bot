@@ -448,8 +448,12 @@ pub fn get(name: &str) -> Option<Scenario> {
         "hill_giant" => Some(hill_giant_scenario()),
         "auto_fighter" => Some(auto_fighter_scenario()),
         "auto_fighter_mage" => Some(auto_fighter_mage_scenario()),
+        "auto_fighter_range" => Some(auto_fighter_range_scenario()),
         "rock_crab" => Some(rock_crab_scenario()),
+        "rock_crab_range" => Some(rock_crab_range_scenario()),
         "green_dragon" => Some(green_dragon_scenario()),
+        "green_dragon_special" => Some(green_dragon_special_scenario()),
+        "green_dragon_potions" => Some(green_dragon_potions_scenario()),
         "fire_giant" => Some(fire_giant_scenario()),
         "ardy_fighter" => Some(ardy_fighter_scenario()),
         "script_trade" => Some(script_trade_scenario()),
@@ -534,8 +538,12 @@ pub fn names() -> Vec<&'static str> {
         "hill_giant",
         "auto_fighter",
         "auto_fighter_mage",
+        "auto_fighter_range",
         "rock_crab",
+        "rock_crab_range",
         "green_dragon",
+        "green_dragon_special",
+        "green_dragon_potions",
         "fire_giant",
         "ardy_fighter",
         "script_trade",
@@ -8180,12 +8188,26 @@ const AUTO_FIGHTER_MAGE_CASTS: i32 = 150;
 const AUTO_FIGHTER_MAGE_AIR_RUNES: i32 = AUTO_FIGHTER_MAGE_CASTS * 2;
 const AUTOCAST_MAGIC_VARP: i32 = 108;
 const AUTOCAST_ARMED_VALUE: i32 = 3;
+const RANGED_STAT: i32 = 4;
+const COMBAT_MODE_VARP: i32 = 43;
+const RAPID_COMBAT_MODE: i32 = 1;
+const MAPLE_SHORTBOW_ID: i32 = 853;
+const BRONZE_ARROW_ID: i32 = 882;
+const RANGE_AMMO: i32 = 200;
 const ROCK_CRAB_FOOD: i32 = 8;
 const GREEN_DRAGON_FOOD: i32 = 12;
 const FIRE_GIANT_FOOD: i32 = 12;
 const COMBAT_ATTACK_LEVEL: i32 = 40;
 const RUNE_SCIMITAR_ID: i32 = 1333;
 const DRAGONFIRE_SHIELD_ID: i32 = 1540;
+const DRAGON_DAGGER_ID: i32 = 1215;
+const DRAGON_DAGGER_ATTACK_LEVEL: i32 = 60;
+const SPECIAL_ENERGY_VARP: i32 = 300;
+const DRAGON_DAGGER_SPECIAL_COST: i32 = 250;
+const SUPER_ATTACK_3_ID: i32 = 145;
+const SUPER_ATTACK_2_ID: i32 = 147;
+const SUPER_STRENGTH_3_ID: i32 = 157;
+const SUPER_STRENGTH_2_ID: i32 = 159;
 const BRASS_KEY_ID: i32 = 983;
 const DRAGON_BONES_ID: i32 = 536;
 const NOTED_DRAGON_BONES_ID: i32 = 537;
@@ -8349,6 +8371,56 @@ const AUTO_FIGHTER_MAGE_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Bool(false),
     },
 ];
+const AUTO_FIGHTER_RANGE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("range"),
+    },
+    ScriptSettingInject {
+        id: "rangeStyle",
+        value: ScriptInjectValue::Str("rapid"),
+    },
+    ScriptSettingInject {
+        id: "ammo",
+        value: ScriptInjectValue::Str("Bronze arrow"),
+    },
+    ScriptSettingInject {
+        id: "ammoWithdraw",
+        value: ScriptInjectValue::Num(RANGE_AMMO as f64),
+    },
+    ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Trout"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_FOOD as f64),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("None"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
 const ROCK_CRAB_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "combatStyle",
@@ -8357,6 +8429,44 @@ const ROCK_CRAB_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "meleeStyle",
         value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Off"),
+    },
+];
+const ROCK_CRAB_RANGE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("range"),
+    },
+    ScriptSettingInject {
+        id: "rangeStyle",
+        value: ScriptInjectValue::Str("rapid"),
+    },
+    ScriptSettingInject {
+        id: "bow",
+        value: ScriptInjectValue::Str("Maple shortbow"),
+    },
+    ScriptSettingInject {
+        id: "ammo",
+        value: ScriptInjectValue::Str("Bronze arrow"),
+    },
+    ScriptSettingInject {
+        id: "ammoWithdraw",
+        value: ScriptInjectValue::Num(RANGE_AMMO as f64),
+    },
+    ScriptSettingInject {
+        id: "minStack",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "collectRange",
+        value: ScriptInjectValue::Num(12.0),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -8383,6 +8493,82 @@ const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "usePotions",
         value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
+const GREEN_DRAGON_SPECIAL_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(true),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Dragon dagger"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
+const GREEN_DRAGON_POTIONS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(true),
     },
     ScriptSettingInject {
         id: "escape",
@@ -10201,6 +10387,168 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
     }
 }
 
+fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(move |c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c).wear(id),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::EquipmentId { id },
+            budget_ticks: 200,
+        },
+    }
+}
+
+/// Prepared bow/quiver branch. The frozen script owns combat-mode selection,
+/// target engagement, ammunition use and (for RockCrab) projectile recovery.
+#[allow(clippy::too_many_arguments)]
+fn combat_range_scenario(
+    name: &'static str,
+    card: &'static str,
+    tele: WorldTile,
+    radius: i32,
+    food_alias: &'static str,
+    food_id: i32,
+    food_count: i32,
+    inject: &'static [ScriptSettingInject],
+    dormant_rocks: bool,
+) -> Scenario {
+    let ranged_xp = Proof::StatXpGain {
+        id: RANGED_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare Ranged stats, food, bow and arrows on the safe tile before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("setstat ranged {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, "~clearinv");
+                cheat(c, "give maple_shortbow 1");
+                cheat(c, &format!("give bronze_arrow {RANGE_AMMO}"));
+                cheat(c, &format!("give {food_alias} {food_count}"));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: RANGED_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "acknowledge prepared Hitpoints before Start",
+            Proof::Stat {
+                id: 3,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge prepared range food before Start",
+            Proof::ItemId {
+                id: food_id,
+                count: food_count,
+            },
+        ),
+        (
+            "acknowledge Maple shortbow before wielding",
+            Proof::ItemId {
+                id: MAPLE_SHORTBOW_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge exact Bronze arrow stack before equipping",
+            Proof::ItemId {
+                id: BRONZE_ARROW_ID,
+                count: RANGE_AMMO,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(wear_combat_item_step(
+        "wield and acknowledge Maple shortbow before hostile-field teleport",
+        MAPLE_SHORTBOW_ID,
+    ));
+    steps.push(wear_combat_item_step(
+        "equip and acknowledge Bronze arrows before hostile-field teleport",
+        BRONZE_ARROW_ID,
+    ));
+    steps.push(Step {
+        name: "teleport into the ranged field only after preparation is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius,
+            },
+            budget_ticks: 200,
+        },
+    });
+    if dormant_rocks {
+        steps.push(bank_fletcher_watch(
+            "acknowledge dormant Rocks in the supported field before Start",
+            Proof::NpcNameNear {
+                name: "Rocks",
+                x: ROCK_CRAB_SPOT.x,
+                z: ROCK_CRAB_SPOT.z,
+                level: ROCK_CRAB_SPOT.level,
+                radius: 50,
+            },
+        ));
+    }
+    steps.push(start_catalog_step());
+    steps.push(bank_fletcher_watch(
+        "watch the frozen script select rapid ranged mode",
+        Proof::Varp {
+            id: COMBAT_MODE_VARP,
+            min: RAPID_COMBAT_MODE,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch Ranged XP from actual ammunition combat after Start",
+        ranged_xp,
+    ));
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: ranged_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some(card),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// ChaosDruidKiller Edgeville dungeon core. Own bank is not this cell.
 /// Style index 1 on the wielded weapon; lobster x12 so tripPrepared holds.
 fn chaos_druid_scenario() -> Scenario {
@@ -10448,6 +10796,20 @@ fn auto_fighter_mage_scenario() -> Scenario {
     }
 }
 
+fn auto_fighter_range_scenario() -> Scenario {
+    combat_range_scenario(
+        "auto_fighter_range",
+        "AutoFighter",
+        ARDOUGNE_GUARD,
+        6,
+        "trout",
+        TROUT_ID,
+        AUTO_FIGHTER_FOOD,
+        AUTO_FIGHTER_RANGE_INJECT,
+        false,
+    )
+}
+
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
 /// Catalog requires native Rocks activation into Rock Crab. Banking is not
 /// this cell. SolveClue stays injected off.
@@ -10490,6 +10852,20 @@ fn rock_crab_scenario() -> Scenario {
     scenario
 }
 
+fn rock_crab_range_scenario() -> Scenario {
+    combat_range_scenario(
+        "rock_crab_range",
+        "RockCrab",
+        ROCK_CRAB_SAFE_STAND,
+        2,
+        "lobster",
+        LOBSTER_ID,
+        ROCK_CRAB_FOOD,
+        ROCK_CRAB_RANGE_INJECT,
+        true,
+    )
+}
+
 /// GreenDragon melee in the wilderness field. Shield 1540 is worn with the
 /// native fixture operation on the safe tile before hostile-field teleport;
 /// this does not qualify the frozen GearEquip branch. Catalog Start baseline
@@ -10513,6 +10889,148 @@ fn green_dragon_scenario() -> Scenario {
         complete_quest: None,
         thieving: 0,
     })
+}
+
+fn green_dragon_special_scenario() -> Scenario {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
+        name: "green_dragon_special",
+        card: "GreenDragon",
+        tele: GREEN_DRAGON_FIELD,
+        radius: 22,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: GREEN_DRAGON_FOOD,
+        weapon_alias: "dragon_dagger",
+        weapon_id: DRAGON_DAGGER_ID,
+        extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        wear_id: Some(DRAGONFIRE_SHIELD_ID),
+        loot_empty: GREEN_DRAGON_LOOT_EMPTY,
+        inject: GREEN_DRAGON_SPECIAL_INJECT,
+        complete_quest: None,
+        thieving: 0,
+    });
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat core has a hostile-field teleport");
+    scenario.steps.splice(
+        hostile_teleport..hostile_teleport,
+        [
+            Step {
+                name: "prepare and acknowledge Attack 60 for the Dragon dagger before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, &format!("setstat attack {DRAGON_DAGGER_ATTACK_LEVEL}"));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat {
+                        id: 0,
+                        min: DRAGON_DAGGER_ATTACK_LEVEL,
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            wear_combat_item_step(
+                "wield and acknowledge Dragon dagger before hostile-field teleport",
+                DRAGON_DAGGER_ID,
+            ),
+            // The card only arms when `Special.energy() >= cost`, so the pool
+            // has to already cover the dagger's 250 before Start; a low pool
+            // must fail this acknowledgement instead of passing unarmed.
+            bank_fletcher_watch(
+                "acknowledge the worn dagger's special cost is covered before Start",
+                Proof::Varp {
+                    id: SPECIAL_ENERGY_VARP,
+                    min: DRAGON_DAGGER_SPECIAL_COST,
+                },
+            ),
+        ],
+    );
+    scenario
+}
+
+fn green_dragon_potions_scenario() -> Scenario {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
+        name: "green_dragon_potions",
+        card: "GreenDragon",
+        tele: GREEN_DRAGON_FIELD,
+        radius: 22,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: GREEN_DRAGON_FOOD,
+        weapon_alias: "rune_scimitar",
+        weapon_id: RUNE_SCIMITAR_ID,
+        extra_give: &[
+            ("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1),
+            ("3dose2attack", SUPER_ATTACK_3_ID, 1),
+            ("3dose2strength", SUPER_STRENGTH_3_ID, 1),
+        ],
+        wear_id: Some(DRAGONFIRE_SHIELD_ID),
+        loot_empty: GREEN_DRAGON_LOOT_EMPTY,
+        inject: GREEN_DRAGON_POTIONS_INJECT,
+        complete_quest: None,
+        thieving: 0,
+    });
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat core has a hostile-field teleport");
+    scenario.steps.splice(
+        hostile_teleport..hostile_teleport,
+        [
+            bank_fletcher_watch(
+                "confirm no seeded Super attack(2) flask before Start",
+                Proof::ItemIdAtMost {
+                    id: SUPER_ATTACK_2_ID,
+                    count: 0,
+                },
+            ),
+            bank_fletcher_watch(
+                "confirm no seeded Super strength(2) flask before Start",
+                Proof::ItemIdAtMost {
+                    id: SUPER_STRENGTH_2_ID,
+                    count: 0,
+                },
+            ),
+        ],
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat core has a Start step");
+    scenario.steps.splice(
+        start + 1..start + 1,
+        [
+            bank_fletcher_watch(
+                "watch the Super attack(3) dose leave the pack after Start",
+                Proof::ItemIdAtMost {
+                    id: SUPER_ATTACK_3_ID,
+                    count: 0,
+                },
+            ),
+            bank_fletcher_watch(
+                "watch the Super attack(2) dose enter the pack after Start",
+                Proof::ItemId {
+                    id: SUPER_ATTACK_2_ID,
+                    count: 1,
+                },
+            ),
+            bank_fletcher_watch(
+                "watch the native Super attack boost before further combat",
+                Proof::Stat { id: 0, min: 41 },
+            ),
+        ],
+    );
+    scenario
 }
 
 /// FireGiant melee already inside the east dungeon room. Approach, barrel
@@ -11125,8 +11643,12 @@ mod tests {
                 "hill_giant",
                 "auto_fighter",
                 "auto_fighter_mage",
+                "auto_fighter_range",
                 "rock_crab",
+                "rock_crab_range",
                 "green_dragon",
+                "green_dragon_special",
+                "green_dragon_potions",
                 "fire_giant",
                 "ardy_fighter",
                 "script_trade",
@@ -15095,6 +15617,126 @@ mod tests {
             count: 298,
         }));
         assert_eq!(mage.proof, Proof::StatXpGain { id: 6, min: 1 });
+    }
+
+    #[test]
+    fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
+        let ranged_xp = Proof::StatXpGain { id: 4, min: 1 };
+        for (name, card, food_id, food_count) in [
+            ("auto_fighter_range", "AutoFighter", 333, 8),
+            ("rock_crab_range", "RockCrab", 379, 8),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(scenario.settings.start_script, Some(card));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(
+                inject.get("combatStyle"),
+                Some(&Value::String("range".into()))
+            );
+            assert_eq!(
+                inject.get("rangeStyle"),
+                Some(&Value::String("rapid".into()))
+            );
+            assert_eq!(
+                inject.get("ammo"),
+                Some(&Value::String("Bronze arrow".into()))
+            );
+            assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+            assert_eq!(
+                inject.get("useSpecial"),
+                (name == "auto_fighter_range").then_some(&Value::Bool(false))
+            );
+            assert!(!inject.contains_key("weapon"));
+
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            let before = scenario.steps[..start]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(before.contains(&Proof::Stat { id: 4, min: 40 }));
+            assert!(before.contains(&Proof::ItemId {
+                id: food_id,
+                count: food_count
+            }));
+            assert!(before.contains(&Proof::EquipmentId { id: 853 }));
+            assert!(before.contains(&Proof::EquipmentId { id: 882 }));
+            assert!(scenario.steps[start + 1..]
+                .iter()
+                .any(|step| step.wait.arm == ranged_xp));
+            assert_eq!(scenario.proof, ranged_xp);
+        }
+
+        let rock = get("rock_crab_range").expect("rock crab range");
+        let rock_inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            rock_inject.get("bow"),
+            Some(&Value::String("Maple shortbow".into()))
+        );
+        let rock_start = rock
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(rock.steps[..rock_start].iter().any(
+            |step| step.name == "acknowledge dormant Rocks in the supported field before Start"
+        ));
+
+        let special = get("green_dragon_special").expect("green dragon special");
+        let inject = settings_inject_map(special.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("useSpecial"), Some(&Value::Bool(true)));
+        assert_eq!(inject.get("usePotions"), Some(&Value::Bool(false)));
+        assert_eq!(
+            inject.get("weapon"),
+            Some(&Value::String("Dragon dagger".into()))
+        );
+        let start = special
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let before = special.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(before.contains(&Proof::Stat { id: 0, min: 60 }));
+        assert!(before.contains(&Proof::EquipmentId { id: 1215 }));
+        assert!(before.contains(&Proof::EquipmentId { id: 1540 }));
+        // The card refuses to arm below the wielded weapon's cost, so the
+        // prepared pool is an acknowledged prerequisite, not a post-Start fix.
+        assert!(before.contains(&Proof::Varp { id: 300, min: 250 }));
+
+        let potions = get("green_dragon_potions").expect("green dragon potions");
+        let inject = settings_inject_map(potions.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("useSpecial"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("usePotions"), Some(&Value::Bool(true)));
+        let start = potions
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let before = potions.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(before.contains(&Proof::ItemId { id: 145, count: 1 }));
+        assert!(before.contains(&Proof::ItemId { id: 157, count: 1 }));
+        assert!(before.contains(&Proof::EquipmentId { id: 1540 }));
+        assert!(before.contains(&Proof::ItemIdAtMost { id: 147, count: 0 }));
+        assert!(before.contains(&Proof::ItemIdAtMost { id: 159, count: 0 }));
+
+        for name in [
+            "auto_fighter_range",
+            "rock_crab_range",
+            "green_dragon_special",
+            "green_dragon_potions",
+        ] {
+            assert!(names().contains(&name));
+        }
     }
 
     #[test]

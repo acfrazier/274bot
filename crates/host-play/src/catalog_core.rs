@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|rock_crab|green_dragon|fire_giant|ardy_fighter";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -230,6 +230,26 @@ pub const GREEN_DRAGON_FIELD: (i32, i32, i32) = (3096, 3814, 0);
 pub const FIRE_GIANT_ROOM: (i32, i32, i32) = (2575, 9893, 0);
 pub const WILDERNESS_MIN_Z: i32 = 3520;
 pub const DUNGEON_MIN_Z: i32 = 9000;
+/// `com_mode`: the combat-tab style varp the ranged branches set directly.
+pub const COMBAT_MODE_VARP: i32 = 43;
+/// `rapid`, the ranged style the range branches select through `setCombatMode`.
+pub const RAPID_COMBAT_MODE: i32 = 1;
+/// `%sa_energy`, the special-attack bar's 0-1000 pool.
+pub const SA_ENERGY_VARP: i32 = 300;
+/// `%sa_attack`, set while a special is armed and cleared when the hit lands.
+pub const SA_ARMED_VARP: i32 = 301;
+pub const SA_ARMED_VALUE: i32 = 1;
+/// Dragon dagger special cost, per the frozen card's own weapon table.
+pub const DRAGON_DAGGER_SPECIAL_COST: i32 = 250;
+pub const MAPLE_SHORTBOW_ID: i32 = 853;
+pub const BRONZE_ARROW_ID: i32 = 882;
+pub const DRAGON_DAGGER_ID: i32 = 1215;
+pub const SUPER_ATTACK_3_ID: i32 = 145;
+pub const SUPER_ATTACK_2_ID: i32 = 147;
+pub const SUPER_STRENGTH_3_ID: i32 = 157;
+pub const SUPER_STRENGTH_2_ID: i32 = 159;
+/// Ranged level both range branches need before Start.
+pub const RANGED_LEVEL: i32 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -297,8 +317,12 @@ pub enum CoreCase {
     HillGiant,
     AutoFighter,
     AutoFighterMage,
+    AutoFighterRange,
     RockCrab,
+    RockCrabRange,
     GreenDragon,
+    GreenDragonSpecial,
+    GreenDragonPotions,
     FireGiant,
     ArdyFighter,
 }
@@ -369,8 +393,12 @@ impl CoreCase {
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
             "auto_fighter_mage" => Ok(Self::AutoFighterMage),
+            "auto_fighter_range" => Ok(Self::AutoFighterRange),
             "rock_crab" => Ok(Self::RockCrab),
+            "rock_crab_range" => Ok(Self::RockCrabRange),
             "green_dragon" => Ok(Self::GreenDragon),
+            "green_dragon_special" => Ok(Self::GreenDragonSpecial),
+            "green_dragon_potions" => Ok(Self::GreenDragonPotions),
             "fire_giant" => Ok(Self::FireGiant),
             "ardy_fighter" => Ok(Self::ArdyFighter),
             _ => Err(format!(
@@ -444,8 +472,12 @@ impl CoreCase {
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
             Self::AutoFighterMage => "auto_fighter_mage",
+            Self::AutoFighterRange => "auto_fighter_range",
             Self::RockCrab => "rock_crab",
+            Self::RockCrabRange => "rock_crab_range",
             Self::GreenDragon => "green_dragon",
+            Self::GreenDragonSpecial => "green_dragon_special",
+            Self::GreenDragonPotions => "green_dragon_potions",
             Self::FireGiant => "fire_giant",
             Self::ArdyFighter => "ardy_fighter",
         }
@@ -495,9 +527,11 @@ impl CoreCase {
             Self::ChaosDruid => "ChaosDruidKiller",
             Self::MossGiant => "MossGiant",
             Self::HillGiant => "HillGiant",
-            Self::AutoFighter | Self::AutoFighterMage => "AutoFighter",
-            Self::RockCrab => "RockCrab",
-            Self::GreenDragon => "GreenDragon",
+            Self::AutoFighter | Self::AutoFighterMage | Self::AutoFighterRange => "AutoFighter",
+            Self::RockCrab | Self::RockCrabRange => "RockCrab",
+            Self::GreenDragon | Self::GreenDragonSpecial | Self::GreenDragonPotions => {
+                "GreenDragon"
+            }
             Self::FireGiant => "FireGiant",
             Self::ArdyFighter => "ArdyFighter",
         }
@@ -753,7 +787,16 @@ impl Observation {
         let varps = snapshot
             .varps()
             .iter()
-            .filter(|varp| matches!(varp.index, BRIMHAVEN_ARENA_VARP | AUTOCAST_MAGIC_VARP))
+            .filter(|varp| {
+                matches!(
+                    varp.index,
+                    BRIMHAVEN_ARENA_VARP
+                        | AUTOCAST_MAGIC_VARP
+                        | COMBAT_MODE_VARP
+                        | SA_ENERGY_VARP
+                        | SA_ARMED_VARP
+                )
+            })
             .map(|varp| (varp.index, varp.value))
             .collect();
         let chat = snapshot
@@ -1583,8 +1626,12 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         | CoreCase::HillGiant
         | CoreCase::AutoFighter
         | CoreCase::AutoFighterMage
+        | CoreCase::AutoFighterRange
         | CoreCase::RockCrab
+        | CoreCase::RockCrabRange
         | CoreCase::GreenDragon
+        | CoreCase::GreenDragonSpecial
+        | CoreCase::GreenDragonPotions
         | CoreCase::FireGiant
         | CoreCase::ArdyFighter => {
             combat_spec(case).is_some_and(|spec| combat_baseline_ready(baseline, spec))
@@ -1752,8 +1799,20 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::RockCrab => {
             "safe stand (2712,3688,0), dormant Rocks observed in the supported field, Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
         }
+        CoreCase::AutoFighterRange => {
+            "Ardougne Guard (2661,3306,0), Hitpoints 40, Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, Trout 8, bank None"
+        }
         CoreCase::GreenDragon => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 12, rune scimitar 1333, worn shield 1540, empty 536/1753"
+        }
+        CoreCase::GreenDragonSpecial => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
+        }
+        CoreCase::GreenDragonPotions => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn shield 1540, super attack(3) 145 and super strength(3) 157 with no two-dose flask and no live boost, lobster 12"
+        }
+        CoreCase::RockCrabRange => {
+            "safe stand (2712,3688,0), dormant Rocks observed in the supported field, Hitpoints and Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, lobster 8, bank Off"
         }
         CoreCase::FireGiant => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, empty 532"
@@ -2883,12 +2942,26 @@ pub struct CombatSpec {
     pub style: CombatStyleWitness,
     pub loot: CombatLoot,
     pub extra: CombatExtra,
+    /// Worn projectile the ranged branch consumes (arrows in the ammo slot).
+    pub projectile: Option<i32>,
+    /// The extra consumable transition this branch must actually execute.
+    pub consumable: CombatConsumable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CombatStyleWitness {
     Strength,
     FireStrike,
+    Ranged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CombatConsumable {
+    None,
+    /// `useSpecial=true`: the spec bar arms and `%sa_energy` pays the cost.
+    Special,
+    /// `usePotions=true`: a dose leaves the flask and the boost lands mid-fight.
+    Potions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2922,6 +2995,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::HerbLawNature,
             extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         CoreCase::MossGiant => Some(CombatSpec {
             target: "Moss giant",
@@ -2933,6 +3008,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         CoreCase::HillGiant => Some(CombatSpec {
             target: "Giant",
@@ -2944,6 +3021,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBonesOrLimpwurt,
             extra: CombatExtra::DungeonKey,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         CoreCase::AutoFighter => Some(CombatSpec {
             target: "Guard",
@@ -2955,6 +3034,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         CoreCase::AutoFighterMage => Some(CombatSpec {
             target: "Guard",
@@ -2966,6 +3047,24 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::FireStrike,
             loot: CombatLoot::None,
             extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // `combatStyle=range`: the source selects the rapid combat mode itself
+        // and fires the worn Bronze arrow stack, so both transitions are the
+        // witnessed outcome instead of a prepared state.
+        CoreCase::AutoFighterRange => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 8,
+            food_id: TROUT_ID,
+            food_count: AUTO_FIGHTER_FOOD,
+            weapon_id: MAPLE_SHORTBOW_ID,
+            style: CombatStyleWitness::Ranged,
+            loot: CombatLoot::None,
+            extra: CombatExtra::None,
+            projectile: Some(BRONZE_ARROW_ID),
+            consumable: CombatConsumable::None,
         }),
         CoreCase::RockCrab => Some(CombatSpec {
             target: "Rock Crab",
@@ -2977,6 +3076,23 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::RockActivation,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // RockCrab's own `AmmoLogic.sweepPlan` branch: dormant Rocks into a crab,
+        // rapid combat mode, and a worn projectile stack that actually shrinks.
+        CoreCase::RockCrabRange => Some(CombatSpec {
+            target: "Rock Crab",
+            stand: ROCK_CRAB_SAFE_STAND,
+            radius: 2,
+            food_id: LOBSTER_ID,
+            food_count: ROCK_CRAB_FOOD,
+            weapon_id: MAPLE_SHORTBOW_ID,
+            style: CombatStyleWitness::Ranged,
+            loot: CombatLoot::None,
+            extra: CombatExtra::RockActivation,
+            projectile: Some(BRONZE_ARROW_ID),
+            consumable: CombatConsumable::None,
         }),
         CoreCase::GreenDragon => Some(CombatSpec {
             target: "Green dragon",
@@ -2988,6 +3104,38 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
             extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // `useSpecial=true` with the dragon dagger: the bar arms and `%sa_energy`
+        // pays the 250 cost, so a queued-but-unspent arming cannot qualify.
+        CoreCase::GreenDragonSpecial => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: DRAGON_DAGGER_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::Special,
+        }),
+        // `usePotions=true`: a three-dose flask becomes its two-dose form and the
+        // native boost has to land on the matching skill during the fight.
+        CoreCase::GreenDragonPotions => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::Potions,
         }),
         CoreCase::FireGiant => Some(CombatSpec {
             target: "Fire giant",
@@ -2999,6 +3147,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         CoreCase::ArdyFighter => Some(CombatSpec {
             target: "Guard",
@@ -3010,6 +3160,8 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
             extra: CombatExtra::StolenFood,
+            projectile: None,
+            consumable: CombatConsumable::None,
         }),
         _ => None,
     }
@@ -3067,8 +3219,10 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
 pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
     let food_ok = match spec.style {
         CombatStyleWitness::FireStrike => baseline.item_id(spec.food_id) == spec.food_count,
-        CombatStyleWitness::Strength if spec.food_count == 0 => true,
-        CombatStyleWitness::Strength => baseline.item_id(spec.food_id) >= spec.food_count,
+        CombatStyleWitness::Ranged | CombatStyleWitness::Strength if spec.food_count == 0 => true,
+        CombatStyleWitness::Ranged | CombatStyleWitness::Strength => {
+            baseline.item_id(spec.food_id) >= spec.food_count
+        }
     };
     let style_ok = match spec.style {
         CombatStyleWitness::Strength => {
@@ -3083,6 +3237,15 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
                 && baseline.item_id(spec.weapon_id) == 0
                 && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
                 && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
+        }
+        // Both ranged pieces worn: the bow in the weapon slot and the projectile
+        // stack in the ammo slot the source fires from.
+        CombatStyleWitness::Ranged => {
+            baseline.level("ranged") >= RANGED_LEVEL
+                && baseline.equipment_id(spec.weapon_id) >= 1
+                && spec
+                    .projectile
+                    .is_some_and(|ammo| baseline.equipment_id(ammo) >= 1)
         }
     };
     let extra_ok = match spec.extra {
@@ -3104,6 +3267,24 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
                 && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
         }
     };
+    // The consumable branch starts from an unspent, unboosted state: a seeded
+    // boost or an already-armed bar would let the run "pass" without the sip
+    // or the special it is meant to prove.
+    let consumable_ok = match spec.consumable {
+        CombatConsumable::None => true,
+        CombatConsumable::Special => {
+            baseline.equipment_id(spec.weapon_id) >= 1
+                && baseline.varp(SA_ARMED_VARP) != SA_ARMED_VALUE
+        }
+        CombatConsumable::Potions => {
+            baseline.item_id(SUPER_ATTACK_3_ID) >= 1
+                && baseline.item_id(SUPER_ATTACK_2_ID) == 0
+                && baseline.item_id(SUPER_STRENGTH_3_ID) >= 1
+                && baseline.item_id(SUPER_STRENGTH_2_ID) == 0
+                && baseline.effective_level("attack") <= baseline.level("attack")
+                && baseline.effective_level("strength") <= baseline.level("strength")
+        }
+    };
     near(baseline.tile, spec.stand, spec.radius)
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
         && food_ok
@@ -3111,6 +3292,7 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
         && combat_loot_count(baseline, spec.loot) == 0
         && !combat_noted(baseline)
         && extra_ok
+        && consumable_ok
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -3173,6 +3355,20 @@ pub struct CombatCoreCycle {
     pub autocast_armed: bool,
     pub mind_rune_consumed: bool,
     pub air_runes_consumed: bool,
+    /// Rapid `com_mode` observed, the ranged branches' own style selection.
+    pub combat_mode: bool,
+    /// Highest worn projectile count seen; a later lower count means arrows fired.
+    pub projectile_peak: i32,
+    pub projectile_fired: bool,
+    /// Spec bar armed (`%sa_attack`) and `%sa_energy` actually paid the cost.
+    pub special_armed: bool,
+    pub special_spent: bool,
+    /// Highest `%sa_energy` seen; a later fall of a full cost means a real spend.
+    pub special_energy_peak: i32,
+    /// A three-dose flask became its two-dose form while in combat.
+    pub potion_dose: bool,
+    /// The matching native attack/strength boost landed after that dose.
+    pub potion_boost: bool,
     pub looted: bool,
     pub noted: bool,
     pub activated: bool,
@@ -3205,6 +3401,17 @@ impl CombatCoreCycle {
                     .saturating_sub(now.item_id(AIR_RUNE_ID))
                     >= 2;
             }
+            // `combatStyle=range`: the source picks the rapid combat mode and fires
+            // the worn stack down, so both are observed transitions of this branch.
+            CombatStyleWitness::Ranged => {
+                self.style_xp |= now.skill_xp("ranged") > baseline.skill_xp("ranged");
+                self.combat_mode |= now.varp(COMBAT_MODE_VARP) == RAPID_COMBAT_MODE;
+                if let Some(ammo) = spec.projectile {
+                    let worn = now.equipment_id(ammo);
+                    self.projectile_fired |= self.projectile_peak > worn;
+                    self.projectile_peak = self.projectile_peak.max(worn);
+                }
+            }
         }
         self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
         self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
@@ -3231,6 +3438,41 @@ impl CombatCoreCycle {
                         || self.dormant_tiles.values().any(|tile| *tile == npc.tile))
                 {
                     self.activated = true;
+                }
+            }
+        }
+        match spec.consumable {
+            CombatConsumable::None => {}
+            // `useSpecial=true`: arming alone is not an execution, the pool has to
+            // pay the wielded weapon's cost. A full cost below either the pre-Start
+            // pool or the highest pool seen since is that payment; the energy only
+            // ever regenerates, so a fall of this size cannot be anything else.
+            CombatConsumable::Special => {
+                self.special_armed |= now.varp(SA_ARMED_VARP) == SA_ARMED_VALUE;
+                let energy = now.varp(SA_ENERGY_VARP);
+                self.special_energy_peak = self.special_energy_peak.max(energy);
+                self.special_spent |= baseline.varp(SA_ENERGY_VARP).saturating_sub(energy)
+                    >= DRAGON_DAGGER_SPECIAL_COST
+                    || self.special_energy_peak.saturating_sub(energy)
+                        >= DRAGON_DAGGER_SPECIAL_COST;
+            }
+            // `usePotions=true`: the sip shows up as the three-dose flask becoming
+            // its two-dose form in a fight, and the boost has to land afterwards.
+            CombatConsumable::Potions => {
+                if !self.potion_dose {
+                    let attack_sip = baseline.item_id(SUPER_ATTACK_3_ID)
+                        > now.item_id(SUPER_ATTACK_3_ID)
+                        && now.item_id(SUPER_ATTACK_2_ID) > baseline.item_id(SUPER_ATTACK_2_ID);
+                    let strength_sip = baseline.item_id(SUPER_STRENGTH_3_ID)
+                        > now.item_id(SUPER_STRENGTH_3_ID)
+                        && now.item_id(SUPER_STRENGTH_2_ID) > baseline.item_id(SUPER_STRENGTH_2_ID);
+                    if (attack_sip || strength_sip) && now.local_in_combat {
+                        self.potion_dose = true;
+                    }
+                }
+                if self.potion_dose {
+                    self.potion_boost |= now.effective_level("attack") > now.level("attack")
+                        || now.effective_level("strength") > now.level("strength");
                 }
             }
         }
@@ -3377,12 +3619,22 @@ impl CombatCoreCycle {
                     && self.mind_rune_consumed
                     && self.air_runes_consumed
             }
+            // Ranged XP alone is not the branch: the source's rapid combat mode and
+            // a projectile that actually left the quiver are both required.
+            CombatStyleWitness::Ranged => {
+                self.style_xp && self.combat_mode && self.projectile_fired
+            }
         };
         let extra_ok = match spec.extra {
             CombatExtra::None | CombatExtra::DungeonKey | CombatExtra::DungeonAmulet => true,
             CombatExtra::RockActivation => self.activated,
             CombatExtra::WornShield => self.shield_worn,
             CombatExtra::StolenFood => self.stolen_food,
+        };
+        let consumable_ok = match spec.consumable {
+            CombatConsumable::None => true,
+            CombatConsumable::Special => self.special_armed && self.special_spent,
+            CombatConsumable::Potions => self.potion_dose && self.potion_boost,
         };
         self.engagements >= 2
             && self.defeats >= 1
@@ -3392,6 +3644,7 @@ impl CombatCoreCycle {
             && !self.noted
             && !self.wrong_item
             && extra_ok
+            && consumable_ok
     }
 }
 
@@ -4940,8 +5193,12 @@ impl CoreWitness {
             | CoreCase::HillGiant
             | CoreCase::AutoFighter
             | CoreCase::AutoFighterMage
+            | CoreCase::AutoFighterRange
             | CoreCase::RockCrab
+            | CoreCase::RockCrabRange
             | CoreCase::GreenDragon
+            | CoreCase::GreenDragonSpecial
+            | CoreCase::GreenDragonPotions
             | CoreCase::FireGiant
             | CoreCase::ArdyFighter => {
                 combat_spec(self.case).is_some_and(|spec| self.combat_core_cycle.qualified(spec))

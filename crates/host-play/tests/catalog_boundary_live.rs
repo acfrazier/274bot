@@ -44,6 +44,23 @@ struct CardLedger {
     source_path: String,
     source_sha256: String,
     revision: u16,
+    /// The card's own frozen settings schema, as recorded in the matrix. Kept as
+    /// raw JSON so a list/tile default cannot break the parse.
+    #[serde(default)]
+    settings_and_behavior_branches: Vec<DeclaredSetting>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeclaredSetting {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    options: Vec<Value>,
+    #[serde(default)]
+    min: Option<Value>,
+    #[serde(default)]
+    max: Option<Value>,
 }
 
 fn support_matrix() -> Result<SupportMatrix, String> {
@@ -6657,13 +6674,543 @@ mod tests {
             CoreCase::MossGiant,
             CoreCase::HillGiant,
             CoreCase::AutoFighter,
+            CoreCase::AutoFighterRange,
             CoreCase::RockCrab,
+            CoreCase::RockCrabRange,
             CoreCase::GreenDragon,
+            CoreCase::GreenDragonSpecial,
+            CoreCase::GreenDragonPotions,
             CoreCase::FireGiant,
             CoreCase::ArdyFighter,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
+        }
+    }
+
+    /// One frame for the four option branches: exact items, worn gear, stats,
+    /// varps, NPC lives, and the local combat flags the branch reads.
+    #[allow(clippy::too_many_arguments)]
+    fn branch_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        equipment_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        levels: &[(&str, i32)],
+        effective: &[(&str, i32)],
+        varps: &[(i32, i32)],
+        npcs: &[BoundedNpc],
+        in_combat: bool,
+        dormant_rocks: bool,
+    ) -> Observation {
+        let mut observation = resource_obs(tile, item_ids, &[], equipment_ids, xp, levels);
+        for (id, value) in varps {
+            observation.varps.insert(*id, *value);
+        }
+        for (name, level) in effective {
+            observation.effective_levels.insert((*name).into(), *level);
+        }
+        observation.npc_facts = npcs.to_vec();
+        observation.local_in_combat = in_combat;
+        observation.local_target_npc = npcs.first().map(|npc| npc.index);
+        observation.local_health = 40;
+        observation.dormant_rocks_seen = dormant_rocks;
+        observation
+    }
+
+    fn bow_gear() -> Vec<(i32, i32)> {
+        vec![(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 200)]
+    }
+
+    #[test]
+    fn ranged_branches_need_the_sources_own_mode_and_projectile_spend() {
+        for (name, card) in [
+            ("auto_fighter_range", "AutoFighter"),
+            ("rock_crab_range", "RockCrab"),
+        ] {
+            let case = CoreCase::parse(name).expect("range case registered");
+            assert_eq!(case.scenario_name(), name);
+            assert_eq!(case.card_name(), card);
+            let spec = combat_spec(case).expect("range spec");
+            assert_eq!(spec.style, CombatStyleWitness::Ranged);
+            assert_eq!(spec.projectile, Some(BRONZE_ARROW_ID));
+        }
+
+        // A melee loadout, a low Ranged level, or a missing half of the ranged
+        // pair must all refuse the Start baseline.
+        let crab_baseline = branch_obs(
+            ROCK_CRAB_SAFE_STAND,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &bow_gear(),
+            &[("ranged", 0)],
+            &[("ranged", 40), ("hitpoints", 40)],
+            &[],
+            &[],
+            &[],
+            false,
+            true,
+        );
+        let crab_case = CoreCase::RockCrabRange;
+        validate_case_baseline(crab_case, &crab_baseline).unwrap();
+        let mut melee_kit = crab_baseline.clone();
+        melee_kit.equipment_ids.clear();
+        melee_kit.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+        assert!(validate_case_baseline(crab_case, &melee_kit).is_err());
+        let mut bag_bow = crab_baseline.clone();
+        bag_bow.equipment_ids.remove(&MAPLE_SHORTBOW_ID);
+        bag_bow.item_ids.insert(MAPLE_SHORTBOW_ID, 1);
+        assert!(validate_case_baseline(crab_case, &bag_bow).is_err());
+        let mut no_arrows = crab_baseline.clone();
+        no_arrows.equipment_ids.remove(&BRONZE_ARROW_ID);
+        assert!(validate_case_baseline(crab_case, &no_arrows).is_err());
+        let mut low_ranged = crab_baseline.clone();
+        low_ranged.levels.insert("ranged".into(), 1);
+        assert!(validate_case_baseline(crab_case, &low_ranged).is_err());
+        let mut awake_rocks = crab_baseline.clone();
+        awake_rocks.dormant_rocks_seen = false;
+        assert!(validate_case_baseline(crab_case, &awake_rocks).is_err());
+
+        // Rocks into a crab, rapid mode, and a stack that actually shrinks: the
+        // real sweep branch qualifies.
+        let rocks = ROCK_CRAB_SPOT;
+        let first = branch_obs(
+            ROCK_CRAB_SAFE_STAND,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 199)],
+            &[("ranged", 12)],
+            &[("ranged", 40), ("hitpoints", 40)],
+            &[],
+            &[(COMBAT_MODE_VARP, RAPID_COMBAT_MODE)],
+            &[
+                combat_npc(3, "Rocks", 0, false, rocks),
+                combat_npc(7, "Rock Crab", 30, true, rocks),
+            ],
+            true,
+            true,
+        );
+        let defeat = branch_obs(
+            ROCK_CRAB_SAFE_STAND,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(MAPLE_SHORTBOW_ID, 1), (BRONZE_ARROW_ID, 196)],
+            &[("ranged", 34)],
+            &[("ranged", 40), ("hitpoints", 40)],
+            &[],
+            &[(COMBAT_MODE_VARP, RAPID_COMBAT_MODE)],
+            &[
+                combat_npc(7, "Rock Crab", 0, false, rocks),
+                combat_npc(9, "Rock Crab", 30, true, rocks),
+            ],
+            true,
+            true,
+        );
+        assert!(
+            witness(crab_case, &crab_baseline, [&first, &defeat, &defeat])
+                .qualify()
+                .is_ok()
+        );
+
+        // The witness only accumulates positive transitions, so a flaw has to
+        // hold in every observed frame — a later frame that restores the
+        // transition would mask a real false positive.
+        fn flawed(
+            first: &Observation,
+            defeat: &Observation,
+            flaw: &dyn Fn(&mut Observation),
+        ) -> [Observation; 3] {
+            let mut frames = [first.clone(), defeat.clone(), defeat.clone()];
+            for frame in &mut frames {
+                flaw(frame);
+            }
+            frames
+        }
+
+        // Strength XP instead of Ranged: the melee substitution this cell excludes.
+        let melee_xp = flawed(&first, &defeat, &|frame| {
+            frame.xp.insert("strength".into(), 40);
+            frame.xp.insert("ranged".into(), 0);
+        });
+        assert!(witness(crab_case, &crab_baseline, melee_xp.iter())
+            .qualify()
+            .is_err());
+        // A non-rapid combat mode never proves the source selected `rapid`.
+        let slow_mode = flawed(&first, &defeat, &|frame| {
+            frame.varps.insert(COMBAT_MODE_VARP, 0);
+        });
+        assert!(witness(crab_case, &crab_baseline, slow_mode.iter())
+            .qualify()
+            .is_err());
+        // A stack that never shrinks is carried ammunition, not an arrow fired.
+        let no_spend = flawed(&first, &defeat, &|frame| {
+            frame.equipment_ids.insert(BRONZE_ARROW_ID, 200);
+        });
+        assert!(witness(crab_case, &crab_baseline, no_spend.iter())
+            .qualify()
+            .is_err());
+
+        // AutoFighter's Guard branch shares the ranged witness, not the crab one.
+        let guard_baseline = branch_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &bow_gear(),
+            &[("ranged", 0)],
+            &[("ranged", 40), ("hitpoints", 40)],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::AutoFighterRange, &guard_baseline).unwrap();
+        let mut crab_stand = guard_baseline.clone();
+        crab_stand.tile = Some(ROCK_CRAB_SAFE_STAND);
+        assert!(validate_case_baseline(CoreCase::AutoFighterRange, &crab_stand).is_err());
+    }
+
+    #[test]
+    fn special_branch_needs_an_armed_bar_and_a_paid_pool() {
+        let case = CoreCase::GreenDragonSpecial;
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[("strength", 0)],
+            &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 1000)],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        // A weapon with no special, a shield-only kit, or an already-armed bar
+        // cannot start this branch.
+        let mut scimitar = baseline.clone();
+        scimitar.equipment_ids.clear();
+        scimitar.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        scimitar.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        assert!(validate_case_baseline(case, &scimitar).is_err());
+        let mut armed_start = baseline.clone();
+        armed_start.varps.insert(SA_ARMED_VARP, SA_ARMED_VALUE);
+        assert!(validate_case_baseline(case, &armed_start).is_err());
+
+        let dragon = GREEN_DRAGON_FIELD;
+        let engaged = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[("strength", 60)],
+            &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
+            &[],
+            &[(SA_ARMED_VARP, SA_ARMED_VALUE), (SA_ENERGY_VARP, 1000)],
+            &[combat_npc(4, "Green dragon", 30, true, dragon)],
+            true,
+            false,
+        );
+        let spent = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(DRAGONFIRE_SHIELD_ID, 1), (DRAGON_DAGGER_ID, 1)],
+            &[("strength", 120)],
+            &[("attack", 60), ("strength", 40), ("hitpoints", 40)],
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 750)],
+            &[
+                combat_npc(4, "Green dragon", 0, false, dragon),
+                combat_npc(8, "Green dragon", 30, true, dragon),
+            ],
+            true,
+            false,
+        );
+        assert!(witness(case, &baseline, [&engaged, &spent, &spent])
+            .qualify()
+            .is_ok());
+
+        // A queued bar with no payment, or a payment with no arming, fails: the
+        // flaw has to hold in every frame, because the witness only accumulates
+        // positive transitions.
+        let armed_but_unpaid = |frame: &mut Observation| {
+            frame.varps.insert(SA_ARMED_VARP, SA_ARMED_VALUE);
+            frame.varps.insert(SA_ENERGY_VARP, 1000);
+        };
+        let mut queued_engaged = engaged.clone();
+        armed_but_unpaid(&mut queued_engaged);
+        let mut queued_spent = spent.clone();
+        armed_but_unpaid(&mut queued_spent);
+        assert!(witness(
+            case,
+            &baseline,
+            [&queued_engaged, &queued_spent, &queued_spent]
+        )
+        .qualify()
+        .is_err());
+        let paid_but_unarmed = |frame: &mut Observation| {
+            frame.varps.insert(SA_ARMED_VARP, 0);
+            frame.varps.insert(SA_ENERGY_VARP, 750);
+        };
+        let mut drained_engaged = engaged.clone();
+        paid_but_unarmed(&mut drained_engaged);
+        let mut drained_spent = spent.clone();
+        paid_but_unarmed(&mut drained_spent);
+        assert!(witness(
+            case,
+            &baseline,
+            [&drained_engaged, &drained_spent, &drained_spent]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    #[test]
+    fn potion_branch_needs_a_dose_and_its_native_boost() {
+        let case = CoreCase::GreenDragonPotions;
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, GREEN_DRAGON_FOOD),
+                (SUPER_ATTACK_3_ID, 1),
+                (SUPER_STRENGTH_3_ID, 1),
+            ],
+            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[("strength", 0)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[("attack", 40), ("strength", 40)],
+            &[(SA_ENERGY_VARP, 1000)],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        // A seeded two-dose flask, a pre-existing boost, or a mage kit is not a
+        // prepared potion branch.
+        let mut seeded_dose = baseline.clone();
+        seeded_dose.item_ids.insert(SUPER_ATTACK_2_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_dose).is_err());
+        let mut preboosted = baseline.clone();
+        preboosted.effective_levels.insert("attack".into(), 47);
+        assert!(validate_case_baseline(case, &preboosted).is_err());
+        let mut bag_potions = baseline.clone();
+        bag_potions.item_ids.remove(&SUPER_ATTACK_3_ID);
+        assert!(validate_case_baseline(case, &bag_potions).is_err());
+
+        let dragon = GREEN_DRAGON_FIELD;
+        let fight = [
+            (LOBSTER_ID, GREEN_DRAGON_FOOD),
+            (SUPER_ATTACK_2_ID, 1),
+            (SUPER_STRENGTH_3_ID, 1),
+        ];
+        let sip = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &fight,
+            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[("strength", 60)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[("attack", 47), ("strength", 40)],
+            &[(SA_ENERGY_VARP, 1000)],
+            &[combat_npc(4, "Green dragon", 30, true, dragon)],
+            true,
+            false,
+        );
+        let boosted = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &fight,
+            &[(DRAGONFIRE_SHIELD_ID, 1), (RUNE_SCIMITAR_ID, 1)],
+            &[("strength", 120)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[("attack", 47), ("strength", 40)],
+            &[(SA_ENERGY_VARP, 1000)],
+            &[
+                combat_npc(4, "Green dragon", 0, false, dragon),
+                combat_npc(8, "Green dragon", 30, true, dragon),
+            ],
+            true,
+            false,
+        );
+        assert!(witness(case, &baseline, [&sip, &boosted, &boosted])
+            .qualify()
+            .is_ok());
+
+        // A dose with no boost, and a boost with no dose, both fail: the flaw has
+        // to hold in every frame, because the witness only accumulates positive
+        // transitions.
+        let no_boost = |frame: &mut Observation| {
+            frame.effective_levels.insert("attack".into(), 40);
+        };
+        let mut dose_sip = sip.clone();
+        no_boost(&mut dose_sip);
+        let mut dose_boosted = boosted.clone();
+        no_boost(&mut dose_boosted);
+        assert!(
+            witness(case, &baseline, [&dose_sip, &dose_boosted, &dose_boosted])
+                .qualify()
+                .is_err()
+        );
+        let unswapped = |frame: &mut Observation| {
+            frame.item_ids.insert(SUPER_ATTACK_3_ID, 1);
+            frame.item_ids.remove(&SUPER_ATTACK_2_ID);
+        };
+        let mut carried_sip = sip.clone();
+        unswapped(&mut carried_sip);
+        let mut carried_boosted = boosted.clone();
+        unswapped(&mut carried_boosted);
+        assert!(witness(
+            case,
+            &baseline,
+            [&carried_sip, &carried_boosted, &carried_boosted]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    /// The audit's seeds and injections are proposals, not verified
+    /// implementation: every injected setting has to be one the frozen card
+    /// itself declares, carrying a value its own schema allows. An undeclared key
+    /// or an out-of-range value must fail here instead of riding along into a
+    /// LIVE cell.
+    ///
+    /// The declaration authority is the identity-checked card source, because
+    /// some matrix schema rows are incomplete (RockCrab's r274/r289 rows omit
+    /// `bankStrategy` and `solveClues`, which both frozen sources do declare).
+    /// Matrix rows are used for the value checks they do carry.
+    #[test]
+    fn option_branch_injects_match_both_frozen_card_schemas() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let matrix = support_matrix().unwrap();
+        for (name, card) in [
+            ("auto_fighter_range", "AutoFighter"),
+            ("rock_crab_range", "RockCrab"),
+            ("green_dragon_special", "GreenDragon"),
+            ("green_dragon_potions", "GreenDragon"),
+        ] {
+            let case = CoreCase::parse(name).expect("option branch registered");
+            assert_eq!(case.card_name(), card);
+            let scenario = scenario::get(name).expect("option scenario registered");
+            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+                .unwrap_or_else(|| panic!("{name} injects no settings"));
+            for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+                let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
+                let catalog = catalog_ledger(&matrix, commit).unwrap();
+                verify_registry_identity(&root, catalog).unwrap();
+                for revision in [274_u16, 289_u16] {
+                    let row = ledger_card(&matrix, commit, revision, case)
+                        .unwrap_or_else(|error| panic!("{name}: {error}"));
+                    let path = verify_source_identity(&root, &row)
+                        .unwrap_or_else(|error| panic!("{name}: {error}"));
+                    let source = std::fs::read_to_string(&path)
+                        .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
+                    let declared = declared_source_settings(&source);
+                    assert!(
+                        !declared.is_empty(),
+                        "{name}: {card} at {commit} r{revision} declares no SETTINGS schema"
+                    );
+                    for (id, value) in &inject {
+                        assert!(
+                            declared.contains(id),
+                            "{name}: {card} at {commit} r{revision} does not declare setting {id:?}"
+                        );
+                        let setting = row
+                            .settings_and_behavior_branches
+                            .iter()
+                            .find(|setting| setting.id == *id);
+                        if let Some(setting) = setting {
+                            assert_declared_value(name, card, commit, revision, id, value, setting);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The identifiers a frozen card actually reads as settings: the keys of its
+    /// own `SETTINGS` schema plus the keys it pulls through `this.settings.<kind>`
+    /// accessors, because a card can read a key it never lists in the schema
+    /// (RockCrab's PeriodicBank strategy reads `bankStrategy`). Only four-space
+    /// schema keys count: deeper lines are the members of a nested setting object,
+    /// and a spread (the loadout schema) is not a setting id.
+    fn declared_source_settings(source: &str) -> BTreeSet<String> {
+        let start = source
+            .find("export const SETTINGS: SettingsSchema = {")
+            .expect("card declares a SETTINGS schema");
+        let rest = &source[start..];
+        let end = rest.find("\n};").expect("SETTINGS schema terminates");
+        let mut declared = rest[..end]
+            .lines()
+            .filter_map(|line| {
+                let key = line.strip_prefix("    ")?;
+                if key.starts_with(' ') {
+                    return None;
+                }
+                let (id, _) = key.split_once(':')?;
+                let id = id.trim();
+                (!id.is_empty()
+                    && id
+                        .chars()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == '_'))
+                .then(|| id.to_string())
+            })
+            .collect::<BTreeSet<_>>();
+        for accessor in ["str", "num", "bool", "list", "strList", "tile"] {
+            let needle = format!("settings.{accessor}('");
+            for (index, _) in source.match_indices(&needle) {
+                let rest = &source[index + needle.len()..];
+                if let Some((key, _)) = rest.split_once('\'') {
+                    if !key.is_empty() && key.len() < 64 {
+                        declared.insert(key.to_string());
+                    }
+                }
+            }
+        }
+        declared
+    }
+
+    fn assert_declared_value(
+        name: &str,
+        card: &str,
+        commit: &str,
+        revision: u16,
+        id: &str,
+        value: &Value,
+        setting: &DeclaredSetting,
+    ) {
+        let context = format!("{name}: {card} {id} at {commit} r{revision}");
+        match value {
+            Value::String(text) => {
+                assert_eq!(setting.kind, "string", "{context}: declared type");
+                if !setting.options.is_empty() {
+                    assert!(
+                        setting
+                            .options
+                            .iter()
+                            .any(|option| option.as_str() == Some(text.as_str())),
+                        "{context}: {text:?} is not one of {:?}",
+                        setting.options
+                    );
+                }
+            }
+            Value::Number(number) => {
+                assert_eq!(setting.kind, "number", "{context}: declared type");
+                let actual = number.as_f64().unwrap_or(f64::NAN);
+                let bound = |value: &Option<Value>| match value {
+                    Some(Value::Number(number)) => number.as_f64(),
+                    Some(Value::String(text)) => text.parse::<f64>().ok(),
+                    _ => None,
+                };
+                if let Some(min) = bound(&setting.min) {
+                    assert!(
+                        actual >= min,
+                        "{context}: {actual} below declared min {min}"
+                    );
+                }
+                if let Some(max) = bound(&setting.max) {
+                    assert!(
+                        actual <= max,
+                        "{context}: {actual} above declared max {max}"
+                    );
+                }
+            }
+            Value::Bool(_) => assert_eq!(setting.kind, "boolean", "{context}: declared type"),
+            other => panic!("{context}: unsupported injected value {other:?}"),
         }
     }
 }
