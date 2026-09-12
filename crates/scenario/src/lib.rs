@@ -3044,7 +3044,12 @@ fn bank_fletcher_close_seed_bank() -> Step {
     Step {
         name: "close the acknowledged seed bank before Start",
         kind: StepKind::Perform {
-            send: Box::new(|c, _| close_modal(c)),
+            send: Box::new(|c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c).close_modal(),
+                    SendResult::Sent { .. } | SendResult::Refused { .. }
+                )
+            }),
         },
         wait: Wait {
             arm: Proof::BankClosed,
@@ -14577,6 +14582,46 @@ mod tests {
             StepKind::Shot { label: "scene2" }
         ));
         assert_eq!(s.proof.name(), "stat(16)>=0");
+    }
+
+    #[test]
+    fn bank_fletcher_seed_close_uses_native_modal_path() {
+        use client::client::{Client, ClientConfig};
+        use client::dash3d::ClientPlayer;
+        use client::io::{ClientStream, ServerProt};
+        use std::net::TcpListener;
+
+        let step = bank_fletcher_close_seed_bank();
+        let StepKind::Perform { send } = &step.kind else {
+            panic!("seed-bank close must be a Perform step");
+        };
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        client.main_modal_id = 100;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let _peer = listener.accept().unwrap();
+        client.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+
+        assert!(send(&mut client, &snapshot));
+        assert_eq!(
+            client.main_modal_id, -1,
+            "native close clears local modal state"
+        );
     }
 
     #[test]
