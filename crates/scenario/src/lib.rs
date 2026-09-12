@@ -8610,10 +8610,10 @@ const STEEL_ARROW_ID: i32 = 886;
 const BODY_TALISMAN_ID: i32 = 1446;
 const BLOOD_RUNE_ID: i32 = 565;
 const CHAOS_RUNE_ID: i32 = 562;
-/// The six verifiable Guard drops the AutoFighter bank cell's injected loot
-/// list holds (`loot=[iron ore, steel arrow, body talisman, blood/chaos/nature
-/// rune]`) and the class the host core's `GUARD_DROP_IDS` deposits. A
-/// clue-only or junk drop is not one of these.
+/// The six verifiable Guard drops the AutoFighter bank cell injects and
+/// ArdyFighter already lists in DEFAULT_LOOT (`iron ore, steel arrow, body
+/// talisman, blood/chaos/nature rune`). A clue-only or junk drop is not one
+/// of these; the bank cells start empty of the class.
 const GUARD_DROP_IDS: [i32; 6] = [
     IRON_ORE_ID,
     STEEL_ARROW_ID,
@@ -9093,6 +9093,21 @@ const GREEN_DRAGON_LOOT_EMPTY: &[i32] = &[
 ];
 const FIRE_GIANT_LOOT_EMPTY: &[i32] = &[BIG_BONES_ID, NOTED_BIG_BONES_ID];
 const ARDY_FIGHTER_LOOT_EMPTY: &[i32] = &[CAKE_ID, BREAD_ID, CHOCOLATE_SLICE_ID, CHOCOLATE_CAKE_ID];
+/// Bank cell: stall food plus the deposit class. `bankEveryItems=1` would
+/// fire on a pre-Start listed Guard drop, so the class stays empty until a
+/// kill feeds it.
+const ARDY_FIGHTER_BANK_LOOT_EMPTY: &[i32] = &[
+    CAKE_ID,
+    BREAD_ID,
+    CHOCOLATE_SLICE_ID,
+    CHOCOLATE_CAKE_ID,
+    IRON_ORE_ID,
+    STEEL_ARROW_ID,
+    BODY_TALISMAN_ID,
+    BLOOD_RUNE_ID,
+    CHAOS_RUNE_ID,
+    NATURE_RUNE_ID,
+];
 
 const COOK_BOT_SALMON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -12079,6 +12094,8 @@ fn chaos_druid_bank_scenario() -> Scenario {
 /// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
 /// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
 /// card's own loot list and returns to the market anchor for further work.
+/// Nothing in the deposit class is prepared: `bankEveryItems=1` would
+/// otherwise treat a pre-Start listed item as the trip end.
 fn ardy_fighter_bank_scenario() -> Scenario {
     combat_bank_scenario(
         "ardy_fighter_bank",
@@ -12090,12 +12107,19 @@ fn ardy_fighter_bank_scenario() -> Scenario {
         0,
         COMBAT_SCIMITAR_ID,
         &[],
-        ARDY_FIGHTER_LOOT_EMPTY,
+        ARDY_FIGHTER_BANK_LOOT_EMPTY,
         ARDY_FIGHTER_BANK_INJECT,
         5,
         "",
         0,
         &[
+            (
+                "watch a Guard drop enter a fresh East Ardougne bank",
+                Proof::BankItemIdAny {
+                    ids: &GUARD_DROP_IDS,
+                    count: 1,
+                },
+            ),
             ("watch the periodic bank close", Proof::BankClosed),
             (
                 "watch return to the market anchor after banking",
@@ -13349,6 +13373,37 @@ mod tests {
         );
         assert_eq!(ardy.get("bankEveryItems"), Some(&Value::from(1.0)));
         assert_eq!(ardy.get("target"), Some(&Value::String("Guard".into())));
+        let ardy_scenario = get("ardy_fighter_bank").unwrap();
+        let ardy_start = ardy_scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        for step in &ardy_scenario.steps[..ardy_start] {
+            assert!(
+                !matches!(step.wait.arm, Proof::ItemId { id, .. } if GUARD_DROP_IDS.contains(&id)),
+                "ardy_fighter_bank must not prepare a deposit-class item before Start"
+            );
+        }
+        for &id in &GUARD_DROP_IDS {
+            assert!(
+                ardy_scenario.steps[..ardy_start].iter().any(|step| {
+                    matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
+                }),
+                "ardy_fighter_bank must confirm empty deposit-class id {id} before Start"
+            );
+        }
+        let ardy_watch = ardy_scenario.steps[ardy_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(
+            ardy_watch.contains(&Proof::BankItemIdAny {
+                ids: &GUARD_DROP_IDS,
+                count: 1,
+            }),
+            "ardy_fighter_bank watches a Guard drop enter a fresh bank"
+        );
     }
 
     #[test]
