@@ -1888,6 +1888,16 @@ mod isolate {
             .map_err(|e| format!("register trade: {e}"))?;
         runtime
             .register_function(
+                "__rs2b0t_drive_partner_trade",
+                move |args: &[serde_json::Value]| {
+                    Ok(crate::drive_partner_trade::dispatch(
+                        args.first().unwrap_or(&serde_json::Value::Null),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register drive_partner_trade: {e}"))?;
+        runtime
+            .register_function(
                 "__rs2b0t_is_hostile_attacker",
                 |args: &[serde_json::Value]| {
                     let payload = args.first().unwrap_or(&serde_json::Value::Null);
@@ -3338,6 +3348,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             crate::production::on_snapshot(&snap);
                             crate::fire::on_snapshot(&snap);
                             crate::trade::on_snapshot(&snap);
+                            crate::drive_partner_trade::on_snapshot(&snap);
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
@@ -3351,6 +3362,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 crate::production::on_hold(host_hold);
                                 crate::fire::on_hold(host_hold);
                                 crate::trade::on_hold(host_hold);
+                                crate::drive_partner_trade::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -3613,6 +3625,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::production::on_reset();
                     crate::fire::on_reset();
                     crate::trade::on_reset();
+                    crate::drive_partner_trade::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     clear_unconsumed_paint_click(&mut runtime);
                 }
@@ -3629,6 +3642,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::production::on_pause();
                     crate::fire::on_pause();
                     crate::trade::on_pause();
+                    crate::drive_partner_trade::on_pause();
                     clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Resume => {
@@ -3644,6 +3658,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::production::on_resume();
                     crate::fire::on_resume();
                     crate::trade::on_resume();
+                    crate::drive_partner_trade::on_resume();
                 }
                 IsolateCmd::PaintClick { id, generation } => {
                     if paused
