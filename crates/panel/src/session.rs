@@ -128,6 +128,7 @@ fn fire_pending_catalog_start(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     handle: &Mutex<Option<host_play::ScriptStartHandle>>,
     core_watch: &Mutex<Option<host_play::catalog_core::CoreWatch>>,
+    pair_watch: &Mutex<Option<host_play::paired_core::PairWatch>>,
     runner: &scenario::ScenarioRunner,
 ) -> bool {
     if !runner.on_start_script() {
@@ -141,6 +142,41 @@ fn fire_pending_catalog_start(
     let Some(h) = handle.as_ref() else {
         return false;
     };
+    let pair = pair_watch.lock().unwrap().clone().unwrap_or_default();
+    if pair.configured() {
+        if pending.len() != 2 {
+            pair.fail_start("pair core requires actual scripts on both visible slots");
+            return false;
+        }
+        match pair.barrier() {
+            host_play::paired_core::StartBarrier::Wait => return false,
+            host_play::paired_core::StartBarrier::RejectStartedWhileUnready => {
+                pair.fail_start("pair core Start while the counterpart is unready");
+                return false;
+            }
+            host_play::paired_core::StartBarrier::StartBoth => {}
+        }
+        if pair
+            .begin_shared_start(&pending[0].slot, &pending[1].slot)
+            .is_err()
+        {
+            return false;
+        }
+        for card in pending.iter() {
+            if let Err(error) = h.start_load(
+                &card.slot,
+                card.js.clone(),
+                card.shape,
+                card.bag.clone(),
+                card.siblings.clone(),
+            ) {
+                pair.fail_start(error);
+                return false;
+            }
+        }
+        pending.clear();
+        return true;
+    }
     let watch = core_watch.lock().unwrap().clone().unwrap_or_default();
     for card in pending.iter() {
         if start_catalog_with_core(&watch, &card.slot, || {
@@ -194,6 +230,39 @@ fn stash_pending_starts(
         }
     }
     *pending.lock().unwrap() = starts;
+}
+
+fn stash_pair_starts(
+    pending: &Mutex<Vec<PendingCatalogStart>>,
+    names: &[String],
+    case: host_play::paired_core::PairCase,
+    js: String,
+    shape: script::LoadShape,
+    schema: &[script::SettingDef],
+    siblings: Vec<(String, String)>,
+) -> Result<(), String> {
+    if names.len() != 2 {
+        return Err("pair core watch supports exactly two driven slots".into());
+    }
+    let a_bag = host_play::paired_core::pair_settings(case, schema, 0, &names[0], &names[1])?;
+    let b_bag = host_play::paired_core::pair_settings(case, schema, 1, &names[1], &names[0])?;
+    *pending.lock().unwrap() = vec![
+        PendingCatalogStart {
+            slot: names[0].clone(),
+            js: js.clone(),
+            shape,
+            bag: Some(a_bag),
+            siblings: siblings.clone(),
+        },
+        PendingCatalogStart {
+            slot: names[1].clone(),
+            js,
+            shape,
+            bag: Some(b_bag),
+            siblings,
+        },
+    ];
+    Ok(())
 }
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
@@ -949,6 +1018,8 @@ pub struct Session {
     /// by the catalog_watch executable.
     catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
     catalog_core_enabled: bool,
+    paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
+    pair_core_enabled: bool,
     /// Focused-slot speaker gate: at most one cpal speaker, owned by the
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
@@ -1149,6 +1220,8 @@ impl Session {
             script_start_handle: Arc::new(Mutex::new(None)),
             catalog_core_watch: Arc::new(Mutex::new(None)),
             catalog_core_enabled: false,
+            paired_core_watch: Arc::new(Mutex::new(None)),
+            pair_core_enabled: false,
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: {
@@ -1189,6 +1262,22 @@ impl Session {
         watch: Option<host_play::catalog_core::CoreWatch>,
     ) {
         *self.catalog_core_watch.lock().unwrap() = watch;
+    }
+
+    /// Enable pair proof only for the dedicated pair_watch entry.
+    pub fn set_pair_core_enabled(&mut self, enabled: bool) {
+        self.pair_core_enabled = enabled;
+    }
+
+    pub fn paired_core_watch(&self) -> Option<host_play::paired_core::PairWatch> {
+        self.paired_core_watch.lock().unwrap().clone()
+    }
+
+    pub(crate) fn install_paired_core_watch(
+        &self,
+        watch: Option<host_play::paired_core::PairWatch>,
+    ) {
+        *self.paired_core_watch.lock().unwrap() = watch;
     }
 
     /// Install production launch inputs while the locked panel still exposes
@@ -1899,6 +1988,9 @@ impl Session {
         // Mint one name per seed slot (fleet included): both slots get a
         // fresh account for this invocation.
         let names = host_play::mint_live_names(scenario.seed.profiles.len());
+        if self.catalog_core_enabled && self.pair_core_enabled {
+            return Err("catalog core and pair core watches are mutually exclusive".into());
+        }
         let core_case = if self.catalog_core_enabled {
             if names.len() != 1 {
                 return Err("catalog core watch supports exactly one driven slot".into());
@@ -1907,12 +1999,22 @@ impl Session {
         } else {
             None
         };
+        let pair_case = if self.pair_core_enabled {
+            if names.len() != 2 {
+                return Err("pair core watch supports exactly two driven slots".into());
+            }
+            Some(host_play::paired_core::PairCase::parse(scenario.name)?)
+        } else {
+            None
+        };
         let mut inject = scenario::settings_inject_map(view.script_settings_inject);
-        if let Some(key) = view.inject_companion_as {
-            if names.len() > 1 {
-                inject
-                    .get_or_insert_with(serde_json::Map::new)
-                    .insert(key.to_string(), serde_json::Value::String(names[1].clone()));
+        if pair_case.is_none() {
+            if let Some(key) = view.inject_companion_as {
+                if names.len() > 1 {
+                    inject
+                        .get_or_insert_with(serde_json::Map::new)
+                        .insert(key.to_string(), serde_json::Value::String(names[1].clone()));
+                }
             }
         }
         self.set_script_settings_inject(inject);
@@ -1930,6 +2032,12 @@ impl Session {
                 .catalog_core_watch()
                 .ok_or_else(|| "catalog core watch handle unavailable".to_string())?;
             watch.configure(case, names[0].clone());
+        }
+        if let Some(case) = pair_case {
+            let watch = self
+                .paired_core_watch()
+                .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
+            watch.configure(case, names[0].clone(), names[1].clone());
         }
         self.mainland
             .store(scenario.seed.mainland, Ordering::Relaxed);
@@ -1996,15 +2104,27 @@ impl Session {
                     &card.settings_schema,
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
-                stash_pending_starts(
-                    &self.pending_script,
-                    &names,
-                    view.inject_companion_as,
-                    card.js.clone(),
-                    card.shape,
-                    bag,
-                    siblings,
-                );
+                if let Some(case) = pair_case {
+                    stash_pair_starts(
+                        &self.pending_script,
+                        &names,
+                        case,
+                        card.js.clone(),
+                        card.shape,
+                        &card.settings_schema,
+                        siblings,
+                    )?;
+                } else {
+                    stash_pending_starts(
+                        &self.pending_script,
+                        &names,
+                        view.inject_companion_as,
+                        card.js.clone(),
+                        card.shape,
+                        bag,
+                        siblings,
+                    );
+                }
             } else {
                 self.fill_rs2b0t_cards_once();
                 self.js
@@ -2027,15 +2147,27 @@ impl Session {
                     &card.settings_schema,
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
-                stash_pending_starts(
-                    &self.pending_script,
-                    &names,
-                    view.inject_companion_as,
-                    card.js.clone(),
-                    card.shape,
-                    bag,
-                    siblings,
-                );
+                if let Some(case) = pair_case {
+                    stash_pair_starts(
+                        &self.pending_script,
+                        &names,
+                        case,
+                        card.js.clone(),
+                        card.shape,
+                        &card.settings_schema,
+                        siblings,
+                    )?;
+                } else {
+                    stash_pending_starts(
+                        &self.pending_script,
+                        &names,
+                        view.inject_companion_as,
+                        card.js.clone(),
+                        card.shape,
+                        bag,
+                        siblings,
+                    );
+                }
             }
         }
         self.login_all();
@@ -2060,6 +2192,7 @@ impl Session {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let catalog_core_watch = Arc::clone(&self.catalog_core_watch);
+        let paired_core_watch = Arc::clone(&self.paired_core_watch);
         let audio = Arc::clone(&self.audio);
         let nav_publish = Arc::clone(&self.nav_publish);
         // Last failed device-open `(slot, when)`; a machine without an
@@ -2234,6 +2367,7 @@ impl Session {
                         &pending_script,
                         &script_start_handle,
                         &catalog_core_watch,
+                        &paired_core_watch,
                         runner,
                     ) {
                         runner.tick_with_hold(c, hold);
@@ -2359,6 +2493,7 @@ impl Session {
         };
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.install_catalog_core_watch(Some(play.catalog_core_watch()));
+        self.install_paired_core_watch(Some(play.paired_core_watch()));
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
         self.play = Some(play);
         crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
