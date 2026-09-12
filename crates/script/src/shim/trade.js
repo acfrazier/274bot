@@ -1,4 +1,19 @@
-import { snap, queue, proxy, notImpl } from '../../shim/_kernel.js';
+// Name-map Trade onto the Rust-owned request/offer/remove/accept/decline
+// sequence. This shim marshals the call argument, runs the optional pick
+// callback as a projection, and dispatches returned verbs. It does not
+// choose rows, wait the count dialog, or treat a queued click as a transfer.
+import { snap, queue, notImpl } from '../../shim/_kernel.js';
+import { Execution } from '../execution/Execution.js';
+
+function callTrade(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_trade
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('Trade');
+    }
+    return fn(payload);
+}
 
 function rowList(key) {
     return snap()[key] || [];
@@ -6,23 +21,82 @@ function rowList(key) {
 
 function nameCountRows(key) {
     return rowList(key).map((row) => ({
+        id: row?.id ?? 0,
         name: row?.name ?? null,
         count: row?.count ?? 0,
     }));
 }
 
-function findRows(key, name) {
-    const wanted = String(name).toLowerCase();
-    return rowList(key).filter(
-        (row) => row && typeof row.name === 'string' && row.name.toLowerCase() === wanted,
-    );
+function dispatchVerb(step) {
+    for (const op of step.ops || []) queue(op);
 }
 
-function pressRow(row) {
-    if (!row || typeof row.component_id !== 'number' || row.component_id < 0) {
-        throw notImpl('Trade');
+function settle(kind, step) {
+    if (kind === 'decline') return undefined;
+    return step.result === true;
+}
+
+function abortedResult(kind) {
+    if (kind === 'decline') return undefined;
+    return false;
+}
+
+function projectPick(candidates, pick) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+    if (typeof pick !== 'function') return candidates[0];
+    return candidates.find(pick) || null;
+}
+
+async function run(kind, name, n, pick) {
+    const begin = callTrade({
+        op: 'begin',
+        kind,
+        name: name ?? '',
+        n: n ?? 0,
+    });
+    if (!begin) return abortedResult(kind);
+    let current = begin;
+    if (current.kind === 'candidates') {
+        const chosen = projectPick(current.candidates, pick);
+        if (!chosen) {
+            callTrade({ op: 'select', token: current.token });
+            return abortedResult(kind);
+        }
+        current = callTrade({
+            op: 'select',
+            token: current.token,
+            id: chosen.id,
+            slot: chosen.slot,
+        });
     }
-    queue({ op: 'if-button', component_id: row.component_id });
+    if (!current) return abortedResult(kind);
+    if (current.kind === 'notImpl') throw notImpl('Trade.' + kind, current.reason);
+    if (current.kind === 'aborted') return abortedResult(kind);
+    if (current.kind === 'done') {
+        dispatchVerb(current);
+        return settle(kind, current);
+    }
+    const token = current.token;
+    while (current) {
+        if (current.kind === 'done') {
+            dispatchVerb(current);
+            return settle(kind, current);
+        }
+        if (current.kind === 'aborted') return abortedResult(kind);
+        if (current.kind === 'notImpl') throw notImpl('Trade.' + kind, current.reason);
+        if (current.kind === 'ops') {
+            dispatchVerb(current);
+        } else if (current.kind !== 'wait') {
+            return abortedResult(kind);
+        }
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = callTrade({ op: 'next', token });
+            return next?.kind !== 'wait';
+        }, 0);
+        current = next;
+    }
+    return abortedResult(kind);
 }
 
 export const Trade = new Proxy(
@@ -47,36 +121,22 @@ export const Trade = new Proxy(
             return nameCountRows('trade_theirs');
         },
         request(playerName) {
-            queue({ op: 'player', name: String(playerName), action: 'Trade' });
+            return run('request', String(playerName ?? ''), 0);
         },
-        offer(name) {
-            const rows = findRows('trade_side', name);
-            if (rows.length === 0) return;
-            pressRow(rows[0]);
+        offerAll(name, pick) {
+            return run('offerAll', String(name ?? ''), 0, pick);
         },
-        offerAll(name) {
-            for (const row of findRows('trade_side', name)) {
-                pressRow(row);
-            }
+        offer(name, n, pick) {
+            return run('offer', String(name ?? ''), n ?? 0, pick);
         },
-        removeAll(name) {
-            for (const row of findRows('trade_mine', name)) {
-                pressRow(row);
-            }
+        removeAll() {
+            return run('removeAll', '', 0);
         },
         accept() {
-            const id = snap().trade_accept_id;
-            if (typeof id !== 'number' || id < 0) {
-                throw notImpl('Trade.accept');
-            }
-            queue({ op: 'if-button', component_id: id });
+            return run('accept', '', 0);
         },
         decline() {
-            const id = snap().trade_decline_id;
-            if (typeof id !== 'number' || id < 0) {
-                throw notImpl('Trade.decline');
-            }
-            queue({ op: 'if-button', component_id: id });
+            return run('decline', '', 0);
         },
     },
     {

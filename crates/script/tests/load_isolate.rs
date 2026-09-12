@@ -5395,13 +5395,42 @@ fn isolate_trade_request_queues_player_trade() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() {
-        Trade.request('bob');
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.request('bob');
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    post_snapshot_input(&iso, &base_snapshot());
+    let actions = [
+        "Attack".to_string(),
+        "Follow".to_string(),
+        "Report".to_string(),
+        "Trade with".to_string(),
+    ];
+    let players = [script::isolate_fb::SceneEntityInput {
+        index: 3,
+        id: 3,
+        name: Some("bob"),
+        x: 3222,
+        z: 3222,
+        level: 0,
+        distance: 1,
+        health: 99,
+        max_health: 99,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 1,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let mut snap = base_snapshot();
+    snap.players = &players;
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     let reqs = iso.drain_interacts();
@@ -5409,9 +5438,9 @@ export default class T extends LoopingBot {
         reqs,
         vec![script::shim::InteractReq::Player {
             name: "bob".into(),
-            action: "Trade".into(),
+            action: "Trade with".into(),
         }],
-        "Trade.request queues scene Trade-with via player op"
+        "Trade.request queues the posted op-4 Trade with label"
     );
     iso.join();
 }
@@ -5421,11 +5450,16 @@ fn isolate_trade_accept_queues_posted_if_button() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() { Trade.accept(); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.accept();
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
+    snap.trade_offer_open = true;
     snap.trade_accept_id = 9001;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -5443,11 +5477,16 @@ fn isolate_trade_decline_queues_posted_if_button() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() { Trade.decline(); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.decline();
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
+    snap.trade_offer_open = true;
     snap.trade_decline_id = 9002;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
@@ -5461,85 +5500,115 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_trade_offer_queues_if_button_on_first_side_row() {
+fn isolate_trade_offer_queues_offer_x_on_selected_side_row() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() { Trade.offer('Bones'); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.offer('Bones', 2);
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let side = [
-        item_row(526, Some("Bones"), 5, &[], false, 0, 9101),
-        item_row(526, Some("Bones"), 3, &[], false, 0, 9102),
-    ];
+    let mut first = item_row(526, Some("Bones"), 5, &[], false, 0, 3322);
+    first.slot = 0;
+    let mut second = item_row(526, Some("Bones"), 3, &[], false, 0, 3322);
+    second.slot = 1;
+    let side = [first, second];
+    snap.trade_offer_open = true;
     snap.trade_side = &side;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9101 }],
-        "Trade.offer presses the first matching trade_side row component_id"
+        vec![script::shim::InteractReq::InvButton {
+            id: 526,
+            slot: 0,
+            component: 3322,
+            operation: 5,
+            bank_generation: 0,
+        }],
+        "Trade.offer n presses Offer X on the selected id+slot"
     );
     iso.join();
 }
 
 #[test]
-fn isolate_trade_offer_all_queues_if_button_on_every_side_row() {
+fn isolate_trade_offer_all_queues_inv_button_on_selected_side_row() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() { Trade.offerAll('Bones'); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.offerAll('Bones');
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let side = [
-        item_row(526, Some("Bones"), 5, &[], false, 0, 9101),
-        item_row(526, Some("Bones"), 3, &[], false, 0, 9102),
-    ];
+    let mut first = item_row(526, Some("Bones"), 5, &[], false, 0, 3322);
+    first.slot = 0;
+    let mut second = item_row(526, Some("Bones"), 3, &[], false, 0, 3322);
+    second.slot = 1;
+    let side = [first, second];
+    snap.trade_offer_open = true;
     snap.trade_side = &side;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![
-            script::shim::InteractReq::IfButton { component_id: 9101 },
-            script::shim::InteractReq::IfButton { component_id: 9102 },
-        ],
-        "Trade.offerAll presses every matching trade_side row"
+        vec![script::shim::InteractReq::InvButton {
+            id: 526,
+            slot: 0,
+            component: 3322,
+            operation: 4,
+            bank_generation: 0,
+        }],
+        "Trade.offerAll presses Offer All on the first matching id+slot"
     );
     iso.join();
 }
 
 #[test]
-fn isolate_trade_remove_all_queues_if_button_on_every_mine_row() {
+fn isolate_trade_remove_all_queues_inv_button_on_first_mine_row() {
     let src = r#"
 import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() { Trade.removeAll('Lobster'); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await Trade.removeAll();
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
-    let mine = [
-        item_row(379, Some("Lobster"), 1, &[], false, 0, 9201),
-        item_row(379, Some("Lobster"), 1, &[], false, 0, 9202),
-    ];
+    let mut first = item_row(379, Some("Lobster"), 1, &[], false, 0, 3415);
+    first.slot = 0;
+    let mut second = item_row(379, Some("Lobster"), 1, &[], false, 0, 3415);
+    second.slot = 1;
+    let mine = [first, second];
+    snap.trade_offer_open = true;
     snap.trade_mine = &mine;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![
-            script::shim::InteractReq::IfButton { component_id: 9201 },
-            script::shim::InteractReq::IfButton { component_id: 9202 },
-        ],
-        "Trade.removeAll presses every matching trade_mine row"
+        vec![script::shim::InteractReq::InvButton {
+            id: 379,
+            slot: 0,
+            component: 3415,
+            operation: 4,
+            bank_generation: 0,
+        }],
+        "Trade.removeAll presses Remove All on the first mine row"
     );
     iso.join();
 }
@@ -5570,13 +5639,13 @@ export default class T extends LoopingBot {
         serde_json::from_str(value.as_str().expect("probe string")).expect("json");
     assert_eq!(
         parsed["mine"],
-        serde_json::json!([{ "name": "Lobster", "count": 2 }]),
-        "Trade.myOffer() maps posted trade_mine rows to {{name,count}}"
+        serde_json::json!([{ "id": 379, "name": "Lobster", "count": 2 }]),
+        "Trade.myOffer() maps posted trade_mine rows to {{id,name,count}}"
     );
     assert_eq!(
         parsed["theirs"],
-        serde_json::json!([{ "name": "Coins", "count": 100 }]),
-        "Trade.theirOffer() maps posted trade_theirs rows to {{name,count}}"
+        serde_json::json!([{ "id": 995, "name": "Coins", "count": 100 }]),
+        "Trade.theirOffer() maps posted trade_theirs rows to {{id,name,count}}"
     );
     iso.join();
 }

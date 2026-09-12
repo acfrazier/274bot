@@ -77,6 +77,8 @@ mod shop;
 mod special;
 #[cfg(feature = "load")]
 mod teleport;
+#[cfg(feature = "load")]
+mod trade;
 
 #[cfg(feature = "memory-profile")]
 pub mod memory_profile;
