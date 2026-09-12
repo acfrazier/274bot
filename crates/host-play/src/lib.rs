@@ -1845,14 +1845,30 @@ fn dispatch_script_interact(
                 operation,
                 bank_generation,
             } => {
-                // Selected bank identity only. Do not fall back to another
-                // same-name row or answer the later count dialog.
+                // Selected bank identity, or the open trade offer/side row.
+                // Do not fall back to another same-name row or answer the
+                // later count dialog.
                 if snapshot.bank_component_id() >= 0
                     && snapshot.bank_session_generation() == bank_generation
                 {
                     if let Some(item) = snapshot.bank().iter().find(|item| {
                         item.def.id == id && item.slot == slot && item.component_id == component
                     }) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                } else if snapshot.trade().offer_open {
+                    if let Some(item) = snapshot
+                        .trade()
+                        .side_pack
+                        .iter()
+                        .chain(snapshot.trade().my_offer.iter())
+                        .find(|item| {
+                            item.def.id == id && item.slot == slot && item.component_id == component
+                        })
+                    {
                         wrote |= matches!(
                             ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
                             SendResult::Sent { .. }
@@ -9304,6 +9320,174 @@ export default class T extends LoopingBot {
             )]
         );
         let _ = &mut c;
+    }
+
+    fn trade_offer_client() -> Client {
+        use client::client::ClientPlayer;
+        use client::config::ObjType;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream =
+            client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap();
+        std::mem::forget(listener);
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.stream = Some(stream);
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.minusedlevel = 0;
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.resize(12, ObjType::default());
+            cache.objs[6].id = 6;
+            cache.objs[6].name = "Rune essence".into();
+            cache.objs[7].id = 7;
+            cache.objs[7].name = "Rune essence".into();
+            cache.objs[7].certlink = 6;
+        }
+        c.main_modal_id = 3323;
+        c.set_iface(
+            3323,
+            IfType {
+                id: 3323,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![3415, 3416, 3417]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            3415,
+            IfType {
+                id: 3415,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_INV,
+                iop: [
+                    Some("Remove 1".into()),
+                    Some("Remove 5".into()),
+                    Some("Remove 10".into()),
+                    Some("Remove All".into()),
+                    Some("Remove X".into()),
+                ],
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            3415,
+            IfTypeMut {
+                link_obj_type: Some(vec![7, 0]),
+                link_obj_number: Some(vec![10, 0]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            3321,
+            IfType {
+                id: 3321,
+                layer_id: 3321,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![3322]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            3322,
+            IfType {
+                id: 3322,
+                layer_id: 3321,
+                r#type: ComponentType::TYPE_INV,
+                iop: [
+                    Some("Offer".into()),
+                    Some("Offer 5".into()),
+                    Some("Offer 10".into()),
+                    Some("Offer All".into()),
+                    Some("Offer X".into()),
+                ],
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            3322,
+            IfTypeMut {
+                link_obj_type: Some(vec![7, 8]),
+                link_obj_number: Some(vec![25, 27]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+        c
+    }
+
+    #[test]
+    fn dispatch_inv_button_preserves_selected_trade_side_id() {
+        let mut c = trade_offer_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        assert!(snap.trade().offer_open);
+        let selected = snap
+            .trade()
+            .side_pack
+            .iter()
+            .find(|item| item.def.id == 7)
+            .expect("id 7");
+        let rec = dispatch_inv_button(
+            &snap,
+            inv_button_req(selected.def.id, selected.slot, selected.component_id, 4, 0),
+        );
+        assert_eq!(
+            rec.menus,
+            vec![(
+                0,
+                MiniMenuAction::INV_BUTTON4,
+                7,
+                selected.slot,
+                selected.component_id
+            )],
+            "selected trade side id 7 must not fall back to same-name id 6"
+        );
+        let forged = dispatch_inv_button(
+            &snap,
+            inv_button_req(9999, selected.slot, selected.component_id, 4, 0),
+        );
+        assert!(forged.menus.is_empty(), "forged trade id sends nothing");
+        let wrong_slot = dispatch_inv_button(
+            &snap,
+            inv_button_req(
+                7,
+                selected.slot.wrapping_add(1),
+                selected.component_id,
+                4,
+                0,
+            ),
+        );
+        assert!(
+            wrong_slot.menus.is_empty(),
+            "same id on another trade slot is not a fallback"
+        );
+        c.main_modal_id = -1;
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut closed = GameSnapshot::new();
+        closed.rebuild(&c);
+        assert!(!closed.trade().offer_open);
+        let shut = dispatch_inv_button(
+            &closed,
+            inv_button_req(7, selected.slot, selected.component_id, 4, 0),
+        );
+        assert!(shut.menus.is_empty(), "closed trade sends nothing");
     }
 
     #[test]
