@@ -22,10 +22,12 @@ Each case is a separate scenario; the existing Edgeville `chaos_druid`, Flee
 
 | Case | Card | Prepared before Start | Injected source options |
 | --- | --- | --- | --- |
-| `chaos_druid_tower` | ChaosDruidKiller | Attack/Strength/Hitpoints 40, Lobster 8, Adamant scimitar 1331, Thieving 46, empty selected loot pack, teleport to the Tower surface stand (2562,3356,0) | `location=Chaos Druid Tower`, `combatStyleIndex=1`, `loot=Herb,Law rune,Nature rune`, `food=Lobster`, `foodWithdraw=8`, `buryBones=false`, `solveClues=false` |
-| `chaos_druid_yanille` | ChaosDruidKiller | Attack/Strength/Hitpoints 40, Lobster 8, Adamant scimitar 1331, Agility 40, empty selected loot pack, teleport into the warrior room (2580,9501,0) | `location=Yanille Dungeon`, same style/loot/food/bury/clue defaults as Tower |
+| `chaos_druid_tower` | ChaosDruidKiller | Attack/Strength/Hitpoints 40, Lobster 12 (`CHAOS_DRUID_FOOD`), Adamant scimitar 1331, Thieving 46, empty pack, teleport to the Tower surface stand (2562,3356,0) | only `location=Chaos Druid Tower`, `combatStyleIndex=1` (`CHAOS_DRUID_TOWER_INJECT`; same two-key shape as Edgeville) |
+| `chaos_druid_yanille` | ChaosDruidKiller | Attack/Strength/Hitpoints 40, Lobster 12, Adamant scimitar 1331, Agility 40, empty pack, teleport into the warrior room (2580,9501,0) | only `location=Yanille Dungeon`, `combatStyleIndex=1` (`CHAOS_DRUID_YANILLE_INJECT`) |
 | `ardy_cakes_fight` | ArdyCakes | Thieving 5, Attack/Strength/Hitpoints 40, 22 retained Knives, worn Adamant scimitar 1331, empty cake pack, Baker's stall stand | `guardResponse=Fight`, `solveClues=false` |
 | `ardy_thiever_fight` | ArdyThiever | Thieving 40, Attack/Strength/Hitpoints 40, worn Adamant scimitar 1331, empty pack, market Guard stand | `thieveTarget=Guard`, `guardResponse=Fight`, `bankAtLootSlots=1`, `solveClues=false` |
+
+ChaosDruidKiller does not declare `loot` / `food` / `foodWithdraw` / `buryBones` / `solveClues` as SETTINGS. Loot selection is hardcoded `isChaosDruidLoot` (Herb / Law rune / Nature rune). Food is the loadout/`scriptFood` default Lobster; the card default for `foodWithdraw` is 12 (matches fixture prep). Those are card/loadout defaults, not injects.
 
 Preparation, acknowledgement and the teleports into the Tower surface, Yanille
 warrior room and Ardougne market all happen before the frozen script Starts;
