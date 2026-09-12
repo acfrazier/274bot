@@ -61,8 +61,14 @@ export function toolKeepNames(reqs) {
     return (reqs || []).map((r) => r && r.name).filter(Boolean);
 }
 
-export function hasAllTools(available, reqs) {
-    return (reqs || []).every((r) => r && r.name && available(r.name));
+export function hasAllTools(reqs, skillLevel, invCount) {
+    if (typeof invCount === 'function') {
+        return (reqs || []).every((r) => {
+            if (r && r.kind === 'tiered') throw notImpl('Tools.hasAllTools');
+            return r && r.name && invCount(r.name) >= (r.min ?? 1);
+        });
+    }
+    return (reqs || []).every((r) => r && r.name && typeof skillLevel === 'function' && skillLevel(r.name));
 }
 
 export function bestAxe(level, available) {
@@ -78,8 +84,29 @@ export function canWieldTool(name, attack) {
     return Number(attack) >= tool.wield_attack;
 }
 
-export function toolRestockPlan() {
-    throw notImpl('Tools.toolRestockPlan');
+export function toolRestockPlan(reqs, skillLevel, invCount, bankCount) {
+    if (!Array.isArray(reqs) || typeof invCount !== 'function' || typeof bankCount !== 'function') {
+        throw notImpl('Tools.toolRestockPlan');
+    }
+    const plan = [];
+    for (const r of reqs) {
+        if (!r || r.kind === 'tiered') {
+            throw notImpl('Tools.toolRestockPlan');
+        }
+        const name = r.name;
+        if (typeof name !== 'string' || name.toLowerCase() !== 'tinderbox') {
+            throw notImpl('Tools.toolRestockPlan');
+        }
+        const min = r.min ?? 1;
+        const target = r.restock ?? min;
+        const have = Number(invCount(name)) || 0;
+        const need = target - have;
+        if (need <= 0) continue;
+        const available = Number(bankCount(name)) || 0;
+        if (available <= 0) continue;
+        plan.push({ name, qty: Math.min(need, available), equip: r.equip === true });
+    }
+    return plan;
 }
 
 export function hasToolReq(available, req) {

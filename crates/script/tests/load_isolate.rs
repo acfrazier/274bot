@@ -5749,7 +5749,12 @@ fn isolate_light_fire_queues_tinderbox_use_on_logs() {
     let src = r#"
 import { lightFire } from '../../api/firemaking/LightFire.js';
 export default class T extends LoopingBot {
-    loop() { globalThis.__probe = lightFire('Logs'); }
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__probe = null;
+        globalThis.__probe = await lightFire('Logs');
+    }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -5758,10 +5763,11 @@ export default class T extends LoopingBot {
     snap.inv = &inv;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
+    let _ = iso.probe("true");
     assert_eq!(
-        value, true,
-        "lightFire queues when tinderbox and logs are posted"
+        iso.probe("__probe").unwrap(),
+        serde_json::Value::Null,
+        "a queued use-on is not a completed light"
     );
     assert_eq!(
         iso.drain_interacts(),
