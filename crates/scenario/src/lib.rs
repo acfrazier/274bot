@@ -8593,6 +8593,7 @@ const MAPLE_SHORTBOW_ID: i32 = 853;
 const BRONZE_ARROW_ID: i32 = 882;
 const RANGE_AMMO: i32 = 200;
 const ROCK_CRAB_FOOD: i32 = 8;
+const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 const GREEN_DRAGON_FOOD: i32 = 12;
 const FIRE_GIANT_FOOD: i32 = 12;
 const COMBAT_ATTACK_LEVEL: i32 = 40;
@@ -11501,7 +11502,7 @@ fn green_dragon_scenario() -> Scenario {
         radius: 22,
         food_alias: "lobster",
         food_id: LOBSTER_ID,
-        food_count: GREEN_DRAGON_FOOD,
+        food_count: GREEN_DRAGON_BASE_FOOD,
         weapon_alias: "rune_scimitar",
         weapon_id: RUNE_SCIMITAR_ID,
         extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],

@@ -6314,7 +6314,10 @@ mod tests {
 
         let mut dragon_base = combat_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[
+                (LOBSTER_ID, GREEN_DRAGON_BASE_FOOD),
+                (DRAGONFIRE_SHIELD_ID, 1),
+            ],
             &[("strength", 90)],
             &levels,
             &[],
@@ -6336,7 +6339,7 @@ mod tests {
         let dragon_first = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD)],
                 &[("strength", 90)],
                 &levels,
                 &[combat_npc(2, "Green dragon", 80, true, GREEN_DRAGON_FIELD)],
@@ -6349,7 +6352,7 @@ mod tests {
         let dragon_second = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGON_BONES_ID, 1)],
+                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (DRAGON_BONES_ID, 1)],
                 &[("strength", 110)],
                 &levels,
                 &[
@@ -6391,7 +6394,7 @@ mod tests {
         let dragon_alias = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
-                &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGON_BONES_ID, 1)],
+                &[(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (DRAGON_BONES_ID, 1)],
                 &[("strength", 110)],
                 &levels,
                 &[
