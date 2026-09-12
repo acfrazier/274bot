@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::window::{self, Gpu, RedrawMode, Theme};
+use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
@@ -911,21 +911,40 @@ fn manual_shot_label(now: SystemTime) -> String {
     format!("manual-{}", scenario::shot::stamp_utc(now))
 }
 
-/// F12 whole-window shot: enqueue `(manual-<stamp>, default snapshot)` on
-/// the same `shot_state.requests` path the scenario sink uses, so the
-/// render readback and `pump_shots` handle it with no scenario involved.
-/// The per-run shot dir is created lazily by `pump_shots` on the first
-/// write.
+/// F12 whole-window shot: pair the pixels with the focused slot's last
+/// published live snapshot, then use the same request/readback/write path
+/// as scenario captures. Without a focused published snapshot, fail closed
+/// instead of writing an invented empty sidecar.
 fn enqueue_manual_shot(state: &mut PanelState) {
     let label = manual_shot_label(SystemTime::now());
-    let json =
-        serde_json::to_string_pretty(&api::snapshot::GameSnapshot::new()).unwrap_or_default();
+    let focused = state.session.focus.lock().unwrap().focused.clone();
+    let Some(focused) = focused else {
+        eprintln!("[panel] F12: no focused slot has a live snapshot");
+        return;
+    };
+    let json = {
+        let states = state.session.nav_states.lock().unwrap();
+        let Some((snapshot, _)) = states.get(&focused) else {
+            eprintln!("[panel] F12: focused slot {focused} has no live snapshot");
+            return;
+        };
+        if !snapshot.ingame() || snapshot.tile().is_none() {
+            eprintln!("[panel] F12: focused slot {focused} has no live player snapshot");
+            return;
+        }
+        match serde_json::to_string_pretty(snapshot) {
+            Ok(json) => json,
+            Err(error) => {
+                eprintln!("[panel] F12: snapshot serialization failed: {error}");
+                return;
+            }
+        }
+    };
     state
         .shot_state
         .lock()
         .unwrap()
-        .requests
-        .push((label.clone(), json));
+        .enqueue(label.clone(), json);
     println!("[panel] F12: shot {label} queued");
 }
 
@@ -1049,26 +1068,40 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
     None
 }
 
-/// Hold a terminal-shot exit until `pump_shots` writes (or the drain
-/// lapses). Returns true while the caller must keep pumping.
-fn hold_terminal_shot(live: &mut LiveScript, wants: bool, wrote_shots: usize) -> bool {
-    if !wants {
-        return false;
-    }
-    let held = match live.drain_started {
-        Some(t0) => t0.elapsed() >= NAV_FULL_SHOT_DRAIN,
-        // The frame the terminal status is first seen: the request is
-        // already in `shot_state`, but `pump_shots` ran before this tick,
-        // so the write needs at least one more frame.
-        None => false,
+/// Hold a terminal-shot exit until `pump_shots` writes. The drain remains
+/// bounded, but a terminal PASS may not turn a missing requested pair into
+/// success when the bound lapses.
+fn hold_terminal_shot(
+    live: &mut LiveScript,
+    label: Option<&str>,
+    status: &ShotStatus,
+) -> Result<bool, String> {
+    let Some(label) = label else {
+        return Ok(false);
     };
-    if !held && wrote_shots == 0 {
-        if live.drain_started.is_none() {
-            live.drain_started = Some(Instant::now());
+    match status {
+        ShotStatus::Written => return Ok(false),
+        ShotStatus::Failed(error) => {
+            return Err(format!("terminal shot {label} failed: {error}"));
         }
-        return true;
+        ShotStatus::Missing
+        | ShotStatus::Requested
+        | ShotStatus::ReadbackPending
+        | ShotStatus::WritePending => {}
     }
-    false
+    if live
+        .drain_started
+        .is_some_and(|t0| t0.elapsed() >= NAV_FULL_SHOT_DRAIN)
+    {
+        return Err(format!(
+            "terminal shot {label} was not written within {}s (capture stage: {status:?})",
+            NAV_FULL_SHOT_DRAIN.as_secs(),
+        ));
+    }
+    // The frame the terminal status is first seen: the request may have
+    // landed after `pump_shots` ran, so the write needs another frame.
+    live.drain_started.get_or_insert_with(Instant::now);
+    Ok(true)
 }
 
 /// Headed script watch: mirror the shared `ScenarioRunner` each frame.
@@ -1079,17 +1112,17 @@ fn hold_terminal_shot(live: &mut LiveScript, wants: bool, wrote_shots: usize) ->
 fn live_script_tick(
     live: &mut LiveScript,
     session: &mut Session,
-    wrote_shots: usize,
+    terminal_shot_status: &ShotStatus,
 ) -> Option<String> {
     if live.passed || live.failed.is_some() {
         return None;
     }
-    let (status, evidence, wants_terminal_shot) = {
+    let (status, evidence, terminal_shot) = {
         let guard = session.scenario.lock().unwrap();
         (
             guard.as_ref().map(|r| r.status()),
             guard.as_ref().and_then(|r| r.evidence().cloned()),
-            guard.as_ref().is_some_and(|r| r.terminal_shot().is_some()),
+            guard.as_ref().and_then(|r| r.terminal_shot()),
         )
     };
     let core_watch = session.catalog_core_watch();
@@ -1113,8 +1146,10 @@ fn live_script_tick(
             })
     };
     if let CoreGate::Failed(message) = &core_gate {
-        if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
-            return None;
+        match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+            Ok(true) => return None,
+            Err(error) => eprintln!("[panel] {error}"),
+            Ok(false) => {}
         }
         if let Some(core) = record_core() {
             eprintln!("CATALOG_CORE: {} {core}", live.name);
@@ -1128,8 +1163,13 @@ fn live_script_tick(
             if matches!(core_gate, CoreGate::Pending) {
                 return None;
             }
-            if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
-                return None;
+            match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+                Ok(true) => return None,
+                Err(error) => {
+                    live.failed = Some(error.clone());
+                    return Some(error);
+                }
+                Ok(false) => {}
             }
             if !live.announced_pass {
                 if let Some(core) = record_core() {
@@ -1148,8 +1188,10 @@ fn live_script_tick(
             None
         }
         Some(scenario::RunnerStatus::Failed(msg)) => {
-            if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
-                return None;
+            match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+                Ok(true) => return None,
+                Err(error) => eprintln!("[panel] {error}"),
+                Ok(false) => {}
             }
             if let Some(core) = record_core() {
                 eprintln!("CATALOG_CORE: {} {core}", live.name);
@@ -4371,12 +4413,16 @@ fn arm_scenario_shots(state: &mut PanelState) {
                 if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
                     eprintln!("[panel] scenario capture requested: {label}");
                 }
-                let json = serde_json::to_string_pretty(snap).unwrap_or_default();
-                shots
-                    .lock()
-                    .unwrap()
-                    .requests
-                    .push((label.to_string(), json));
+                match serde_json::to_string_pretty(snap) {
+                    Ok(json) => shots.lock().unwrap().enqueue(label.to_string(), json),
+                    Err(error) => {
+                        eprintln!("[panel] shot {label}: snapshot serialization failed: {error}");
+                        shots
+                            .lock()
+                            .unwrap()
+                            .mark_failed(label, &format!("snapshot serialization failed: {error}"));
+                    }
+                }
             },
         ));
     }
@@ -4483,16 +4529,26 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
 /// Returns how many shots were written this frame — the `--smoke` watch
 /// exits 0 once its single scene2 shot lands.
 fn pump_shots(state: &mut PanelState) -> usize {
-    let mut shots = state.shot_state.lock().unwrap();
+    let done = {
+        let mut shots = state.shot_state.lock().unwrap();
+        std::mem::take(&mut shots.done)
+    };
     let mut written = 0;
-    for cap in std::mem::take(&mut shots.done) {
+    for cap in done {
         if state.shot_dir.is_none() {
-            state.shot_dir = scenario::shot::create_run_dir()
-                .map(Some)
-                .unwrap_or_else(|e| {
-                    eprintln!("[panel] shot dir: {e}; shots will be skipped");
-                    None
-                });
+            match scenario::shot::create_run_dir() {
+                Ok(dir) => state.shot_dir = Some(dir),
+                Err(error) => {
+                    let message = format!("shot directory unavailable: {error}");
+                    eprintln!("[panel] shot {}: {message}", cap.label);
+                    state
+                        .shot_state
+                        .lock()
+                        .unwrap()
+                        .mark_failed(&cap.label, &message);
+                    continue;
+                }
+            }
         }
         if let Some(dir) = state.shot_dir.as_deref() {
             match scenario::shot::write_shot(
@@ -4505,13 +4561,20 @@ fn pump_shots(state: &mut PanelState) -> usize {
             ) {
                 Ok(path) => {
                     println!("[panel] shot {} -> {}", cap.label, path.display());
+                    state.shot_state.lock().unwrap().mark_written(&cap.label);
                     written += 1;
                 }
-                Err(e) => eprintln!("[panel] shot {}: {e}", cap.label),
+                Err(error) => {
+                    eprintln!("[panel] shot {}: {error}", cap.label);
+                    state
+                        .shot_state
+                        .lock()
+                        .unwrap()
+                        .mark_failed(&cap.label, &error.to_string());
+                }
             }
         }
     }
-    let requests = std::mem::take(&mut shots.requests);
     // `--smoke` render-settle gate: hold the scene2 request until the
     // focused slot has held scene 2 for [`SMOKE_SETTLE`] and is still
     // ingame — the slot's 1 fps renderer needs wall-clock time to
@@ -4526,9 +4589,17 @@ fn pump_shots(state: &mut PanelState) -> usize {
         _ => false,
     };
     if !hold {
-        shots.wanted.extend(requests);
-    } else {
-        shots.requests = requests;
+        let mut shots = state.shot_state.lock().unwrap();
+        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") && !shots.requests.is_empty() {
+            let labels = shots
+                .requests
+                .iter()
+                .map(|(label, _)| label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("[panel] capture queued for readback: {labels}");
+        }
+        shots.promote_requests();
     }
     written
 }
@@ -4558,11 +4629,25 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     }
     state.session.pump_script_transpile();
     let statuses = state.session.statuses();
+    let terminal_shot_status = {
+        let label = state
+            .session
+            .scenario
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|runner| runner.terminal_shot());
+        label
+            .map(|label| state.shot_state.lock().unwrap().status(label))
+            .unwrap_or(ShotStatus::Missing)
+    };
     if let Some(live) = state.live.as_mut() {
         let fail = match live {
             LiveHarness::Null(n) => live_null_tick(n, &statuses),
             LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
-            LiveHarness::Script(ls) => live_script_tick(ls, &mut state.session, wrote_shots),
+            LiveHarness::Script(ls) => {
+                live_script_tick(ls, &mut state.session, &terminal_shot_status)
+            }
             LiveHarness::Smoke(s) => live_smoke_tick(s, &mut state.session, &statuses, wrote_shots),
         };
         if let Some(msg) = fail {
@@ -4629,8 +4714,8 @@ mod tests {
         manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
         runner_config, smoke_settled, smoke_should_fire, startup_progress, Boot, CoreGate,
         LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
-        ProgressPhase, RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-        SMOKE_DEADLINE, SMOKE_SETTLE,
+        ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W,
+        LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -5577,6 +5662,28 @@ mod tests {
         assert_eq!(scenario::shot::safe_label(&label), label);
     }
 
+    #[test]
+    fn manual_shot_without_a_focused_live_snapshot_is_not_enqueued() {
+        let mut state = PanelState::default();
+        super::enqueue_manual_shot(&mut state);
+        assert!(state.shot_state.lock().unwrap().requests.is_empty());
+    }
+
+    #[test]
+    fn manual_shot_rejects_an_empty_published_snapshot() {
+        let mut state = PanelState::default();
+        state.session.focus.lock().unwrap().focused = Some("alice".into());
+        state.session.nav_states.lock().unwrap().insert(
+            "alice".into(),
+            (
+                api::snapshot::GameSnapshot::new(),
+                nav::WorldState::default(),
+            ),
+        );
+        super::enqueue_manual_shot(&mut state);
+        assert!(state.shot_state.lock().unwrap().requests.is_empty());
+    }
+
     /// A synthetic client that has already seeded: ingame, scene 2, a
     /// mainland build base, and bumped family gens (same trick as the
     /// scenario crate's own tests — no live server).
@@ -5666,7 +5773,7 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, 0),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
             None,
             "PASS latches; the caller exits 0"
         );
@@ -5680,11 +5787,14 @@ mod tests {
         live.passed = false;
         live.announced_pass = false;
         live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
-        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            None
+        );
         assert!(!live.passed, "scenario-only PASS is not catalog core PASS");
         live.core_deadline = Some(Instant::now() - Duration::from_secs(1));
-        let error =
-            live_script_tick(&mut live, &mut s, 0).expect("unqualified core times out as FAIL");
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing)
+            .expect("unqualified core times out as FAIL");
         assert!(error.contains("catalog core did not qualify"), "{error}");
 
         live.failed = None;
@@ -5707,7 +5817,10 @@ mod tests {
         baseline.xp.insert("thieving".into(), 1);
         baseline.items.insert("Coins".into(), 1);
         watch.observe("catalogtest", baseline, false);
-        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            None
+        );
         assert!(live.passed, "full shared core permits headed PASS");
         watch.clear();
 
@@ -5716,14 +5829,17 @@ mod tests {
         live.soak = true;
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, 0),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
         assert!(!live.passed, "window stays open after proof PASS");
         assert!(live.announced_pass);
         live.soak_until = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            None
+        );
         assert!(live.passed, "exit 0 only after BUDGET_S elapses");
 
         // FAIL: a never-satisfiable arm within a 1-tick budget.
@@ -5767,7 +5883,8 @@ mod tests {
             core_deadline: None,
         };
         // No terminal shot armed: the FAIL returns immediately.
-        let msg = live_script_tick(&mut live, &mut s, 0).expect("FAIL returns the message");
+        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing)
+            .expect("FAIL returns the message");
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
         assert!(live.failed.is_some());
     }
@@ -5823,13 +5940,14 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, 0),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Requested),
             None,
             "the first FAIL frame holds so the shot can land"
         );
         assert!(live.drain_started.is_some());
         // The shot writes on a later frame: the FAIL is returned.
-        let msg = live_script_tick(&mut live, &mut s, 1).expect("FAIL after the shot writes");
+        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Written)
+            .expect("FAIL after the shot writes");
         assert!(live.failed.is_some());
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
     }
@@ -5889,14 +6007,100 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, 0),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Requested),
             None,
             "the first PASS frame holds so the shot can land"
         );
         assert!(!live.passed);
         assert!(live.drain_started.is_some());
-        assert_eq!(live_script_tick(&mut live, &mut s, 1), None);
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written),
+            None
+        );
         assert!(live.passed, "PASS after the shot writes; caller exits 0");
+
+        live.passed = false;
+        live.failed = None;
+        live.announced_pass = false;
+        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Requested)
+            .expect("PASS with a missing terminal shot must fail after the drain bound");
+        assert!(error.contains("terminal shot"), "error: {error}");
+        assert!(error.contains("not written"), "error: {error}");
+        assert!(live.failed.is_some(), "the missing capture latches failure");
+    }
+
+    #[test]
+    fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
+        let mut live = LiveScript {
+            name: "script_t".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: None,
+        };
+        assert_eq!(
+            super::hold_terminal_shot(
+                &mut live,
+                Some("t-pass"),
+                &crate::window::ShotStatus::Written,
+            ),
+            Ok(false)
+        );
+        assert!(live.drain_started.is_none());
+    }
+
+    #[test]
+    fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-panel-shot-pump-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut state = PanelState {
+            shot_dir: Some(dir.clone()),
+            ..PanelState::default()
+        };
+        state
+            .shot_state
+            .lock()
+            .unwrap()
+            .done
+            .push(crate::window::ShotCapture {
+                label: "gnome_chop".into(),
+                snapshot_json: "{\"scene\":2}".into(),
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 255],
+            });
+
+        assert_eq!(super::pump_shots(&mut state), 1);
+        assert_eq!(
+            state.shot_state.lock().unwrap().status("gnome_chop"),
+            ShotStatus::Written
+        );
+        let mut extensions = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| {
+                entry
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        extensions.sort();
+        assert_eq!(extensions, ["json", "png"]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn smoke_at(started: Instant) -> LiveSmoke {
