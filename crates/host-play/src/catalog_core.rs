@@ -277,17 +277,28 @@ pub const MOSS_GIANT_BANK: (i32, i32, i32) = (2615, 3332, 0);
 pub const HILL_GIANT_BANK: (i32, i32, i32) = (3185, 3440, 0);
 pub const CHAOS_DRUID_BANK: (i32, i32, i32) = (3094, 3491, 0);
 pub const ARDOUGNE_EAST_BANK: (i32, i32, i32) = (2655, 3283, 0);
-/// AutoFighter's loot list: the gem-table names its own DEFAULT_LOOT holds.
-pub const UNCUT_DIAMOND_ID: i32 = 1617;
-pub const UNCUT_RUBY_ID: i32 = 1619;
-pub const UNCUT_EMERALD_ID: i32 = 1621;
 /// ArdyFighter's own DEFAULT_LOOT names, minus `clue scroll` (the card keeps
 /// clue items in its deposit matcher and one id per scroll tier would be a
-/// guess). These are the Guard drop-table rows the card's list was written for.
+/// guess). These are the Guard drop-table rows the cards' lists were written
+/// for: ArdyFighter's own loot list and the AutoFighter bank cell's injected
+/// one.
 pub const STEEL_ARROW_ID: i32 = 886;
 pub const BODY_TALISMAN_ID: i32 = 1446;
 pub const BLOOD_RUNE_ID: i32 = 565;
 pub const CHAOS_RUNE_ID: i32 = 562;
+/// The six verifiable Guard drops: the loot list the AutoFighter bank cell
+/// injects (`loot=[iron ore, steel arrow, body talisman, blood/chaos/nature
+/// rune]`, whose item names resolve to exactly these ids) and the class its
+/// bank trip deposits — the same ArdyFighter already lists. A clue-only or
+/// junk drop is not one of these.
+pub const GUARD_DROP_IDS: [i32; 6] = [
+    IRON_ORE_ID,
+    STEEL_ARROW_ID,
+    BODY_TALISMAN_ID,
+    BLOOD_RUNE_ID,
+    CHAOS_RUNE_ID,
+    NATURE_RUNE_ID,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1743,11 +1754,11 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                     CoreCase::ChaosDruidYanille => baseline.level("agility") >= 40,
                     // Bank cells start from a wielded melee weapon: every one of
                     // these cards deposits (or is told to deposit) the pack, so a
-                    // carried weapon would be stashed instead of used.
-                    CoreCase::AutoFighterBank => {
-                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
-                            && baseline.item_id(UNCUT_SAPPHIRE_ID) == 1
-                    }
+                    // carried weapon would be stashed instead of used. The Guard
+                    // loot class is refused by `combat_baseline_ready` itself
+                    // (`combat_loot_count == 0`): the cell's deposit class must
+                    // not be seeded before Start.
+                    CoreCase::AutoFighterBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
                     CoreCase::MossGiantBank => {
                         baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
                             && baseline.item_id(LOBSTER_ID) == MOSS_GIANT_BANK_FOOD
@@ -1965,7 +1976,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
         }
         CoreCase::AutoFighterBank => {
-            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, prepared gem 1623, banking Auto"
+            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, banking Auto, empty Guard-drop class 440/886/1446/565/562/561"
         }
         CoreCase::MossGiantBank => {
             "Moss safespot (2553,3406,0) r10, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 2 (below its restock line), empty 532/225"
@@ -3132,6 +3143,9 @@ pub enum CombatLoot {
     BigBones,
     BigBonesOrLimpwurt,
     DragonBonesOrHide,
+    /// The AutoFighter bank cell's injected Guard loot list: any one of the
+    /// six verifiable Guard drops ([`GUARD_DROP_IDS`]) landing in the pack.
+    GuardDrop,
     None,
 }
 
@@ -3359,7 +3373,10 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         // itself is declared in `combat_bank_spec`. Prepared food differs from
         // the plain core where the card's own trip rule needs a shortfall
         // (MossGiant banks when the pack runs dry, ChaosDruidKiller when the
-        // carried food is under `foodWithdraw`).
+        // carried food is under `foodWithdraw`). AutoFighter finishes its
+        // fights instantly at these levels, so the cell's trip end is the
+        // injected `bankAtLootSlots=1`: the loot class is the card's own
+        // injected Guard list, and the pack starts empty of it.
         CoreCase::AutoFighterBank => Some(CombatSpec {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
@@ -3368,7 +3385,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_count: AUTO_FIGHTER_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
-            loot: CombatLoot::None,
+            loot: CombatLoot::GuardDrop,
             extra: CombatExtra::None,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -3453,13 +3470,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
     match case {
         // `banking=Auto`: BankRun walks to the nearest bank from the anchor and
         // deposits everything its keep-list does not hold, then restocks food.
+        // The deposit class is the card's own injected Guard loot list: the
+        // pack only ever holds it because a Guard dropped it.
         CoreCase::AutoFighterBank => Some(CombatBankSpec {
-            deposit: &[
-                UNCUT_SAPPHIRE_ID,
-                UNCUT_EMERALD_ID,
-                UNCUT_RUBY_ID,
-                UNCUT_DIAMOND_ID,
-            ],
+            deposit: &GUARD_DROP_IDS,
             stand: ARDOUGNE_EAST_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
@@ -3499,14 +3513,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
         // list and walks back to the market anchor. No food restock (the
         // Baker's stall is this card's food).
         CoreCase::ArdyFighterBank => Some(CombatBankSpec {
-            deposit: &[
-                IRON_ORE_ID,
-                STEEL_ARROW_ID,
-                BODY_TALISMAN_ID,
-                BLOOD_RUNE_ID,
-                CHAOS_RUNE_ID,
-                NATURE_RUNE_ID,
-            ],
+            deposit: &GUARD_DROP_IDS,
             stand: ARDY_BANK,
             stand_radius: 6,
             restock: None,
@@ -3562,6 +3569,10 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
         CombatLoot::DragonBonesOrHide => {
             observation.item_id(DRAGON_BONES_ID) + observation.item_id(GREEN_DRAGONHIDE_ID)
         }
+        CombatLoot::GuardDrop => GUARD_DROP_IDS
+            .iter()
+            .map(|id| observation.item_id(*id))
+            .sum(),
         CombatLoot::None => 0,
     }
 }
@@ -4006,6 +4017,7 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         CombatLoot::BigBones => id == BIG_BONES_ID,
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
         CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
+        CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
         CombatLoot::None => false,
     }
 }

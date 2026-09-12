@@ -7647,7 +7647,7 @@ mod tests {
         let baseline = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
             &[(TROUT_ID, 20)],
             &[("strength", 0)],
             &[],
@@ -7657,9 +7657,14 @@ mod tests {
             false,
         );
         validate_case_baseline(case, &baseline).unwrap();
-        let mut no_prepared_loot = baseline.clone();
-        no_prepared_loot.item_ids.remove(&UNCUT_SAPPHIRE_ID);
-        assert!(validate_case_baseline(case, &no_prepared_loot).is_err());
+        // The class item has to be a Guard drop: any seeded deposit-class
+        // stock fails the baseline (mirrors moss_giant_bank's seeded bones).
+        let mut seeded_loot = baseline.clone();
+        seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_loot).is_err());
+        let mut seeded_rune = baseline.clone();
+        seeded_rune.item_ids.insert(BLOOD_RUNE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_rune).is_err());
         let mut carried_weapon_only = baseline.clone();
         carried_weapon_only.equipment_ids.clear();
         assert!(validate_case_baseline(case, &carried_weapon_only).is_err());
@@ -7670,7 +7675,7 @@ mod tests {
         let first = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
             &[(TROUT_ID, 20)],
             &[("strength", 12)],
             &[combat_npc(1, "Guard", 22, true, ARDY_THIEVER_STAND)],
@@ -7682,7 +7687,7 @@ mod tests {
         let defeat = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
             &[(TROUT_ID, 20)],
             &[("strength", 40)],
             &[
@@ -7694,11 +7699,25 @@ mod tests {
             0,
             false,
         );
+        // The kill's drop lands in the pack: the class only exists because the
+        // script looted it, and `bankAtLootSlots=1` ends the trip on it.
+        let looted = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
         let deposited = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -7710,7 +7729,7 @@ mod tests {
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -7722,7 +7741,7 @@ mod tests {
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -7734,7 +7753,7 @@ mod tests {
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -7746,7 +7765,7 @@ mod tests {
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
             &[("strength", 60)],
             &[combat_npc(3, "Guard", 20, true, ARDY_THIEVER_STAND)],
             true,
@@ -7757,7 +7776,10 @@ mod tests {
         assert!(witness(
             case,
             &baseline,
-            [&first, &defeat, &deposited, &restocked, &closed, &returned, &further, &further]
+            [
+                &first, &defeat, &looted, &deposited, &restocked, &closed, &returned, &further,
+                &further
+            ]
         )
         .qualify()
         .is_ok());
@@ -7765,37 +7787,17 @@ mod tests {
         assert!(witness(
             case,
             &baseline,
-            [&first, &defeat, &first, &defeat, &first, &defeat]
+            [&first, &defeat, &looted, &first, &defeat, &first, &defeat]
         )
         .qualify()
         .is_err());
-        // A bank that only ever opened (readiness/seed) fails: same pack loot,
-        // no deposit move, no close, no return.
-        let open_only = bank_obs(
+        // A bank whose class stock appears without the pack ever holding one
+        // has no kill-fed loot behind it and fails the core witness.
+        let phantom_bank = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (UNCUT_SAPPHIRE_ID, 1)],
-            &[(TROUT_ID, 20)],
-            &[("strength", 40)],
-            &[],
-            false,
-            None,
-            5,
-            true,
-        );
-        assert!(witness(
-            case,
-            &baseline,
-            [&first, &defeat, &deposited, &open_only, &open_only]
-        )
-        .qualify()
-        .is_err());
-        // A loaded booth away from the card's own bank fails the cell.
-        let wrong_bank = bank_obs(
-            case,
-            ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (UNCUT_SAPPHIRE_ID, 1)],
+            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -7809,6 +7811,56 @@ mod tests {
             [
                 &first,
                 &defeat,
+                &phantom_bank,
+                &restocked,
+                &closed,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // A bank that only ever opened (readiness/seed) fails: same pack loot,
+        // no deposit move, no close, no return.
+        let open_only = bank_obs(
+            case,
+            ARDOUGNE_EAST_BANK,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [&first, &defeat, &looted, &open_only, &open_only]
+        )
+        .qualify()
+        .is_err());
+        // A loaded booth away from the card's own bank fails the cell.
+        let wrong_bank = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[("strength", 40)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &first,
+                &defeat,
+                &looted,
                 &wrong_bank,
                 &restocked,
                 &closed,
@@ -7822,7 +7874,7 @@ mod tests {
         assert!(witness(
             case,
             &baseline,
-            [&first, &defeat, &deposited, &restocked, &closed, &returned]
+            [&first, &defeat, &looted, &deposited, &restocked, &closed, &returned]
         )
         .qualify()
         .is_err());
@@ -8519,6 +8571,33 @@ mod tests {
                         "{name}: {card} at {commit} does not declare setting {id:?}"
                     );
                 }
+                // Settings.list only accepts a JSON array; a CSV string falls
+                // back to AutoFighter's DEFAULT_LOOT (gems+clue), which Guards
+                // cannot feed. merge_bag must keep the injected Guard names.
+                if name == "auto_fighter_bank" {
+                    let schema = script::settings_schema_from_source(&source);
+                    let loot = schema
+                        .iter()
+                        .find(|setting| setting.id == "loot")
+                        .unwrap_or_else(|| panic!("{name}: {card} schema has no loot setting"));
+                    assert_eq!(
+                        loot.ty, "string[]",
+                        "{name}: {card} at {commit} loot must be string[] so Settings.list reads the inject"
+                    );
+                    let bag = script::merge_bag(&schema, &Map::new(), Some(&inject));
+                    assert_eq!(
+                        bag.get("loot"),
+                        Some(&json!([
+                            "iron ore",
+                            "steel arrow",
+                            "body talisman",
+                            "blood rune",
+                            "chaos rune",
+                            "nature rune"
+                        ])),
+                        "{name}: {card} at {commit} must deliver the injected Guard loot array, not DEFAULT_LOOT"
+                    );
+                }
             }
         }
     }
@@ -8611,6 +8690,27 @@ mod tests {
                 }
             }
             Value::Bool(_) => assert_eq!(setting.kind, "boolean", "{context}: declared type"),
+            Value::Array(items) => {
+                assert!(
+                    setting.kind == "string[]" || setting.kind == "list",
+                    "{context}: declared type"
+                );
+                for item in items {
+                    let text = item.as_str().unwrap_or_else(|| {
+                        panic!("{context}: array item {item:?} is not a string")
+                    });
+                    if !setting.options.is_empty() {
+                        assert!(
+                            setting
+                                .options
+                                .iter()
+                                .any(|option| option.as_str() == Some(text)),
+                            "{context}: {text:?} is not one of {:?}",
+                            setting.options
+                        );
+                    }
+                }
+            }
             other => panic!("{context}: unsupported injected value {other:?}"),
         }
     }

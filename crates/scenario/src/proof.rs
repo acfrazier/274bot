@@ -29,6 +29,11 @@ pub enum Proof {
     BankItemAtMost { name: &'static str, count: i32 },
     /// A fresh, open bank contains at least `count` of exact object `id`.
     BankItemId { id: i32, count: i32 },
+    /// A fresh, open bank contains at least `count` of *any* exact object in
+    /// `ids` — for a class of RNG-fed drops where no single id is guaranteed
+    /// but at least one has to land (the AutoFighter bank cell's six
+    /// Guard-reachable loot ids).
+    BankItemIdAny { ids: &'static [i32], count: i32 },
     /// A fresh, open bank contains at most `count` of exact object `id`.
     BankItemIdAtMost { id: i32, count: i32 },
     /// The bank modal is closed after a preceding observed bank step.
@@ -132,6 +137,13 @@ impl Proof {
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
             Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
             Proof::BankItemId { id, count } => format!("fresh_bank_item_id({id})>={count}"),
+            Proof::BankItemIdAny { ids, count } => format!(
+                "fresh_bank_item_id_any({})>={count}",
+                ids.iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Proof::BankItemIdAtMost { id, count } => {
                 format!("fresh_bank_item_id({id})<={count}")
             }
@@ -287,6 +299,18 @@ impl Proof {
                 } else {
                     got <= *count
                 }
+            }
+            Proof::BankItemIdAny { ids, count } => {
+                if !fresh_bank(snap) {
+                    return false;
+                }
+                let got: i32 = snap
+                    .bank()
+                    .iter()
+                    .filter(|row| ids.contains(&row.def.id))
+                    .map(|row| row.count)
+                    .sum();
+                got >= *count
             }
             Proof::BankClosed => {
                 snap.ingame()

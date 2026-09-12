@@ -8606,6 +8606,22 @@ const ROPE_ID: i32 = 954;
 const CASKET_ID: i32 = 405;
 const NOTED_CASKET_ID: i32 = 406;
 const NOTED_UNCUT_SAPPHIRE_ID: i32 = 1624;
+const STEEL_ARROW_ID: i32 = 886;
+const BODY_TALISMAN_ID: i32 = 1446;
+const BLOOD_RUNE_ID: i32 = 565;
+const CHAOS_RUNE_ID: i32 = 562;
+/// The six verifiable Guard drops the AutoFighter bank cell's injected loot
+/// list holds (`loot=[iron ore, steel arrow, body talisman, blood/chaos/nature
+/// rune]`) and the class the host core's `GUARD_DROP_IDS` deposits. A
+/// clue-only or junk drop is not one of these.
+const GUARD_DROP_IDS: [i32; 6] = [
+    IRON_ORE_ID,
+    STEEL_ARROW_ID,
+    BODY_TALISMAN_ID,
+    BLOOD_RUNE_ID,
+    CHAOS_RUNE_ID,
+    NATURE_RUNE_ID,
+];
 
 const CHAOS_DRUID_FIELD: WorldTile = WorldTile {
     x: 3110,
@@ -11572,7 +11588,9 @@ fn ardy_fighter_scenario() -> Scenario {
 
 /// `banking=Auto` on AutoFighter: BankRun walks to the nearest bank from the
 /// anchor, deposits everything its keep-list does not hold and restocks food.
-/// `bankAtLootSlots=1` so the prepared trip loot is what ends the trip.
+/// `loot` is the six verifiable Guard drops (the card's default gem+clue list
+/// is unreachable: Guards drop no gems and the card keeps clue items), and
+/// `bankAtLootSlots=1` so the first of those drops is what ends the trip.
 const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "target",
@@ -11589,6 +11607,17 @@ const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "bankAtLootSlots",
         value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&[
+            "iron ore",
+            "steel arrow",
+            "body talisman",
+            "blood rune",
+            "chaos rune",
+            "nature rune",
+        ]),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -11679,7 +11708,6 @@ fn combat_bank_scenario(
     thieving: i32,
     bank_alias: &'static str,
     bank_food_count: i32,
-    prepared_stock: Option<(&'static str, i32, i32)>,
     watches: &[(&'static str, Proof)],
 ) -> Scenario {
     let xp = Proof::StatXpGain {
@@ -11700,9 +11728,6 @@ fn combat_bank_scenario(
                 cheat(c, "~clearinv");
                 cheat(c, &format!("give {food_alias} {food_count}"));
                 for &(alias, _, count) in extra_give {
-                    cheat(c, &format!("give {alias} {count}"));
-                }
-                if let Some((alias, _, count)) = prepared_stock {
                     cheat(c, &format!("give {alias} {count}"));
                 }
                 if bank_food_count > 0 {
@@ -11765,12 +11790,6 @@ fn combat_bank_scenario(
     for &(_, id, count) in extra_give {
         steps.push(bank_fletcher_watch(
             "acknowledge prepared extra gear before Start",
-            Proof::ItemId { id, count },
-        ));
-    }
-    if let Some((_, id, count)) = prepared_stock {
-        steps.push(bank_fletcher_watch(
-            "acknowledge the prepared trip loot before Start",
             Proof::ItemId { id, count },
         ));
     }
@@ -11839,12 +11858,13 @@ fn combat_bank_scenario(
     }
 }
 
-/// `banking=Auto` on the Guard anchor: one prepared listed-loot gem is the
-/// trip's loot slot (`bankAtLootSlots=1`), East Ardougne is the nearest bank,
-/// and the BankRun has to deposit it, restock trout to its declared 10, close,
-/// walk back to the anchor and fight again. Guards expose no gem-table drop in
-/// the frozen content, so the trip loot is prepared input and said so here and
-/// in the options-149 report; the witness still refuses a seed-only pass.
+/// `banking=Auto` on the Guard anchor: the injected `loot` list is the six
+/// verifiable Guard drops and `bankAtLootSlots=1` makes the first of them the
+/// trip's loot slot. East Ardougne is the nearest bank, and the BankRun has to
+/// deposit that loot, restock trout to its declared 10, close, walk back to
+/// the anchor and fight again. Nothing in the class is prepared: it can only
+/// enter the pack as a Guard drop, and a run that never loots one deposits
+/// nothing to qualify.
 fn auto_fighter_bank_scenario() -> Scenario {
     combat_bank_scenario(
         "auto_fighter_bank",
@@ -11856,17 +11876,16 @@ fn auto_fighter_bank_scenario() -> Scenario {
         AUTO_FIGHTER_FOOD,
         COMBAT_SCIMITAR_ID,
         &[],
-        &[],
+        &GUARD_DROP_IDS,
         AUTO_FIGHTER_BANK_INJECT,
         0,
         "trout",
         20,
-        Some(("uncut_sapphire", UNCUT_SAPPHIRE_ID, 1)),
         &[
             (
-                "watch the trip loot enter a fresh Ardougne East bank",
-                Proof::BankItemId {
-                    id: UNCUT_SAPPHIRE_ID,
+                "watch a Guard drop enter a fresh Ardougne East bank",
+                Proof::BankItemIdAny {
+                    ids: &GUARD_DROP_IDS,
                     count: 1,
                 },
             ),
@@ -11917,7 +11936,6 @@ fn moss_giant_bank_scenario() -> Scenario {
         0,
         "lobster",
         24,
-        None,
         &[
             (
                 "watch the trip's Big bones enter a fresh Ardougne West bank",
@@ -11973,7 +11991,6 @@ fn hill_giant_bank_scenario() -> Scenario {
         0,
         "trout",
         12,
-        None,
         &[
             (
                 "watch the trip's Big bones enter a fresh Varrock West bank",
@@ -12030,7 +12047,6 @@ fn chaos_druid_bank_scenario() -> Scenario {
         0,
         "lobster",
         12,
-        None,
         &[
             (
                 "watch the prepare-trip restock of exactly twelve Lobster",
@@ -12079,7 +12095,6 @@ fn ardy_fighter_bank_scenario() -> Scenario {
         5,
         "",
         0,
-        None,
         &[
             ("watch the periodic bank close", Proof::BankClosed),
             (
@@ -13263,6 +13278,44 @@ mod tests {
         .unwrap();
         assert_eq!(auto.get("banking"), Some(&Value::String("Auto".into())));
         assert_eq!(auto.get("bankAtLootSlots"), Some(&Value::from(1.0)));
+        // The trip loot is the injected Guard list itself: no deposit-class
+        // item is prepared, so the class can only arrive as a kill drop.
+        assert_eq!(
+            auto.get("loot"),
+            Some(&Value::Array(
+                [
+                    "iron ore",
+                    "steel arrow",
+                    "body talisman",
+                    "blood rune",
+                    "chaos rune",
+                    "nature rune",
+                ]
+                .into_iter()
+                .map(|name| Value::String(name.into()))
+                .collect()
+            ))
+        );
+        let auto_scenario = get("auto_fighter_bank").unwrap();
+        let auto_start = auto_scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        for step in &auto_scenario.steps[..auto_start] {
+            assert!(
+                !matches!(step.wait.arm, Proof::ItemId { id, .. } if GUARD_DROP_IDS.contains(&id)),
+                "auto_fighter_bank must not prepare a deposit-class item before Start"
+            );
+        }
+        for &id in &GUARD_DROP_IDS {
+            assert!(
+                auto_scenario.steps[..auto_start].iter().any(|step| {
+                    matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
+                }),
+                "auto_fighter_bank must confirm empty deposit-class id {id} before Start"
+            );
+        }
         let hill = settings_inject_map(
             get("hill_giant_bank")
                 .unwrap()
