@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -299,6 +299,35 @@ pub const GUARD_DROP_IDS: [i32; 6] = [
     CHAOS_RUNE_ID,
     NATURE_RUNE_ID,
 ];
+/// RockCrab PeriodicBank listed loot the bank cell can verify (the card's
+/// default list also has clues and other gems; these two are the audit's
+/// reachable, id-stable pair).
+pub const CASKET_ID: i32 = 405;
+pub const NOTED_CASKET_ID: i32 = 406;
+pub const NOTED_UNCUT_SAPPHIRE_ID: i32 = 1624;
+pub const FIRE_RUNE_ID: i32 = 554;
+/// Varrock teleport Magic level and the frozen GreenDragon rune recipe
+/// (`Law×1 + Air×3 + Fire×1`). The cell carries three casts so one failed
+/// click cannot starve the escape.
+pub const VARROCK_TELE_MAGIC: i32 = 25;
+pub const VARROCK_TELE_LAW: i32 = 3;
+pub const VARROCK_TELE_AIR: i32 = 9;
+pub const VARROCK_TELE_FIRE: i32 = 3;
+pub const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
+pub const FIRE_GIANT_BANK_RESTOCK: i32 = 20;
+/// GreenDragon `bankTile` default (Edgeville), distinct from ChaosDruidKiller's
+/// Edgeville stand at z=3491.
+pub const GREEN_DRAGON_BANK: (i32, i32, i32) = (3094, 3493, 0);
+/// FireGiantLogic `RAFT_STAND` / `WASHED_OUT` / `BARREL_BANK`.
+pub const FIRE_GIANT_RAFT: (i32, i32, i32) = (2510, 3493, 0);
+pub const FIRE_GIANT_WASH: (i32, i32, i32) = (2527, 3413, 0);
+pub const FIRE_GIANT_BANK: (i32, i32, i32) = (2616, 3332, 0);
+/// Frozen Varrock teleport land (the same tile FireGiant's Varrock escape uses).
+pub const VARROCK_TELE_LAND: (i32, i32, i32) = (3213, 3424, 0);
+/// Nearest RockCrab `DEFAULT_SPOTS` loc to the safe stand (2712,3688,0) — spot
+/// 4 at (2710,3717,0). `onStart` picks that as `currentSpot()`, and PeriodicBank
+/// returns there.
+pub const ROCK_CRAB_BANK_RET: (i32, i32, i32) = (2710, 3717, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -383,6 +412,11 @@ pub enum CoreCase {
     HillGiantBank,
     ChaosDruidBank,
     ArdyFighterBank,
+    RockCrabBank,
+    GreenDragonBank,
+    GreenDragonTele,
+    FireGiantApproach,
+    FireGiantBank,
 }
 
 impl CoreCase {
@@ -468,6 +502,11 @@ impl CoreCase {
             "hill_giant_bank" => Ok(Self::HillGiantBank),
             "chaos_druid_bank" => Ok(Self::ChaosDruidBank),
             "ardy_fighter_bank" => Ok(Self::ArdyFighterBank),
+            "rock_crab_bank" => Ok(Self::RockCrabBank),
+            "green_dragon_bank" => Ok(Self::GreenDragonBank),
+            "green_dragon_tele" => Ok(Self::GreenDragonTele),
+            "fire_giant_approach" => Ok(Self::FireGiantApproach),
+            "fire_giant_bank" => Ok(Self::FireGiantBank),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -556,6 +595,11 @@ impl CoreCase {
             Self::HillGiantBank => "hill_giant_bank",
             Self::ChaosDruidBank => "chaos_druid_bank",
             Self::ArdyFighterBank => "ardy_fighter_bank",
+            Self::RockCrabBank => "rock_crab_bank",
+            Self::GreenDragonBank => "green_dragon_bank",
+            Self::GreenDragonTele => "green_dragon_tele",
+            Self::FireGiantApproach => "fire_giant_approach",
+            Self::FireGiantBank => "fire_giant_bank",
         }
     }
 
@@ -610,11 +654,13 @@ impl CoreCase {
             | Self::AutoFighterMage
             | Self::AutoFighterRange
             | Self::AutoFighterBank => "AutoFighter",
-            Self::RockCrab | Self::RockCrabRange => "RockCrab",
-            Self::GreenDragon | Self::GreenDragonSpecial | Self::GreenDragonPotions => {
-                "GreenDragon"
-            }
-            Self::FireGiant => "FireGiant",
+            Self::RockCrab | Self::RockCrabRange | Self::RockCrabBank => "RockCrab",
+            Self::GreenDragon
+            | Self::GreenDragonSpecial
+            | Self::GreenDragonPotions
+            | Self::GreenDragonBank
+            | Self::GreenDragonTele => "GreenDragon",
+            Self::FireGiant | Self::FireGiantApproach | Self::FireGiantBank => "FireGiant",
             Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
         }
     }
@@ -1747,7 +1793,12 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         | CoreCase::MossGiantBank
         | CoreCase::HillGiantBank
         | CoreCase::ChaosDruidBank
-        | CoreCase::ArdyFighterBank => combat_spec(case).is_some_and(|spec| {
+        | CoreCase::ArdyFighterBank
+        | CoreCase::RockCrabBank
+        | CoreCase::GreenDragonBank
+        | CoreCase::GreenDragonTele
+        | CoreCase::FireGiantApproach
+        | CoreCase::FireGiantBank => combat_spec(case).is_some_and(|spec| {
             combat_baseline_ready(baseline, spec)
                 && match case {
                     CoreCase::ChaosDruidTower => baseline.level("thieving") >= 46,
@@ -1778,6 +1829,19 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                             && baseline.item_id(CAKE_ID) == 0
                             && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
                     }
+                    CoreCase::RockCrabBank => {
+                        baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                            && baseline.dormant_rocks_seen
+                    }
+                    CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
+                    CoreCase::GreenDragonTele => {
+                        baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                            && baseline.level("magic") >= VARROCK_TELE_MAGIC
+                            && baseline.item_id(LAW_RUNE_ID) >= 1
+                            && baseline.item_id(AIR_RUNE_ID) >= 3
+                            && baseline.item_id(FIRE_RUNE_ID) >= 1
+                    }
+                    CoreCase::FireGiantBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
                     _ => true,
                 }
         }),
@@ -1992,6 +2056,21 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::ArdyFighterBank => {
             "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, empty Guard-drop class 440/886/1446/565/562/561, bankStrategy Loot count"
         }
+        CoreCase::RockCrabBank => {
+            "safe stand (2712,3688,0), dormant Rocks, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8, empty 1623/405, bankStrategy Loot count"
+        }
+        CoreCase::GreenDragonBank => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn rune scimitar 1333 and shield 1540, lobster 12, empty 536/1753, escape Flee to bank"
+        }
+        CoreCase::GreenDragonTele => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
+        }
+        CoreCase::FireGiantApproach => {
+            "raft stand (2510,3493,0) z<9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, Waterfall Quest"
+        }
+        CoreCase::FireGiantBank => {
+            "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 12, amulet 295, rope 954, empty 532, escapeTele Barrel"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -2043,6 +2122,7 @@ pub struct CoreWitness {
     pub herblore_newt_cycle: HerbloreNewtCycle,
     pub combat_core_cycle: CombatCoreCycle,
     pub combat_bank_cycle: CombatBankCycle,
+    pub combat_approach_cycle: CombatApproachCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -3149,6 +3229,8 @@ pub enum CombatLoot {
     /// ([`GUARD_DROP_IDS`]) landing in the pack. AutoFighter bank injects that
     /// list; ArdyFighter already lists the same names in `DEFAULT_LOOT`.
     GuardDrop,
+    /// RockCrab PeriodicBank listed loot the bank cell can verify by id.
+    SapphireOrCasket,
     None,
 }
 
@@ -3160,6 +3242,8 @@ pub enum CombatExtra {
     WornShield,
     DungeonAmulet,
     StolenFood,
+    /// FireGiant `EnterDungeon` from the raft: Start is on the surface.
+    DungeonApproach,
 }
 
 pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
@@ -3450,6 +3534,74 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        CoreCase::RockCrabBank => Some(CombatSpec {
+            target: "Rock Crab",
+            stand: ROCK_CRAB_SAFE_STAND,
+            radius: 2,
+            food_id: LOBSTER_ID,
+            food_count: ROCK_CRAB_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::SapphireOrCasket,
+            extra: CombatExtra::RockActivation,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::GreenDragonBank => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::DragonBonesOrHide,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // Teleport escape is Magic XP + Varrock land, then the Edgeville bank
+        // trip. Combat kills are not this cell: a flee-walk to Edgeville
+        // without Magic XP / Varrock land fails it.
+        CoreCase::GreenDragonTele => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::FireGiantApproach => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_RAFT,
+            radius: 5,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::DungeonApproach,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::FireGiantBank => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::DungeonAmulet,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
         _ => None,
     }
 }
@@ -3458,7 +3610,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
 /// to land in the bank, the card's own booth stand, the food the card restocks
 /// there (when it restocks at all) and the tile the trip returns to before
 /// further work. Values are the frozen cards' own tiles and keep-lists; see
-/// `docs/compat/05-options-149.md`.
+/// `docs/compat/05-options-149.md` and `docs/compat/05-options-150.md`.
 #[derive(Debug, Clone, Copy)]
 pub struct CombatBankSpec {
     /// Pack-to-bank stock: the card's own loot or carried-food class. Any one
@@ -3472,6 +3624,15 @@ pub struct CombatBankSpec {
     /// Where the trip returns before further work.
     pub ret: (i32, i32, i32),
     pub ret_radius: i32,
+    /// Optional waypoint the trip has to visit before the booth: Varrock land
+    /// for GreenDragon tele, barrel wash-up for FireGiant barrel exit.
+    pub via: Option<(i32, i32, i32)>,
+    pub via_radius: i32,
+    /// The via tile is a spellbook teleport: Magic XP has to land with it.
+    pub via_magic: bool,
+    /// When false, the bank trip itself is the cell (tele escape). The
+    /// reviewed two-engagement combat core is not required.
+    pub require_combat: bool,
 }
 
 pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
@@ -3487,6 +3648,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             restock: Some(TROUT_ID),
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
         }),
         // Script-owned Ardougne West trip: deposits everything but
         // food/runes/ammo/weapon and withdraws lobster back to the safespot.
@@ -3497,6 +3662,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             restock: Some(LOBSTER_ID),
             ret: MOSS_GIANT_SAFESPOT,
             ret_radius: 6,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
         }),
         // Always-on trip end: Varrock West keeps only trout and the Brass key.
         CoreCase::HillGiantBank => Some(CombatBankSpec {
@@ -3506,6 +3675,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             restock: Some(TROUT_ID),
             ret: HILL_GIANT_PIT,
             ret_radius: 16,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
         }),
         // Edgeville trip end: `depositInventory` empties the pack, then the
         // card withdraws exactly its food back and returns through the trapdoor.
@@ -3516,6 +3689,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             restock: Some(LOBSTER_ID),
             ret: CHAOS_DRUID_FIELD,
             ret_radius: 14,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
         }),
         // `bankStrategy=Loot count`: PeriodicBank deposits the card's own
         // Guard-reachable loot list and walks back to the market anchor. No
@@ -3528,6 +3705,66 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             restock: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+        }),
+        // RockCrab PeriodicBank Loot-count at Seers. The task deposits listed
+        // loot and returns to `currentSpot()`; it does not restock food
+        // (`BankRun` is the food-gone restock, a different trip).
+        CoreCase::RockCrabBank => Some(CombatBankSpec {
+            deposit: &[UNCUT_SAPPHIRE_ID, CASKET_ID],
+            stand: SEERS_BANK,
+            stand_radius: 6,
+            restock: None,
+            ret: ROCK_CRAB_BANK_RET,
+            ret_radius: 6,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+        }),
+        // GreenDragon BankRun to Edgeville: deposit except keep-list, withdraw
+        // food to `foodWithdraw` 20, walk back past the ditch.
+        CoreCase::GreenDragonBank => Some(CombatBankSpec {
+            deposit: &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+        }),
+        // `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
+        // Edgeville booth. A south-walk flee without the teleport fails.
+        CoreCase::GreenDragonTele => Some(CombatBankSpec {
+            deposit: &[],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: Some(VARROCK_TELE_LAND),
+            via_radius: 8,
+            via_magic: true,
+            require_combat: false,
+        }),
+        // Barrel exit to (2527,3413,0) then Ardougne West restock and re-entry.
+        CoreCase::FireGiantBank => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID],
+            stand: FIRE_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            ret: FIRE_GIANT_ROOM,
+            ret_radius: 10,
+            via: Some(FIRE_GIANT_WASH),
+            via_radius: 6,
+            via_magic: false,
+            require_combat: true,
         }),
         _ => None,
     }
@@ -3547,6 +3784,10 @@ pub fn combat_noted(observation: &Observation) -> bool {
         || observation.bank_item_id(NOTED_GREEN_DRAGONHIDE_ID) > 0
         || observation.item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
         || observation.bank_item_id(NOTED_DRAGONFIRE_SHIELD_ID) > 0
+        || observation.item_id(NOTED_CASKET_ID) > 0
+        || observation.bank_item_id(NOTED_CASKET_ID) > 0
+        || observation.item_id(NOTED_UNCUT_SAPPHIRE_ID) > 0
+        || observation.bank_item_id(NOTED_UNCUT_SAPPHIRE_ID) > 0
         || noted_stall_food(observation) > 0
 }
 
@@ -3582,6 +3823,9 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
             .iter()
             .map(|id| observation.item_id(*id))
             .sum(),
+        CombatLoot::SapphireOrCasket => {
+            observation.item_id(UNCUT_SAPPHIRE_ID) + observation.item_id(CASKET_ID)
+        }
         CombatLoot::None => 0,
     }
 }
@@ -3635,6 +3879,11 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
             baseline.level("thieving") >= 5
                 && stall_food(baseline) == 0
                 && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+        }
+        CombatExtra::DungeonApproach => {
+            held_id(baseline, GLARIALS_AMULET_ID) >= 1
+                && held_id(baseline, ROPE_ID) >= 1
+                && baseline.tile.is_some_and(|tile| tile.1 < DUNGEON_MIN_Z)
         }
     };
     // The consumable branch starts from an unspent, unboosted state: a seeded
@@ -4000,6 +4249,7 @@ impl CombatCoreCycle {
             CombatExtra::RockActivation => self.activated,
             CombatExtra::WornShield => self.shield_worn,
             CombatExtra::StolenFood => self.stolen_food,
+            CombatExtra::DungeonApproach => true,
         };
         let consumable_ok = match spec.consumable {
             CombatConsumable::None => true,
@@ -4027,6 +4277,7 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
         CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
+        CombatLoot::SapphireOrCasket => id == UNCUT_SAPPHIRE_ID || id == CASKET_ID,
         CombatLoot::None => false,
     }
 }
@@ -4059,6 +4310,10 @@ pub struct CombatBankCycle {
     pub return_xp: Option<i32>,
     /// A loaded booth opened away from the card's declared stand.
     pub wrong_bank: bool,
+    /// The optional via tile (Varrock land / barrel wash-up) was visited.
+    pub via_seen: bool,
+    /// Magic XP landed with the via tile when `via_magic` is set.
+    pub via_magic: bool,
 }
 
 impl CombatBankCycle {
@@ -4083,13 +4338,29 @@ impl CombatBankCycle {
         if open && !at_stand {
             self.wrong_bank = true;
         }
+        if let Some(via) = bank.via {
+            if near(now.tile, via, bank.via_radius) {
+                self.via_seen = true;
+                if bank.via_magic {
+                    self.via_magic |= now.skill_xp("magic") > baseline.skill_xp("magic");
+                }
+            }
+        }
+        let via_ready =
+            bank.via.is_none() || (self.via_seen && (!bank.via_magic || self.via_magic));
+        let deposited = if bank.deposit.is_empty() {
+            true
+        } else {
+            Self::deposit_count(now, bank.deposit) == 0
+                && Self::bank_count(now, bank.deposit) > Self::bank_count(baseline, bank.deposit)
+        };
         if self.banked.is_none()
+            && via_ready
             && open
             && at_stand
             // A fresh session: the pre-Start bank state cannot satisfy this.
             && now.bank_generation > baseline.bank_generation
-            && Self::deposit_count(now, bank.deposit) == 0
-            && Self::bank_count(now, bank.deposit) > Self::bank_count(baseline, bank.deposit)
+            && deposited
         {
             self.food_at_deposit = bank.restock.map_or(0, |food| now.item_id(food));
             self.banked = Some(now.clone());
@@ -4114,13 +4385,38 @@ impl CombatBankCycle {
     }
 
     pub fn qualified(&self, spec: CombatSpec, bank: CombatBankSpec) -> bool {
-        self.combat.qualified(spec)
+        let combat_ok = !bank.require_combat || self.combat.qualified(spec);
+        combat_ok
+            && (bank.via.is_none() || self.via_seen)
+            && (!bank.via_magic || self.via_magic)
             && self.banked.is_some()
             && (bank.restock.is_none() || self.restocked)
             && self.closed
             && self.returned
             && self.further
             && !self.wrong_bank
+    }
+}
+
+/// FireGiant `EnterDungeon` from the raft: Start is on the surface, the script
+/// has to put the player at z>=9000, then Strength XP on a Fire giant. An
+/// in-room core (already z>=9000 at Start) cannot qualify this cell.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CombatApproachCycle {
+    pub entered: bool,
+    pub style_xp: bool,
+}
+
+impl CombatApproachCycle {
+    pub fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
+        let baseline_surface = baseline.tile.is_some_and(|tile| tile.1 < DUNGEON_MIN_Z);
+        self.entered |= baseline_surface && now.tile.is_some_and(|tile| tile.1 >= DUNGEON_MIN_Z);
+        self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
+            && spec.style == CombatStyleWitness::Strength;
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.entered && self.style_xp
     }
 }
 
@@ -5367,6 +5663,7 @@ impl CoreWitness {
             herblore_newt_cycle: HerbloreNewtCycle::default(),
             combat_core_cycle: CombatCoreCycle::default(),
             combat_bank_cycle: CombatBankCycle::default(),
+            combat_approach_cycle: CombatApproachCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -5509,6 +5806,12 @@ impl CoreWitness {
         if let (Some(spec), Some(bank)) = (combat_spec(self.case), combat_bank_spec(self.case)) {
             self.combat_bank_cycle
                 .observe(spec, bank, &self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::FireGiantApproach) {
+            if let Some(spec) = combat_spec(self.case) {
+                self.combat_approach_cycle
+                    .observe(spec, &self.baseline, observation);
+            }
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -5840,12 +6143,17 @@ impl CoreWitness {
             | CoreCase::MossGiantBank
             | CoreCase::HillGiantBank
             | CoreCase::ChaosDruidBank
-            | CoreCase::ArdyFighterBank => {
+            | CoreCase::ArdyFighterBank
+            | CoreCase::RockCrabBank
+            | CoreCase::GreenDragonBank
+            | CoreCase::GreenDragonTele
+            | CoreCase::FireGiantBank => {
                 match (combat_spec(self.case), combat_bank_spec(self.case)) {
                     (Some(spec), Some(bank)) => self.combat_bank_cycle.qualified(spec, bank),
                     _ => false,
                 }
             }
+            CoreCase::FireGiantApproach => self.combat_approach_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -5920,6 +6228,7 @@ impl CoreWitness {
             "herblore_newt_cycle": self.herblore_newt_cycle,
             "combat_core_cycle": self.combat_core_cycle,
             "combat_bank_cycle": self.combat_bank_cycle,
+            "combat_approach_cycle": self.combat_approach_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }

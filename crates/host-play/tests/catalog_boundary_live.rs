@@ -6682,6 +6682,11 @@ mod tests {
             CoreCase::GreenDragonPotions,
             CoreCase::FireGiant,
             CoreCase::ArdyFighter,
+            CoreCase::RockCrabBank,
+            CoreCase::GreenDragonBank,
+            CoreCase::GreenDragonTele,
+            CoreCase::FireGiantApproach,
+            CoreCase::FireGiantBank,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
@@ -8600,6 +8605,31 @@ mod tests {
                 "ArdyFighter",
                 "src/bot/scripts/ArdyFighter/ArdyFighter.ts",
             ),
+            (
+                "rock_crab_bank",
+                "RockCrab",
+                "src/bot/scripts/RockCrab/RockCrab.ts",
+            ),
+            (
+                "green_dragon_bank",
+                "GreenDragon",
+                "src/bot/scripts/GreenDragon/GreenDragon.ts",
+            ),
+            (
+                "green_dragon_tele",
+                "GreenDragon",
+                "src/bot/scripts/GreenDragon/GreenDragon.ts",
+            ),
+            (
+                "fire_giant_approach",
+                "FireGiant",
+                "src/bot/scripts/FireGiant/FireGiant.ts",
+            ),
+            (
+                "fire_giant_bank",
+                "FireGiant",
+                "src/bot/scripts/FireGiant/FireGiant.ts",
+            ),
         ] {
             let case = CoreCase::parse(name).expect("bank case registered");
             assert_eq!(case.card_name(), card);
@@ -8652,6 +8682,240 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hazard_camp_cells_require_source_trips_and_refuse_seed_only_paths() {
+        let levels = [
+            ("attack", COMBAT_ATTACK_LEVEL),
+            ("strength", COMBAT_ATTACK_LEVEL),
+            ("hitpoints", COMBAT_ATTACK_LEVEL),
+        ];
+
+        // --- rock_crab_bank: PeriodicBank Loot-count at Seers, no food restock.
+        let case = CoreCase::parse("rock_crab_bank").expect("rock crab bank registered");
+        assert_eq!(case.card_name(), "RockCrab");
+        let mut baseline = bank_obs(
+            case,
+            ROCK_CRAB_SAFE_STAND,
+            &[(LOBSTER_ID, ROCK_CRAB_FOOD)],
+            &[(LOBSTER_ID, 20)],
+            &[("strength", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        baseline.dormant_rocks_seen = true;
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+        let mut awake = baseline.clone();
+        awake.dormant_rocks_seen = false;
+        assert!(validate_case_baseline(case, &awake).is_err());
+
+        let rocks = {
+            let mut o = baseline.clone();
+            o.tile = Some(ROCK_CRAB_SPOT);
+            o.npc_facts = vec![combat_npc(3, "Rocks", 50, false, ROCK_CRAB_SPOT)];
+            o.dormant_rocks_seen = true;
+            o
+        };
+        let woke = {
+            let mut o = rocks.clone();
+            o.npc_facts = vec![combat_npc(3, "Rock Crab", 50, true, ROCK_CRAB_SPOT)];
+            o.local_in_combat = true;
+            o.local_target_npc = Some(3);
+            o.xp.insert("strength".into(), 12);
+            o
+        };
+        let defeat = {
+            let mut o = woke.clone();
+            o.npc_facts = vec![
+                combat_npc(3, "Rock Crab", 0, false, ROCK_CRAB_SPOT),
+                combat_npc(6, "Rock Crab", 40, true, ROCK_CRAB_SPOT),
+            ];
+            o.local_target_npc = Some(6);
+            o.xp.insert("strength".into(), 40);
+            o
+        };
+        let looted = {
+            let mut o = defeat.clone();
+            o.item_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+            o.local_in_combat = false;
+            o.local_target_npc = None;
+            o.npc_facts.clear();
+            o
+        };
+        let deposited = {
+            let mut o = looted.clone();
+            o.tile = Some(SEERS_BANK);
+            o.item_ids.remove(&UNCUT_SAPPHIRE_ID);
+            o.bank_ids.insert(UNCUT_SAPPHIRE_ID, 1);
+            o.bank_open = true;
+            o.bank_loaded = true;
+            o.bank_generation = 5;
+            o
+        };
+        let closed = {
+            let mut o = deposited.clone();
+            o.bank_open = false;
+            o.bank_loaded = false;
+            o.bank_generation = 6;
+            o
+        };
+        let returned = {
+            let mut o = closed.clone();
+            o.tile = Some(ROCK_CRAB_BANK_RET);
+            o
+        };
+        let further = {
+            let mut o = returned.clone();
+            o.xp.insert("strength".into(), 52);
+            o
+        };
+        assert!(witness(
+            case,
+            &baseline,
+            [&rocks, &woke, &defeat, &defeat, &looted, &deposited, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(
+            case,
+            &baseline,
+            [&rocks, &woke, &defeat, &looted, &deposited, &closed, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        // --- green_dragon_tele: Varrock Magic XP + land, then Edgeville restock.
+        // A south-walk booth without the teleport cannot qualify.
+        let case = CoreCase::parse("green_dragon_tele").expect("green tele registered");
+        assert_eq!(case.card_name(), "GreenDragon");
+        let mut baseline = bank_obs(
+            case,
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, GREEN_DRAGON_FOOD),
+                (LAW_RUNE_ID, VARROCK_TELE_LAW),
+                (AIR_RUNE_ID, VARROCK_TELE_AIR),
+                (FIRE_RUNE_ID, VARROCK_TELE_FIRE),
+            ],
+            &[(LOBSTER_ID, 24)],
+            &[("strength", 0), ("magic", 0)],
+            &[],
+            false,
+            None,
+            0,
+            false,
+        );
+        baseline.equipment_ids.clear();
+        baseline.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        baseline.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        baseline.levels.insert("magic".into(), VARROCK_TELE_MAGIC);
+        baseline
+            .effective_levels
+            .insert("magic".into(), VARROCK_TELE_MAGIC);
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut no_magic = baseline.clone();
+        no_magic.levels.insert("magic".into(), 1);
+        no_magic.effective_levels.insert("magic".into(), 1);
+        assert!(validate_case_baseline(case, &no_magic).is_err());
+
+        let landed = {
+            let mut o = baseline.clone();
+            o.tile = Some(VARROCK_TELE_LAND);
+            o.xp.insert("magic".into(), 35);
+            o
+        };
+        let deposited = {
+            let mut o = landed.clone();
+            o.tile = Some(GREEN_DRAGON_BANK);
+            o.bank_open = true;
+            o.bank_loaded = true;
+            o.bank_generation = 4;
+            o
+        };
+        let restocked = {
+            let mut o = deposited.clone();
+            o.item_ids.insert(LOBSTER_ID, GREEN_DRAGON_BANK_RESTOCK);
+            o.bank_ids.insert(LOBSTER_ID, 16);
+            o
+        };
+        let closed = {
+            let mut o = restocked.clone();
+            o.bank_open = false;
+            o.bank_loaded = false;
+            o.bank_generation = 5;
+            o
+        };
+        let returned = {
+            let mut o = closed.clone();
+            o.tile = Some(GREEN_DRAGON_FIELD);
+            o
+        };
+        let further = {
+            let mut o = returned.clone();
+            o.xp.insert("strength".into(), 12);
+            o
+        };
+        assert!(witness(
+            case,
+            &baseline,
+            [&landed, &deposited, &restocked, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        let flee = {
+            let mut o = deposited.clone();
+            o.tile = Some(GREEN_DRAGON_BANK);
+            o.xp.insert("magic".into(), 0);
+            o
+        };
+        assert!(witness(
+            case,
+            &baseline,
+            [&flee, &restocked, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        // --- fire_giant_approach: raft Start, then z>=9000 and Strength XP.
+        let case = CoreCase::parse("fire_giant_approach").expect("approach registered");
+        assert_eq!(case.card_name(), "FireGiant");
+        let raft = combat_obs(
+            FIRE_GIANT_RAFT,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+            ],
+            &[("strength", 0)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(case, &raft).unwrap();
+        let mut in_room = raft.clone();
+        in_room.tile = Some(FIRE_GIANT_ROOM);
+        assert!(validate_case_baseline(case, &in_room).is_err());
+        let entered = {
+            let mut o = raft.clone();
+            o.tile = Some(FIRE_GIANT_ROOM);
+            o
+        };
+        let xp = {
+            let mut o = entered.clone();
+            o.xp.insert("strength".into(), 18);
+            o
+        };
+        assert!(witness(case, &raft, [&entered, &xp]).qualify().is_ok());
+        assert!(witness(case, &raft, [&entered]).qualify().is_err());
+        assert!(witness(case, &in_room, [&xp]).qualify().is_err());
     }
 
     /// The identifiers a frozen card actually reads as settings: the keys of its
