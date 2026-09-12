@@ -39,7 +39,7 @@ function inScene(lx, lz, reach) {
 // cannot mutate the shared snapshot. Missing component identity is -1,
 // never a hardcoded valid component. Occupied native slots include
 // item id 0; empty/malformed rows are omitted.
-function inventoryItems(rows = snap().inv) {
+function inventoryItems(rows) {
     if (!Array.isArray(rows)) return [];
     const out = [];
     for (const row of rows) {
@@ -69,7 +69,7 @@ export const reader = proxy('reader', {
         return typeof host().invSize === 'number' ? host().invSize : 0;
     },
     inventory() {
-        return inventoryItems();
+        return inventoryItems(snap().inv);
     },
     bankSideItems() {
         return inventoryItems(snap().bank_side);
