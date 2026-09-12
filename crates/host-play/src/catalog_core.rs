@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -331,6 +331,50 @@ pub const VARROCK_TELE_LAND: (i32, i32, i32) = (3213, 3424, 0);
 /// 4 at (2710,3717,0). `onStart` picks that as `currentSpot()`, and PeriodicBank
 /// returns there.
 pub const ROCK_CRAB_BANK_RET: (i32, i32, i32) = (2710, 3717, 0);
+/// AIO Teleport start: Lumbridge bank, r8, so Varrock/Falador arrival is a
+/// real tile change. Generated tele_coord `0_46_52_21_50` is Falador land.
+pub const LUMBRIDGE_BANK: (i32, i32, i32) = (3092, 3245, 0);
+pub const FALADOR_TELE_LAND: (i32, i32, i32) = (2965, 3378, 0);
+pub const FALADOR_TELE_MAGIC: i32 = 37;
+pub const STAFF_OF_AIR_ID: i32 = 1381;
+pub const STAFF_OF_WATER_ID: i32 = 1383;
+pub const WATER_RUNE_ID: i32 = 555;
+pub const AIO_LAW_PACK: i32 = 2;
+pub const AIO_ELEMENT_PACK: i32 = 20;
+pub const AIO_LAW_BANK: i32 = 200;
+/// Frozen ShopBuyout first preset (Aemad) and Aubury Varrock East stand.
+pub const AEMAD_STAND: (i32, i32, i32) = (2613, 3294, 0);
+pub const AUBURY_STAND: (i32, i32, i32) = (3253, 3401, 0);
+pub const SHOP_COIN_BANK: i32 = 20_000;
+/// Varrock West anvil used by SmithingBot. Bronze platebody is Smithing 18,
+/// not the audit's copied Smithing 1 (dagger) seed.
+pub const VARROCK_WEST_BANK: (i32, i32, i32) = (3185, 3440, 0);
+pub const VARROCK_ANVIL: (i32, i32, i32) = (3188, 3425, 0);
+pub const HAMMER_ID: i32 = 2347;
+pub const BRONZE_DAGGER_ID: i32 = 1205;
+pub const BRONZE_PLATEBODY_ID: i32 = 1117;
+pub const BRONZE_PLATEBODY_SMITHING: i32 = 18;
+pub const SMITH_BAR_BANK: i32 = 28;
+pub const NEEDLE_ID: i32 = 1733;
+pub const THREAD_ID: i32 = 1734;
+pub const LEATHER_GLOVES_ID: i32 = 1059;
+pub const HARDLEATHER_BODY_ID: i32 = 1131;
+/// Selected 274 leather-interface identity. 289 mismatch is LIVE unavailable,
+/// not a new native.
+pub const LEATHER_IF: i32 = 2311;
+pub const LEATHER_GLOVES_MAKE10: i32 = 8636;
+pub const HARD_LEATHER_CRAFTING: i32 = 28;
+pub const LEATHER_BANK: i32 = 28;
+pub const THREAD_BANK: i32 = 100;
+pub const OAK_LOGS_ID: i32 = 1521;
+pub const TINDERBOX_ID: i32 = 590;
+pub const OAK_FIREMAKING: i32 = 15;
+pub const FIRE_LOG_BANK: i32 = 28;
+/// Posted native `FIRE_PLOTS` Varrock East AABB (not frozen FIRE_SPOTS).
+pub const FIRE_PLOT_VARROCK_EAST_X0: i32 = 3235;
+pub const FIRE_PLOT_VARROCK_EAST_X1: i32 = 3275;
+pub const FIRE_PLOT_VARROCK_EAST_Z0: i32 = 3418;
+pub const FIRE_PLOT_VARROCK_EAST_Z1: i32 = 3432;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -420,6 +464,17 @@ pub enum CoreCase {
     GreenDragonTele,
     FireGiantApproach,
     FireGiantBank,
+    AioTeleport,
+    AioTeleportFalador,
+    AioTeleportNoStaff,
+    ShopBuyout,
+    ShopBuyoutAubury,
+    SmithingBot,
+    SmithingBotPlatebody,
+    LeatherCrafter,
+    LeatherCrafterHardBody,
+    Firemaker,
+    FiremakerOak,
 }
 
 impl CoreCase {
@@ -510,6 +565,17 @@ impl CoreCase {
             "green_dragon_tele" => Ok(Self::GreenDragonTele),
             "fire_giant_approach" => Ok(Self::FireGiantApproach),
             "fire_giant_bank" => Ok(Self::FireGiantBank),
+            "aio_teleport" => Ok(Self::AioTeleport),
+            "aio_teleport_falador" => Ok(Self::AioTeleportFalador),
+            "aio_teleport_no_staff" => Ok(Self::AioTeleportNoStaff),
+            "shop_buyout" => Ok(Self::ShopBuyout),
+            "shop_buyout_aubury" => Ok(Self::ShopBuyoutAubury),
+            "smithing_bot" => Ok(Self::SmithingBot),
+            "smithing_bot_platebody" => Ok(Self::SmithingBotPlatebody),
+            "leather_crafter" => Ok(Self::LeatherCrafter),
+            "leather_crafter_hard_body" => Ok(Self::LeatherCrafterHardBody),
+            "firemaker" => Ok(Self::Firemaker),
+            "firemaker_oak" => Ok(Self::FiremakerOak),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -603,6 +669,17 @@ impl CoreCase {
             Self::GreenDragonTele => "green_dragon_tele",
             Self::FireGiantApproach => "fire_giant_approach",
             Self::FireGiantBank => "fire_giant_bank",
+            Self::AioTeleport => "aio_teleport",
+            Self::AioTeleportFalador => "aio_teleport_falador",
+            Self::AioTeleportNoStaff => "aio_teleport_no_staff",
+            Self::ShopBuyout => "shop_buyout",
+            Self::ShopBuyoutAubury => "shop_buyout_aubury",
+            Self::SmithingBot => "smithing_bot",
+            Self::SmithingBotPlatebody => "smithing_bot_platebody",
+            Self::LeatherCrafter => "leather_crafter",
+            Self::LeatherCrafterHardBody => "leather_crafter_hard_body",
+            Self::Firemaker => "firemaker",
+            Self::FiremakerOak => "firemaker_oak",
         }
     }
 
@@ -665,6 +742,13 @@ impl CoreCase {
             | Self::GreenDragonTele => "GreenDragon",
             Self::FireGiant | Self::FireGiantApproach | Self::FireGiantBank => "FireGiant",
             Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
+            Self::AioTeleport | Self::AioTeleportFalador | Self::AioTeleportNoStaff => {
+                "AIO Teleport"
+            }
+            Self::ShopBuyout | Self::ShopBuyoutAubury => "ShopBuyout",
+            Self::SmithingBot | Self::SmithingBotPlatebody => "SmithingBot",
+            Self::LeatherCrafter | Self::LeatherCrafterHardBody => "LeatherCrafter",
+            Self::Firemaker | Self::FiremakerOak => "Firemaker",
         }
     }
 }
@@ -717,6 +801,13 @@ pub struct Observation {
     pub equipment_ids: BTreeMap<i32, i32>,
     pub main_modal: i32,
     pub widget_ids: BTreeSet<i32>,
+    /// Compact open-shop stock (empty while the shop is down). Not a full
+    /// shop clone.
+    pub shop_open: bool,
+    pub shop_stock: Vec<BoundedShopItem>,
+    /// Posted anvil/main-skill-multi row ids this frame (empty if the panel
+    /// was not decoded). Chat `make_products` does not fill this.
+    pub main_make_ids: BTreeSet<i32>,
 }
 
 /// One loc retained for these named cases. The live loc sweep is not copied.
@@ -751,6 +842,13 @@ pub struct BoundedGround {
     pub count: i32,
     pub tile: (i32, i32, i32),
     pub distance: i32,
+}
+
+/// One posted shop-stock row retained for shop-buyout cores.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BoundedShopItem {
+    pub id: i32,
+    pub count: i32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1070,6 +1168,25 @@ impl Observation {
                 .iter()
                 .map(|widget| widget.component_id)
                 .collect(),
+            shop_open: snapshot.shop().open,
+            shop_stock: snapshot
+                .shop()
+                .stock
+                .iter()
+                .filter(|item| item.count > 0 && item.def.id >= 0)
+                .take(16)
+                .map(|item| BoundedShopItem {
+                    id: item.def.id,
+                    count: item.count,
+                })
+                .collect(),
+            main_make_ids: snapshot
+                .main_make()
+                .iter()
+                .filter(|item| item.def.id >= 0)
+                .take(16)
+                .map(|item| item.def.id)
+                .collect(),
         }
     }
 
@@ -1111,6 +1228,18 @@ impl Observation {
 
     pub fn has_widget(&self, id: i32) -> bool {
         self.widget_ids.contains(&id)
+    }
+
+    pub fn shop_item_id(&self, id: i32) -> i32 {
+        self.shop_stock
+            .iter()
+            .find(|row| row.id == id)
+            .map(|row| row.count)
+            .unwrap_or(0)
+    }
+
+    pub fn has_main_make(&self, id: i32) -> bool {
+        self.main_make_ids.contains(&id)
     }
 }
 
@@ -1157,7 +1286,7 @@ pub fn keep_bounded_loc(id: i32, name: Option<&str>) -> bool {
         WOODEN_DOOR_CLOSED_ID | WOODEN_DOOR_OPEN_ID | WOODEN_GATE_CLOSED_ID | WOODEN_GATE_OPEN_ID
     ) || name.is_some_and(|name| {
         let n = name.trim().to_ascii_lowercase();
-        n == "door" || n.ends_with(" door") || n.contains("gate")
+        n == "door" || n.ends_with(" door") || n.contains("gate") || n == "fire"
     })
 }
 
@@ -1189,6 +1318,24 @@ pub fn loc_at(
 pub fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32) -> bool {
     tile.is_some_and(|tile| {
         tile.2 == target.2 && (tile.0 - target.0).abs().max((tile.1 - target.1).abs()) <= radius
+    })
+}
+
+pub fn empty_pack(observation: &Observation) -> bool {
+    observation.item_ids.values().copied().sum::<i32>() == 0
+}
+
+pub fn fire_in_varrock_east_plot(observation: &Observation) -> bool {
+    observation.loc_facts.iter().any(|loc| {
+        loc.level == 0
+            && loc.x >= FIRE_PLOT_VARROCK_EAST_X0
+            && loc.x <= FIRE_PLOT_VARROCK_EAST_X1
+            && loc.z >= FIRE_PLOT_VARROCK_EAST_Z0
+            && loc.z <= FIRE_PLOT_VARROCK_EAST_Z1
+            && loc
+                .name
+                .as_deref()
+                .is_some_and(|name| name.trim().eq_ignore_ascii_case("fire"))
     })
 }
 
@@ -1848,6 +1995,87 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                     _ => true,
                 }
         }),
+        CoreCase::AioTeleport => {
+            near(baseline.tile, LUMBRIDGE_BANK, 8)
+                && baseline.level("magic") >= VARROCK_TELE_MAGIC
+                && baseline.equipment_id(STAFF_OF_AIR_ID) == 1
+                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
+                && baseline.item_id(FIRE_RUNE_ID) >= 1
+                && !near(baseline.tile, VARROCK_TELE_LAND, 8)
+        }
+        CoreCase::AioTeleportFalador => {
+            near(baseline.tile, LUMBRIDGE_BANK, 8)
+                && baseline.level("magic") >= FALADOR_TELE_MAGIC
+                && baseline.equipment_id(STAFF_OF_WATER_ID) == 1
+                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
+                && baseline.item_id(AIR_RUNE_ID) >= 3
+                && !near(baseline.tile, FALADOR_TELE_LAND, 8)
+        }
+        CoreCase::AioTeleportNoStaff => {
+            near(baseline.tile, LUMBRIDGE_BANK, 8)
+                && baseline.level("magic") >= VARROCK_TELE_MAGIC
+                && baseline.equipment_id(STAFF_OF_AIR_ID) == 0
+                && baseline.equipment_id(STAFF_OF_WATER_ID) == 0
+                && baseline.item_id(LAW_RUNE_ID) >= AIO_LAW_PACK
+                && baseline.item_id(AIR_RUNE_ID) >= 3
+                && baseline.item_id(FIRE_RUNE_ID) >= 1
+                && !near(baseline.tile, VARROCK_TELE_LAND, 8)
+        }
+        CoreCase::ShopBuyout => {
+            near(baseline.tile, AEMAD_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(EMPTY_VIAL_ID) == 0
+        }
+        CoreCase::ShopBuyoutAubury => {
+            near(baseline.tile, AUBURY_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(AIR_RUNE_ID) == 0
+        }
+        CoreCase::SmithingBot => {
+            near(baseline.tile, VARROCK_WEST_BANK, 8)
+                && baseline.level("smithing") >= 1
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_DAGGER_ID) == 0
+                && baseline.item_id(BRONZE_BAR_ID) == 0
+        }
+        CoreCase::SmithingBotPlatebody => {
+            near(baseline.tile, VARROCK_WEST_BANK, 8)
+                && baseline.level("smithing") >= BRONZE_PLATEBODY_SMITHING
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_PLATEBODY_ID) == 0
+                && baseline.item_id(BRONZE_DAGGER_ID) == 0
+                && baseline.item_id(BRONZE_BAR_ID) == 0
+        }
+        CoreCase::LeatherCrafter => {
+            near(baseline.tile, AL_KHARID_BANK, 8)
+                && baseline.level("crafting") >= 1
+                && empty_pack(baseline)
+                && baseline.item_id(LEATHER_GLOVES_ID) == 0
+                && baseline.item_id(SOFT_LEATHER_ID) == 0
+        }
+        CoreCase::LeatherCrafterHardBody => {
+            near(baseline.tile, AL_KHARID_BANK, 8)
+                && baseline.level("crafting") >= HARD_LEATHER_CRAFTING
+                && empty_pack(baseline)
+                && baseline.item_id(HARDLEATHER_BODY_ID) == 0
+                && baseline.item_id(HARD_LEATHER_ID) == 0
+                && baseline.item_id(LEATHER_GLOVES_ID) == 0
+        }
+        CoreCase::Firemaker => {
+            near(baseline.tile, VARROCK_EAST_BANK, 8)
+                && baseline.level("firemaking") >= 1
+                && empty_pack(baseline)
+                && baseline.item_id(LOGS_ID) == 0
+                && !fire_in_varrock_east_plot(baseline)
+        }
+        CoreCase::FiremakerOak => {
+            near(baseline.tile, VARROCK_EAST_BANK, 8)
+                && baseline.level("firemaking") >= OAK_FIREMAKING
+                && empty_pack(baseline)
+                && baseline.item_id(OAK_LOGS_ID) == 0
+                && baseline.item_id(LOGS_ID) == 0
+                && !fire_in_varrock_east_plot(baseline)
+        }
     };
     if ready {
         return Ok(());
@@ -2074,6 +2302,39 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::FireGiantBank => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 12, amulet 295, rope 954, empty 532, escapeTele Barrel"
         }
+        CoreCase::AioTeleport => {
+            "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
+        }
+        CoreCase::AioTeleportFalador => {
+            "Lumbridge bank (3092,3245,0) r8, Magic 37, worn staff of water 1383, pack law 563x2 and air 556, not already at Falador land"
+        }
+        CoreCase::AioTeleportNoStaff => {
+            "Lumbridge bank (3092,3245,0) r8, Magic 25, pack law/air/fire, no covering air/water staff, not already at Varrock land"
+        }
+        CoreCase::ShopBuyout => {
+            "Aemad stand (2613,3294,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutAubury => {
+            "Aubury stand (3253,3401,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::SmithingBot => {
+            "Varrock West bank (3185,3440,0), Smithing 1, empty pack of 2347/2349/1205"
+        }
+        CoreCase::SmithingBotPlatebody => {
+            "Varrock West bank (3185,3440,0), Smithing 18, empty pack of 2347/2349/1117/1205"
+        }
+        CoreCase::LeatherCrafter => {
+            "Al-Kharid bank (3269,3167,0), Crafting 1, empty pack of 1733/1734/1741/1059"
+        }
+        CoreCase::LeatherCrafterHardBody => {
+            "Al-Kharid bank (3269,3167,0), Crafting 28, empty pack of 1733/1734/1743/1131/1059"
+        }
+        CoreCase::Firemaker => {
+            "Varrock East bank (3253,3420,0), Firemaking 1, empty pack of 590/1511, no Fire loc in posted plot"
+        }
+        CoreCase::FiremakerOak => {
+            "Varrock East bank (3253,3420,0), Firemaking 15, empty pack of 590/1521/1511, no Fire loc in posted plot"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -2126,6 +2387,11 @@ pub struct CoreWitness {
     pub combat_core_cycle: CombatCoreCycle,
     pub combat_bank_cycle: CombatBankCycle,
     pub combat_approach_cycle: CombatApproachCycle,
+    pub aio_teleport_cycle: AioTeleportCycle,
+    pub shop_buyout_cycle: ShopBuyoutCycle,
+    pub smithing_bot_cycle: SmithingBotCycle,
+    pub leather_crafter_cycle: LeatherCrafterCycle,
+    pub firemaker_cycle: FiremakerCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -5621,6 +5887,577 @@ pub fn station_production_spec(
     }
 }
 
+/// Magic XP and destination tile, then native bank restock and a further
+/// teleport. Walking or a queued if-button without XP/law spend fails.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AioTeleportCycle {
+    pub teleported: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub closed: bool,
+    pub further: bool,
+}
+
+pub struct AioTeleportSpec {
+    pub landing: (i32, i32, i32),
+    pub restock: (i32, i32, i32),
+    pub staff: Option<i32>,
+    pub air_from_pack: bool,
+}
+
+pub fn aio_teleport_spec(case: CoreCase) -> Option<AioTeleportSpec> {
+    match case {
+        CoreCase::AioTeleport => Some(AioTeleportSpec {
+            landing: VARROCK_TELE_LAND,
+            restock: VARROCK_EAST_BANK,
+            staff: Some(STAFF_OF_AIR_ID),
+            air_from_pack: false,
+        }),
+        CoreCase::AioTeleportFalador => Some(AioTeleportSpec {
+            landing: FALADOR_TELE_LAND,
+            restock: FALADOR_WEST_BANK,
+            staff: Some(STAFF_OF_WATER_ID),
+            air_from_pack: true,
+        }),
+        CoreCase::AioTeleportNoStaff => Some(AioTeleportSpec {
+            landing: VARROCK_TELE_LAND,
+            restock: VARROCK_EAST_BANK,
+            staff: None,
+            air_from_pack: true,
+        }),
+        _ => None,
+    }
+}
+
+impl AioTeleportCycle {
+    pub fn observe(&mut self, spec: AioTeleportSpec, baseline: &Observation, now: &Observation) {
+        let AioTeleportSpec {
+            landing,
+            restock,
+            staff,
+            air_from_pack,
+        } = spec;
+        if self.teleported.is_none()
+            && now.skill_xp("magic") > baseline.skill_xp("magic")
+            && now.item_id(LAW_RUNE_ID) < baseline.item_id(LAW_RUNE_ID)
+            && near(now.tile, landing, 8)
+            && staff.is_none_or(|id| now.equipment_id(id) >= 1)
+            && (!air_from_pack || now.item_id(AIR_RUNE_ID) < baseline.item_id(AIR_RUNE_ID))
+        {
+            self.teleported = Some(now.clone());
+        }
+        if self.teleported.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && near(now.tile, restock, 8)
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(LAW_RUNE_ID) > deposited.item_id(LAW_RUNE_ID)
+                && now.bank_item_id(LAW_RUNE_ID) < deposited.bank_item_id(LAW_RUNE_ID)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.closed |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation;
+        }
+        if let Some(teleported) = &self.teleported {
+            if let Some(restocked) = &self.restocked {
+                self.further |= self.closed
+                    && !now.bank_open
+                    && now.skill_xp("magic") > teleported.skill_xp("magic")
+                    && now.item_id(LAW_RUNE_ID) < restocked.item_id(LAW_RUNE_ID);
+            }
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.teleported.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+    }
+}
+
+/// Posted shop stock down, matching inv up, coins down, then deposit except
+/// coins, withdraw coins, and a second buy. Queued if-button without stock
+/// movement fails.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ShopBuyoutCycle {
+    pub opened: Option<Observation>,
+    pub bought: Option<Observation>,
+    pub bought_id: Option<i32>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub returned: bool,
+    pub reopened: Option<Observation>,
+    pub further: bool,
+}
+
+pub struct ShopBuyoutSpec {
+    pub stand: (i32, i32, i32),
+    pub stand_radius: i32,
+    pub restock: (i32, i32, i32),
+}
+
+pub fn shop_buyout_spec(case: CoreCase) -> Option<ShopBuyoutSpec> {
+    match case {
+        CoreCase::ShopBuyout => Some(ShopBuyoutSpec {
+            stand: AEMAD_STAND,
+            stand_radius: 6,
+            restock: ARDOUGNE_EAST_BANK,
+        }),
+        CoreCase::ShopBuyoutAubury => Some(ShopBuyoutSpec {
+            stand: AUBURY_STAND,
+            stand_radius: 6,
+            restock: VARROCK_EAST_BANK,
+        }),
+        _ => None,
+    }
+}
+
+fn shop_bought_id(before: &Observation, now: &Observation) -> Option<i32> {
+    if now.item_id(COINS_ID) >= before.item_id(COINS_ID) {
+        return None;
+    }
+    let mut found = None;
+    for row in &before.shop_stock {
+        if now.shop_item_id(row.id) < row.count && now.item_id(row.id) > before.item_id(row.id) {
+            if row.id == EMPTY_VIAL_ID {
+                return Some(EMPTY_VIAL_ID);
+            }
+            if found.is_none() {
+                found = Some(row.id);
+            }
+        }
+    }
+    found
+}
+
+impl ShopBuyoutCycle {
+    pub fn observe(&mut self, spec: ShopBuyoutSpec, baseline: &Observation, now: &Observation) {
+        let ShopBuyoutSpec {
+            stand,
+            stand_radius,
+            restock,
+        } = spec;
+        if self.opened.is_none()
+            && now.shop_open
+            && now.main_modal == SHOPMAIN
+            && near(now.tile, stand, stand_radius)
+            && !now.shop_stock.is_empty()
+        {
+            self.opened = Some(now.clone());
+        }
+        if let Some(opened) = &self.opened {
+            if self.bought.is_none() {
+                if let Some(id) = shop_bought_id(opened, now) {
+                    self.bought_id = Some(id);
+                    self.bought = Some(now.clone());
+                }
+            }
+        }
+        if let Some(id) = self.bought_id {
+            if self.deposited.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation > baseline.bank_generation
+                && near(now.tile, restock, 8)
+                && now.item_id(id) == 0
+                && now.bank_item_id(id) >= 1
+                && now.item_id(COINS_ID) >= 1
+            {
+                self.deposited = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
+                && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, stand, stand_radius);
+        }
+        if self.returned
+            && self.reopened.is_none()
+            && now.shop_open
+            && now.main_modal == SHOPMAIN
+            && near(now.tile, stand, stand_radius)
+        {
+            self.reopened = Some(now.clone());
+        }
+        if let Some(reopened) = &self.reopened {
+            self.further |= shop_bought_id(reopened, now).is_some();
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.opened.is_some()
+            && self.bought.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+    }
+}
+
+/// Anvil main-panel production (not chat make), then deposit except hammer,
+/// restock bars, and further smithing.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmithingBotCycle {
+    pub panel: Option<Observation>,
+    pub produced: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub returned: bool,
+    pub further: bool,
+    pub wrong_product: bool,
+}
+
+pub struct SmithingBotSpec {
+    pub product: i32,
+    pub wrong: i32,
+    pub bars_per: i32,
+}
+
+pub fn smithing_bot_spec(case: CoreCase) -> Option<SmithingBotSpec> {
+    match case {
+        CoreCase::SmithingBot => Some(SmithingBotSpec {
+            product: BRONZE_DAGGER_ID,
+            wrong: BRONZE_PLATEBODY_ID,
+            bars_per: 1,
+        }),
+        CoreCase::SmithingBotPlatebody => Some(SmithingBotSpec {
+            product: BRONZE_PLATEBODY_ID,
+            wrong: BRONZE_DAGGER_ID,
+            bars_per: 5,
+        }),
+        _ => None,
+    }
+}
+
+impl SmithingBotCycle {
+    pub fn observe(&mut self, spec: SmithingBotSpec, baseline: &Observation, now: &Observation) {
+        let SmithingBotSpec {
+            product,
+            wrong,
+            bars_per,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong) > 0 || now.bank_item_id(wrong) > 0;
+        if self.panel.is_none()
+            && now.has_main_make(product)
+            && near(now.tile, VARROCK_ANVIL, 8)
+            && now.item_id(BRONZE_BAR_ID) >= bars_per
+            && now.item_id(product) == 0
+            && now.item_id(HAMMER_ID) >= 1
+        {
+            self.panel = Some(now.clone());
+        }
+        if let Some(panel) = &self.panel {
+            if self.produced.is_none()
+                && near(now.tile, VARROCK_ANVIL, 8)
+                && now.item_id(product) >= 1
+                && now.item_id(BRONZE_BAR_ID) <= panel.item_id(BRONZE_BAR_ID) - bars_per
+                && now.skill_xp("smithing") > baseline.skill_xp("smithing")
+                && now.item_id(wrong) == 0
+            {
+                self.produced = Some(now.clone());
+            }
+        }
+        if self.produced.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(product) == 0
+            && now.bank_item_id(product) >= 1
+            && now.item_id(HAMMER_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(BRONZE_BAR_ID) >= bars_per
+                && now.bank_item_id(BRONZE_BAR_ID) < deposited.bank_item_id(BRONZE_BAR_ID)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, VARROCK_ANVIL, 8);
+        }
+        if let Some(produced) = &self.produced {
+            self.further |= self.returned
+                && !now.bank_open
+                && now.item_id(product) >= 1
+                && now.skill_xp("smithing") > produced.skill_xp("smithing")
+                && now.item_id(wrong) == 0;
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.panel.is_some()
+            && self.produced.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+            && !self.wrong_product
+    }
+}
+
+/// Soft-leather gloves wait the selected leather interface; hard-leather
+/// body is the no-modal `flow=single` burst.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LeatherCrafterCycle {
+    pub interface: Option<Observation>,
+    pub withdrawn: Option<Observation>,
+    pub produced: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub returned: bool,
+    pub further: bool,
+    pub used_interface: bool,
+    pub wrong_product: bool,
+}
+
+pub struct LeatherCrafterSpec {
+    pub product: i32,
+    pub input: i32,
+    pub wrong: i32,
+    pub require_interface: bool,
+}
+
+pub fn leather_crafter_spec(case: CoreCase) -> Option<LeatherCrafterSpec> {
+    match case {
+        CoreCase::LeatherCrafter => Some(LeatherCrafterSpec {
+            product: LEATHER_GLOVES_ID,
+            input: SOFT_LEATHER_ID,
+            wrong: HARDLEATHER_BODY_ID,
+            require_interface: true,
+        }),
+        CoreCase::LeatherCrafterHardBody => Some(LeatherCrafterSpec {
+            product: HARDLEATHER_BODY_ID,
+            input: HARD_LEATHER_ID,
+            wrong: LEATHER_GLOVES_ID,
+            require_interface: false,
+        }),
+        _ => None,
+    }
+}
+
+impl LeatherCrafterCycle {
+    pub fn observe(&mut self, spec: LeatherCrafterSpec, baseline: &Observation, now: &Observation) {
+        let LeatherCrafterSpec {
+            product,
+            input,
+            wrong,
+            require_interface,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong) > 0 || now.bank_item_id(wrong) > 0;
+        if now.main_modal == LEATHER_IF && now.has_widget(LEATHER_GLOVES_MAKE10) {
+            self.used_interface = true;
+            if self.interface.is_none()
+                && now.item_id(input) >= 1
+                && now.item_id(product) == 0
+                && now.item_id(NEEDLE_ID) >= 1
+            {
+                self.interface = Some(now.clone());
+            }
+        }
+        if self.withdrawn.is_none()
+            && now.item_id(input) >= 1
+            && now.item_id(product) == 0
+            && now.item_id(NEEDLE_ID) >= 1
+            && baseline.item_id(input) == 0
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        let prior = if require_interface {
+            self.interface.as_ref()
+        } else {
+            self.withdrawn.as_ref().filter(|_| !self.used_interface)
+        };
+        if let Some(prior) = prior {
+            if self.produced.is_none()
+                && now.item_id(product) >= 1
+                && now.item_id(input) < prior.item_id(input)
+                && now.skill_xp("crafting") > baseline.skill_xp("crafting")
+                && now.item_id(wrong) == 0
+            {
+                self.produced = Some(now.clone());
+            }
+        }
+        if self.produced.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(product) == 0
+            && now.bank_item_id(product) >= 1
+            && now.item_id(NEEDLE_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(input) >= 1
+                && now.bank_item_id(input) < deposited.bank_item_id(input)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation;
+        }
+        if let Some(produced) = &self.produced {
+            self.further |= self.returned
+                && !now.bank_open
+                && now.item_id(product) >= 1
+                && now.skill_xp("crafting") > produced.skill_xp("crafting")
+                && now.item_id(wrong) == 0;
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.produced.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+            && !self.wrong_product
+    }
+}
+
+/// Firemaking XP plus a Fire loc inside the posted Varrock East AABB, then
+/// deposit except tinderbox, restock logs, and another light.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FiremakerCycle {
+    pub withdrawn: Option<Observation>,
+    pub lit: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub returned: bool,
+    pub further: bool,
+    pub wrong_log: bool,
+}
+
+pub struct FiremakerSpec {
+    pub log: i32,
+    pub wrong: i32,
+}
+
+pub fn firemaker_spec(case: CoreCase) -> Option<FiremakerSpec> {
+    match case {
+        CoreCase::Firemaker => Some(FiremakerSpec {
+            log: LOGS_ID,
+            wrong: OAK_LOGS_ID,
+        }),
+        CoreCase::FiremakerOak => Some(FiremakerSpec {
+            log: OAK_LOGS_ID,
+            wrong: LOGS_ID,
+        }),
+        _ => None,
+    }
+}
+
+impl FiremakerCycle {
+    pub fn observe(&mut self, spec: FiremakerSpec, baseline: &Observation, now: &Observation) {
+        let FiremakerSpec { log, wrong } = spec;
+        self.wrong_log |= now.item_id(wrong) > 0 || now.bank_item_id(wrong) > 0;
+        if self.withdrawn.is_none()
+            && now.item_id(log) >= 1
+            && now.item_id(TINDERBOX_ID) >= 1
+            && baseline.item_id(log) == 0
+            && !fire_in_varrock_east_plot(now)
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            if self.lit.is_none()
+                && now.skill_xp("firemaking") > baseline.skill_xp("firemaking")
+                && now.item_id(log) < withdrawn.item_id(log)
+                && fire_in_varrock_east_plot(now)
+            {
+                self.lit = Some(now.clone());
+            }
+        }
+        if self.lit.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(log) == 0
+            && now.item_id(TINDERBOX_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(log) >= 1
+                && now.bank_item_id(log) < deposited.bank_item_id(log)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation;
+        }
+        if let Some(lit) = &self.lit {
+            self.further |= self.returned
+                && !now.bank_open
+                && now.skill_xp("firemaking") > lit.skill_xp("firemaking")
+                && fire_in_varrock_east_plot(now);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.withdrawn.is_some()
+            && self.lit.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+            && !self.wrong_log
+    }
+}
+
 impl CoreWitness {
     pub fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -5667,6 +6504,11 @@ impl CoreWitness {
             combat_core_cycle: CombatCoreCycle::default(),
             combat_bank_cycle: CombatBankCycle::default(),
             combat_approach_cycle: CombatApproachCycle::default(),
+            aio_teleport_cycle: AioTeleportCycle::default(),
+            shop_buyout_cycle: ShopBuyoutCycle::default(),
+            smithing_bot_cycle: SmithingBotCycle::default(),
+            leather_crafter_cycle: LeatherCrafterCycle::default(),
+            firemaker_cycle: FiremakerCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -5815,6 +6657,26 @@ impl CoreWitness {
                 self.combat_approach_cycle
                     .observe(spec, &self.baseline, observation);
             }
+        }
+        if let Some(spec) = aio_teleport_spec(self.case) {
+            self.aio_teleport_cycle
+                .observe(spec, &self.baseline, observation);
+        }
+        if let Some(spec) = shop_buyout_spec(self.case) {
+            self.shop_buyout_cycle
+                .observe(spec, &self.baseline, observation);
+        }
+        if let Some(spec) = smithing_bot_spec(self.case) {
+            self.smithing_bot_cycle
+                .observe(spec, &self.baseline, observation);
+        }
+        if let Some(spec) = leather_crafter_spec(self.case) {
+            self.leather_crafter_cycle
+                .observe(spec, &self.baseline, observation);
+        }
+        if let Some(spec) = firemaker_spec(self.case) {
+            self.firemaker_cycle
+                .observe(spec, &self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -6157,6 +7019,17 @@ impl CoreWitness {
                 }
             }
             CoreCase::FireGiantApproach => self.combat_approach_cycle.qualified(),
+            CoreCase::AioTeleport | CoreCase::AioTeleportFalador | CoreCase::AioTeleportNoStaff => {
+                self.aio_teleport_cycle.qualified()
+            }
+            CoreCase::ShopBuyout | CoreCase::ShopBuyoutAubury => self.shop_buyout_cycle.qualified(),
+            CoreCase::SmithingBot | CoreCase::SmithingBotPlatebody => {
+                self.smithing_bot_cycle.qualified()
+            }
+            CoreCase::LeatherCrafter | CoreCase::LeatherCrafterHardBody => {
+                self.leather_crafter_cycle.qualified()
+            }
+            CoreCase::Firemaker | CoreCase::FiremakerOak => self.firemaker_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -6232,6 +7105,11 @@ impl CoreWitness {
             "combat_core_cycle": self.combat_core_cycle,
             "combat_bank_cycle": self.combat_bank_cycle,
             "combat_approach_cycle": self.combat_approach_cycle,
+            "aio_teleport_cycle": self.aio_teleport_cycle,
+            "shop_buyout_cycle": self.shop_buyout_cycle,
+            "smithing_bot_cycle": self.smithing_bot_cycle,
+            "leather_crafter_cycle": self.leather_crafter_cycle,
+            "firemaker_cycle": self.firemaker_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
