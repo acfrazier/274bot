@@ -5670,6 +5670,130 @@ mod tests {
     }
 
     #[test]
+    fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
+        use host_play::paired_core::{
+            AirObservation, FlaxObservation, PairCase, PairWatch, StartBarrier, AIR_RUINS,
+            FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
+        };
+        use scenario::StepKind;
+
+        for (cli, case, card, mode_a, mode_b) in [
+            (
+                "script_nature_crafter_air",
+                PairCase::Air,
+                "NatureCrafter",
+                "Master",
+                "Runner",
+            ),
+            (
+                "script_mule_crafter_air",
+                PairCase::Mule,
+                "MuleCrafter",
+                "Crafter",
+                "Mule",
+            ),
+            (
+                "script_flax_runner",
+                PairCase::Flax,
+                "FlaxRunner",
+                "Runner",
+                "Spinner",
+            ),
+        ] {
+            assert_eq!(
+                parse_live_args(["--live", cli], None),
+                Ok(RunMode::Live(cli.into())),
+                "{cli} must resolve as a headed pair_watch live name"
+            );
+            let name = cli.strip_prefix("script_").unwrap();
+            assert_eq!(PairCase::parse(name).unwrap(), case);
+            let scenario = scenario::get(name).unwrap();
+            assert_eq!(scenario.seed.profiles.len(), 2);
+            assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
+            assert_eq!(scenario.settings.start_script, Some(card));
+            assert_eq!(scenario.companions.len(), 1);
+            assert_eq!(scenario.companions[0].profile, 1);
+            assert!(scenario
+                .steps
+                .iter()
+                .any(|step| matches!(step.kind, StepKind::StartScript)));
+
+            let a = "alice";
+            let b = "bob";
+            let bag_a = host_play::paired_core::pair_settings(case, &[], 0, a, b).unwrap();
+            let bag_b = host_play::paired_core::pair_settings(case, &[], 1, b, a).unwrap();
+            assert_eq!(bag_a.get("mode").and_then(|v| v.as_str()), Some(mode_a));
+            assert_eq!(bag_b.get("mode").and_then(|v| v.as_str()), Some(mode_b));
+            assert_eq!(bag_a.get("partner").and_then(|v| v.as_str()), Some(b));
+            assert_eq!(bag_b.get("partner").and_then(|v| v.as_str()), Some(a));
+
+            let watch = PairWatch::default();
+            watch.configure(case, a, b);
+            match case {
+                PairCase::Air | PairCase::Mule => {
+                    let first = AirObservation {
+                        ingame: true,
+                        scene_state: 2,
+                        inventory_tab_available: true,
+                        player: Some(a.into()),
+                        tile: Some(AIR_RUINS),
+                        air_talisman: 1,
+                        essence_unnoted: if case == PairCase::Mule {
+                            MULE_TRADE_CAP
+                        } else {
+                            0
+                        },
+                        ..AirObservation::default()
+                    };
+                    let second = AirObservation {
+                        ingame: true,
+                        scene_state: 2,
+                        inventory_tab_available: true,
+                        player: Some(b.into()),
+                        tile: Some(AIR_RUINS),
+                        air_talisman: 0,
+                        essence_unnoted: if case == PairCase::Mule {
+                            MULE_TRADE_CAP
+                        } else {
+                            TRADE_CAP
+                        },
+                        ..AirObservation::default()
+                    };
+                    watch.observe_air(a, first, false);
+                    watch.observe_air(b, second, false);
+                    assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
+                    watch.begin_shared_start(a, b).unwrap();
+                }
+                PairCase::Flax => {
+                    let runner = FlaxObservation {
+                        ingame: true,
+                        scene_state: 2,
+                        inventory_tab_available: true,
+                        player: Some(a.into()),
+                        tile: Some(FLAX_FIELD),
+                        crafting: 1,
+                        ..FlaxObservation::default()
+                    };
+                    let spinner = FlaxObservation {
+                        ingame: true,
+                        scene_state: 2,
+                        inventory_tab_available: true,
+                        player: Some(b.into()),
+                        tile: Some(FLAX_MEET),
+                        crafting: 1,
+                        ..FlaxObservation::default()
+                    };
+                    watch.observe_flax(a, runner, false);
+                    watch.observe_flax(b, spinner, false);
+                    assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
+                    watch.begin_shared_start(a, b).unwrap();
+                }
+                PairCase::Duel => unreachable!("headed cells are Air/Mule/Flax"),
+            }
+        }
+    }
+
+    #[test]
     fn smoke_should_fire_table() {
         // Fires exactly once, only while armed, only at `ingame && scene 2`.
         let cases: &[(&str, bool, bool, bool, i32, bool)] = &[

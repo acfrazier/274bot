@@ -22,10 +22,10 @@ mod runner;
 pub mod shot;
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::interact::{
-    cheat, close_modal, op_loc, tele_args, Driver, Interactions, SendReason, SendResult,
+    cheat, close_modal, logout, op_loc, tele_args, Driver, Interactions, SendReason, SendResult,
     MAXME_SETSTATS,
 };
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
@@ -482,6 +482,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "firemaker" => Some(firemaker_scenario()),
         "firemaker_oak" => Some(firemaker_oak_scenario()),
         "script_trade" => Some(script_trade_scenario()),
+        "nature_crafter_air" => Some(nature_crafter_air_scenario()),
+        "mule_crafter_air" => Some(mule_crafter_air_scenario()),
+        "flax_runner" => Some(flax_runner_scenario()),
         _ => None,
     }
 }
@@ -597,6 +600,9 @@ pub fn names() -> Vec<&'static str> {
         "firemaker",
         "firemaker_oak",
         "script_trade",
+        "nature_crafter_air",
+        "mule_crafter_air",
+        "flax_runner",
     ]
 }
 
@@ -4605,6 +4611,12 @@ const FLAX_FIELD: WorldTile = WorldTile {
     z: 3444,
     level: 0,
 };
+/// FlaxRunner meet tile. Same stand as the shared pair witness.
+const FLAX_MEET: WorldTile = WorldTile {
+    x: 2719,
+    z: 3471,
+    level: 0,
+};
 
 const DOOR_OPENER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "stand",
@@ -5854,6 +5866,8 @@ const EARTH_TALISMAN_ID: i32 = 1440;
 const AIR_RUNE_ID: i32 = 556;
 const EARTH_RUNE_ID: i32 = 557;
 const RUNE_ESSENCE_SEED: i32 = 200;
+const PAIR_AIR_FIRST_LOAD: i32 = 25;
+const PAIR_MULE_FIRST_LOAD: i32 = 27;
 
 const RUNECRAFTER_AIR_RUINS: WorldTile = WorldTile {
     x: 2988,
@@ -13826,6 +13840,484 @@ fn press_trade_accept(c: &mut Client) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum PairCompanionKind {
+    AirRunner,
+    MuleMule,
+    FlaxSpinner,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PairPrepStage {
+    WaitMainland,
+    TutSkip,
+    Relog,
+    WaitRelog,
+    Seed,
+    WaitSeed,
+    AckBank,
+    CloseBank,
+    FirstLoad,
+    WaitReady,
+    Idle,
+}
+
+struct PairCompanionSlot {
+    kind: PairCompanionKind,
+    stage: PairPrepStage,
+    logout_sent: bool,
+    saw_logout: bool,
+    seed_sent: bool,
+    first_load_sent: bool,
+    last_action: Instant,
+}
+
+impl PairCompanionSlot {
+    fn new(kind: PairCompanionKind) -> Self {
+        Self {
+            kind,
+            stage: PairPrepStage::WaitMainland,
+            logout_sent: false,
+            saw_logout: false,
+            seed_sent: false,
+            first_load_sent: false,
+            last_action: Instant::now() - Duration::from_secs(1),
+        }
+    }
+}
+
+fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
+    let mut snap = GameSnapshot::default();
+    snap.rebuild(c);
+    let now = Instant::now();
+    let inv_tab = snap
+        .side_tabs()
+        .iter()
+        .any(|tab| tab.index == 3 && tab.available);
+    match slot.stage {
+        PairPrepStage::WaitMainland => {
+            if c.ingame && c.scene_state == 2 && c.map_build_base_x >= 3000 {
+                slot.stage = PairPrepStage::TutSkip;
+            }
+        }
+        PairPrepStage::TutSkip => {
+            if !send_ok(slot, now) {
+                return;
+            }
+            cheat(c, "setvar tutorial 1000");
+            cheat(c, "getvar tutorial");
+            slot.last_action = now;
+            slot.stage = PairPrepStage::Relog;
+        }
+        PairPrepStage::Relog => {
+            if c.ingame && !slot.logout_sent {
+                if !send_ok(slot, now) {
+                    return;
+                }
+                let ifaces = std::sync::Arc::clone(&c.ifaces);
+                if logout(c, ifaces.as_slice()) {
+                    slot.logout_sent = true;
+                    slot.last_action = now;
+                    slot.stage = PairPrepStage::WaitRelog;
+                }
+            }
+        }
+        PairPrepStage::WaitRelog => {
+            if !snap.ingame() {
+                slot.saw_logout = true;
+                return;
+            }
+            if slot.saw_logout && snap.ingame() && snap.scene_state() == 2 && inv_tab {
+                slot.stage = PairPrepStage::Seed;
+            }
+        }
+        PairPrepStage::Seed => {
+            if !send_ok(slot, now) {
+                return;
+            }
+            if !slot.seed_sent {
+                cheat(c, "~clearinv");
+                match slot.kind {
+                    PairCompanionKind::AirRunner => {
+                        cheat(c, &format!("givebank blankrune {RUNE_ESSENCE_SEED}"));
+                        cheat(
+                            c,
+                            &tele_args(
+                                FALADOR_EAST_BANK.level,
+                                FALADOR_EAST_BANK.x,
+                                FALADOR_EAST_BANK.z,
+                            ),
+                        );
+                    }
+                    PairCompanionKind::MuleMule => {
+                        cheat(c, &format!("givebank blankrune {RUNE_ESSENCE_SEED}"));
+                        cheat(
+                            c,
+                            &tele_args(
+                                FALADOR_EAST_BANK.level,
+                                FALADOR_EAST_BANK.x,
+                                FALADOR_EAST_BANK.z,
+                            ),
+                        );
+                    }
+                    PairCompanionKind::FlaxSpinner => {
+                        cheat(c, "setstat crafting 1");
+                        cheat(c, &tele_args(FLAX_MEET.level, FLAX_MEET.x, FLAX_MEET.z));
+                    }
+                }
+                slot.seed_sent = true;
+                slot.last_action = now;
+            }
+            slot.stage = PairPrepStage::WaitSeed;
+        }
+        PairPrepStage::WaitSeed => match slot.kind {
+            PairCompanionKind::AirRunner | PairCompanionKind::MuleMule => {
+                if pair_near(&snap, FALADOR_EAST_BANK, 8) {
+                    slot.stage = PairPrepStage::AckBank;
+                }
+            }
+            PairCompanionKind::FlaxSpinner => {
+                if pair_near(&snap, FLAX_MEET, 8)
+                    && pair_stat(&snap, CRAFTING_STAT) >= 1
+                    && pair_inv_id(&snap, FLAX_ID) == 0
+                    && pair_inv_id(&snap, BOW_STRING_ID) == 0
+                {
+                    slot.stage = PairPrepStage::Idle;
+                }
+            }
+        },
+        PairPrepStage::AckBank => {
+            if pair_bank_id(&snap, RUNE_ESSENCE_ID) >= RUNE_ESSENCE_SEED
+                && snap.bank_loaded()
+                && snap.bank_component_id() >= 0
+                && pair_near(&snap, FALADOR_EAST_BANK, 8)
+            {
+                slot.stage = PairPrepStage::CloseBank;
+                return;
+            }
+            if !send_ok(slot, now) {
+                return;
+            }
+            match Interactions::new(&snap, c).open_nearest_booth() {
+                SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+            }
+            slot.last_action = now;
+        }
+        PairPrepStage::CloseBank => {
+            if snap.bank_component_id() < 0 {
+                slot.stage = PairPrepStage::FirstLoad;
+                return;
+            }
+            if !send_ok(slot, now) {
+                return;
+            }
+            let _ = close_modal(c);
+            slot.last_action = now;
+        }
+        PairPrepStage::FirstLoad => {
+            if !send_ok(slot, now) {
+                return;
+            }
+            if !slot.first_load_sent {
+                let n = match slot.kind {
+                    PairCompanionKind::AirRunner => PAIR_AIR_FIRST_LOAD,
+                    PairCompanionKind::MuleMule => PAIR_MULE_FIRST_LOAD,
+                    PairCompanionKind::FlaxSpinner => 0,
+                };
+                cheat(c, &format!("give blankrune {n}"));
+                cheat(
+                    c,
+                    &tele_args(
+                        MULECRAFTER_AIR_RUINS.level,
+                        MULECRAFTER_AIR_RUINS.x,
+                        MULECRAFTER_AIR_RUINS.z,
+                    ),
+                );
+                slot.first_load_sent = true;
+                slot.last_action = now;
+            }
+            slot.stage = PairPrepStage::WaitReady;
+        }
+        PairPrepStage::WaitReady => {
+            let want = match slot.kind {
+                PairCompanionKind::AirRunner => PAIR_AIR_FIRST_LOAD,
+                PairCompanionKind::MuleMule => PAIR_MULE_FIRST_LOAD,
+                PairCompanionKind::FlaxSpinner => 0,
+            };
+            if pair_near(&snap, MULECRAFTER_AIR_RUINS, 8)
+                && pair_inv_id(&snap, RUNE_ESSENCE_ID) >= want
+                && snap.bank_component_id() < 0
+            {
+                slot.stage = PairPrepStage::Idle;
+            }
+        }
+        PairPrepStage::Idle => {}
+    }
+}
+
+fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
+    now.duration_since(slot.last_action) >= Duration::from_millis(400)
+}
+
+fn pair_near(snap: &GameSnapshot, dest: WorldTile, radius: i32) -> bool {
+    snap.tile().is_some_and(|(x, z, level)| {
+        level == dest.level && (x - dest.x).abs() <= radius && (z - dest.z).abs() <= radius
+    })
+}
+
+fn pair_inv_id(snap: &GameSnapshot, id: i32) -> i32 {
+    snap.inv()
+        .iter()
+        .filter(|(item_id, _)| *item_id == id)
+        .map(|(_, count)| *count)
+        .sum()
+}
+
+fn pair_bank_id(snap: &GameSnapshot, id: i32) -> i32 {
+    snap.bank()
+        .iter()
+        .filter(|row| row.def.id == id)
+        .map(|row| row.count)
+        .sum()
+}
+
+fn pair_stat(snap: &GameSnapshot, id: i32) -> i32 {
+    snap.stats()
+        .iter()
+        .find(|row| row.index == id)
+        .map(|row| row.base)
+        .unwrap_or(0)
+}
+
+fn pair_fleet_seed() -> Seed {
+    Seed {
+        profiles: vec![("test", "test"), ("test2", "test2")],
+        mainland: true,
+    }
+}
+
+fn pair_watch_settings(name: &'static str, start_script: &'static str) -> ScenarioSettings {
+    ScenarioSettings {
+        full_rate: true,
+        require_mainland_base: true,
+        deadline: SCRIPT_GOLD_DEADLINE,
+        start_script: Some(start_script),
+        terminal_shot: Some(name),
+        nav: gold_script_nav(),
+        ..Default::default()
+    }
+}
+
+fn pair_companion(kind: PairCompanionKind) -> Companion {
+    Companion {
+        profile: 1,
+        per_frame: {
+            let mut slot = PairCompanionSlot::new(kind);
+            Box::new(move |c| pair_companion_frame(c, &mut slot))
+        },
+    }
+}
+
+/// NatureCrafter Air Master/Runner: two visible slots, shared Start after
+/// both native preps. Pair watch supplies complementary mode/partner bags.
+fn nature_crafter_air_scenario() -> Scenario {
+    let ruins = MULECRAFTER_AIR_RUINS;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Air master talisman at ruins before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give air_talisman 1");
+                cheat(c, &tele_args(ruins.level, ruins.x, ruins.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: ruins.x,
+                z: ruins.z,
+                level: ruins.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Air talisman in pack before Start",
+            Proof::ItemId {
+                id: AIR_TALISMAN_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded essence in pack before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_ESSENCE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted essence in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_ESSENCE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Air runes in pack before Start",
+            Proof::ItemIdAtMost {
+                id: AIR_RUNE_ID,
+                count: 0,
+            },
+        ),
+        ("confirm seed bank closed before Start", Proof::BankClosed),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    Scenario {
+        name: "nature_crafter_air",
+        seed: pair_fleet_seed(),
+        steps,
+        proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![pair_companion(PairCompanionKind::AirRunner)],
+        settings: pair_watch_settings("nature_crafter_air", "NatureCrafter"),
+    }
+}
+
+/// MuleCrafter Air Crafter/Mule: two visible slots, shared Start after both
+/// native preps. bankFill=true is the pair_settings default, not this cell.
+fn mule_crafter_air_scenario() -> Scenario {
+    let ruins = MULECRAFTER_AIR_RUINS;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Mule crafter talisman and first 27 essence at ruins before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give air_talisman 1");
+                cheat(c, &format!("give blankrune {PAIR_MULE_FIRST_LOAD}"));
+                cheat(c, &tele_args(ruins.level, ruins.x, ruins.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: ruins.x,
+                z: ruins.z,
+                level: ruins.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Air talisman in pack before Start",
+            Proof::ItemId {
+                id: AIR_TALISMAN_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm exactly one unnoted 1436 load of 27 before Start",
+            Proof::ItemId {
+                id: RUNE_ESSENCE_ID,
+                count: PAIR_MULE_FIRST_LOAD,
+            },
+        ),
+        (
+            "confirm no extra unnoted essence beyond the first load",
+            Proof::ItemIdAtMost {
+                id: RUNE_ESSENCE_ID,
+                count: PAIR_MULE_FIRST_LOAD,
+            },
+        ),
+        (
+            "confirm no seeded noted essence in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_ESSENCE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Air runes in pack before Start",
+            Proof::ItemIdAtMost {
+                id: AIR_RUNE_ID,
+                count: 0,
+            },
+        ),
+        ("confirm seed bank closed before Start", Proof::BankClosed),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    Scenario {
+        name: "mule_crafter_air",
+        seed: pair_fleet_seed(),
+        steps,
+        proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![pair_companion(PairCompanionKind::MuleMule)],
+        settings: pair_watch_settings("mule_crafter_air", "MuleCrafter"),
+    }
+}
+
+/// FlaxRunner Runner/Spinner: empty packs, runner at the field, spinner at
+/// the meet. First flax pack is picked after shared Start.
+fn flax_runner_scenario() -> Scenario {
+    let field = FLAX_FIELD;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed empty Flax runner pack at the field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &tele_args(field.level, field.x, field.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: field.x,
+                z: field.z,
+                level: field.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm no seeded flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        ("confirm seed bank closed before Start", Proof::BankClosed),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    Scenario {
+        name: "flax_runner",
+        seed: pair_fleet_seed(),
+        steps,
+        proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![pair_companion(PairCompanionKind::FlaxSpinner)],
+        settings: pair_watch_settings("flax_runner", "FlaxRunner"),
+    }
+}
+
 /// Journal colour is login-time `~update_questlist`; the Relog step after
 /// these cheats is what actually opens packed quest-gated edges.
 const TRANSPORT_QUEST_SETVARS: &[&str] = &[
@@ -14222,6 +14714,9 @@ mod tests {
                 "firemaker",
                 "firemaker_oak",
                 "script_trade",
+                "nature_crafter_air",
+                "mule_crafter_air",
+                "flax_runner",
             ]
         );
     }
@@ -19587,5 +20082,76 @@ mod tests {
         assert_eq!(s.settings.deadline, Duration::from_secs(3600));
         assert_eq!(s.settings.sustains, nav_energy_sustains());
         assert!(names().contains(&"nav_routes"));
+    }
+
+    #[test]
+    fn pair_cells_register_two_visible_actors_and_shared_start() {
+        for (name, card, dest) in [
+            (
+                "nature_crafter_air",
+                "NatureCrafter",
+                WorldTile {
+                    x: 2983,
+                    z: 3288,
+                    level: 0,
+                },
+            ),
+            (
+                "mule_crafter_air",
+                "MuleCrafter",
+                WorldTile {
+                    x: 2983,
+                    z: 3288,
+                    level: 0,
+                },
+            ),
+            (
+                "flax_runner",
+                "FlaxRunner",
+                WorldTile {
+                    x: 2741,
+                    z: 3444,
+                    level: 0,
+                },
+            ),
+        ] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} must be registered"));
+            assert_eq!(s.name, name);
+            assert_eq!(s.seed.profiles.len(), 2, "{name} is a two-profile fleet");
+            assert_ne!(
+                s.seed.profiles[0].0, s.seed.profiles[1].0,
+                "{name} actors must be distinct"
+            );
+            assert_eq!(s.settings.start_script, Some(card));
+            assert_eq!(s.settings.inject_companion_as, None);
+            assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert_eq!(s.settings.terminal_shot, Some(name));
+            assert_eq!(s.companions.len(), 1);
+            assert_eq!(s.companions[0].profile, 1);
+            let start = s
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name} must Start after prep"));
+            assert!(
+                start > 0,
+                "{name} Start must follow native acknowledged prep"
+            );
+            assert!(s.steps[..start]
+                .iter()
+                .any(|step| matches!(step.kind, StepKind::Relog)));
+            assert!(s.steps[..start].iter().any(|step| {
+                matches!(
+                    step.wait.arm,
+                    Proof::ArrivedNear {
+                        x,
+                        z,
+                        level,
+                        radius: 8
+                    } if x == dest.x && z == dest.z && level == dest.level
+                )
+            }));
+            assert!(names().contains(&name));
+        }
     }
 }
