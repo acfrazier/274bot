@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod catalog_core;
 pub mod nav_identity;
+pub mod paired_core;
 pub mod profile;
 pub mod progress;
 pub use nav_identity::{
@@ -4211,6 +4212,8 @@ pub struct Play {
     /// Dormant unless a visible catalog proof explicitly configures it.
     /// Slot threads feed it from the same snapshot publication used by scripts.
     catalog_core: catalog_core::CoreWatch,
+    /// Dormant unless a visible pair proof explicitly configures it.
+    paired_core: paired_core::PairWatch,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: Arc<Mutex<LoginQueue>>,
@@ -4348,6 +4351,7 @@ impl Play {
             cache,
             obj_names,
             catalog_core: catalog_core::CoreWatch::default(),
+            paired_core: paired_core::PairWatch::default(),
             ifaces,
             ifaces_mut_template,
             queue: Arc::new(Mutex::new(LoginQueue::default())),
@@ -4448,6 +4452,11 @@ impl Play {
     /// Shared headed catalog proof handle. It is disabled by default.
     pub fn catalog_core_watch(&self) -> catalog_core::CoreWatch {
         self.catalog_core.clone()
+    }
+
+    /// Shared headed pair proof handle. It is disabled by default.
+    pub fn paired_core_watch(&self) -> paired_core::PairWatch {
+        self.paired_core.clone()
     }
 
     /// Blocks until every slot thread exits (slot threads run forever, so
@@ -4816,6 +4825,7 @@ impl Play {
             self.world.clone(),
             Arc::clone(&self.obj_names),
             self.catalog_core.clone(),
+            self.paired_core.clone(),
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
@@ -5069,6 +5079,7 @@ fn spawn_slot_thread(
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
     slot_catalog_core: catalog_core::CoreWatch,
+    slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -5196,6 +5207,7 @@ fn spawn_slot_thread(
                 let arm_obs = Arc::clone(&arm);
                 let obs_name = username.clone();
                 let obs_catalog_core = slot_catalog_core.clone();
+                let obs_paired_core = slot_paired_core.clone();
                 let knock_name = username.clone();
                 let knock_scripts = Arc::clone(&slot_scripts);
                 let knock = move |ev: &DetectedRandom| -> RandomClaim {
@@ -5255,6 +5267,7 @@ fn spawn_slot_thread(
                                 &slot_obj_names,
                                 session_boundary,
                             );
+                            obs_paired_core.observe_snapshot(name, &nav_snapshot, session_boundary);
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();
                             let hold = status.hold || !ready || session_boundary;

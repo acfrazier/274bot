@@ -23,18 +23,19 @@ use vault::{Profile, ProfileSettings};
 use paired_catalog::{
     air_operation_gates, air_prepared_current, air_settings, bank_ack_target_absence,
     bank_seed_acknowledged, card_row, catalog_ledger, duel_operation_gates, duel_prepared_current,
-    duel_settings, frozen_card_hashes_match, hash_file, mule_mode_requires_partner,
-    mule_operation_gates, mule_prepared_current, mule_settings, near, prepare_card,
-    relog_admission, shared_start_barrier, verify_generated_duel_controls,
-    verify_registry_identity, AirClaim, AirObservation, AirPairWitness, AirRole, AirSlotRecord,
-    DuelClaim, DuelObservation, DuelPairWitness, DuelSlotRecord, GateKind, MuleClaim,
-    MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PreparedCard, RelogAdmission,
-    StartBarrier, StartBarrierInput, AIR_RUINS, BANK_SEED_ESSENCE, CATALOG_COMMIT_A,
-    CATALOG_COMMIT_B, DUEL_ARENA, DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256,
-    DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, MULECRAFTER,
-    MULECRAFTER_LOGIC_SHA256, MULECRAFTER_SHA256, MULE_TRADE_CAP, NATURECRAFTER,
-    NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256, PREP_DEADLINE_SECS,
-    SCRIPT_GOLD_DEADLINE_SECS, SCRIPT_GOLD_WATCH_TICKS, TRADE_CAP,
+    duel_settings, flax_operation_gates, flax_prepared_current, frozen_card_hashes_match,
+    hash_file, mule_mode_requires_partner, mule_operation_gates, mule_prepared_current,
+    mule_settings, near, prepare_card, relog_admission, shared_start_barrier,
+    verify_generated_duel_controls, verify_registry_identity, AirClaim, AirObservation,
+    AirPairWitness, AirRole, AirSlotRecord, DuelClaim, DuelObservation, DuelPairWitness,
+    DuelSlotRecord, FlaxClaim, FlaxObservation, FlaxPairWitness, FlaxRole, FlaxSlotRecord,
+    GateKind, MuleClaim, MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PreparedCard,
+    RelogAdmission, StartBarrier, StartBarrierInput, AIR_RUINS, BANK_SEED_ESSENCE,
+    CATALOG_COMMIT_A, CATALOG_COMMIT_B, DUEL_ARENA, DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256,
+    DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, FLAXRUNNER, FLAXRUNNER_SHA256,
+    FLAX_BANK, FLAX_FIELD, FLAX_MEET, MULECRAFTER, MULECRAFTER_LOGIC_SHA256, MULECRAFTER_SHA256,
+    MULE_TRADE_CAP, NATURECRAFTER, NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256,
+    PREP_DEADLINE_SECS, SCRIPT_GOLD_DEADLINE_SECS, SCRIPT_GOLD_WATCH_TICKS, TRADE_CAP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1039,6 +1040,12 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             &card,
             weapon,
         )?,
+        PairCase::Flax => {
+            return Err(
+                "flax LIVE prep remains root-owned; offline FlaxPairWitness is the 157 fixture"
+                    .into(),
+            );
+        }
     };
     let slot_b = match case {
         PairCase::Air => new_slot(
@@ -1062,6 +1069,12 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             &card,
             weapon,
         )?,
+        PairCase::Flax => {
+            return Err(
+                "flax LIVE prep remains root-owned; offline FlaxPairWitness is the 157 fixture"
+                    .into(),
+            );
+        }
     };
     let state = Arc::new(Mutex::new((slot_a, slot_b)));
     let frame_state = Arc::clone(&state);
@@ -1076,11 +1089,13 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                 match case {
                     PairCase::Air | PairCase::Mule => pair.0.frame_air(client, hold),
                     PairCase::Duel => pair.0.frame_duel(client, hold),
+                    PairCase::Flax => {}
                 }
             } else if username == pair.1.account {
                 match case {
                     PairCase::Air | PairCase::Mule => pair.1.frame_air(client, hold),
                     PairCase::Duel => pair.1.frame_duel(client, hold),
+                    PairCase::Flax => {}
                 }
             }
         },
@@ -1277,6 +1292,12 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                     } else if timed_out {
                         break Err("idle/non-progress: missing Duel records after Start".into());
                     }
+                }
+                PairCase::Flax => {
+                    break Err(
+                        "flax LIVE prep remains root-owned; offline FlaxPairWitness is the 157 fixture"
+                            .into(),
+                    );
                 }
             }
         }
@@ -1638,9 +1659,11 @@ mod tests {
     fn frozen_catalog_hashes_match_both_revisions() {
         frozen_card_hashes_match(PairCase::Air).unwrap();
         frozen_card_hashes_match(PairCase::Mule).unwrap();
+        frozen_card_hashes_match(PairCase::Flax).unwrap();
         frozen_card_hashes_match(PairCase::Duel).unwrap();
         assert_eq!(NATURECRAFTER, "NatureCrafter");
         assert_eq!(MULECRAFTER, "MuleCrafter");
+        assert_eq!(FLAXRUNNER, "FlaxRunner");
         assert_eq!(DUEL_ARENA, "Duel Arena Combat Trainer");
         assert_eq!(
             NATURECRAFTER_SHA256,
@@ -1653,6 +1676,10 @@ mod tests {
         assert_eq!(
             DUEL_ARENA_SHA256,
             "5656dabb30a47aac590fa1afadba19e689dd792d70da8dc4851e18d62e52d090"
+        );
+        assert_eq!(
+            FLAXRUNNER_SHA256,
+            "6edae2ae773b73b907b5a3d4c020052075f7b32f9c2872ca78246eead9dfff34"
         );
         assert_eq!(
             NATURE_RUNNER_LOGIC_SHA256,
@@ -1674,8 +1701,10 @@ mod tests {
             catalog_ledger(commit).unwrap();
             card_row(commit, 274, NATURECRAFTER).unwrap();
             card_row(commit, 274, MULECRAFTER).unwrap();
+            card_row(commit, 274, FLAXRUNNER).unwrap();
             card_row(commit, 289, DUEL_ARENA).unwrap();
             card_row(commit, 289, MULECRAFTER).unwrap();
+            card_row(commit, 289, FLAXRUNNER).unwrap();
         }
     }
 
@@ -1710,6 +1739,12 @@ mod tests {
             .iter()
             .any(|gate| gate.kind == GateKind::UnusedByCase
                 && gate.source.contains("bankFill=false")));
+        assert!(flax_operation_gates().iter().any(|gate| {
+            gate.kind == GateKind::Mapped && gate.call.contains("driveActivePartnerTrade")
+        }));
+        assert!(flax_operation_gates()
+            .iter()
+            .any(|gate| gate.kind == GateKind::UnusedByCase && gate.source.contains("FlaxAIO")));
         assert!(duel_operation_gates().iter().any(|gate| {
             gate.kind == GateKind::CatalogLiteralMatchesGenerated && gate.call.contains("ifButton")
         }));
@@ -2488,5 +2523,147 @@ mod tests {
 
         let error = pair.qualify_supported().unwrap_err();
         assert!(error.contains("post-exchange"), "{error}");
+    }
+
+    fn flax_obs(player: &str, flax: i32, string: i32, xp: i32) -> FlaxObservation {
+        FlaxObservation {
+            ingame: true,
+            scene_state: 2,
+            inventory_tab_available: true,
+            player: Some(player.into()),
+            tile: Some(FLAX_MEET),
+            crafting: 1,
+            crafting_xp: xp,
+            flax,
+            bow_string: string,
+            ..FlaxObservation::default()
+        }
+    }
+
+    fn flax_pair() -> FlaxPairWitness {
+        let runner_base = FlaxObservation {
+            tile: Some(FLAX_FIELD),
+            ..flax_obs("runner", 0, 0, 0)
+        };
+        let spinner_base = flax_obs("spinner", 0, 0, 0);
+        flax_prepared_current(FlaxRole::Runner, "runner", &runner_base).unwrap();
+        flax_prepared_current(FlaxRole::Spinner, "spinner", &spinner_base).unwrap();
+        let mut pair = FlaxPairWitness {
+            runner: FlaxSlotRecord::new(
+                FlaxRole::Runner,
+                "runner".into(),
+                "runner".into(),
+                "spinner".into(),
+                Default::default(),
+                runner_base,
+            ),
+            spinner: FlaxSlotRecord::new(
+                FlaxRole::Spinner,
+                "spinner".into(),
+                "spinner".into(),
+                "runner".into(),
+                Default::default(),
+                spinner_base,
+            ),
+        };
+        pair.runner.observe(with_flax_trade(
+            flax_obs("runner", 24, 0, 0),
+            "spinner",
+            true,
+            false,
+        ));
+        pair.runner.observe(with_flax_trade(
+            flax_obs("runner", 24, 0, 0),
+            "spinner",
+            false,
+            true,
+        ));
+        pair.spinner.observe(with_flax_trade(
+            flax_obs("spinner", 0, 0, 0),
+            "runner",
+            true,
+            false,
+        ));
+        pair.spinner.observe(with_flax_trade(
+            flax_obs("spinner", 0, 0, 0),
+            "runner",
+            false,
+            true,
+        ));
+        pair.runner.observe(flax_obs("runner", 0, 0, 0));
+        pair.spinner.observe(flax_obs("spinner", 24, 0, 0));
+        pair
+    }
+
+    fn with_flax_trade(
+        mut observation: FlaxObservation,
+        partner: &str,
+        offer: bool,
+        confirm: bool,
+    ) -> FlaxObservation {
+        observation.trade_offer_open = offer;
+        observation.trade_confirm_open = confirm;
+        observation.trade_partner = Some(partner.into());
+        observation
+    }
+
+    #[test]
+    fn flax_rejects_wrong_partner() {
+        let mut pair = flax_pair();
+        pair.runner.saw_wrong_partner = true;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("wrong partner"), "{error}");
+    }
+
+    #[test]
+    fn flax_rejects_one_sided_confirmation() {
+        let mut pair = flax_pair();
+        pair.spinner.saw_confirm_with_partner = false;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("one-sided"), "{error}");
+    }
+
+    #[test]
+    fn flax_rejects_seed_only_strings() {
+        let mut pair = flax_pair();
+        pair.spinner.baseline.bow_string = 24;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("seed-only"), "{error}");
+    }
+
+    #[test]
+    fn flax_rejects_first_transfer_as_full_cycle() {
+        let pair = flax_pair();
+        assert_eq!(
+            pair.qualify_supported().unwrap(),
+            FlaxClaim::FirstFlaxTransfer
+        );
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(
+            error.contains("no further work") || error.contains("seed-only"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn flax_rejects_missing_second_production() {
+        let mut pair = flax_pair();
+        pair.spinner.observe(FlaxObservation {
+            flax: 0,
+            bow_string: 24,
+            crafting_xp: 15,
+            ..flax_obs("spinner", 0, 24, 15)
+        });
+        let mut bank = flax_obs("spinner", 0, 0, 15);
+        bank.tile = Some(FLAX_BANK);
+        bank.bank_open = true;
+        bank.bank_loaded = true;
+        pair.spinner.observe(bank);
+        pair.spinner.observe(flax_obs("spinner", 0, 0, 15));
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(
+            error.contains("no further work") || error.contains("second"),
+            "{error}"
+        );
     }
 }
