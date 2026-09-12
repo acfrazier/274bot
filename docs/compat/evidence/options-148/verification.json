@@ -5,7 +5,7 @@
   "brief": "docs/compat/briefs/148-alternate-camp-guard-options.md",
   "brief_sha256": "6cf51dc6e14fd72a796cbce5554cc3c491d3cd3479a3e97c391df8e0f3c2494d",
   "implementation": {
-    "commit": "f9e197a545231fbbcf2d6d32dab6b2feaa2e05e2",
+    "commit": "48b27aef1e4ad0b9a24b798dc02833db26a25b55",
     "parent": "4779c6bf34f2541cb18f2cd5e4cee5d929f53d4e",
     "client_gitlink": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
     "worktree": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
