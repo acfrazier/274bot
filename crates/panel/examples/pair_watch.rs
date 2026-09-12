@@ -9,7 +9,15 @@ fn main() {
             std::process::exit(code);
         }
     };
-    if !matches!(args.mode, panel::RunMode::Live(_)) {
+    let allowed = matches!(
+        args.mode,
+        panel::RunMode::Live(ref name)
+            if matches!(
+                name.as_str(),
+                "script_nature_crafter_air" | "script_mule_crafter_air" | "script_flax_runner"
+            )
+    );
+    if !allowed {
         eprintln!(
             "FAIL: pair_watch requires --live script_nature_crafter_air|script_mule_crafter_air|script_flax_runner"
         );
