@@ -1772,6 +1772,8 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                             && baseline.item_id(LOBSTER_ID) == CHAOS_DRUID_BANK_FOOD
                     }
                     CoreCase::ArdyFighterBank => {
+                        // Guard-drop emptiness is `combat_baseline_ready`'s
+                        // `CombatLoot::GuardDrop` count == 0, same as AutoFighter.
                         baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
                             && baseline.item_id(CAKE_ID) == 0
                             && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
@@ -1988,7 +1990,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Edgeville dungeon (3110,9936,0) r14, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8 (under foodWithdraw 12)"
         }
         CoreCase::ArdyFighterBank => {
-            "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, bankStrategy Loot count"
+            "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, empty Guard-drop class 440/886/1446/565/562/561, bankStrategy Loot count"
         }
     };
     Err(format!(
@@ -3143,8 +3145,9 @@ pub enum CombatLoot {
     BigBones,
     BigBonesOrLimpwurt,
     DragonBonesOrHide,
-    /// The AutoFighter bank cell's injected Guard loot list: any one of the
-    /// six verifiable Guard drops ([`GUARD_DROP_IDS`]) landing in the pack.
+    /// Guard-drop pack stock: any one of the six verifiable Guard drops
+    /// ([`GUARD_DROP_IDS`]) landing in the pack. AutoFighter bank injects that
+    /// list; ArdyFighter already lists the same names in `DEFAULT_LOOT`.
     GuardDrop,
     None,
 }
@@ -3437,7 +3440,12 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_count: 0,
             weapon_id: ADAMANT_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
-            loot: CombatLoot::None,
+            // The card's own DEFAULT_LOOT is already the Guard-reachable
+            // names; `bankEveryItems=1` ends the trip on the first of those
+            // drops. Pack starts empty of the class so the deposit cannot be
+            // a pre-Start seed. StolenFood extra stays: the Baker's stall is
+            // this card's restock.
+            loot: CombatLoot::GuardDrop,
             extra: CombatExtra::StolenFood,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -3509,9 +3517,10 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             ret: CHAOS_DRUID_FIELD,
             ret_radius: 14,
         }),
-        // `bankStrategy=Loot count`: PeriodicBank deposits the card's own loot
-        // list and walks back to the market anchor. No food restock (the
-        // Baker's stall is this card's food).
+        // `bankStrategy=Loot count`: PeriodicBank deposits the card's own
+        // Guard-reachable loot list and walks back to the market anchor. No
+        // food restock (the Baker's stall is this card's food). The class
+        // only ever enters the pack as a Guard drop.
         CoreCase::ArdyFighterBank => Some(CombatBankSpec {
             deposit: &GUARD_DROP_IDS,
             stand: ARDY_BANK,

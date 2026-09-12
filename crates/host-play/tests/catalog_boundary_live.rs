@@ -8371,6 +8371,14 @@ mod tests {
         let mut seeded_cake = baseline.clone();
         seeded_cake.item_ids.insert(CAKE_ID, 1);
         assert!(validate_case_baseline(case, &seeded_cake).is_err());
+        // Same class as auto_fighter_bank: a pre-Start Guard drop would fire
+        // `bankEveryItems=1` without a kill-fed pickup.
+        let mut seeded_loot = baseline.clone();
+        seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_loot).is_err());
+        let mut seeded_rune = baseline.clone();
+        seeded_rune.item_ids.insert(BLOOD_RUNE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded_rune).is_err());
         let mut low_thieving = baseline.clone();
         low_thieving.levels.insert("thieving".into(), 4);
         assert!(validate_case_baseline(case, &low_thieving).is_err());
@@ -8508,6 +8516,50 @@ mod tests {
                 &first,
                 &looted,
                 &no_deposit,
+                &closed,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // A bank whose class stock appears without the pack ever holding one
+        // has no kill-fed loot behind it and fails the core witness.
+        let defeat = bank_obs(
+            case,
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 4)],
+            &[],
+            &[("strength", 44), ("thieving", 60)],
+            &[
+                combat_npc(13, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(14, "Guard", 20, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(14),
+            0,
+            false,
+        );
+        let phantom_bank = bank_obs(
+            case,
+            ARDY_BANK,
+            &[(CAKE_ID, 4)],
+            &[(STEEL_ARROW_ID, 5)],
+            &[("strength", 44), ("thieving", 60)],
+            &[],
+            false,
+            None,
+            5,
+            true,
+        );
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &stolen,
+                &first,
+                &defeat,
+                &phantom_bank,
                 &closed,
                 &returned,
                 &further
