@@ -27,7 +27,7 @@ Each case is a separate scenario; the existing Edgeville `chaos_druid`, Flee
 | `ardy_cakes_fight` | ArdyCakes | Thieving 5, Attack/Strength/Hitpoints 40, 22 retained Knives, worn Adamant scimitar 1331, empty cake pack, Baker's stall stand | `guardResponse=Fight`, `solveClues=false` |
 | `ardy_thiever_fight` | ArdyThiever | Thieving 40, Attack/Strength/Hitpoints 40, worn Adamant scimitar 1331, empty pack, market Guard stand | `thieveTarget=Guard`, `guardResponse=Fight`, `bankAtLootSlots=1`, `solveClues=false` |
 
-ChaosDruidKiller does not declare `loot` / `food` / `foodWithdraw` / `buryBones` / `solveClues` as SETTINGS. Loot selection is hardcoded `isChaosDruidLoot` (Herb / Law rune / Nature rune). Food is the loadout/`scriptFood` default Lobster; the card default for `foodWithdraw` is 12 (matches fixture prep). Those are card/loadout defaults, not injects.
+ChaosDruidKiller SETTINGS does not declare `loot` / `food` / `buryBones` / `solveClues`. Loot selection is hardcoded `isChaosDruidLoot` (Herb / Law rune / Nature rune). Food name comes from loadout/`scriptFood` default Lobster. `foodWithdraw` is a declared SETTINGS number (default 12) but is not injected on these cells; fixture prep seeds Lobster x12 to match that default.
 
 Preparation, acknowledgement and the teleports into the Tower surface, Yanille
 warrior room and Ardougne market all happen before the frozen script Starts;
