@@ -3395,7 +3395,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
             food_id: LOBSTER_ID,
-            food_count: GREEN_DRAGON_FOOD,
+            food_count: GREEN_DRAGON_BASE_FOOD,
             weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,

@@ -7071,6 +7071,24 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn green_dragon_base_requires_the_full_ordinary_trip_food() {
+        let case = CoreCase::GreenDragon;
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(RUNE_SCIMITAR_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        assert!(validate_case_baseline(case, &baseline).is_err());
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn ardy_fight_obs(
         tile: (i32, i32, i32),
