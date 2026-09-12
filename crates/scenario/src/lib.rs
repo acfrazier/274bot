@@ -25,8 +25,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use api::interact::{
-    cheat, close_modal, logout, op_loc, tele_args, Driver, Interactions, SendReason, SendResult,
-    MAXME_SETSTATS,
+    cheat, logout, op_loc, tele_args, Driver, Interactions, SendReason, SendResult, MAXME_SETSTATS,
 };
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
@@ -13934,9 +13933,20 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             }
         }
         PairPrepStage::WaitRelog => {
-            if !snap.ingame() {
+            // Host::run_client probe returns on !ingame before the next
+            // observe, so companion_tick never sees the off-world frame.
+            // Reconnect login is the delivered post-logout signal; stale
+            // pre-logout scene2 (reconnect != Some(true)) must not seed.
+            if pair_relog_seen(
+                slot.logout_sent,
+                slot.saw_logout,
+                snap.ingame(),
+                c.last_login_reconnect,
+            ) {
                 slot.saw_logout = true;
-                return;
+                if !snap.ingame() {
+                    return;
+                }
             }
             if slot.saw_logout && snap.ingame() && snap.scene_state() == 2 && inv_tab {
                 slot.stage = PairPrepStage::Seed;
@@ -14022,7 +14032,9 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             if !send_ok(slot, now) {
                 return;
             }
-            let _ = close_modal(c);
+            match Interactions::new(&snap, c).close_modal() {
+                SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+            }
             slot.last_action = now;
         }
         PairPrepStage::FirstLoad => {
@@ -14070,6 +14082,15 @@ fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
     now.duration_since(slot.last_action) >= Duration::from_millis(400)
 }
 
+fn pair_relog_seen(
+    logout_sent: bool,
+    saw_logout: bool,
+    ingame: bool,
+    last_login_reconnect: Option<bool>,
+) -> bool {
+    saw_logout || !ingame || (logout_sent && last_login_reconnect == Some(true))
+}
+
 fn pair_near(snap: &GameSnapshot, dest: WorldTile, radius: i32) -> bool {
     snap.tile().is_some_and(|(x, z, level)| {
         level == dest.level && (x - dest.x).abs() <= radius && (z - dest.z).abs() <= radius
@@ -14110,6 +14131,7 @@ fn pair_fleet_seed() -> Seed {
 fn pair_watch_settings(name: &'static str, start_script: &'static str) -> ScenarioSettings {
     ScenarioSettings {
         full_rate: true,
+        only_render_selected: false,
         require_mainland_base: true,
         deadline: SCRIPT_GOLD_DEADLINE,
         start_script: Some(start_script),
@@ -20183,6 +20205,14 @@ mod tests {
             assert_eq!(s.settings.inject_companion_as, None);
             assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
             assert_eq!(s.settings.terminal_shot, Some(name));
+            assert!(
+                s.settings.full_rate,
+                "{name} pair-watch keeps a full-rate headed cadence"
+            );
+            assert!(
+                !s.settings.only_render_selected,
+                "{name} pair-watch must draw both actors; ordinary panel default stays selected-only"
+            );
             assert_eq!(s.companions.len(), 1);
             assert_eq!(s.companions[0].profile, 1);
             let start = s
@@ -20210,5 +20240,126 @@ mod tests {
             }));
             assert!(names().contains(&name));
         }
+    }
+
+    fn pair_companion_client() -> client::client::Client {
+        use api::interact::CC_LOGOUT;
+        use client::client::{Client, ClientConfig};
+        use client::config::IfType;
+        use client::dash3d::ClientPlayer;
+        use client::io::ServerProt;
+        use std::sync::Arc;
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        client.last_login_reconnect = Some(false);
+        client.side_icon[3] = 1;
+        let mut ifaces = vec![None; 16];
+        ifaces[7] = Some(Box::new(IfType {
+            client_code: CC_LOGOUT,
+            ..Default::default()
+        }));
+        client.ifaces = Arc::new(ifaces);
+        for prot in [
+            ServerProt::PLAYER_INFO,
+            ServerProt::REBUILD_NORMAL,
+            ServerProt::UPDATE_STAT,
+            ServerProt::IF_OPENMAIN,
+        ] {
+            client.bump_gens(prot);
+        }
+        client
+    }
+
+    fn pair_out_len(client: &client::client::Client) -> usize {
+        client.out.pos
+    }
+
+    /// Host::run_client returns on !ingame before another observe, so the
+    /// companion callback never sees the off-world frame. Reconnect login
+    /// is the delivered post-logout signal; stale pre-logout scene2 must
+    /// not seed.
+    #[test]
+    fn pair_companion_seeds_after_reconnect_without_an_off_world_frame() {
+        let scenario = get("nature_crafter_air").expect("nature_crafter_air is registered");
+        let mut runner = crate::ScenarioRunner::new(scenario);
+        let index = runner
+            .companion_for("test2")
+            .expect("air runner is profile 1");
+        let mut client = pair_companion_client();
+
+        runner.companion_tick(index, &mut client);
+        std::thread::sleep(Duration::from_millis(400));
+        runner.companion_tick(index, &mut client);
+        std::thread::sleep(Duration::from_millis(400));
+        runner.companion_tick(index, &mut client);
+        assert!(
+            client.ingame,
+            "the fixture keeps the in-game frame the live scheduler actually delivers"
+        );
+
+        let after_relog = pair_out_len(&client);
+        runner.companion_tick(index, &mut client);
+        assert_eq!(
+            pair_out_len(&client),
+            after_relog,
+            "pre-logout scene2 must not seed"
+        );
+
+        client.last_login_reconnect = Some(true);
+        runner.companion_tick(index, &mut client);
+        std::thread::sleep(Duration::from_millis(400));
+        runner.companion_tick(index, &mut client);
+        assert!(
+            pair_out_len(&client) > after_relog,
+            "reconnect login without a delivered !ingame frame must admit WaitRelog and seed"
+        );
+    }
+
+    #[test]
+    fn pair_companion_close_bank_uses_native_modal_path() {
+        use client::client::{Client, ClientConfig};
+        use client::dash3d::ClientPlayer;
+        use client::io::{ClientStream, ServerProt};
+        use std::net::TcpListener;
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        client.main_modal_id = 100;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let _peer = listener.accept().unwrap();
+        client.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+
+        match Interactions::new(&snapshot, &mut client).close_modal() {
+            SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+        }
+        assert_eq!(
+            client.main_modal_id, -1,
+            "native close clears local modal state"
+        );
     }
 }

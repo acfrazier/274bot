@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
+use crate::window::{self, Gpu, RedrawMode, ShotState, ShotStatus, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
@@ -1107,6 +1107,112 @@ fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -
     None
 }
 
+fn pair_terminal_actor_names(session: &Session) -> Option<(String, String)> {
+    let runner = session.scenario.lock().unwrap();
+    let runner = runner.as_ref()?;
+    let a = runner.profile_name().to_string();
+    let b = runner.companion_profile_name(0).to_string();
+    if a.is_empty() || b.is_empty() || a == b {
+        None
+    } else {
+        Some((a, b))
+    }
+}
+
+fn pair_shot_labels(base: &str, a: &str, b: &str) -> [String; 2] {
+    [format!("{base}-{a}"), format!("{base}-{b}")]
+}
+
+fn actor_snapshot_json(
+    actor: &str,
+    snapshot: &api::snapshot::GameSnapshot,
+) -> Result<String, String> {
+    let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("actor".into(), serde_json::Value::String(actor.to_string()));
+        match object.get_mut("player") {
+            Some(serde_json::Value::Object(player)) => {
+                player.insert("name".into(), serde_json::Value::String(actor.to_string()));
+            }
+            _ => {
+                object.insert("player".into(), serde_json::json!({ "name": actor }));
+            }
+        }
+    }
+    serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
+}
+
+fn pair_terminal_shot_status(shots: &ShotState, labels: &[String]) -> ShotStatus {
+    if labels.is_empty() {
+        return ShotStatus::Missing;
+    }
+    let mut pending = ShotStatus::Written;
+    for label in labels {
+        match shots.status(label) {
+            ShotStatus::Failed(error) => return ShotStatus::Failed(error),
+            ShotStatus::Missing => return ShotStatus::Missing,
+            ShotStatus::Written => {}
+            other => pending = other,
+        }
+    }
+    pending
+}
+
+/// Request current scene2 snapshots for each distinct pair actor. Skip
+/// title-screen / missing views so an early snapshot cannot stand in for
+/// terminal world proof. Capture failure stays FAIL.
+fn enqueue_pair_terminal_shots(session: &Session, shots: &Mutex<ShotState>, base_label: &str) {
+    let Some((a, b)) = pair_terminal_actor_names(session) else {
+        return;
+    };
+    let labels = pair_shot_labels(base_label, &a, &b);
+    let requests = {
+        let states = session.nav_states.lock().unwrap();
+        [&a, &b]
+            .into_iter()
+            .zip(labels.iter())
+            .filter_map(|(name, label)| {
+                let (snapshot, _) = states.get(name)?;
+                if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                    return None;
+                }
+                Some((label.clone(), actor_snapshot_json(name, snapshot).ok()?))
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut shots = shots.lock().unwrap();
+    for (label, json) in requests {
+        if matches!(shots.status(&label), ShotStatus::Missing) {
+            shots.enqueue(label, json);
+        }
+    }
+}
+
+fn hold_script_terminal_shot(
+    live: &mut LiveScript,
+    session: &Session,
+    terminal_shot: Option<&str>,
+    fallback: &ShotStatus,
+    shots: Option<&Mutex<ShotState>>,
+) -> Result<bool, String> {
+    let owned;
+    let status = match (shots, terminal_shot, session.paired_core_watch()) {
+        (Some(shots), Some(label), Some(watch)) if watch.configured() => {
+            enqueue_pair_terminal_shots(session, shots, label);
+            match pair_terminal_actor_names(session) {
+                Some((a, b)) => {
+                    let labels = pair_shot_labels(label, &a, &b);
+                    owned = pair_terminal_shot_status(&shots.lock().unwrap(), &labels);
+                    &owned
+                }
+                None => fallback,
+            }
+        }
+        _ => fallback,
+    };
+    hold_terminal_shot(live, terminal_shot, status)
+}
+
 /// Hold a terminal-shot exit until `pump_shots` writes. The drain remains
 /// bounded, but a terminal PASS may not turn a missing requested pair into
 /// success when the bound lapses.
@@ -1152,6 +1258,7 @@ fn live_script_tick(
     live: &mut LiveScript,
     session: &mut Session,
     terminal_shot_status: &ShotStatus,
+    shots: Option<&Mutex<ShotState>>,
 ) -> Option<String> {
     if live.passed || live.failed.is_some() {
         return None;
@@ -1216,7 +1323,7 @@ fn live_script_tick(
         }
     };
     if let CoreGate::Failed(message) = &core_gate {
-        match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
             Ok(false) => {}
@@ -1227,7 +1334,7 @@ fn live_script_tick(
         return Some(message.clone());
     }
     if let CoreGate::Failed(message) = &pair_gate {
-        match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
             Ok(false) => {}
@@ -1242,7 +1349,13 @@ fn live_script_tick(
             if matches!(core_gate, CoreGate::Pending) || matches!(pair_gate, CoreGate::Pending) {
                 return None;
             }
-            match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+            match hold_script_terminal_shot(
+                live,
+                session,
+                terminal_shot,
+                terminal_shot_status,
+                shots,
+            ) {
                 Ok(true) => return None,
                 Err(error) => {
                     live.failed = Some(error.clone());
@@ -1265,7 +1378,13 @@ fn live_script_tick(
             None
         }
         Some(scenario::RunnerStatus::Failed(msg)) => {
-            match hold_terminal_shot(live, terminal_shot, terminal_shot_status) {
+            match hold_script_terminal_shot(
+                live,
+                session,
+                terminal_shot,
+                terminal_shot_status,
+                shots,
+            ) {
                 Ok(true) => return None,
                 Err(error) => eprintln!("[panel] {error}"),
                 Ok(false) => {}
@@ -4726,9 +4845,12 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
         let fail = match live {
             LiveHarness::Null(n) => live_null_tick(n, &statuses),
             LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
-            LiveHarness::Script(ls) => {
-                live_script_tick(ls, &mut state.session, &terminal_shot_status)
-            }
+            LiveHarness::Script(ls) => live_script_tick(
+                ls,
+                &mut state.session,
+                &terminal_shot_status,
+                Some(&state.shot_state),
+            ),
             LiveHarness::Smoke(s) => live_smoke_tick(s, &mut state.session, &statuses, wrote_shots),
         };
         if let Some(msg) = fail {
@@ -5978,7 +6100,7 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
             None,
             "PASS latches; the caller exits 0"
         );
@@ -5993,12 +6115,12 @@ mod tests {
         live.announced_pass = false;
         live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
             None
         );
         assert!(!live.passed, "scenario-only PASS is not catalog core PASS");
         live.core_deadline = Some(Instant::now() - Duration::from_secs(1));
-        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing)
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
             .expect("unqualified core times out as FAIL");
         assert!(error.contains("catalog core did not qualify"), "{error}");
 
@@ -6023,7 +6145,7 @@ mod tests {
         baseline.items.insert("Coins".into(), 1);
         watch.observe("catalogtest", baseline, false);
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
             None
         );
         assert!(live.passed, "full shared core permits headed PASS");
@@ -6034,7 +6156,7 @@ mod tests {
         live.soak = true;
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
@@ -6042,7 +6164,7 @@ mod tests {
         assert!(live.announced_pass);
         live.soak_until = Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
             None
         );
         assert!(live.passed, "exit 0 only after BUDGET_S elapses");
@@ -6088,7 +6210,7 @@ mod tests {
             core_deadline: None,
         };
         // No terminal shot armed: the FAIL returns immediately.
-        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing)
+        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
             .expect("FAIL returns the message");
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
         assert!(live.failed.is_some());
@@ -6145,13 +6267,13 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Requested),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
             None,
             "the first FAIL frame holds so the shot can land"
         );
         assert!(live.drain_started.is_some());
         // The shot writes on a later frame: the FAIL is returned.
-        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Written)
+        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Written, None)
             .expect("FAIL after the shot writes");
         assert!(live.failed.is_some());
         assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
@@ -6212,14 +6334,14 @@ mod tests {
             core_deadline: None,
         };
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Requested),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
             None,
             "the first PASS frame holds so the shot can land"
         );
         assert!(!live.passed);
         assert!(live.drain_started.is_some());
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
             None
         );
         assert!(live.passed, "PASS after the shot writes; caller exits 0");
@@ -6228,7 +6350,7 @@ mod tests {
         live.failed = None;
         live.announced_pass = false;
         live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
-        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Requested)
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None)
             .expect("PASS with a missing terminal shot must fail after the drain bound");
         assert!(error.contains("terminal shot"), "error: {error}");
         assert!(error.contains("not written"), "error: {error}");
@@ -6257,6 +6379,81 @@ mod tests {
             Ok(false)
         );
         assert!(live.drain_started.is_none());
+    }
+
+    #[test]
+    fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
+        use std::collections::HashSet;
+
+        let mut s = crate::session::Session::new();
+        let scenario = scenario::get("nature_crafter_air").expect("paired cell");
+        let mut runner = scenario::ScenarioRunner::new(scenario);
+        runner.set_live_names(&["alice".into(), "bob".into()]);
+        *s.scenario.lock().unwrap() = Some(runner);
+
+        let watch = host_play::paired_core::PairWatch::default();
+        watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
+        s.install_paired_core_watch(Some(watch));
+
+        let mut snap_a = api::snapshot::GameSnapshot::new();
+        snap_a.rebuild(&script_client());
+        let mut snap_b = api::snapshot::GameSnapshot::new();
+        snap_b.rebuild(&script_client());
+        assert!(snap_a.ingame() && snap_a.scene_state() == 2);
+        s.nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snap_a, nav::WorldState::default()));
+        s.nav_states
+            .lock()
+            .unwrap()
+            .insert("bob".into(), (snap_b, nav::WorldState::default()));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        let mut live = LiveScript {
+            name: "script_nature_crafter_air".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: Some(Instant::now() - Duration::from_secs(1)),
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, Some(&shots)),
+            None,
+            "pair terminal FAIL holds until both actor shots are requested"
+        );
+        let guard = shots.lock().unwrap();
+        assert_eq!(guard.requests.len(), 2, "both actors must be captured");
+        let mut actors = HashSet::new();
+        for (label, json) in &guard.requests {
+            let value: serde_json::Value = serde_json::from_str(json).expect("snapshot json");
+            assert_eq!(value.get("ingame"), Some(&serde_json::Value::Bool(true)));
+            assert_eq!(value.get("scene_state"), Some(&serde_json::json!(2)));
+            let actor = value
+                .get("actor")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    value
+                        .get("player")
+                        .and_then(|player| player.get("name"))
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("");
+            assert!(
+                label.contains(actor),
+                "label {label} must name actor {actor}"
+            );
+            actors.insert(actor.to_string());
+        }
+        assert_eq!(
+            actors.len(),
+            2,
+            "paired headed snapshots must identify two distinct actors"
+        );
     }
 
     #[test]
