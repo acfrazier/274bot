@@ -2082,10 +2082,13 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
 }
 
-/// Packed `shop_template` from the local client jag: the main modal root
-/// and stock TYPE_INV must survive unpack so shop ids are provable.
+/// Packed shop interfaces from the local client jag: the main modal root with
+/// its stock TYPE_INV (3824 → 3900, Buy 1/5/10) and the side interface root
+/// with the player pack TYPE_INV (3822 → 3823, Sell 1/5/10) must survive
+/// unpack so both selected-cache identities and their fixed op slots are
+/// provable.
 #[test]
-fn packed_shop_template_posts_main_and_stock_inv() {
+fn packed_shop_interfaces_post_main_stock_and_player_pack() {
     let cache = client::cache_dir();
     if !cache.join("interface").is_file() {
         return;
@@ -2104,6 +2107,8 @@ fn packed_shop_template_posts_main_and_stock_inv() {
 
     const SHOPMAIN: i32 = 3824;
     const SHOP_STOCK_INV: i32 = 3900;
+    const SHOP_SIDE: i32 = 3822;
+    const SHOP_SIDE_INV: i32 = 3823;
 
     let root = c
         .if_(SHOPMAIN as usize)
@@ -2115,11 +2120,34 @@ fn packed_shop_template_posts_main_and_stock_inv() {
         .expect("packed IF must contain shop_template:inv");
     assert_eq!(stock.r#type, ComponentType::TYPE_INV);
     assert_eq!(stock.layer_id, SHOPMAIN);
+    for (index, label) in [(1, "Buy 1"), (2, "Buy 5"), (3, "Buy 10")] {
+        assert_eq!(
+            stock.iop[index].as_deref(),
+            Some(label),
+            "shop stock inv must expose {label} at iop[{index}]"
+        );
+    }
+
+    let side = c
+        .if_(SHOP_SIDE as usize)
+        .expect("packed IF must contain shop_template_side root");
+    assert_eq!(side.r#type, ComponentType::TYPE_LAYER);
+    assert_eq!(side.id, SHOP_SIDE);
+    let pack = c
+        .if_(SHOP_SIDE_INV as usize)
+        .expect("packed IF must contain shop_template_side:inv");
+    assert_eq!(pack.r#type, ComponentType::TYPE_INV);
     assert_eq!(
-        stock.iop[1].as_deref(),
-        Some("Buy 1"),
-        "shop stock inv must expose Buy 1 at iop[1]"
+        pack.layer_id, SHOP_SIDE,
+        "the player pack belongs to the shop side root, not the main modal"
     );
+    for (index, label) in [(1, "Sell 1"), (2, "Sell 5"), (3, "Sell 10")] {
+        assert_eq!(
+            pack.iop[index].as_deref(),
+            Some(label),
+            "shop player pack must expose {label} at iop[{index}]"
+        );
+    }
 }
 
 /// Backpack items present while the shop modal is down: the shop family
@@ -2274,6 +2302,141 @@ fn shop_view_stock_when_modal_open() {
     assert_eq!(snap.inventory().len(), 1);
     assert_eq!(snap.inventory()[0].def.id, 3);
     assert_eq!(snap.inventory()[0].container, ItemContainer::Inventory);
+}
+
+/// The shop side interface (3822 → 3823) is the Sell container: while it is
+/// decoded its rows post as `ItemContainer::ShopPlayer`; with the side modal
+/// down the pack is absent (`player_available == false`), never the backpack.
+#[test]
+fn shop_player_pack_posts_only_while_the_side_modal_is_open() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 3, "Coins");
+    plant_obj(&mut c, 5, "Rope");
+    plant_obj(&mut c, 6, "Pot");
+
+    // The backpack sits on side tab 3 so a wrong fallback is visible.
+    let inv_id = c.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    c.set_iface_mut(
+        inv_id,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![100, 0]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[3] = inv_id as i32;
+
+    set_iface(
+        &mut c,
+        3824,
+        IfType {
+            id: 3824,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![6, 0]),
+            link_obj_number: Some(vec![3, 0]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3822,
+        IfType {
+            id: 3822,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3823,
+        IfType {
+            id: 3823,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Sell 1".into()),
+                Some("Sell 5".into()),
+                Some("Sell 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3823,
+        IfTypeMut {
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
+        },
+    );
+
+    c.main_modal_id = 3824;
+    c.side_modal_id = 3822;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(snap.rebuild_family(&c, Family::Shop));
+    assert!(snap.rebuild_family(&c, Family::Inventory));
+
+    let shop = snap.shop();
+    assert!(shop.open);
+    assert!(shop.player_available);
+    assert_eq!(shop.player.len(), 1);
+    assert_eq!(shop.player[0].def.id, 6);
+    assert_eq!(shop.player[0].container, ItemContainer::ShopPlayer);
+    assert_eq!(shop.player[0].component_id, 3823);
+    assert_eq!(shop.player[0].actions[1].as_deref(), Some("Sell 1"));
+    assert_eq!(shop.stock[0].container, ItemContainer::ShopStock);
+    assert_eq!(shop.stock[0].def.id, 5);
+
+    // The side modal goes down: the pack is not posted at all, so a Sell
+    // transfer has to refuse instead of acting on an empty stand-in.
+    c.side_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    assert!(
+        snap.rebuild_family(&c, Family::Shop),
+        "the side-modal change must move the shop gate"
+    );
+    let shop = snap.shop();
+    assert!(
+        !shop.player_available,
+        "an undecoded player pack is not an empty one"
+    );
+    assert!(shop.player.is_empty());
 }
 
 /// Chat lines read the full ring (index 0 = newest) with a monotonic

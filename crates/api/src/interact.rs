@@ -669,6 +669,7 @@ fn container_items(container: ItemContainer, snapshot: &GameSnapshot) -> &[ItemV
         ItemContainer::TradeTheirOffer => &snapshot.trade().their_offer,
         ItemContainer::TradeSidePack => &snapshot.trade().side_pack,
         ItemContainer::ShopStock => &snapshot.shop().stock,
+        ItemContainer::ShopPlayer => &snapshot.shop().player,
         ItemContainer::Widget => &[],
     }
 }
@@ -1068,11 +1069,27 @@ impl<'a> Interactions<'a> {
         self.dispatch(WireCommand::Count { value }, snapshot.tick() as u64)
     }
 
-    /// Buy `qty` of a shop stock row by name: resolve the stock item,
-    /// press the matching Buy inv-button (`Buy 1`/`Buy 5`/`Buy 10`), then
-    /// `answer_count` when a count dialog is already up and `qty` is not
-    /// one of the fixed buy amounts.
-    pub fn shop_buy(&mut self, name: &str, qty: i32) -> SendResult<'a> {
+    /// Press one shop Buy op (`Buy 1`/`Buy 5`/`Buy 10`) on the named stock
+    /// row. `chunk` must be a fixed shop amount — the 10/5/1 batching and
+    /// the held-count settlement live in the host shop runtime
+    /// (`script::shop`), not here. This never selects the `Buy X` menu
+    /// entry, so it never answers a count dialog.
+    pub fn shop_buy(&mut self, name: &str, chunk: i32) -> SendResult<'a> {
+        self.shop_item_op(ItemContainer::ShopStock, name, chunk)
+    }
+
+    /// Press one shop Sell op (`Sell 1`/`Sell 5`/`Sell 10`) on the named
+    /// row of the shop's player pack (`shop_template_side:inv`, 3823).
+    /// Selling never acts on the stock container or the backpack component.
+    pub fn shop_sell(&mut self, name: &str, chunk: i32) -> SendResult<'a> {
+        self.shop_item_op(ItemContainer::ShopPlayer, name, chunk)
+    }
+
+    /// Resolve `name` in the selected shop container and dispatch its fixed
+    /// Buy/Sell op slot (`iop[1..4]`). Refuses when the shop or that
+    /// container is not posted, when the chunk is not 1/5/10, or when the
+    /// row is gone (stale exact row).
+    fn shop_item_op(&mut self, container: ItemContainer, name: &str, chunk: i32) -> SendResult<'a> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
@@ -1080,11 +1097,22 @@ impl<'a> Interactions<'a> {
         if !snapshot.shop().open {
             return refuse(snapshot, SendReason::NoModalOpen);
         }
-        if qty < 1 {
-            return refuse(snapshot, SendReason::InvalidCount);
+        // iop[0]=Value, iop[1]=Buy/Sell 1, iop[2]=…5, iop[3]=…10.
+        let operation = match chunk {
+            1 => 2,
+            5 => 3,
+            10 => 4,
+            _ => return refuse(snapshot, SendReason::InvalidCount),
+        };
+        let rows = match container {
+            ItemContainer::ShopPlayer => &snapshot.shop().player,
+            _ => &snapshot.shop().stock,
+        };
+        if rows.is_empty() {
+            return refuse(snapshot, SendReason::StaleTarget);
         }
         let wanted = name.trim().to_lowercase();
-        let Some(item) = snapshot.shop().stock.iter().find(|it| {
+        let Some(item) = rows.iter().find(|it| {
             it.def
                 .name
                 .as_deref()
@@ -1096,26 +1124,10 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.check_target(&target, snapshot) {
             return refuse(snapshot, reason);
         }
-        // iop[0]=Value, iop[1]=Buy 1, iop[2]=Buy 5, iop[3]=Buy 10.
-        let operation = match qty {
-            1 => 2,
-            5 => 3,
-            10 => 4,
-            _ => 2,
-        };
-        let result = self.dispatch(
+        self.dispatch(
             WireCommand::Op { target, operation },
             snapshot.tick() as u64,
-        );
-        match result {
-            SendResult::Refused { .. } => result,
-            SendResult::Sent { .. }
-                if !matches!(qty, 1 | 5 | 10) && snapshot.count_dialog_open() =>
-            {
-                self.answer_count(qty)
-            }
-            other => other,
-        }
+        )
     }
 
     pub fn walk<'t>(&mut self, tile: WorldTile) -> SendResult<'t> {

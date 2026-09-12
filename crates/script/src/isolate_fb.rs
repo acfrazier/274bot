@@ -167,6 +167,8 @@ const VT_SNAP_QUEST_STATUSES: VOffsetT = 150;
 const VT_SNAP_QUEST_STATUSES_AVAILABLE: VOffsetT = 152;
 const VT_SNAP_NPC_BOXES: VOffsetT = 154;
 const VT_SNAP_NPC_BOXES_AVAILABLE: VOffsetT = 156;
+const VT_SNAP_SHOP_PLAYER: VOffsetT = 158;
+const VT_SNAP_SHOP_PLAYER_AVAILABLE: VOffsetT = 160;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -557,6 +559,11 @@ pub struct NativeFactsInput<'a> {
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
     pub npc_boxes: Option<&'a [NpcBoxInput]>,
+    /// The shop side interface's player pack rows (`shop_template_side:inv`,
+    /// 3823). `None` = that container was not decoded this rebuild: Sell must
+    /// fail closed rather than act on an empty stand-in. `Some([])` = decoded
+    /// and empty.
+    pub shop_player: Option<&'a [ItemRowInput<'a>]>,
 }
 
 /// One native NPC projection in overlay-canvas pixels.
@@ -1135,6 +1142,16 @@ impl Verifiable for SnapshotReader<'_> {
                 false,
             )?
             .visit_field::<bool>("npc_boxes_available", VT_SNAP_NPC_BOXES_AVAILABLE, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "shop_player",
+                VT_SNAP_SHOP_PLAYER,
+                false,
+            )?
+            .visit_field::<bool>(
+                "shop_player_available",
+                VT_SNAP_SHOP_PLAYER_AVAILABLE,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1428,6 +1445,22 @@ impl SnapshotReader<'_> {
     }
     pub fn shop_stock(&self) -> Vec<RowReader<'_>> {
         rows::<RowReader>(&self.tab, VT_SNAP_SHOP_STOCK)
+    }
+    pub fn has_shop_player(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_SHOP_PLAYER)
+    }
+    pub fn shop_player(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_SHOP_PLAYER)
+    }
+    pub fn has_shop_player_available(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_SHOP_PLAYER_AVAILABLE, None)
+                .is_some()
+        }
+    }
+    pub fn shop_player_available(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_PLAYER_AVAILABLE, None) }.unwrap_or(false)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -1957,6 +1990,7 @@ pub struct SnapshotFingerprint {
     pub trade_decline_id: i32,
     pub shop_open: bool,
     pub shop_stock: Vec<ItemRowFp>,
+    pub shop_player: Option<Vec<ItemRowFp>>,
     pub reach: ReachViewFp,
     pub attacked_by_player: bool,
     pub widgets: Vec<(i32, String)>,
@@ -2137,6 +2171,9 @@ impl SnapshotFingerprint {
             trade_decline_id: input.trade_decline_id,
             shop_open: input.shop_open,
             shop_stock: input.shop_stock.iter().map(item_row_fp).collect(),
+            shop_player: native
+                .shop_player
+                .map(|rows| rows.iter().map(item_row_fp).collect()),
             reach: ReachViewFp {
                 available: input.reach.available,
                 base_x: input.reach.base_x,
@@ -2241,6 +2278,7 @@ pub struct DeltaMask {
     pub trade_decline_id: bool,
     pub shop_open: bool,
     pub shop_stock: bool,
+    pub shop_player: bool,
     pub reach: bool,
     pub attacked_by_player: bool,
     pub widgets: bool,
@@ -2319,6 +2357,7 @@ impl DeltaMask {
             trade_decline_id: true,
             shop_open: true,
             shop_stock: true,
+            shop_player: true,
             reach: true,
             attacked_by_player: true,
             widgets: true,
@@ -2407,6 +2446,7 @@ impl DeltaMask {
             trade_decline_id: next.trade_decline_id != last.trade_decline_id,
             shop_open: next.shop_open != last.shop_open,
             shop_stock: next.shop_stock != last.shop_stock,
+            shop_player: next.shop_player != last.shop_player,
             reach: next.reach != last.reach,
             attacked_by_player: next.attacked_by_player != last.attacked_by_player,
             widgets: next.widgets != last.widgets,
@@ -2792,6 +2832,14 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let shop_player_off = if mask.shop_player {
+        native.shop_player.map(|rows| {
+            let offs = rows.iter().map(|r| row_off(b, r)).collect::<Vec<_>>();
+            b.create_vector(&offs)
+        })
+    } else {
+        None
+    };
     let reach_table_off = if mask.reach {
         Some(reach_off(b, &input.reach))
     } else {
@@ -3055,6 +3103,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.shop_stock {
         b.push_slot_always(VT_SNAP_SHOP_STOCK, shop_stock_off.expect("mask checked"));
+    }
+    if mask.shop_player {
+        b.push_slot_always(VT_SNAP_SHOP_PLAYER_AVAILABLE, native.shop_player.is_some());
+        if let Some(off) = shop_player_off {
+            b.push_slot_always(VT_SNAP_SHOP_PLAYER, off);
+        }
     }
     if mask.reach {
         b.push_slot_always(VT_SNAP_REACH, reach_table_off.expect("mask checked"));
@@ -4256,6 +4310,28 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "inv-button has no operation".to_string())?,
                 bank_generation: row.bank_generation().unwrap_or(0),
             }),
+            "shop-button" => out.push(crate::shim::InteractReq::ShopButton {
+                kind: row
+                    .kind()
+                    .ok_or_else(|| "shop-button has no kind".to_string())?
+                    .to_string(),
+                name: row
+                    .name()
+                    .ok_or_else(|| "shop-button has no name".to_string())?
+                    .to_string(),
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "shop-button has no id".to_string())?,
+                slot: row
+                    .index()
+                    .ok_or_else(|| "shop-button has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "shop-button has no component".to_string())?,
+                chunk: row
+                    .stand_op()
+                    .ok_or_else(|| "shop-button has no chunk".to_string())?,
+            }),
             "close" => out.push(crate::shim::InteractReq::Close),
             "npc" => out.push(crate::shim::InteractReq::Npc {
                 name: row
@@ -4383,6 +4459,7 @@ fn interact_off<'b>(
         InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
+        InteractReq::ShopButton { .. } => "shop-button",
         InteractReq::Close => "close",
         InteractReq::Npc { .. } => "npc",
         InteractReq::Loc { .. } => "loc",
@@ -4405,7 +4482,8 @@ fn interact_off<'b>(
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
         | InteractReq::UseOn { kind, .. }
-        | InteractReq::UseWidgetOn { kind, .. } => Some(b.create_string(kind)),
+        | InteractReq::UseWidgetOn { kind, .. }
+        | InteractReq::ShopButton { kind, .. } => Some(b.create_string(kind)),
         _ => None,
     };
     let name_off = match req {
@@ -4420,6 +4498,7 @@ fn interact_off<'b>(
         | InteractReq::Npc { name, .. }
         | InteractReq::Player { name, .. }
         | InteractReq::UseOn { name, .. }
+        | InteractReq::ShopButton { name, .. }
         | InteractReq::Wear { name } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
@@ -4458,6 +4537,20 @@ fn interact_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
+        InteractReq::ShopButton {
+            id,
+            slot,
+            component,
+            chunk,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_INDEX, *slot);
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
+            b.push_slot_always(VT_IN_STAND_OP, *chunk);
+        }
         InteractReq::OpenBooth {
             x, z, level, id, ..
         } => {

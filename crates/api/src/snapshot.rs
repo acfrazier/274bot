@@ -249,6 +249,9 @@ pub enum ItemContainer {
     TradeTheirOffer,
     TradeSidePack,
     ShopStock,
+    /// The shop's own view of the local player's pack (`shop_template_side:inv`,
+    /// 3823): the container Sell 1/5/10 read and act on.
+    ShopPlayer,
     Widget,
 }
 
@@ -368,11 +371,18 @@ impl Default for TradeView {
     }
 }
 
-/// The shop main modal's stock container (empty while the shop is down).
+/// The shop main modal's stock container and the shop side interface's
+/// player pack (empty while the shop is down).
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct ShopView {
     pub open: bool,
     pub stock: Vec<ItemView>,
+    /// The `shop_template_side:inv` (3823) rows: `Sell` acts here, never on
+    /// the stock rows and never on the plain backpack container.
+    pub player: Vec<ItemView>,
+    /// Whether that side container was decoded at all this rebuild. Distinguishes
+    /// an unposted/missing player pack (fail closed) from an empty one.
+    pub player_available: bool,
 }
 
 /// One chat history line. The ring's index 0 is the newest line;
@@ -1710,13 +1720,17 @@ impl GameSnapshot {
         true
     }
 
-    /// Shop rebuild: the packed shop main modal's stock TYPE_INV. Empty
-    /// while `main_modal_id` is not the shop root — never the backpack.
+    /// Shop rebuild: the packed shop main modal's stock TYPE_INV plus the
+    /// shop side interface's player pack TYPE_INV. Both are empty while the
+    /// matching root is not open — never the backpack.
     fn rebuild_shop(&mut self, client: &Client) -> bool {
         if !self.shop_gate.moved(client, self.inv_session_current) {
             return false;
         }
         let open = client.main_modal_id == SHOPMAIN;
+        let player = (open && client.side_modal_id == SHOP_SIDE)
+            .then(|| inv_items(client, SHOP_SIDE_INV, ItemContainer::ShopPlayer))
+            .flatten();
         self.shop = ShopView {
             open,
             stock: if open {
@@ -1724,6 +1738,11 @@ impl GameSnapshot {
             } else {
                 Vec::new()
             },
+            // The player pack is the shop *side* interface (3822 → 3823),
+            // opened with the main modal by `if_openmain_side`. Sell needs
+            // this container, not the stock rows and not the backpack.
+            player: player.clone().unwrap_or_default(),
+            player_available: player.is_some(),
         };
         true
     }
@@ -3114,9 +3133,13 @@ where
 }
 
 /// The 274 shop iface ids (the packed `interface.order` allocation):
-/// shop_template 3824 (main modal), shop_template:inv 3900 (stock).
+/// shop_template 3824 (main modal), shop_template:inv 3900 (stock),
+/// shop_template_side 3822 (side modal) and shop_template_side:inv 3823
+/// (the shop's player pack — the Sell 1/5/10 container).
 const SHOPMAIN: i32 = 3824;
 const SHOP_STOCK_INV: i32 = 3900;
+const SHOP_SIDE: i32 = 3822;
+const SHOP_SIDE_INV: i32 = 3823;
 
 /// The 274 trade iface ids (the packed `interface.order` allocation):
 /// trademain 3323 (offer screen), tradeconfirm 3443, trademain:inv 3415,

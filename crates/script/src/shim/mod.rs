@@ -890,6 +890,19 @@ pub enum InteractReq {
     /// Press an interface button by component id.
     #[serde(rename = "if-button")]
     IfButton { component_id: i32 },
+    /// Press one fixed shop Buy/Sell op on the exact posted shop row. Rust
+    /// owns the 10/5/1 batching, the packet-per-tick bound and the held-count
+    /// settlement; the host re-resolves this exact row and refuses a
+    /// same-name fallback.
+    #[serde(rename = "shop-button")]
+    ShopButton {
+        kind: String,
+        name: String,
+        id: i32,
+        slot: i32,
+        component: i32,
+        chunk: i32,
+    },
     /// Close the open main/side/chat modal (not the bank).
     #[serde(rename = "close-modal")]
     CloseModal,
