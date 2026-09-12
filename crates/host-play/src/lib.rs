@@ -2,6 +2,8 @@
 //! unlocks a vault and runs the named profiles; the `e2e` harness links
 //! this library so it can poll per-slot state instead of scraping logs.
 
+#![recursion_limit = "256"]
+
 pub mod audio;
 pub mod catalog_core;
 pub mod nav_identity;
