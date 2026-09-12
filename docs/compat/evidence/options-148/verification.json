@@ -1,6 +1,6 @@
 {
   "task": "t_9a7d8feb",
-  "verified_utc": "2026-09-12T13:16:49Z",
+  "verified_utc": "2026-09-12T13:18:06Z",
   "branch": "codex/rs2b0t-multirevision",
   "brief": "docs/compat/briefs/148-alternate-camp-guard-options.md",
   "brief_sha256": "6cf51dc6e14fd72a796cbce5554cc3c491d3cd3479a3e97c391df8e0f3c2494d",
@@ -9,7 +9,7 @@
     "parent": "4779c6bf34f2541cb18f2cd5e4cee5d929f53d4e",
     "client_gitlink": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
     "worktree": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
-    "note": "Impl commit 48b27aef1; R1 review requested doc accuracy for injects/prep. Doc fix commit stamped after amend."
+    "note": "Impl 48b27aef1; R1 doc accuracy fix 3a24e82d1 (injects location+combatStyleIndex only; Lobster 12); flee tile 5dd3a3f30; documentation_sha256 matches working-tree content."
   },
   "source_sha256": {
     "crates/scenario/src/lib.rs": "33660874139595ff69a9211b8e45f73e0a1866411756e8d133a7e52c9bd50fce",
@@ -23,9 +23,9 @@
     "ArdyThiever.ts@8e7d965b": "3cee6ff99d8f24532a5564fc7215faba19ca78f0156386913497bf266fca8aa5"
   },
   "documentation_sha256": {
-    "docs/compat/05-options-148.md": "2094d2015dea10aaf8b36cdb81a741d539a130836019b54551e1bf41d24c5345",
+    "docs/compat/05-options-148.md": "e33b3633ac77898d532e7c9a9a63d4f29b0749c3f25077f5f7cedd8b71659ac6",
     "docs/compat/evidence/options-148/isolated-checks.log": "1d7a2591ee0b30c8ff1f825bf9cf467747a5e02cdc5dda440ed83b58fbb1fbfd",
-    "docs/compat/evidence/options-148/source-declarations.json": "33298857b7cbbd5a2dee17700d760fb34d4297e2d2c121b7f976995af63dfcf8"
+    "docs/compat/evidence/options-148/source-declarations.json": "ea6c66926a204e727c6322018158adb957163d2e4f4357975e7916b5c0d7b8f8"
   },
   "r1_review_doc_fix": {
     "requested": "injects for tower/yanille are only location+combatStyleIndex; prep Lobster 12 not 8; no invented loot/food/buryBones/solveClues injects",
