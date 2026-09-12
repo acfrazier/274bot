@@ -4,19 +4,31 @@
     ".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
     ".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a"
   ],
-  "note": "Exact catalog directory names are the identity-checked frozen inputs under .superpowers/inputs/; both catalogs carry byte-identical copies of these three cards for the keys below.",
+  "note": "Exact catalog directory names are the identity-checked frozen inputs under .superpowers/inputs/; both catalogs carry byte-identical copies of these three cards for the keys below. injected_settings lists only ScriptSettingInject keys from the committed scenario inject arrays. card_defaults / hardcoded are not inject identity.",
   "cases": {
     "chaos_druid_tower": {
       "card": "ChaosDruidKiller",
       "source_files": ["ChaosDruidKiller.ts", "ChaosDruidLogic.ts"],
-      "settings_read": {
+      "inject_const": "CHAOS_DRUID_TOWER_INJECT",
+      "injected_settings": {
         "location": "Chaos Druid Tower",
-        "combatStyleIndex": "1",
-        "loot": "Herb,Law rune,Nature rune",
-        "food": "Lobster",
-        "foodWithdraw": 8,
-        "buryBones": false,
-        "solveClues": false
+        "combatStyleIndex": "1"
+      },
+      "card_defaults_not_injected": {
+        "foodWithdraw": 12,
+        "note": "SETTINGS declares foodWithdraw default 12; not present in inject array"
+      },
+      "hardcoded_not_settings": {
+        "loot_filter": "isChaosDruidLoot → Herb, Law rune, Nature rune",
+        "food": "loadout/scriptFood default Lobster (not a SETTINGS key)",
+        "buryBones": "not a SETTINGS key on this card",
+        "solveClues": "not a SETTINGS key on this card"
+      },
+      "prepared_before_start": {
+        "stats": { "attack": 40, "strength": 40, "hitpoints": 40, "thieving": 46 },
+        "inventory": { "379": 12 },
+        "weapon": "Adamant scimitar 1331",
+        "tile": [2562, 3356, 0]
       },
       "spot": {
         "name": "Chaos Druid Tower",
@@ -34,14 +46,26 @@
     "chaos_druid_yanille": {
       "card": "ChaosDruidKiller",
       "source_files": ["ChaosDruidKiller.ts", "ChaosDruidLogic.ts"],
-      "settings_read": {
+      "inject_const": "CHAOS_DRUID_YANILLE_INJECT",
+      "injected_settings": {
         "location": "Yanille Dungeon",
-        "combatStyleIndex": "1",
-        "loot": "Herb,Law rune,Nature rune",
-        "food": "Lobster",
-        "foodWithdraw": 8,
-        "buryBones": false,
-        "solveClues": false
+        "combatStyleIndex": "1"
+      },
+      "card_defaults_not_injected": {
+        "foodWithdraw": 12,
+        "note": "SETTINGS declares foodWithdraw default 12; not present in inject array"
+      },
+      "hardcoded_not_settings": {
+        "loot_filter": "isChaosDruidLoot → Herb, Law rune, Nature rune",
+        "food": "loadout/scriptFood default Lobster (not a SETTINGS key)",
+        "buryBones": "not a SETTINGS key on this card",
+        "solveClues": "not a SETTINGS key on this card"
+      },
+      "prepared_before_start": {
+        "stats": { "attack": 40, "strength": 40, "hitpoints": 40, "agility": 40 },
+        "inventory": { "379": 12 },
+        "weapon": "Adamant scimitar 1331",
+        "tile": [2580, 9501, 0]
       },
       "spot": {
         "name": "Yanille Dungeon",
@@ -59,7 +83,7 @@
     "ardy_cakes_fight": {
       "card": "ArdyCakes",
       "source_files": ["ArdyCakes.ts"],
-      "settings_read": {
+      "injected_settings": {
         "guardResponse": "Fight",
         "solveClues": false
       },
@@ -82,7 +106,7 @@
     "ardy_thiever_fight": {
       "card": "ArdyThiever",
       "source_files": ["ArdyThiever.ts"],
-      "settings_read": {
+      "injected_settings": {
         "thieveTarget": "Guard",
         "guardResponse": "Fight",
         "bankAtLootSlots": 1,
