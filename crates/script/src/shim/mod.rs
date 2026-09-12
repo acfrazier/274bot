@@ -903,6 +903,17 @@ pub enum InteractReq {
         component: i32,
         chunk: i32,
     },
+    /// Press the exact posted anvil/main skill-multi row. Host dispatch
+    /// re-resolves id/slot/component on the current main-make rows and
+    /// sends `ActionSpec::Operation`. It does not fall back to a
+    /// same-name row or answer a count dialog.
+    #[serde(rename = "make-panel")]
+    MakePanel {
+        id: i32,
+        slot: i32,
+        component: i32,
+        operation: i32,
+    },
     /// Close the open main/side/chat modal (not the bank).
     #[serde(rename = "close-modal")]
     CloseModal,

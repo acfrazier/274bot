@@ -68,6 +68,8 @@ mod death_recovery;
 #[cfg(feature = "load")]
 mod periodic_bank;
 #[cfg(feature = "load")]
+mod production;
+#[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
 mod special;

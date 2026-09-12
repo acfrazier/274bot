@@ -470,6 +470,7 @@ fn family_index(f: Family) -> usize {
         Family::Modals => 25,
         Family::Controls => 26,
         Family::Menu => 27,
+        Family::MainMake => 28,
     }
 }
 
@@ -4023,5 +4024,162 @@ fn read_context_round_trips_every_family() {
             z: 3212,
             level: 1
         })
+    );
+}
+
+/// Anvil skill-multi is a main-modal TYPE_INV whose ops start with Make.
+/// Chat make-products and shop Buy/Sell must not appear here.
+#[test]
+fn main_make_posts_anvil_rows_and_ignores_chat_make_and_shop() {
+    let mut c = client_with_npc();
+    plant_obj(&mut c, 1205, "Bronze dagger");
+    set_iface(
+        &mut c,
+        3000,
+        IfType {
+            id: 3000,
+            layer_id: 3000,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![1119]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        1119,
+        IfType {
+            id: 1119,
+            layer_id: 3000,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Make 1".into()),
+                Some("Make 5".into()),
+                Some("Make 10".into()),
+                None,
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        1119,
+        IfTypeMut {
+            link_obj_type: Some(vec![1206]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+    c.main_modal_id = 3000;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::MainMake));
+    assert_eq!(snap.main_make().len(), 1);
+    assert_eq!(snap.main_make()[0].def.id, 1205);
+    assert_eq!(
+        snap.main_make()[0].def.name.as_deref(),
+        Some("Bronze dagger")
+    );
+    assert_eq!(snap.main_make()[0].slot, 0);
+    assert_eq!(snap.main_make()[0].component_id, 1119);
+    assert_eq!(snap.main_make()[0].container, ItemContainer::MainMake);
+    assert_eq!(
+        snap.main_make()[0].actions,
+        vec![
+            Some("Make 1".into()),
+            Some("Make 5".into()),
+            Some("Make 10".into()),
+            None,
+            None
+        ]
+    );
+
+    // A chat make-menu on the same client is not the anvil panel.
+    set_iface(
+        &mut c,
+        2100,
+        IfType {
+            id: 2100,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2120]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        2120,
+        IfType {
+            id: 2120,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_TEXT,
+            button_text: "Make X".into(),
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        2120,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+    c.chat_modal_id = 2100;
+    c.bump_gens(ServerProt::IF_OPENCHAT);
+    assert!(snap.rebuild_family(&c, Family::MakeProducts));
+    assert_eq!(
+        snap.main_make().len(),
+        1,
+        "chat make-products must not replace anvil rows"
+    );
+
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    assert!(snap.rebuild_family(&c, Family::MainMake));
+    assert!(
+        snap.main_make().is_empty(),
+        "closing the main modal clears anvil rows"
+    );
+}
+
+/// Packed IF archives expose at least one TYPE_INV whose ops start with
+/// Make. The host walks the open main modal rather than baking those ids.
+#[test]
+fn packed_interfaces_include_a_make_type_inv() {
+    let cache = client::cache_dir();
+    if !cache.join("interface").is_file() {
+        return;
+    }
+    let c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: cache.display().to_string(),
+        members: true,
+        lowmem: false,
+    });
+    assert!(
+        c.ifaces_len() > 0,
+        "cache interface jag unpacked no components"
+    );
+    let mut found = 0;
+    for id in 0..c.ifaces_len() {
+        let Some(com) = c.if_(id) else {
+            continue;
+        };
+        if com.r#type == ComponentType::TYPE_INV
+            && com
+                .iop
+                .iter()
+                .flatten()
+                .any(|op| op.to_ascii_lowercase().starts_with("make"))
+        {
+            found += 1;
+        }
+    }
+    assert!(
+        found > 0,
+        "selected cache must contain a Make TYPE_INV for the anvil walk"
     );
 }

@@ -1948,6 +1948,12 @@ export default class T extends LoopingBot {
             .any(|r| matches!(r, script::shim::InteractReq::IfButton { component_id: 42 })),
         "makeX clicks the posted qty button: {reqs:?}"
     );
+    assert!(
+        !reqs
+            .iter()
+            .any(|r| matches!(r, script::shim::InteractReq::AnswerCount { .. })),
+        "a closed count dialog must not receive Answer-Count: {reqs:?}"
+    );
     iso.join();
 }
 
@@ -2015,10 +2021,18 @@ export default class T extends LoopingBot {
     );
     iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a closed count dialog must not receive Answer-Count"
+    );
+    snap.count_dialog_open = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::AnswerCount { value: 27 }],
-        "next tick answers the count dialog"
+        "Answer-Count waits for the posted count dialog"
     );
     iso.join();
 }

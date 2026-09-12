@@ -169,6 +169,8 @@ const VT_SNAP_NPC_BOXES: VOffsetT = 154;
 const VT_SNAP_NPC_BOXES_AVAILABLE: VOffsetT = 156;
 const VT_SNAP_SHOP_PLAYER: VOffsetT = 158;
 const VT_SNAP_SHOP_PLAYER_AVAILABLE: VOffsetT = 160;
+const VT_SNAP_MAIN_MAKE: VOffsetT = 162;
+const VT_SNAP_MAIN_MAKE_AVAILABLE: VOffsetT = 164;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -564,6 +566,10 @@ pub struct NativeFactsInput<'a> {
     /// fail closed rather than act on an empty stand-in. `Some([])` = decoded
     /// and empty.
     pub shop_player: Option<&'a [ItemRowInput<'a>]>,
+    /// Main-modal skill-multi TYPE_INV rows. `None` = that panel was not
+    /// decoded this rebuild (anvil ops fail closed). `Some([])` = decoded
+    /// and empty.
+    pub main_make: Option<&'a [ItemRowInput<'a>]>,
 }
 
 /// One native NPC projection in overlay-canvas pixels.
@@ -1152,6 +1158,12 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_SHOP_PLAYER_AVAILABLE,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "main_make",
+                VT_SNAP_MAIN_MAKE,
+                false,
+            )?
+            .visit_field::<bool>("main_make_available", VT_SNAP_MAIN_MAKE_AVAILABLE, false)?
             .finish();
         Ok(())
     }
@@ -1461,6 +1473,22 @@ impl SnapshotReader<'_> {
     }
     pub fn shop_player_available(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_SHOP_PLAYER_AVAILABLE, None) }.unwrap_or(false)
+    }
+    pub fn has_main_make(&self) -> bool {
+        rows_present::<RowReader>(&self.tab, VT_SNAP_MAIN_MAKE)
+    }
+    pub fn main_make(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_SNAP_MAIN_MAKE)
+    }
+    pub fn has_main_make_available(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_MAIN_MAKE_AVAILABLE, None)
+                .is_some()
+        }
+    }
+    pub fn main_make_available(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_MAIN_MAKE_AVAILABLE, None) }.unwrap_or(false)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -1991,6 +2019,7 @@ pub struct SnapshotFingerprint {
     pub shop_open: bool,
     pub shop_stock: Vec<ItemRowFp>,
     pub shop_player: Option<Vec<ItemRowFp>>,
+    pub main_make: Option<Vec<ItemRowFp>>,
     pub reach: ReachViewFp,
     pub attacked_by_player: bool,
     pub widgets: Vec<(i32, String)>,
@@ -2174,6 +2203,9 @@ impl SnapshotFingerprint {
             shop_player: native
                 .shop_player
                 .map(|rows| rows.iter().map(item_row_fp).collect()),
+            main_make: native
+                .main_make
+                .map(|rows| rows.iter().map(item_row_fp).collect()),
             reach: ReachViewFp {
                 available: input.reach.available,
                 base_x: input.reach.base_x,
@@ -2279,6 +2311,7 @@ pub struct DeltaMask {
     pub shop_open: bool,
     pub shop_stock: bool,
     pub shop_player: bool,
+    pub main_make: bool,
     pub reach: bool,
     pub attacked_by_player: bool,
     pub widgets: bool,
@@ -2358,6 +2391,7 @@ impl DeltaMask {
             shop_open: true,
             shop_stock: true,
             shop_player: true,
+            main_make: true,
             reach: true,
             attacked_by_player: true,
             widgets: true,
@@ -2447,6 +2481,7 @@ impl DeltaMask {
             shop_open: next.shop_open != last.shop_open,
             shop_stock: next.shop_stock != last.shop_stock,
             shop_player: next.shop_player != last.shop_player,
+            main_make: next.main_make != last.main_make,
             reach: next.reach != last.reach,
             attacked_by_player: next.attacked_by_player != last.attacked_by_player,
             widgets: next.widgets != last.widgets,
@@ -2840,6 +2875,14 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let main_make_off = if mask.main_make {
+        native.main_make.map(|rows| {
+            let offs = rows.iter().map(|r| row_off(b, r)).collect::<Vec<_>>();
+            b.create_vector(&offs)
+        })
+    } else {
+        None
+    };
     let reach_table_off = if mask.reach {
         Some(reach_off(b, &input.reach))
     } else {
@@ -3108,6 +3151,12 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_SHOP_PLAYER_AVAILABLE, native.shop_player.is_some());
         if let Some(off) = shop_player_off {
             b.push_slot_always(VT_SNAP_SHOP_PLAYER, off);
+        }
+    }
+    if mask.main_make {
+        b.push_slot_always(VT_SNAP_MAIN_MAKE_AVAILABLE, native.main_make.is_some());
+        if let Some(off) = main_make_off {
+            b.push_slot_always(VT_SNAP_MAIN_MAKE, off);
         }
     }
     if mask.reach {
@@ -4332,6 +4381,20 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .stand_op()
                     .ok_or_else(|| "shop-button has no chunk".to_string())?,
             }),
+            "make-panel" => out.push(crate::shim::InteractReq::MakePanel {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "make-panel has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "make-panel has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "make-panel has no component".to_string())?,
+                operation: row
+                    .stand_op()
+                    .ok_or_else(|| "make-panel has no operation".to_string())?,
+            }),
             "close" => out.push(crate::shim::InteractReq::Close),
             "npc" => out.push(crate::shim::InteractReq::Npc {
                 name: row
@@ -4460,6 +4523,7 @@ fn interact_off<'b>(
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::ShopButton { .. } => "shop-button",
+        InteractReq::MakePanel { .. } => "make-panel",
         InteractReq::Close => "close",
         InteractReq::Npc { .. } => "npc",
         InteractReq::Loc { .. } => "loc",
@@ -4653,6 +4717,17 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_COMPONENT_ID, *component);
             b.push_slot_always(VT_IN_STAND_OP, *operation);
             b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
+        }
+        InteractReq::MakePanel {
+            id,
+            slot,
+            component,
+            operation,
+        } => {
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
+            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
+            b.push_slot_always(VT_IN_STAND_OP, *operation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {

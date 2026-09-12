@@ -1889,6 +1889,28 @@ fn dispatch_script_interact(
                     wrote |= matches!(sent, SendResult::Sent { .. });
                 }
             }
+            InteractReq::MakePanel {
+                id,
+                slot,
+                component,
+                operation,
+            } => {
+                // Anvil/main skill-multi identity only. Do not fall back to
+                // another same-name row, the backpack, or a count dialog.
+                let present = snapshot.main_make().iter().any(|item| {
+                    item.def.id == id && item.slot == slot && item.component_id == component
+                });
+                if present {
+                    if let Some(item) = snapshot.main_make().iter().find(|item| {
+                        item.def.id == id && item.slot == slot && item.component_id == component
+                    }) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
             InteractReq::Close => {
                 let res = ix.close_modal();
                 if host::debug_enabled() {
@@ -2972,6 +2994,41 @@ fn with_script_snapshot_input<R>(
     let shop_player = snapshot
         .filter(|s| s.shop().player_available)
         .map(|_| shop_player_rows.as_slice());
+    let main_make_ops_store: Vec<Vec<String>>;
+    let main_make_rows: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        main_make_ops_store = s
+            .main_make()
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.main_make()
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &main_make_ops_store[i],
+                noted: it.def.noted,
+                cert: posted_cert(obj_names, &it.def),
+                component_id: it.component_id,
+                slot: it.slot,
+            })
+            .collect()
+    } else {
+        main_make_ops_store = Vec::new();
+        Vec::new()
+    };
+    // Always decoded when a snapshot exists: empty means no Make TYPE_INV
+    // on the open main modal, not an unpublished field.
+    let main_make = snapshot.map(|_| main_make_rows.as_slice());
     let shop_stock_ops_store: Vec<Vec<String>>;
     let shop_stock: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
         shop_stock_ops_store = s
@@ -3341,6 +3398,7 @@ fn with_script_snapshot_input<R>(
         quest_statuses,
         npc_boxes,
         shop_player,
+        main_make,
     };
     f(&input, native)
 }
