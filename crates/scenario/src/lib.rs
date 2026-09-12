@@ -465,6 +465,11 @@ pub fn get(name: &str) -> Option<Scenario> {
         "hill_giant_bank" => Some(hill_giant_bank_scenario()),
         "chaos_druid_bank" => Some(chaos_druid_bank_scenario()),
         "ardy_fighter_bank" => Some(ardy_fighter_bank_scenario()),
+        "rock_crab_bank" => Some(rock_crab_bank_scenario()),
+        "green_dragon_bank" => Some(green_dragon_bank_scenario()),
+        "green_dragon_tele" => Some(green_dragon_tele_scenario()),
+        "fire_giant_approach" => Some(fire_giant_approach_scenario()),
+        "fire_giant_bank" => Some(fire_giant_bank_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -564,6 +569,11 @@ pub fn names() -> Vec<&'static str> {
         "hill_giant_bank",
         "chaos_druid_bank",
         "ardy_fighter_bank",
+        "rock_crab_bank",
+        "green_dragon_bank",
+        "green_dragon_tele",
+        "fire_giant_approach",
+        "fire_giant_bank",
         "script_trade",
     ]
 }
@@ -8670,6 +8680,43 @@ const FIRE_GIANT_ROOM: WorldTile = WorldTile {
     z: 9893,
     level: 0,
 };
+const FIRE_GIANT_RAFT: WorldTile = WorldTile {
+    x: 2510,
+    z: 3493,
+    level: 0,
+};
+const FIRE_GIANT_WASH: WorldTile = WorldTile {
+    x: 2527,
+    z: 3413,
+    level: 0,
+};
+const FIRE_GIANT_BANK: WorldTile = WorldTile {
+    x: 2616,
+    z: 3332,
+    level: 0,
+};
+const VARROCK_TELE_LAND: WorldTile = WorldTile {
+    x: 3213,
+    z: 3424,
+    level: 0,
+};
+const ROCK_CRAB_BANK_RET: WorldTile = WorldTile {
+    x: 2710,
+    z: 3717,
+    level: 0,
+};
+const SEERS_BANK: WorldTile = WorldTile {
+    x: 2725,
+    z: 3491,
+    level: 0,
+};
+const FIRE_RUNE_ID: i32 = 554;
+const VARROCK_TELE_MAGIC: i32 = 25;
+const VARROCK_TELE_LAW: i32 = 3;
+const VARROCK_TELE_AIR: i32 = 9;
+const VARROCK_TELE_FIRE: i32 = 3;
+const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
+const FIRE_GIANT_BANK_RESTOCK: i32 = 20;
 
 const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -9041,6 +9088,66 @@ const FIRE_GIANT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "buryBones",
         value: ScriptInjectValue::Bool(false),
+    },
+];
+const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Loot count"),
+    },
+    ScriptSettingInject {
+        id: "bankEveryItems",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+const GREEN_DRAGON_TELE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Teleport to Varrock"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
     },
 ];
 const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
@@ -12141,6 +12248,422 @@ fn ardy_fighter_bank_scenario() -> Scenario {
     )
 }
 
+const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_ID];
+const GREEN_DRAGON_BANK_DEPOSIT: [i32; 2] = [DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID];
+
+fn insert_waterfall_quest(scenario: &mut Scenario) {
+    let prepare = scenario
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("prepare melee stats"))
+        .expect("combat bank/core prepares stats");
+    scenario.steps.splice(
+        prepare..prepare,
+        [
+            Step {
+                name: "complete required quests before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~completequests");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ChatChoice,
+                    budget_ticks: 20,
+                },
+            },
+            Step {
+                name: "answer the quest-seed dialogs until the journal is green",
+                kind: StepKind::DrainDialogs { choice: 1 },
+                wait: Wait {
+                    arm: Proof::QuestDone {
+                        name: "Waterfall Quest",
+                    },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+    );
+}
+
+fn wear_shield_before_hostile_teleport(scenario: &mut Scenario) {
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat bank has a hostile-field teleport");
+    scenario.steps.insert(
+        hostile_teleport,
+        wear_combat_item_step(
+            "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            DRAGONFIRE_SHIELD_ID,
+        ),
+    );
+}
+
+fn acknowledge_dormant_rocks_before_start(scenario: &mut Scenario) {
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat bank has a Start step");
+    scenario.steps.insert(
+        start,
+        bank_fletcher_watch(
+            "acknowledge dormant Rocks in the supported field before Start",
+            Proof::NpcNameNear {
+                name: "Rocks",
+                x: ROCK_CRAB_SPOT.x,
+                z: ROCK_CRAB_SPOT.z,
+                level: ROCK_CRAB_SPOT.level,
+                radius: 50,
+            },
+        ),
+    );
+}
+
+/// RockCrab PeriodicBank `Loot count` at Seers. `bankEveryItems=1` ends the
+/// trip on the first listed drop (uncut sapphire 1623 or casket 405). The
+/// PeriodicBank task deposits matching loot and returns to `currentSpot()`;
+/// it does not restock food.
+fn rock_crab_bank_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "rock_crab_bank",
+        "RockCrab",
+        ROCK_CRAB_SAFE_STAND,
+        2,
+        "lobster",
+        LOBSTER_ID,
+        ROCK_CRAB_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[],
+        ROCK_CRAB_LOOT_EMPTY,
+        ROCK_CRAB_BANK_INJECT,
+        0,
+        "lobster",
+        20,
+        &[
+            (
+                "watch listed RockCrab loot enter a fresh Seers bank",
+                Proof::BankItemIdAny {
+                    ids: &ROCK_CRAB_BANK_DEPOSIT,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the periodic bank at the Seers booth",
+                Proof::ArrivedNear {
+                    x: SEERS_BANK.x,
+                    z: SEERS_BANK.z,
+                    level: SEERS_BANK.level,
+                    radius: 6,
+                },
+            ),
+            ("watch the periodic bank close", Proof::BankClosed),
+            (
+                "watch return to the nearest RockCrab spot after banking",
+                Proof::ArrivedNear {
+                    x: ROCK_CRAB_BANK_RET.x,
+                    z: ROCK_CRAB_BANK_RET.z,
+                    level: ROCK_CRAB_BANK_RET.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    acknowledge_dormant_rocks_before_start(&mut scenario);
+    scenario
+}
+
+/// GreenDragon BankRun to Edgeville: food-gone / pack-full trip deposits
+/// bones or hide, restocks lobster to `foodWithdraw` 20, and walks back
+/// past the wilderness ditch.
+fn green_dragon_bank_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "green_dragon_bank",
+        "GreenDragon",
+        GREEN_DRAGON_FIELD,
+        22,
+        "lobster",
+        LOBSTER_ID,
+        GREEN_DRAGON_FOOD,
+        RUNE_SCIMITAR_ID,
+        &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        GREEN_DRAGON_LOOT_EMPTY,
+        GREEN_DRAGON_INJECT,
+        0,
+        "lobster",
+        24,
+        &[
+            (
+                "watch dragon bones or hide enter a fresh Edgeville bank",
+                Proof::BankItemIdAny {
+                    ids: &GREEN_DRAGON_BANK_DEPOSIT,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the restock of Lobster to the card's foodWithdraw 20",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: GREEN_DRAGON_BANK_RESTOCK,
+                },
+            ),
+            ("watch GreenDragon close its bank", Proof::BankClosed),
+            (
+                "watch return to the dragon field after banking",
+                Proof::ArrivedNear {
+                    x: GREEN_DRAGON_FIELD.x,
+                    z: GREEN_DRAGON_FIELD.z,
+                    level: GREEN_DRAGON_FIELD.level,
+                    radius: 22,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    wear_shield_before_hostile_teleport(&mut scenario);
+    scenario
+}
+
+/// `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
+/// Edgeville booth restock and a return past the ditch. A south-walk flee
+/// without the teleport fails this cell.
+fn green_dragon_tele_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "green_dragon_tele",
+        "GreenDragon",
+        GREEN_DRAGON_FIELD,
+        22,
+        "lobster",
+        LOBSTER_ID,
+        GREEN_DRAGON_FOOD,
+        RUNE_SCIMITAR_ID,
+        &[
+            ("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1),
+            ("lawrune", LAW_RUNE_ID, VARROCK_TELE_LAW),
+            ("airrune", AIR_RUNE_ID, VARROCK_TELE_AIR),
+            ("firerune", FIRE_RUNE_ID, VARROCK_TELE_FIRE),
+        ],
+        GREEN_DRAGON_LOOT_EMPTY,
+        GREEN_DRAGON_TELE_INJECT,
+        0,
+        "lobster",
+        24,
+        &[
+            (
+                "watch Magic XP from the Varrock teleport after Start",
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: 1,
+                },
+            ),
+            (
+                "watch the Varrock teleport land, not a queued button",
+                Proof::ArrivedNear {
+                    x: VARROCK_TELE_LAND.x,
+                    z: VARROCK_TELE_LAND.z,
+                    level: VARROCK_TELE_LAND.level,
+                    radius: 8,
+                },
+            ),
+            (
+                "watch the restock of Lobster to the card's foodWithdraw 20",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: GREEN_DRAGON_BANK_RESTOCK,
+                },
+            ),
+            (
+                "watch GreenDragon close its bank after the teleport",
+                Proof::BankClosed,
+            ),
+            (
+                "watch return to the dragon field after banking",
+                Proof::ArrivedNear {
+                    x: GREEN_DRAGON_FIELD.x,
+                    z: GREEN_DRAGON_FIELD.z,
+                    level: GREEN_DRAGON_FIELD.level,
+                    radius: 22,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    wear_shield_before_hostile_teleport(&mut scenario);
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat bank has a hostile-field teleport");
+    scenario.steps.splice(
+        hostile_teleport..hostile_teleport,
+        [Step {
+            name: "prepare and acknowledge Magic 25 for Varrock teleport before Start",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, &format!("setstat magic {VARROCK_TELE_MAGIC}"));
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat {
+                    id: MAGIC_STAT,
+                    min: VARROCK_TELE_MAGIC,
+                },
+                budget_ticks: 200,
+            },
+        }],
+    );
+    scenario
+}
+
+/// FireGiant `EnterDungeon` from the raft. Start is not already z>=9000; the
+/// frozen script has to board the raft, rope the rock and tree, open the
+/// ledge door, then fight.
+fn fire_giant_approach_scenario() -> Scenario {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
+        name: "fire_giant_approach",
+        card: "FireGiant",
+        tele: FIRE_GIANT_RAFT,
+        radius: 5,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: FIRE_GIANT_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[
+            ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+            ("rope", ROPE_ID, 1),
+        ],
+        wear_id: None,
+        loot_empty: FIRE_GIANT_LOOT_EMPTY,
+        inject: FIRE_GIANT_INJECT,
+        complete_quest: Some("Waterfall Quest"),
+        thieving: 0,
+        agility: 0,
+    });
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat core has a Start step");
+    scenario.steps.insert(
+        start + 1,
+        bank_fletcher_watch(
+            "watch the script enter the Waterfall Dungeon after Start",
+            Proof::ArrivedNear {
+                x: FIRE_GIANT_ROOM.x,
+                z: FIRE_GIANT_ROOM.z,
+                level: FIRE_GIANT_ROOM.level,
+                radius: 16,
+            },
+        ),
+    );
+    scenario
+}
+
+/// FireGiant barrel exit then Ardougne West restock and re-entry. The in-room
+/// core leaves this trip unqualified.
+fn fire_giant_bank_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "fire_giant_bank",
+        "FireGiant",
+        FIRE_GIANT_ROOM,
+        10,
+        "lobster",
+        LOBSTER_ID,
+        FIRE_GIANT_FOOD,
+        COMBAT_SCIMITAR_ID,
+        &[
+            ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+            ("rope", ROPE_ID, 1),
+        ],
+        FIRE_GIANT_LOOT_EMPTY,
+        FIRE_GIANT_INJECT,
+        0,
+        "lobster",
+        24,
+        &[
+            (
+                "watch the barrel wash-up before the bank walk",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_WASH.x,
+                    z: FIRE_GIANT_WASH.z,
+                    level: FIRE_GIANT_WASH.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch the trip's Big bones enter a fresh Ardougne West bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the Ardougne West booth the barrel trip walks to",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_BANK.x,
+                    z: FIRE_GIANT_BANK.z,
+                    level: FIRE_GIANT_BANK.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch the restock of Lobster to the card's foodWithdraw 20",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: FIRE_GIANT_BANK_RESTOCK,
+                },
+            ),
+            ("watch FireGiant close its bank", Proof::BankClosed),
+            (
+                "watch re-entry to the fire-giant room after banking",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_ROOM.x,
+                    z: FIRE_GIANT_ROOM.z,
+                    level: FIRE_GIANT_ROOM.level,
+                    radius: 10,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    insert_waterfall_quest(&mut scenario);
+    scenario
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -12720,6 +13243,11 @@ mod tests {
                 "hill_giant_bank",
                 "chaos_druid_bank",
                 "ardy_fighter_bank",
+                "rock_crab_bank",
+                "green_dragon_bank",
+                "green_dragon_tele",
+                "fire_giant_approach",
+                "fire_giant_bank",
                 "script_trade",
             ]
         );
@@ -13407,6 +13935,158 @@ mod tests {
     }
 
     #[test]
+    fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
+        let rock = get("rock_crab_bank").expect("rock_crab_bank registered");
+        assert_eq!(rock.settings.start_script, Some("RockCrab"));
+        assert_eq!(rock.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("bankStrategy"),
+            Some(&Value::String("Loot count".into()))
+        );
+        assert_eq!(inject.get("bankEveryItems"), Some(&Value::from(1.0)));
+        let start = rock
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(rock.steps[..start].iter().any(
+            |step| step.name == "acknowledge dormant Rocks in the supported field before Start"
+        ));
+        assert!(rock.steps[..start].iter().any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: COMBAT_SCIMITAR_ID
+            }));
+        for &id in &ROCK_CRAB_BANK_DEPOSIT {
+            assert!(
+                rock.steps[..start].iter().any(|step| {
+                    matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
+                }),
+                "rock_crab_bank must confirm empty deposit-class id {id} before Start"
+            );
+        }
+        let watch = rock.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(watch.contains(&Proof::BankItemIdAny {
+            ids: &ROCK_CRAB_BANK_DEPOSIT,
+            count: 1,
+        }));
+        assert!(watch.contains(&Proof::BankClosed));
+
+        let dragon = get("green_dragon_bank").expect("green_dragon_bank registered");
+        assert_eq!(dragon.settings.start_script, Some("GreenDragon"));
+        let inject = settings_inject_map(dragon.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("escape"),
+            Some(&Value::String("Flee to bank".into()))
+        );
+        let start = dragon
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(dragon.steps[..start].iter().any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: RUNE_SCIMITAR_ID
+            }));
+        assert!(dragon.steps[..start].iter().any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: DRAGONFIRE_SHIELD_ID
+            }));
+        let watch = dragon.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(watch.contains(&Proof::BankItemIdAny {
+            ids: &GREEN_DRAGON_BANK_DEPOSIT,
+            count: 1,
+        }));
+
+        let tele = get("green_dragon_tele").expect("green_dragon_tele registered");
+        let inject = settings_inject_map(tele.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("escape"),
+            Some(&Value::String("Teleport to Varrock".into()))
+        );
+        let start = tele
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(tele.steps[..start].iter().any(|step| step.wait.arm
+            == Proof::Stat {
+                id: MAGIC_STAT,
+                min: VARROCK_TELE_MAGIC,
+            }));
+        let watch = tele.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(watch.contains(&Proof::StatXpGain {
+            id: MAGIC_STAT,
+            min: 1,
+        }));
+        assert!(watch.contains(&Proof::ArrivedNear {
+            x: VARROCK_TELE_LAND.x,
+            z: VARROCK_TELE_LAND.z,
+            level: VARROCK_TELE_LAND.level,
+            radius: 8,
+        }));
+
+        let approach = get("fire_giant_approach").expect("fire_giant_approach registered");
+        assert_eq!(approach.settings.start_script, Some("FireGiant"));
+        assert!(approach.steps.iter().any(|step| matches!(
+            step.wait.arm,
+            Proof::QuestDone {
+                name: "Waterfall Quest"
+            }
+        )));
+        let start = approach
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(approach.steps[..start].iter().any(|step| step.wait.arm
+            == Proof::ArrivedNear {
+                x: FIRE_GIANT_RAFT.x,
+                z: FIRE_GIANT_RAFT.z,
+                level: FIRE_GIANT_RAFT.level,
+                radius: 5,
+            }));
+        assert!(approach.steps[start + 1..].iter().any(|step| step.wait.arm
+            == Proof::ArrivedNear {
+                x: FIRE_GIANT_ROOM.x,
+                z: FIRE_GIANT_ROOM.z,
+                level: FIRE_GIANT_ROOM.level,
+                radius: 16,
+            }));
+
+        let bank = get("fire_giant_bank").expect("fire_giant_bank registered");
+        let start = bank
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let watch = bank.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(watch.contains(&Proof::ArrivedNear {
+            x: FIRE_GIANT_WASH.x,
+            z: FIRE_GIANT_WASH.z,
+            level: FIRE_GIANT_WASH.level,
+            radius: 6,
+        }));
+        assert!(watch.contains(&Proof::BankItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        }));
+        assert!(watch.contains(&Proof::BankClosed));
+    }
+
+    #[test]
     fn hostile_fields_follow_safe_pretele_precondition_acknowledgements() {
         for name in [
             "chaos_druid",
@@ -13417,6 +14097,11 @@ mod tests {
             "green_dragon",
             "fire_giant",
             "ardy_fighter",
+            "rock_crab_bank",
+            "green_dragon_bank",
+            "green_dragon_tele",
+            "fire_giant_approach",
+            "fire_giant_bank",
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
             let start = scenario
