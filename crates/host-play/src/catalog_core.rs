@@ -226,6 +226,9 @@ pub const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
 pub const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
 pub const HILL_GIANT_BANK_RESTOCK: i32 = 4;
 pub const ROCK_CRAB_FOOD: i32 = 8;
+/// Base GreenDragon's ordinary trip withdraws twenty Lobsters.
+/// Special, potion, bank, and teleport cells retain their twelve-food inputs.
+pub const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
 pub const FIRE_GIANT_FOOD: i32 = 12;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
@@ -2024,7 +2027,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Ardougne Guard (2661,3306,0), Hitpoints 40, Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, Trout 8, bank None"
         }
         CoreCase::GreenDragon => {
-            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 12, rune scimitar 1333, worn shield 1540, empty 536/1753"
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 20, rune scimitar 1333, worn shield 1540, empty 536/1753"
         }
         CoreCase::GreenDragonSpecial => {
             "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
