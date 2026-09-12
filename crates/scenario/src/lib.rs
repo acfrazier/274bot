@@ -427,7 +427,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "rune_crafter_earth" => Some(rune_crafter_earth_scenario()),
         "mule_crafter" => Some(mule_crafter_scenario()),
         "ardy_cakes" => Some(ardy_cakes_scenario()),
+        "ardy_cakes_fight" => Some(ardy_cakes_fight_scenario()),
         "ardy_thiever" => Some(ardy_thiever_scenario()),
+        "ardy_thiever_fight" => Some(ardy_thiever_fight_scenario()),
         "ardy_thiever_knight" => Some(ardy_thiever_knight_scenario()),
         "gnome_chop" => Some(gnome_chop_scenario()),
         "gnome_fletch_short" => Some(gnome_fletch_short_scenario()),
@@ -444,6 +446,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "herblore_secondaries" => Some(herblore_secondaries_scenario()),
         "herblore_secondaries_newt" => Some(herblore_secondaries_newt_scenario()),
         "chaos_druid" => Some(chaos_druid_scenario()),
+        "chaos_druid_tower" => Some(chaos_druid_tower_scenario()),
+        "chaos_druid_yanille" => Some(chaos_druid_yanille_scenario()),
         "moss_giant" => Some(moss_giant_scenario()),
         "hill_giant" => Some(hill_giant_scenario()),
         "auto_fighter" => Some(auto_fighter_scenario()),
@@ -517,7 +521,9 @@ pub fn names() -> Vec<&'static str> {
         "rune_crafter_earth",
         "mule_crafter",
         "ardy_cakes",
+        "ardy_cakes_fight",
         "ardy_thiever",
+        "ardy_thiever_fight",
         "ardy_thiever_knight",
         "gnome_chop",
         "gnome_fletch_short",
@@ -534,6 +540,8 @@ pub fn names() -> Vec<&'static str> {
         "herblore_secondaries",
         "herblore_secondaries_newt",
         "chaos_druid",
+        "chaos_druid_tower",
+        "chaos_druid_yanille",
         "moss_giant",
         "hill_giant",
         "auto_fighter",
@@ -6982,6 +6990,17 @@ const ARDY_CAKES_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const ARDY_CAKES_FIGHT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "guardResponse",
+        value: ScriptInjectValue::Str("Fight"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+
 const ARDY_THIEVER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "thieveTarget",
@@ -6990,6 +7009,33 @@ const ARDY_THIEVER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "guardResponse",
         value: ScriptInjectValue::Str("Flee"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankAtLootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "restockAtFood",
+        value: ScriptInjectValue::Num(0.0),
+    },
+];
+
+const ARDY_THIEVER_FIGHT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "thieveTarget",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "guardResponse",
+        value: ScriptInjectValue::Str("Fight"),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -7197,6 +7243,167 @@ fn ardy_cakes_scenario() -> Scenario {
     }
 }
 
+/// `guardResponse=Fight`: stall steal then FightBack kill of the catching Guard.
+/// Combat stats and a scimitar are prepared so the FightBack branch can land;
+/// the Flee kite is not this cell. Catalog owns the Guard defeat witness.
+fn ardy_cakes_fight_scenario() -> Scenario {
+    let stand = ARDY_CAKES_STAND;
+    let first_xp = Proof::StatXpGain {
+        id: THIEVING_STAT,
+        min: 1,
+    };
+    let cake = Proof::ItemId {
+        id: CAKE_ID,
+        count: 1,
+    };
+    let style_xp = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed thieving, combat stats, scimitar, 22-Knife ballast and Baker's stall stand before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat thieving 5");
+                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, "give adamant_scimitar 1");
+                cheat(c, &format!("give knife {ARDY_CAKES_BALLAST_KNIVES}"));
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Thieving 5 before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: 5,
+            },
+        ),
+        (
+            "confirm Attack 40 before Start",
+            Proof::Stat {
+                id: 0,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm Strength 40 before Start",
+            Proof::Stat {
+                id: STRENGTH_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm Hitpoints 40 before Start",
+            Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm 22 retained nonproduct Knives before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: ARDY_CAKES_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm exactly 22 retained nonproduct Knives before Start",
+            Proof::ItemIdAtMost {
+                id: KNIFE_ID,
+                count: ARDY_CAKES_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm prepared scimitar before wielding",
+            Proof::ItemId {
+                id: COMBAT_SCIMITAR_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CAKE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bread in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded chocolate slice in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CHOCOLATE_SLICE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded chocolate cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CHOCOLATE_CAKE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(wear_combat_item_step(
+        "wield and acknowledge Adamant scimitar before Start",
+        COMBAT_SCIMITAR_ID,
+    ));
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Thieving XP from Baker's stall after Start", first_xp),
+        ("watch exact Cake 1891 stolen after Start", cake),
+        (
+            "watch Strength XP from FightBack on the catching Guard after Start",
+            style_xp,
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "ardy_cakes_fight",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: style_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ArdyCakes"),
+            script_settings_inject: Some(ARDY_CAKES_FIGHT_INJECT),
+            terminal_shot: Some("ardy_cakes_fight"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 struct ArdyThieverSpec {
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -7217,6 +7424,166 @@ fn ardy_thiever_knight_scenario() -> Scenario {
         inject: ARDY_THIEVER_KNIGHT_INJECT,
         thieving: 55,
     })
+}
+
+/// `guardResponse=Fight` on ArdyThiever: pickpocket coins, FightBack on catch,
+/// then the same loot-count bank/return/further cycle as the Flee cell. Combat
+/// kit is prepared before Start; catalog owns the Guard defeat + no-Flee gate.
+fn ardy_thiever_fight_scenario() -> Scenario {
+    let stand = ARDOUGNE_GUARD;
+    let first_xp = Proof::StatXpGain {
+        id: THIEVING_STAT,
+        min: 1,
+    };
+    let coins = Proof::ItemId {
+        id: COINS_ID,
+        count: 1,
+    };
+    let style_xp = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed thieving, combat stats, scimitar, empty pack and market stand before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat thieving 40");
+                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, "give adamant_scimitar 1");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm prepared Thieving before Start",
+            Proof::Stat {
+                id: THIEVING_STAT,
+                min: 40,
+            },
+        ),
+        (
+            "confirm Attack 40 before Start",
+            Proof::Stat {
+                id: 0,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm Strength 40 before Start",
+            Proof::Stat {
+                id: STRENGTH_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm Hitpoints 40 before Start",
+            Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "confirm prepared scimitar before wielding",
+            Proof::ItemId {
+                id: COMBAT_SCIMITAR_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded coins in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded cake in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CAKE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(wear_combat_item_step(
+        "wield and acknowledge Adamant scimitar before Start",
+        COMBAT_SCIMITAR_ID,
+    ));
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Thieving XP after Start", first_xp),
+        ("watch exact Coins 995 pickpocketed after Start", coins),
+        (
+            "watch Strength XP from FightBack on the catching Guard after Start",
+            style_xp,
+        ),
+        (
+            "watch script-pickpocketed coins enter a fresh Ardougne bank",
+            Proof::BankItemId {
+                id: COINS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of coins after deposit",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch return to the market stand after deposit",
+            Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 6,
+            },
+        ),
+        (
+            "watch the pickpocket bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch another exact Coins 995 after return", coins),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "ardy_thiever_fight",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: coins,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ArdyThiever"),
+            script_settings_inject: Some(ARDY_THIEVER_FIGHT_INJECT),
+            terminal_shot: Some("ardy_thiever_fight"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// Empty pack at the Guard/Knight stand. Flee, clues off, loot-count bank
@@ -8224,6 +8591,16 @@ const CHAOS_DRUID_FIELD: WorldTile = WorldTile {
     z: 9936,
     level: 0,
 };
+const CHAOS_DRUID_TOWER_FIELD: WorldTile = WorldTile {
+    x: 2562,
+    z: 3356,
+    level: 0,
+};
+const CHAOS_DRUID_YANILLE_FIELD: WorldTile = WorldTile {
+    x: 2580,
+    z: 9501,
+    level: 0,
+};
 const MOSS_GIANT_SAFESPOT: WorldTile = WorldTile {
     x: 2553,
     z: 3406,
@@ -8261,6 +8638,26 @@ const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "location",
         value: ScriptInjectValue::Str("Edgeville Dungeon"),
+    },
+    ScriptSettingInject {
+        id: "combatStyleIndex",
+        value: ScriptInjectValue::Str("1"),
+    },
+];
+const CHAOS_DRUID_TOWER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Chaos Druid Tower"),
+    },
+    ScriptSettingInject {
+        id: "combatStyleIndex",
+        value: ScriptInjectValue::Str("1"),
+    },
+];
+const CHAOS_DRUID_YANILLE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Yanille Dungeon"),
     },
     ScriptSettingInject {
         id: "combatStyleIndex",
@@ -10190,6 +10587,7 @@ struct CombatCorePlan {
     inject: &'static [ScriptSettingInject],
     complete_quest: Option<&'static str>,
     thieving: i32,
+    agility: i32,
 }
 
 fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
@@ -10209,6 +10607,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         inject,
         complete_quest,
         thieving,
+        agility,
     } = plan;
     let xp = Proof::StatXpGain {
         id: STRENGTH_STAT,
@@ -10247,6 +10646,9 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
                 if thieving > 0 {
                     cheat(c, &format!("setstat thieving {thieving}"));
+                }
+                if agility > 0 {
+                    cheat(c, &format!("setstat agility {agility}"));
                 }
                 cheat(c, "~clearinv");
                 cheat(c, &format!("give {weapon_alias} 1"));
@@ -10294,6 +10696,15 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             Proof::Stat {
                 id: THIEVING_STAT,
                 min: thieving,
+            },
+        ));
+    }
+    if agility > 0 {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared Agility before Start",
+            Proof::Stat {
+                id: AGILITY_STAT,
+                min: agility,
             },
         ));
     }
@@ -10568,6 +10979,54 @@ fn chaos_druid_scenario() -> Scenario {
         inject: CHAOS_DRUID_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
+    })
+}
+
+/// Chaos Druid Tower surface camp. Same Chaos druid identity and Herb/Law/Nature
+/// loot as Edgeville; Thieving 46 is the door/approach prerequisite, prepared and
+/// acknowledged before Start. Banking is not this cell.
+fn chaos_druid_tower_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "chaos_druid_tower",
+        card: "ChaosDruidKiller",
+        tele: CHAOS_DRUID_TOWER_FIELD,
+        radius: 4,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: CHAOS_DRUID_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
+        wear_id: None,
+        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
+        inject: CHAOS_DRUID_TOWER_INJECT,
+        complete_quest: None,
+        thieving: 46,
+        agility: 0,
+    })
+}
+
+/// Yanille Dungeon warrior room. Target display is Chaos druid warrior; Agility 40
+/// is the room prerequisite. Approach web/ledge is not this cell.
+fn chaos_druid_yanille_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "chaos_druid_yanille",
+        card: "ChaosDruidKiller",
+        tele: CHAOS_DRUID_YANILLE_FIELD,
+        radius: 8,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: CHAOS_DRUID_FOOD,
+        weapon_alias: "adamant_scimitar",
+        weapon_id: COMBAT_SCIMITAR_ID,
+        extra_give: &[],
+        wear_id: None,
+        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
+        inject: CHAOS_DRUID_YANILLE_INJECT,
+        complete_quest: None,
+        thieving: 0,
+        agility: 40,
     })
 }
 
@@ -10590,6 +11049,7 @@ fn moss_giant_scenario() -> Scenario {
         inject: MOSS_GIANT_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     })
 }
 
@@ -10613,6 +11073,7 @@ fn hill_giant_scenario() -> Scenario {
         inject: HILL_GIANT_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     })
 }
 
@@ -10635,6 +11096,7 @@ fn auto_fighter_scenario() -> Scenario {
         inject: AUTO_FIGHTER_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     })
 }
 
@@ -10830,6 +11292,7 @@ fn rock_crab_scenario() -> Scenario {
         inject: ROCK_CRAB_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     });
     let start = scenario
         .steps
@@ -10888,6 +11351,7 @@ fn green_dragon_scenario() -> Scenario {
         inject: GREEN_DRAGON_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     })
 }
 
@@ -10908,6 +11372,7 @@ fn green_dragon_special_scenario() -> Scenario {
         inject: GREEN_DRAGON_SPECIAL_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     });
     let hostile_teleport = scenario
         .steps
@@ -10975,6 +11440,7 @@ fn green_dragon_potions_scenario() -> Scenario {
         inject: GREEN_DRAGON_POTIONS_INJECT,
         complete_quest: None,
         thieving: 0,
+        agility: 0,
     });
     let hostile_teleport = scenario
         .steps
@@ -11056,6 +11522,7 @@ fn fire_giant_scenario() -> Scenario {
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some("Waterfall Quest"),
         thieving: 0,
+        agility: 0,
     })
 }
 
@@ -11078,6 +11545,7 @@ fn ardy_fighter_scenario() -> Scenario {
         inject: ARDY_FIGHTER_INJECT,
         complete_quest: None,
         thieving: 5,
+        agility: 0,
     })
 }
 
@@ -11622,7 +12090,9 @@ mod tests {
                 "rune_crafter_earth",
                 "mule_crafter",
                 "ardy_cakes",
+                "ardy_cakes_fight",
                 "ardy_thiever",
+                "ardy_thiever_fight",
                 "ardy_thiever_knight",
                 "gnome_chop",
                 "gnome_fletch_short",
@@ -11639,6 +12109,8 @@ mod tests {
                 "herblore_secondaries",
                 "herblore_secondaries_newt",
                 "chaos_druid",
+                "chaos_druid_tower",
+                "chaos_druid_yanille",
                 "moss_giant",
                 "hill_giant",
                 "auto_fighter",
@@ -14259,6 +14731,240 @@ mod tests {
     }
 
     #[test]
+    fn alternate_camp_and_fight_option_cases_register() {
+        let strength = Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1,
+        };
+        let cakes_fight = get("ardy_cakes_fight").expect("ardy_cakes_fight");
+        assert_eq!(cakes_fight.settings.start_script, Some("ArdyCakes"));
+        assert_eq!(cakes_fight.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(cakes_fight.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("guardResponse"),
+            Some(&Value::String("Fight".into()))
+        );
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        let start = cakes_fight
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = cakes_fight.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2668,
+            z: 3312,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 5,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: 0,
+            min: COMBAT_ATTACK_LEVEL,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: STRENGTH_STAT,
+            min: COMBAT_ATTACK_LEVEL,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: 22,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: COMBAT_SCIMITAR_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        let watch = cakes_fight.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: THIEVING_STAT,
+                    min: 1
+                },
+                Proof::ItemId {
+                    id: CAKE_ID,
+                    count: 1
+                },
+                strength,
+            ]
+        );
+        assert_eq!(cakes_fight.proof, strength);
+        assert!(!watch
+            .iter()
+            .any(|arm| matches!(arm, Proof::BankItemId { .. })));
+
+        let thiever_fight = get("ardy_thiever_fight").expect("ardy_thiever_fight");
+        assert_eq!(thiever_fight.settings.start_script, Some("ArdyThiever"));
+        let inject = settings_inject_map(thiever_fight.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("guardResponse"),
+            Some(&Value::String("Fight".into()))
+        );
+        assert_eq!(
+            inject.get("thieveTarget"),
+            Some(&Value::String("Guard".into()))
+        );
+        let start = thiever_fight
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = thiever_fight.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 40,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: 0,
+            min: COMBAT_ATTACK_LEVEL,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: COMBAT_SCIMITAR_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        let watch = thiever_fight.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let coins = Proof::ItemId {
+            id: COINS_ID,
+            count: 1,
+        };
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: THIEVING_STAT,
+                    min: 1
+                },
+                coins,
+                strength,
+                Proof::BankItemId {
+                    id: COINS_ID,
+                    count: 1
+                },
+                Proof::ItemIdAtMost {
+                    id: COINS_ID,
+                    count: 0
+                },
+                Proof::ArrivedNear {
+                    x: 2661,
+                    z: 3306,
+                    level: 0,
+                    radius: 6,
+                },
+                Proof::BankClosed,
+                coins,
+            ]
+        );
+        assert_eq!(thiever_fight.proof, coins);
+
+        let tower = get("chaos_druid_tower").expect("chaos_druid_tower");
+        assert_eq!(tower.settings.start_script, Some("ChaosDruidKiller"));
+        let inject = settings_inject_map(tower.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Chaos Druid Tower".into()))
+        );
+        assert_eq!(
+            inject.get("combatStyleIndex"),
+            Some(&Value::String("1".into()))
+        );
+        let start = tower
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = tower.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2562,
+            z: 3356,
+            level: 0,
+            radius: 4,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 46,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: CHAOS_DRUID_FOOD,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 0,
+        }));
+        assert_eq!(tower.steps[start + 1].wait.arm, strength);
+        assert_eq!(tower.proof, strength);
+
+        let yanille = get("chaos_druid_yanille").expect("chaos_druid_yanille");
+        assert_eq!(yanille.settings.start_script, Some("ChaosDruidKiller"));
+        let inject = settings_inject_map(yanille.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Yanille Dungeon".into()))
+        );
+        let start = yanille
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = yanille.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2580,
+            z: 9501,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: AGILITY_STAT,
+            min: 40,
+        }));
+        assert!(!seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 46,
+        }));
+        assert_eq!(yanille.steps[start + 1].wait.arm, strength);
+        assert_eq!(yanille.proof, strength);
+
+        for name in [
+            "ardy_cakes_fight",
+            "ardy_thiever_fight",
+            "chaos_druid_tower",
+            "chaos_druid_yanille",
+        ] {
+            assert!(names().contains(&name));
+            let scenario = get(name).unwrap();
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        }
+    }
+
+    #[test]
     fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
         let chop = get("gnome_chop").expect("gnome_chop");
         assert_eq!(chop.settings.start_script, Some("GnomeMagicChopper"));
@@ -15219,6 +15925,66 @@ mod tests {
         assert_eq!(chaos.steps[start + 1].wait.arm, strength);
         assert_eq!(chaos.proof, strength);
 
+        let tower = get("chaos_druid_tower").expect("chaos_druid_tower");
+        assert_eq!(tower.settings.start_script, Some("ChaosDruidKiller"));
+        let inject = settings_inject_map(tower.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Chaos Druid Tower".into()))
+        );
+        assert_eq!(
+            inject.get("combatStyleIndex"),
+            Some(&Value::String("1".into()))
+        );
+        let start = tower
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = tower.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2562,
+            z: 3356,
+            level: 0,
+            radius: 4,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: THIEVING_STAT,
+            min: 46,
+        }));
+        assert_eq!(tower.proof, strength);
+
+        let yanille = get("chaos_druid_yanille").expect("chaos_druid_yanille");
+        assert_eq!(yanille.settings.start_script, Some("ChaosDruidKiller"));
+        let inject = settings_inject_map(yanille.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Yanille Dungeon".into()))
+        );
+        let start = yanille
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = yanille.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2580,
+            z: 9501,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: AGILITY_STAT,
+            min: 40,
+        }));
+        assert_eq!(yanille.proof, strength);
+
         let moss = get("moss_giant").expect("moss_giant");
         assert_eq!(moss.settings.start_script, Some("MossGiant"));
         let inject = settings_inject_map(moss.settings.script_settings_inject).unwrap();
@@ -15332,6 +16098,8 @@ mod tests {
 
         for name in [
             "chaos_druid",
+            "chaos_druid_tower",
+            "chaos_druid_yanille",
             "moss_giant",
             "hill_giant",
             "auto_fighter",

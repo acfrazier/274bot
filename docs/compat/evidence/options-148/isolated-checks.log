@@ -1,0 +1,35 @@
+task: t_9a7d8feb
+branch: codex/rs2b0t-multirevision
+parent_commit_before_implementation: 4779c6bf34f2541cb18f2cd5e4cee5d929f53d4e
+client gitlink: 52c37f9ce50d1f184656d5b4469c007ec8a5791a
+verified UTC: 2026-09-12T13:10:28Z
+worktree: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision
+note: checks ran in the campaign worktree with an exclusive cargo target under the
+default worktree target directory; no concurrent restore of unrelated dirty files.
+The unrelated docs/compat/evidence/periodic-bank-capabilities change was left
+untouched and is not part of this task.
+
+$ cargo test -p scenario --lib
+result: PASS; 109 passed, 0 failed, 0 ignored
+includes: tests::alternate_camp_and_fight_option_cases_register
+includes: tests::combat_core_cases_register_melee_cycles
+includes: tests::nav_full_is_a_mainland_follow_to_a_cross_square_destination (names snapshot)
+
+$ cargo test -p host-play --features memory-profile --lib
+result: PASS; 177 passed, 0 failed, 0 ignored
+
+$ cargo test -p host-play --features memory-profile --test catalog_boundary_live
+result: PASS; 56 passed, 0 failed, 1 ignored LIVE
+includes: tests::alternate_druid_camps_need_their_own_field_prereqs_and_target_identity
+includes: tests::fight_guard_response_needs_a_kill_and_rejects_the_flee_kite
+includes: tests::option_branch_injects_match_both_frozen_card_schemas
+includes: tests::camp_and_fight_option_injects_match_frozen_card_schemas
+
+$ cargo clippy -p scenario -p host-play --features host-play/memory-profile --all-targets -- -D warnings
+result: PASS
+
+$ cargo fmt --all -- --check
+result: PASS
+
+No LIVE process was launched. The single ignored host-play test is the
+LIVE-gated catalog_boundary_live cell, which root owns.

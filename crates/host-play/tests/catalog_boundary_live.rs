@@ -7063,6 +7063,476 @@ mod tests {
         .is_err());
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn ardy_fight_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        thieving_xp: i32,
+        strength_xp: i32,
+        thieving: i32,
+        npcs: &[BoundedNpc],
+        local_in_combat: bool,
+        local_target_npc: Option<usize>,
+    ) -> Observation {
+        let mut observation = ardy_obs(tile, item_ids, bank_ids, thieving_xp, thieving);
+        observation.xp.insert("strength".into(), strength_xp);
+        observation
+            .levels
+            .insert("attack".into(), COMBAT_ATTACK_LEVEL);
+        observation
+            .levels
+            .insert("strength".into(), COMBAT_ATTACK_LEVEL);
+        observation
+            .levels
+            .insert("hitpoints".into(), COMBAT_ATTACK_LEVEL);
+        observation.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+        observation.npc_facts = npcs.to_vec();
+        observation.local_in_combat = local_in_combat;
+        observation.local_target_npc = local_target_npc;
+        observation.local_health = 40;
+        observation
+    }
+
+    #[test]
+    fn alternate_druid_camps_need_their_own_field_prereqs_and_target_identity() {
+        let levels = [
+            ("attack", 40),
+            ("strength", 40),
+            ("hitpoints", 40),
+            ("thieving", 46),
+            ("agility", 1),
+        ];
+        let tower_base = combat_obs(
+            CHAOS_DRUID_TOWER_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 0)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::ChaosDruidTower, &tower_base).unwrap();
+        let mut low_thieving = tower_base.clone();
+        low_thieving.levels.insert("thieving".into(), 45);
+        assert!(validate_case_baseline(CoreCase::ChaosDruidTower, &low_thieving).is_err());
+        let mut edgeville = tower_base.clone();
+        edgeville.tile = Some(CHAOS_DRUID_FIELD);
+        assert!(validate_case_baseline(CoreCase::ChaosDruidTower, &edgeville).is_err());
+
+        let tower_first = combat_obs(
+            CHAOS_DRUID_TOWER_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 12)],
+            &levels,
+            &[combat_npc(
+                2,
+                "Chaos druid",
+                20,
+                true,
+                CHAOS_DRUID_TOWER_FIELD,
+            )],
+            true,
+            Some(2),
+        );
+        let tower_second = combat_obs(
+            CHAOS_DRUID_TOWER_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[("strength", 40)],
+            &levels,
+            &[
+                combat_npc(2, "Chaos druid", 0, false, CHAOS_DRUID_TOWER_FIELD),
+                combat_npc(6, "Chaos druid", 18, true, CHAOS_DRUID_TOWER_FIELD),
+            ],
+            true,
+            Some(6),
+        );
+        assert!(witness(
+            CoreCase::ChaosDruidTower,
+            &tower_base,
+            [&tower_first, &tower_second, &tower_second]
+        )
+        .qualify()
+        .is_ok());
+        // Warrior name is the Yanille identity; Tower must keep Chaos druid.
+        let mut warrior_first = tower_first.clone();
+        warrior_first.npc_facts = vec![combat_npc(
+            2,
+            "Chaos druid warrior",
+            20,
+            true,
+            CHAOS_DRUID_TOWER_FIELD,
+        )];
+        let mut warrior_second = tower_second.clone();
+        warrior_second.npc_facts = vec![
+            combat_npc(2, "Chaos druid warrior", 0, false, CHAOS_DRUID_TOWER_FIELD),
+            combat_npc(6, "Chaos druid warrior", 18, true, CHAOS_DRUID_TOWER_FIELD),
+        ];
+        assert!(witness(
+            CoreCase::ChaosDruidTower,
+            &tower_base,
+            [&warrior_first, &warrior_second, &warrior_second]
+        )
+        .qualify()
+        .is_err());
+        // Style XP without selected loot cannot qualify the tower cell.
+        let mut no_loot = tower_second.clone();
+        no_loot.item_ids.remove(&UNIDENTIFIED_GUAM_ID);
+        assert!(witness(
+            CoreCase::ChaosDruidTower,
+            &tower_base,
+            [&tower_first, &no_loot, &no_loot]
+        )
+        .qualify()
+        .is_err());
+
+        let yanille_levels = [
+            ("attack", 40),
+            ("strength", 40),
+            ("hitpoints", 40),
+            ("agility", 40),
+            ("thieving", 1),
+        ];
+        let yanille_base = combat_obs(
+            CHAOS_DRUID_YANILLE_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 0)],
+            &yanille_levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::ChaosDruidYanille, &yanille_base).unwrap();
+        let mut low_agility = yanille_base.clone();
+        low_agility.levels.insert("agility".into(), 39);
+        assert!(validate_case_baseline(CoreCase::ChaosDruidYanille, &low_agility).is_err());
+        let mut tower_stand = yanille_base.clone();
+        tower_stand.tile = Some(CHAOS_DRUID_TOWER_FIELD);
+        assert!(validate_case_baseline(CoreCase::ChaosDruidYanille, &tower_stand).is_err());
+
+        let yanille_first = combat_obs(
+            CHAOS_DRUID_YANILLE_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 12)],
+            &yanille_levels,
+            &[combat_npc(
+                3,
+                "Chaos druid warrior",
+                22,
+                true,
+                CHAOS_DRUID_YANILLE_FIELD,
+            )],
+            true,
+            Some(3),
+        );
+        let yanille_second = combat_obs(
+            CHAOS_DRUID_YANILLE_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (NATURE_RUNE_ID, 1)],
+            &[("strength", 44)],
+            &yanille_levels,
+            &[
+                combat_npc(
+                    3,
+                    "Chaos druid warrior",
+                    0,
+                    false,
+                    CHAOS_DRUID_YANILLE_FIELD,
+                ),
+                combat_npc(
+                    9,
+                    "Chaos druid warrior",
+                    20,
+                    true,
+                    CHAOS_DRUID_YANILLE_FIELD,
+                ),
+            ],
+            true,
+            Some(9),
+        );
+        assert!(witness(
+            CoreCase::ChaosDruidYanille,
+            &yanille_base,
+            [&yanille_first, &yanille_second, &yanille_second]
+        )
+        .qualify()
+        .is_ok());
+        // Non-warrior Chaos druid identity fails Yanille.
+        let mut plain_first = yanille_first.clone();
+        plain_first.npc_facts = vec![combat_npc(
+            3,
+            "Chaos druid",
+            22,
+            true,
+            CHAOS_DRUID_YANILLE_FIELD,
+        )];
+        let mut plain_second = yanille_second.clone();
+        plain_second.npc_facts = vec![
+            combat_npc(3, "Chaos druid", 0, false, CHAOS_DRUID_YANILLE_FIELD),
+            combat_npc(9, "Chaos druid", 20, true, CHAOS_DRUID_YANILLE_FIELD),
+        ];
+        assert!(witness(
+            CoreCase::ChaosDruidYanille,
+            &yanille_base,
+            [&plain_first, &plain_second, &plain_second]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    #[test]
+    fn fight_guard_response_needs_a_kill_and_rejects_the_flee_kite() {
+        let cakes_base = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
+            &[],
+            0,
+            0,
+            5,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::ArdyCakesFight, &cakes_base).unwrap();
+        let mut no_weapon = cakes_base.clone();
+        no_weapon.equipment_ids.clear();
+        assert!(validate_case_baseline(CoreCase::ArdyCakesFight, &no_weapon).is_err());
+        let mut low_attack = cakes_base.clone();
+        low_attack.levels.insert("attack".into(), 1);
+        assert!(validate_case_baseline(CoreCase::ArdyCakesFight, &low_attack).is_err());
+
+        let stolen = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[],
+            16,
+            0,
+            5,
+            &[],
+            false,
+            None,
+        );
+        let engaged = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[],
+            16,
+            12,
+            5,
+            &[combat_npc(4, "Guard", 22, true, ARDY_CAKES_STAND)],
+            true,
+            Some(4),
+        );
+        let killed = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES), (CAKE_ID, 1)],
+            &[],
+            16,
+            40,
+            5,
+            &[combat_npc(4, "Guard", 0, false, ARDY_CAKES_STAND)],
+            false,
+            None,
+        );
+        assert!(witness(
+            CoreCase::ArdyCakesFight,
+            &cakes_base,
+            [&stolen, &engaged, &killed]
+        )
+        .qualify()
+        .is_ok());
+        // Steal alone is the Flee core shape; Fight needs the kill.
+        assert!(witness(CoreCase::ArdyCakesFight, &cakes_base, [&stolen])
+            .qualify()
+            .is_err());
+        // Landing on the Flee kite tile fails this branch.
+        let mut fled = killed.clone();
+        fled.tile = Some(ARDY_FLEE_TILE);
+        assert!(witness(
+            CoreCase::ArdyCakesFight,
+            &cakes_base,
+            [&stolen, &engaged, &fled]
+        )
+        .qualify()
+        .is_err());
+        // Chocolate cake is not stall food.
+        let mut wrong = stolen.clone();
+        wrong.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+        assert!(witness(
+            CoreCase::ArdyCakesFight,
+            &cakes_base,
+            [&wrong, &engaged, &killed]
+        )
+        .qualify()
+        .is_err());
+
+        let thiever_base = ardy_fight_obs(ARDY_THIEVER_STAND, &[], &[], 0, 0, 40, &[], false, None);
+        validate_case_baseline(CoreCase::ArdyThieverFight, &thiever_base).unwrap();
+        let pickpocketed = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[],
+            484,
+            0,
+            40,
+            &[],
+            false,
+            None,
+        );
+        let fight = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[],
+            484,
+            20,
+            40,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        let killed_guard = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[],
+            484,
+            48,
+            40,
+            &[combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND)],
+            false,
+            None,
+        );
+        let mut deposited = ardy_fight_obs(
+            ARDY_BANK,
+            &[(CAKE_ID, 1)],
+            &[(COINS_ID, 30)],
+            484,
+            48,
+            40,
+            &[],
+            false,
+            None,
+        );
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(CAKE_ID, 1)],
+            &[],
+            484,
+            48,
+            40,
+            &[],
+            false,
+            None,
+        );
+        returned.bank_generation = 2;
+        let mut further = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(COINS_ID, 30), (CAKE_ID, 1)],
+            &[],
+            952,
+            48,
+            40,
+            &[],
+            false,
+            None,
+        );
+        further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &pickpocketed,
+                &fight,
+                &killed_guard,
+                &deposited,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        // Flee kite before the kill fails the Fight branch even if banking completes.
+        let mut fled_mid = fight.clone();
+        fled_mid.tile = Some(ARDY_FLEE_TILE);
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &pickpocketed,
+                &fled_mid,
+                &killed_guard,
+                &deposited,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // Bank cycle without a kill is the Flee cell, not Fight.
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [&pickpocketed, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    /// Camp/Fight option inject keys must be declared by the frozen card
+    /// SETTINGS schema (or read via settings.* accessors). Matrix rows are not
+    /// required for these four cells; matrix refresh is root-owned.
+    #[test]
+    fn camp_and_fight_option_injects_match_frozen_card_schemas() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (name, card, path_tail) in [
+            (
+                "chaos_druid_tower",
+                "ChaosDruidKiller",
+                "src/bot/scripts/ChaosDruidKiller/ChaosDruidKiller.ts",
+            ),
+            (
+                "chaos_druid_yanille",
+                "ChaosDruidKiller",
+                "src/bot/scripts/ChaosDruidKiller/ChaosDruidKiller.ts",
+            ),
+            (
+                "ardy_cakes_fight",
+                "ArdyCakes",
+                "src/bot/scripts/ArdyCakes/ArdyCakes.ts",
+            ),
+            (
+                "ardy_thiever_fight",
+                "ArdyThiever",
+                "src/bot/scripts/ArdyThiever/ArdyThiever.ts",
+            ),
+        ] {
+            let case = CoreCase::parse(name).expect("option branch registered");
+            assert_eq!(case.card_name(), card);
+            let scenario = scenario::get(name).expect("option scenario registered");
+            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+                .unwrap_or_else(|| panic!("{name} injects no settings"));
+            for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+                let path = repo
+                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                    .join(path_tail);
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
+                let declared = declared_source_settings(&source);
+                assert!(
+                    !declared.is_empty(),
+                    "{name}: {card} at {commit} declares no SETTINGS schema"
+                );
+                for id in inject.keys() {
+                    assert!(
+                        declared.contains(id),
+                        "{name}: {card} at {commit} does not declare setting {id:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// The audit's seeds and injections are proposals, not verified
     /// implementation: every injected setting has to be one the frozen card
     /// itself declares, carrying a value its own schema allows. An undeclared key

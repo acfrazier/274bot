@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -201,6 +201,10 @@ pub const NOTED_HERB_ID: i32 = 200;
 pub const LANTADYME_HERB_ID: i32 = 2485;
 pub const NOTED_LANTADYME_HERB_ID: i32 = 2486;
 pub const CHAOS_DRUID_FIELD: (i32, i32, i32) = (3110, 9936, 0);
+pub const CHAOS_DRUID_TOWER_FIELD: (i32, i32, i32) = (2562, 3356, 0);
+pub const CHAOS_DRUID_YANILLE_FIELD: (i32, i32, i32) = (2580, 9501, 0);
+/// ArdyCakes / ArdyThiever Flee kite tile. Fight mode must kill instead of landing here.
+pub const ARDY_FLEE_TILE: (i32, i32, i32) = (2655, 3298, 0);
 pub const MOSS_GIANT_SAFESPOT: (i32, i32, i32) = (2553, 3406, 0);
 pub const HILL_GIANT_PIT: (i32, i32, i32) = (3110, 9832, 0);
 pub const CHAOS_DRUID_FOOD: i32 = 12;
@@ -296,7 +300,9 @@ pub enum CoreCase {
     RuneCrafterEarth,
     MuleCrafter,
     ArdyCakes,
+    ArdyCakesFight,
     ArdyThiever,
+    ArdyThieverFight,
     ArdyThieverKnight,
     GnomeChop,
     GnomeFletchShort,
@@ -313,6 +319,8 @@ pub enum CoreCase {
     HerbloreSecondaries,
     HerbloreSecondariesNewt,
     ChaosDruid,
+    ChaosDruidTower,
+    ChaosDruidYanille,
     MossGiant,
     HillGiant,
     AutoFighter,
@@ -372,7 +380,9 @@ impl CoreCase {
             "rune_crafter_earth" => Ok(Self::RuneCrafterEarth),
             "mule_crafter" => Ok(Self::MuleCrafter),
             "ardy_cakes" => Ok(Self::ArdyCakes),
+            "ardy_cakes_fight" => Ok(Self::ArdyCakesFight),
             "ardy_thiever" => Ok(Self::ArdyThiever),
+            "ardy_thiever_fight" => Ok(Self::ArdyThieverFight),
             "ardy_thiever_knight" => Ok(Self::ArdyThieverKnight),
             "gnome_chop" => Ok(Self::GnomeChop),
             "gnome_fletch_short" => Ok(Self::GnomeFletchShort),
@@ -389,6 +399,8 @@ impl CoreCase {
             "herblore_secondaries" => Ok(Self::HerbloreSecondaries),
             "herblore_secondaries_newt" => Ok(Self::HerbloreSecondariesNewt),
             "chaos_druid" => Ok(Self::ChaosDruid),
+            "chaos_druid_tower" => Ok(Self::ChaosDruidTower),
+            "chaos_druid_yanille" => Ok(Self::ChaosDruidYanille),
             "moss_giant" => Ok(Self::MossGiant),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
@@ -451,7 +463,9 @@ impl CoreCase {
             Self::RuneCrafterEarth => "rune_crafter_earth",
             Self::MuleCrafter => "mule_crafter",
             Self::ArdyCakes => "ardy_cakes",
+            Self::ArdyCakesFight => "ardy_cakes_fight",
             Self::ArdyThiever => "ardy_thiever",
+            Self::ArdyThieverFight => "ardy_thiever_fight",
             Self::ArdyThieverKnight => "ardy_thiever_knight",
             Self::GnomeChop => "gnome_chop",
             Self::GnomeFletchShort => "gnome_fletch_short",
@@ -468,6 +482,8 @@ impl CoreCase {
             Self::HerbloreSecondaries => "herblore_secondaries",
             Self::HerbloreSecondariesNewt => "herblore_secondaries_newt",
             Self::ChaosDruid => "chaos_druid",
+            Self::ChaosDruidTower => "chaos_druid_tower",
+            Self::ChaosDruidYanille => "chaos_druid_yanille",
             Self::MossGiant => "moss_giant",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
@@ -515,8 +531,8 @@ impl CoreCase {
             Self::TannerBot | Self::TannerBotHard => "TannerBot",
             Self::RuneCrafter | Self::RuneCrafterEarth => "RuneCrafter",
             Self::MuleCrafter => "MuleCrafter",
-            Self::ArdyCakes => "ArdyCakes",
-            Self::ArdyThiever | Self::ArdyThieverKnight => "ArdyThiever",
+            Self::ArdyCakes | Self::ArdyCakesFight => "ArdyCakes",
+            Self::ArdyThiever | Self::ArdyThieverFight | Self::ArdyThieverKnight => "ArdyThiever",
             Self::GnomeChop | Self::GnomeFletchShort | Self::GnomeFletchLong => "GnomeMagicChopper",
             Self::CoalTrucks => "CoalTrucks",
             Self::CookBot | Self::CookBotLobster => "CookBot",
@@ -524,7 +540,9 @@ impl CoreCase {
             Self::FlaxSpinner => "FlaxSpinner",
             Self::FlaxAio | Self::FlaxAioPick | Self::FlaxAioSpin => "FlaxAIO",
             Self::HerbloreSecondaries | Self::HerbloreSecondariesNewt => "HerbloreSecondaries",
-            Self::ChaosDruid => "ChaosDruidKiller",
+            Self::ChaosDruid | Self::ChaosDruidTower | Self::ChaosDruidYanille => {
+                "ChaosDruidKiller"
+            }
             Self::MossGiant => "MossGiant",
             Self::HillGiant => "HillGiant",
             Self::AutoFighter | Self::AutoFighterMage | Self::AutoFighterRange => "AutoFighter",
@@ -1089,6 +1107,29 @@ pub fn ardy_thiever_baseline_ready(baseline: &Observation, thieving: i32) -> boo
         && baseline.item_id(CAKE_ID) == 0
 }
 
+/// Baker's stall Flee cell prep plus combat stats and a weapon so FightBack can kill.
+pub fn ardy_cakes_fight_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, ARDY_CAKES_STAND, 6)
+        && baseline.level("thieving") >= 5
+        && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
+        && baseline.item_id(KNIFE_ID) == ARDY_CAKES_BALLAST_KNIVES
+        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+        && stall_food(baseline) == 0
+        && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+        && noted_stall_food(baseline) == 0
+}
+
+/// Guard pickpocket Fight cell: same empty-pack thieving prep plus combat kit.
+pub fn ardy_thiever_fight_baseline_ready(baseline: &Observation) -> bool {
+    ardy_thiever_baseline_ready(baseline, 40)
+        && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
+        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+}
+
 pub fn held_id(observation: &Observation, id: i32) -> i32 {
     observation.item_id(id) + observation.equipment_id(id)
 }
@@ -1577,7 +1618,9 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                 && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
                 && noted_stall_food(baseline) == 0
         }
+        CoreCase::ArdyCakesFight => ardy_cakes_fight_baseline_ready(baseline),
         CoreCase::ArdyThiever => ardy_thiever_baseline_ready(baseline, 40),
+        CoreCase::ArdyThieverFight => ardy_thiever_fight_baseline_ready(baseline),
         CoreCase::ArdyThieverKnight => ardy_thiever_baseline_ready(baseline, 55),
         CoreCase::GnomeChop => gnome_chop_baseline_ready(baseline),
         CoreCase::GnomeFletchShort => gnome_fletch_baseline_ready(baseline, 80, Some(84)),
@@ -1622,6 +1665,8 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::HerbloreSecondaries => herblore_eggs_baseline_ready(baseline),
         CoreCase::HerbloreSecondariesNewt => herblore_newt_baseline_ready(baseline),
         CoreCase::ChaosDruid
+        | CoreCase::ChaosDruidTower
+        | CoreCase::ChaosDruidYanille
         | CoreCase::MossGiant
         | CoreCase::HillGiant
         | CoreCase::AutoFighter
@@ -1633,9 +1678,14 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         | CoreCase::GreenDragonSpecial
         | CoreCase::GreenDragonPotions
         | CoreCase::FireGiant
-        | CoreCase::ArdyFighter => {
-            combat_spec(case).is_some_and(|spec| combat_baseline_ready(baseline, spec))
-        }
+        | CoreCase::ArdyFighter => combat_spec(case).is_some_and(|spec| {
+            combat_baseline_ready(baseline, spec)
+                && match case {
+                    CoreCase::ChaosDruidTower => baseline.level("thieving") >= 46,
+                    CoreCase::ChaosDruidYanille => baseline.level("agility") >= 40,
+                    _ => true,
+                }
+        }),
     };
     if ready {
         return Ok(());
@@ -1733,8 +1783,14 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::ArdyCakes => {
             "Baker's stall stand (2668,3312,0), Thieving 5, exactly 22 Knives 946, and no 1891/2309/1901/1897"
         }
+        CoreCase::ArdyCakesFight => {
+            "Baker's stall stand (2668,3312,0), Thieving 5, Attack/Strength/Hitpoints 40, scimitar 1331, 22 Knives 946, and no stall food"
+        }
         CoreCase::ArdyThiever => {
             "Ardougne Guard stand (2661,3306,0), Thieving 40, and empty pack of 995/1891"
+        }
+        CoreCase::ArdyThieverFight => {
+            "Ardougne Guard stand (2661,3306,0), Thieving 40, Attack/Strength/Hitpoints 40, scimitar 1331, and empty pack of 995/1891"
         }
         CoreCase::ArdyThieverKnight => {
             "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
@@ -1783,6 +1839,12 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         }
         CoreCase::ChaosDruid => {
             "Edgeville dungeon (3110,9936,0), Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, empty herb/law/nature"
+        }
+        CoreCase::ChaosDruidTower => {
+            "Chaos Druid Tower (2562,3356,0) r4, Thieving 46, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, empty herb/law/nature"
+        }
+        CoreCase::ChaosDruidYanille => {
+            "Yanille Dungeon warrior room (2580,9501,0) r8, Agility 40, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, empty herb/law/nature"
         }
         CoreCase::MossGiant => {
             "Moss safespot (2553,3406,0), Attack/Strength/Hitpoints 40, lobster 10, scimitar 1331, empty big bones 532"
@@ -1858,7 +1920,9 @@ pub struct CoreWitness {
     pub tanner_bot_cycle: TannerBotCycle,
     pub rune_crafter_cycle: RuneCrafterCycle,
     pub ardy_cakes_cycle: ArdyCakesCycle,
+    pub ardy_cakes_fight_cycle: ArdyCakesFightCycle,
     pub ardy_thiever_cycle: ArdyThieverCycle,
+    pub ardy_thiever_fight_cycle: ArdyThieverFightCycle,
     pub gnome_chop_cycle: GnomeChopCycle,
     pub gnome_fletch_cycle: GnomeFletchCycle,
     pub coal_trucks_cycle: CoalTrucksCycle,
@@ -2989,6 +3053,36 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             target: "Chaos druid",
             stand: CHAOS_DRUID_FIELD,
             radius: 14,
+            food_id: LOBSTER_ID,
+            food_count: CHAOS_DRUID_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::HerbLawNature,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // `location=Chaos Druid Tower`: surface camp r4, Thieving 46 door, same
+        // Chaos druid display name and Herb/Law/Nature pickup as Edgeville.
+        CoreCase::ChaosDruidTower => Some(CombatSpec {
+            target: "Chaos druid",
+            stand: CHAOS_DRUID_TOWER_FIELD,
+            radius: 4,
+            food_id: LOBSTER_ID,
+            food_count: CHAOS_DRUID_FOOD,
+            weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::HerbLawNature,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // `location=Yanille Dungeon`: warrior room target identity differs; loot
+        // still the card's selected Herb/Law/Nature set.
+        CoreCase::ChaosDruidYanille => Some(CombatSpec {
+            target: "Chaos druid warrior",
+            stand: CHAOS_DRUID_YANILLE_FIELD,
+            radius: 8,
             food_id: LOBSTER_ID,
             food_count: CHAOS_DRUID_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
@@ -4234,6 +4328,82 @@ impl ArdyCakesCycle {
     }
 }
 
+/// `guardResponse=Fight`: stall steal then FightBack kill. Landing on the Flee
+/// kite tile fails — that is the other branch.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ArdyCakesFightCycle {
+    pub stolen: Option<Observation>,
+    pub killed: Option<Observation>,
+    pub fled: bool,
+    pub wrong_product: bool,
+    pub noted: bool,
+    pub engaged_guard: Option<usize>,
+    pub style_xp: bool,
+}
+
+impl ArdyCakesFightCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            now.item_id(CHOCOLATE_CAKE_ID) > 0 || now.bank_item_id(CHOCOLATE_CAKE_ID) > 0;
+        self.noted |= noted_stall_food(now) > 0;
+        self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
+            || now.skill_xp("attack") > baseline.skill_xp("attack");
+        if self.stolen.is_none()
+            && stall_food(now) >= 1
+            && stall_food(baseline) == 0
+            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
+            && now.item_id(CHOCOLATE_CAKE_ID) == 0
+            && noted_stall_food(now) == 0
+        {
+            self.stolen = Some(now.clone());
+        }
+        if self.stolen.is_some() && self.killed.is_none() {
+            self.fled |= near(now.tile, ARDY_FLEE_TILE, 2);
+        }
+        for npc in &now.npc_facts {
+            let Some(name) = npc.name.as_deref().map(str::trim) else {
+                continue;
+            };
+            if name != "Guard" {
+                continue;
+            }
+            let selected = npc.targeting_local
+                || (now.local_target_npc == Some(npc.index) && now.local_in_combat);
+            if selected {
+                self.engaged_guard = Some(npc.index);
+            }
+            if self.stolen.is_some()
+                && self.killed.is_none()
+                && self.engaged_guard == Some(npc.index)
+                && npc.total_health > 0
+                && npc.health == 0
+                && self.style_xp
+            {
+                self.killed = Some(now.clone());
+            }
+        }
+        // Despawn after engagement also counts once style XP landed.
+        if self.stolen.is_some()
+            && self.killed.is_none()
+            && self.style_xp
+            && self
+                .engaged_guard
+                .is_some_and(|index| !now.npc_facts.iter().any(|npc| npc.index == index))
+        {
+            self.killed = Some(now.clone());
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.stolen.is_some()
+            && self.killed.is_some()
+            && self.style_xp
+            && !self.fled
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
 /// Pickpocket coins with Thieving XP, deposit coins at loot-count 1, return
 /// to the market stand, pickpocket again. Stall food without coins cannot
 /// qualify. Fight stays pending.
@@ -4277,6 +4447,97 @@ impl ArdyThieverCycle {
 
     pub fn qualified(&self) -> bool {
         self.further && self.pickpocketed.is_some() && self.deposited.is_some()
+    }
+}
+
+/// `guardResponse=Fight` on ArdyThiever: the Flee bank-cycle shape plus a
+/// FightBack Guard kill. The Flee kite tile fails this branch.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ArdyThieverFightCycle {
+    pub pickpocketed: Option<Observation>,
+    pub killed: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub returned: bool,
+    pub further: bool,
+    pub fled: bool,
+    pub engaged_guard: Option<usize>,
+    pub style_xp: bool,
+}
+
+impl ArdyThieverFightCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
+            || now.skill_xp("attack") > baseline.skill_xp("attack");
+        if self.pickpocketed.is_none()
+            && now.item_id(COINS_ID) >= 1
+            && baseline.item_id(COINS_ID) == 0
+            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
+        {
+            self.pickpocketed = Some(now.clone());
+        }
+        if self.pickpocketed.is_some() && self.killed.is_none() {
+            self.fled |= near(now.tile, ARDY_FLEE_TILE, 2);
+        }
+        for npc in &now.npc_facts {
+            let Some(name) = npc.name.as_deref().map(str::trim) else {
+                continue;
+            };
+            if name != "Guard" {
+                continue;
+            }
+            let selected = npc.targeting_local
+                || (now.local_target_npc == Some(npc.index) && now.local_in_combat);
+            if selected {
+                self.engaged_guard = Some(npc.index);
+            }
+            if self.pickpocketed.is_some()
+                && self.killed.is_none()
+                && self.engaged_guard == Some(npc.index)
+                && npc.total_health > 0
+                && npc.health == 0
+                && self.style_xp
+            {
+                self.killed = Some(now.clone());
+            }
+        }
+        if self.pickpocketed.is_some()
+            && self.killed.is_none()
+            && self.style_xp
+            && self
+                .engaged_guard
+                .is_some_and(|index| !now.npc_facts.iter().any(|npc| npc.index == index))
+        {
+            self.killed = Some(now.clone());
+        }
+        if self.pickpocketed.is_some()
+            && self.killed.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(COINS_ID) == 0
+            && now.bank_item_id(COINS_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, ARDY_THIEVER_STAND, 6);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(COINS_ID) >= 1;
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.further
+            && self.pickpocketed.is_some()
+            && self.killed.is_some()
+            && self.deposited.is_some()
+            && self.style_xp
+            && !self.fled
     }
 }
 
@@ -4723,7 +4984,9 @@ impl CoreWitness {
             tanner_bot_cycle: TannerBotCycle::default(),
             rune_crafter_cycle: RuneCrafterCycle::default(),
             ardy_cakes_cycle: ArdyCakesCycle::default(),
+            ardy_cakes_fight_cycle: ArdyCakesFightCycle::default(),
             ardy_thiever_cycle: ArdyThieverCycle::default(),
+            ardy_thiever_fight_cycle: ArdyThieverFightCycle::default(),
             gnome_chop_cycle: GnomeChopCycle::default(),
             gnome_fletch_cycle: GnomeFletchCycle::default(),
             coal_trucks_cycle: CoalTrucksCycle::default(),
@@ -5009,11 +5272,19 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::ArdyCakes) {
             self.ardy_cakes_cycle.observe(&self.baseline, observation);
         }
+        if matches!(self.case, CoreCase::ArdyCakesFight) {
+            self.ardy_cakes_fight_cycle
+                .observe(&self.baseline, observation);
+        }
         if matches!(
             self.case,
             CoreCase::ArdyThiever | CoreCase::ArdyThieverKnight
         ) {
             self.ardy_thiever_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::ArdyThieverFight) {
+            self.ardy_thiever_fight_cycle
+                .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::GnomeChop) {
             self.gnome_chop_cycle.observe(&self.baseline, observation);
@@ -5170,9 +5441,11 @@ impl CoreWitness {
                 self.rune_crafter_cycle.qualified()
             }
             CoreCase::ArdyCakes => self.ardy_cakes_cycle.qualified(),
+            CoreCase::ArdyCakesFight => self.ardy_cakes_fight_cycle.qualified(),
             CoreCase::ArdyThiever | CoreCase::ArdyThieverKnight => {
                 self.ardy_thiever_cycle.qualified()
             }
+            CoreCase::ArdyThieverFight => self.ardy_thiever_fight_cycle.qualified(),
             CoreCase::GnomeChop => self.gnome_chop_cycle.qualified(),
             CoreCase::GnomeFletchShort | CoreCase::GnomeFletchLong => {
                 self.gnome_fletch_cycle.qualified()
@@ -5189,6 +5462,8 @@ impl CoreWitness {
             CoreCase::HerbloreSecondaries => self.herblore_eggs_cycle.qualified(),
             CoreCase::HerbloreSecondariesNewt => self.herblore_newt_cycle.qualified(),
             CoreCase::ChaosDruid
+            | CoreCase::ChaosDruidTower
+            | CoreCase::ChaosDruidYanille
             | CoreCase::MossGiant
             | CoreCase::HillGiant
             | CoreCase::AutoFighter
@@ -5247,7 +5522,9 @@ impl CoreWitness {
             "tanner_bot_cycle": self.tanner_bot_cycle,
             "rune_crafter_cycle": self.rune_crafter_cycle,
             "ardy_cakes_cycle": self.ardy_cakes_cycle,
+            "ardy_cakes_fight_cycle": self.ardy_cakes_fight_cycle,
             "ardy_thiever_cycle": self.ardy_thiever_cycle,
+            "ardy_thiever_fight_cycle": self.ardy_thiever_fight_cycle,
             "gnome_chop_cycle": self.gnome_chop_cycle,
             "gnome_fletch_cycle": self.gnome_fletch_cycle,
             "coal_trucks_cycle": self.coal_trucks_cycle,

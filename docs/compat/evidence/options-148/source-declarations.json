@@ -1,0 +1,107 @@
+{
+  "brief": "docs/compat/briefs/148-alternate-camp-guard-options.md",
+  "catalog_roots": [
+    ".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+    ".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a"
+  ],
+  "note": "Exact catalog directory names are the identity-checked frozen inputs under .superpowers/inputs/; both catalogs carry byte-identical copies of these three cards for the keys below.",
+  "cases": {
+    "chaos_druid_tower": {
+      "card": "ChaosDruidKiller",
+      "source_files": ["ChaosDruidKiller.ts", "ChaosDruidLogic.ts"],
+      "settings_read": {
+        "location": "Chaos Druid Tower",
+        "combatStyleIndex": "1",
+        "loot": "Herb,Law rune,Nature rune",
+        "food": "Lobster",
+        "foodWithdraw": 8,
+        "buryBones": false,
+        "solveClues": false
+      },
+      "spot": {
+        "name": "Chaos Druid Tower",
+        "field_stand": [2562, 3356, 0],
+        "npc_display": "Chaos druid",
+        "prerequisite": "Thieving 46 (door/approach; approach itself is out of cell)"
+      },
+      "post_start_requires": [
+        "two Chaos druid engagements with verified defeat",
+        "Strength XP above baseline",
+        "selected Herb/Law/Nature loot pickup"
+      ],
+      "out_of_cell": ["Tower door picklock walk-up", "banking", "DeathRecovery"]
+    },
+    "chaos_druid_yanille": {
+      "card": "ChaosDruidKiller",
+      "source_files": ["ChaosDruidKiller.ts", "ChaosDruidLogic.ts"],
+      "settings_read": {
+        "location": "Yanille Dungeon",
+        "combatStyleIndex": "1",
+        "loot": "Herb,Law rune,Nature rune",
+        "food": "Lobster",
+        "foodWithdraw": 8,
+        "buryBones": false,
+        "solveClues": false
+      },
+      "spot": {
+        "name": "Yanille Dungeon",
+        "field_stand": [2580, 9501, 0],
+        "npc_display": "Chaos druid warrior",
+        "prerequisite": "Agility 40 (ledge; web/ledge approach is out of cell)"
+      },
+      "post_start_requires": [
+        "two Chaos druid warrior engagements with verified defeat",
+        "Strength XP above baseline",
+        "selected Herb/Law/Nature loot pickup"
+      ],
+      "out_of_cell": ["entrance web", "ledge approach", "banking", "DeathRecovery"]
+    },
+    "ardy_cakes_fight": {
+      "card": "ArdyCakes",
+      "source_files": ["ArdyCakes.ts"],
+      "settings_read": {
+        "guardResponse": "Fight",
+        "solveClues": false
+      },
+      "source_branch": "RESPONSE === 'Fight' selects FightBack task instead of Flee",
+      "preparation": {
+        "thieving": 5,
+        "combat_stats": 40,
+        "weapon": "Adamant scimitar 1331 worn",
+        "ballast": "22 Knives (non-product pack ballast)",
+        "stand": [2668, 3312, 0]
+      },
+      "post_start_requires": [
+        "Thieving XP from Baker's stall",
+        "exact Cake 1891 (not chocolate cake/bread/slice)",
+        "Guard defeat with Strength XP",
+        "never ArrivedNear Flee kite tile (2662, 3288, 0)"
+      ],
+      "out_of_cell": ["Flee kite", "bank-on-full packing"]
+    },
+    "ardy_thiever_fight": {
+      "card": "ArdyThiever",
+      "source_files": ["ArdyThiever.ts"],
+      "settings_read": {
+        "thieveTarget": "Guard",
+        "guardResponse": "Fight",
+        "bankAtLootSlots": 1,
+        "solveClues": false
+      },
+      "source_branch": "RESPONSE === 'Fight' selects FightBack and omits Flee; bank cycle still runs on loot slots",
+      "preparation": {
+        "thieving": 40,
+        "combat_stats": 40,
+        "weapon": "Adamant scimitar 1331 worn",
+        "stand": [2661, 3306, 0]
+      },
+      "post_start_requires": [
+        "Thieving XP and coins from Guard pickpocket",
+        "Guard defeat with Strength XP",
+        "never ArrivedNear Flee kite tile (2662, 3288, 0)",
+        "coins bank deposit, closed return to stand, further pickpocket"
+      ],
+      "out_of_cell": ["Flee kite"]
+    }
+  }
+}
