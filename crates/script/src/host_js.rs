@@ -1482,6 +1482,47 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "shop-button",
+        fields: &[
+            TsField {
+                name: "kind",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "name",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "slot",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "component",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "chunk",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
         op: "close",
         fields: &[],
     },

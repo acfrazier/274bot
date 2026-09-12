@@ -5567,7 +5567,8 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Task 6 — Shop.* reads posted shop_open / shop_stock; buy queues IfButton.
+// Task 6/38 — Shop.* reads posted shop_open / shop_stock; buy queues the
+// exact shop row for the Rust-owned batch.
 #[test]
 fn isolate_shop_closed_is_not_open_with_empty_stock() {
     let src = r#"
@@ -5622,14 +5623,14 @@ export default class T extends LoopingBot {
     assert_eq!(probe.get("open"), Some(&true.into()));
     assert_eq!(
         probe.get("stock"),
-        Some(&serde_json::json!([{ "name": "Lobster", "count": 100 }])),
-        "open shop maps posted shop_stock rows"
+        Some(&serde_json::json!([{ "name": "Lobster", "count": 100, "slot": -1 }])),
+        "open shop maps posted shop_stock rows with their observed slot"
     );
     iso.join();
 }
 
 #[test]
-fn isolate_shop_buy_queues_if_button_on_matching_stock_row() {
+fn isolate_shop_buy_queues_the_exact_posted_shop_row() {
     let src = r#"
 import { Shop } from '../../api/shop/Shop.js';
 export default class T extends LoopingBot {
@@ -5646,14 +5647,21 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9201 }],
-        "Shop.buy('Lobster', 1) queues if-button on the matching stock row"
+        vec![script::shim::InteractReq::ShopButton {
+            kind: "buy".into(),
+            name: "Lobster".into(),
+            id: 377,
+            slot: -1,
+            component: 9201,
+            chunk: 1,
+        }],
+        "Shop.buy('Lobster', 1) queues one Buy 1 on the exact posted row"
     );
     iso.join();
 }
 
 #[test]
-fn isolate_shop_buy_non_fixed_qty_queues_if_button_and_answer_count() {
+fn isolate_shop_buy_batches_the_frozen_ten_five_one() {
     let src = r#"
 import { Shop } from '../../api/shop/Shop.js';
 export default class T extends LoopingBot {
@@ -5671,10 +5679,32 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::IfButton { component_id: 9201 },
-            script::shim::InteractReq::AnswerCount { value: 7 },
+            script::shim::InteractReq::ShopButton {
+                kind: "buy".into(),
+                name: "Lobster".into(),
+                id: 377,
+                slot: -1,
+                component: 9201,
+                chunk: 5,
+            },
+            script::shim::InteractReq::ShopButton {
+                kind: "buy".into(),
+                name: "Lobster".into(),
+                id: 377,
+                slot: -1,
+                component: 9201,
+                chunk: 1,
+            },
+            script::shim::InteractReq::ShopButton {
+                kind: "buy".into(),
+                name: "Lobster".into(),
+                id: 377,
+                slot: -1,
+                component: 9201,
+                chunk: 1,
+            },
         ],
-        "Shop.buy('Lobster', 7) queues if-button then answer-count when qty not in {{1,5,10,all}}"
+        "Shop.buy('Lobster', 7) queues 5+1+1 in one tick, never a count dialog"
     );
     iso.join();
 }

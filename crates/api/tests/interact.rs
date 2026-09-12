@@ -3421,3 +3421,278 @@ fn pending_door_packet_matches_client_one_tile_walk() {
     api::prot::WalkStep { x: 5, z: 6 }.write(&mut c.out);
     assert_eq!(&c.out.data()[..c.out.pos], expected);
 }
+
+/// The shop main modal (3824) with its stock TYPE_INV (3900, two rows) and
+/// the shop side interface (3822) with the player pack TYPE_INV (3823, one
+/// row that shares a name with a stock row).
+fn plant_shop(c: &mut Client) {
+    let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+    cache.objs.resize(7, ObjType::default());
+    cache.objs[4] = ObjType {
+        id: 4,
+        name: "Pot".into(),
+        ..Default::default()
+    };
+    cache.objs[5] = ObjType {
+        id: 5,
+        name: "Rope".into(),
+        ..Default::default()
+    };
+    // The pack's own "Pot": a different object id under the same name.
+    cache.objs[6] = ObjType {
+        id: 6,
+        name: "Pot".into(),
+        ..Default::default()
+    };
+    set_iface(
+        c,
+        3824,
+        IfType {
+            id: 3824,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![5, 6, 0]),
+            link_obj_number: Some(vec![100, 3, 0]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        3822,
+        IfType {
+            id: 3822,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        3823,
+        IfType {
+            id: 3823,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Sell 1".into()),
+                Some("Sell 5".into()),
+                Some("Sell 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        3823,
+        IfTypeMut {
+            link_obj_type: Some(vec![7, 0]),
+            link_obj_number: Some(vec![2, 0]),
+            ..Default::default()
+        },
+    );
+    c.main_modal_id = 3824;
+    c.side_modal_id = 3822;
+}
+
+/// `Shop.buy` presses only the stock container's fixed Buy 1/5/10 slots:
+/// the shared-name pack row is never the target, and a non-fixed amount or a
+/// row that is gone refuses before any packet.
+#[test]
+fn shop_buy_presses_buy_slots_on_the_stock_container_only() {
+    let mut s = scene();
+    plant_shop(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    assert!(snap.shop().open);
+    assert_eq!(snap.shop().stock.len(), 2);
+    assert!(snap.shop().player_available);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        for (name, chunk, operation) in [("Pot", 1, 2), ("Rope", 10, 4)] {
+            match ix.shop_buy(name, chunk) {
+                SendResult::Sent { command, .. } => {
+                    assert!(
+                        matches!(command, WireCommand::Op { operation: op, .. } if op == operation),
+                        "Buy {chunk} must use iop[{operation}]"
+                    );
+                }
+                SendResult::Refused { reason, .. } => panic!("{name} refused: {reason:?}"),
+            }
+        }
+        assert!(matches!(
+            ix.shop_buy("Pot", 7),
+            SendResult::Refused {
+                reason: SendReason::InvalidCount,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.shop_buy("Shark", 1),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::INV_BUTTON2, 4, 0, 3900),
+            (0, MiniMenuAction::INV_BUTTON4, 5, 1, 3900),
+        ],
+        "Buy 1 then Buy 10 as inv-button ops at the stock rows' own id/slot and component 3900"
+    );
+    assert_eq!(rec.actions, vec![0, 0]);
+}
+
+/// `Shop.sell` presses only the shop's player pack (3823) rows, even when
+/// the stock holds the same name.
+#[test]
+fn shop_sell_presses_sell_slots_on_the_shop_player_pack() {
+    let mut s = scene();
+    plant_shop(&mut s.client);
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.shop_sell("Pot", 5) {
+            SendResult::Sent { command, .. } => {
+                assert!(matches!(command, WireCommand::Op { operation: 3, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        // "Rope" is a stock row only: Sell never falls back to it.
+        assert!(matches!(
+            ix.shop_sell("Rope", 1),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::INV_BUTTON3, 6, 0, 3823)],
+        "Sell 5 acts on the pack's own Pot row at component 3823"
+    );
+    assert_eq!(rec.actions, vec![0]);
+}
+
+/// Both shop transfers refuse before any packet while the shop modal is down.
+#[test]
+fn shop_ops_refuse_without_an_open_shop() {
+    let mut s = scene();
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.shop_buy("Pot", 1),
+            SendResult::Refused {
+                reason: SendReason::NoModalOpen,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.shop_sell("Pot", 1),
+            SendResult::Refused {
+                reason: SendReason::NoModalOpen,
+                ..
+            }
+        ));
+    }
+    assert!(rec.menus.is_empty() && rec.actions.is_empty());
+}
+
+/// A shop whose side interface was never decoded posts no player pack: Sell
+/// fails closed on the empty container instead of guessing the backpack.
+#[test]
+fn shop_sell_refuses_without_a_posted_player_pack() {
+    let mut s = scene();
+    let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+    cache.objs.resize(7, ObjType::default());
+    cache.objs[4] = ObjType {
+        id: 4,
+        name: "Pot".into(),
+        ..Default::default()
+    };
+    set_iface(
+        &mut s.client,
+        3824,
+        IfType {
+            id: 3824,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut s.client,
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut s.client,
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![4, 0]),
+            link_obj_number: Some(vec![100, 0]),
+            ..Default::default()
+        },
+    );
+    s.client.main_modal_id = 3824;
+    s.client.side_modal_id = -1;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.shop().open);
+    assert!(!snap.shop().player_available);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.shop_sell("Pot", 1),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert!(rec.menus.is_empty() && rec.actions.is_empty());
+}

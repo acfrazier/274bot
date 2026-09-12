@@ -272,6 +272,7 @@ export type InteractReq =
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
   | { op: 'held'; name: string; action: string}
   | { op: 'inv-button'; id: number; slot: number; component: number; operation: number; bank_generation?: number}
+  | { op: 'shop-button'; kind: string; name: string; id: number; slot: number; component: number; chunk: number}
   | { op: 'close'}
   | { op: 'npc'; name: string; action: string; index?: number | null}
   | { op: 'loc'; x: number; z: number; level: number; action: string; id?: number | null}

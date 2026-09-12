@@ -1856,6 +1856,13 @@ mod isolate {
             })
             .map_err(|e| format!("register teleport: {e}"))?;
         runtime
+            .register_function("__rs2b0t_shop", move |args: &[serde_json::Value]| {
+                Ok(crate::shop::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register shop: {e}"))?;
+        runtime
             .register_function(
                 "__rs2b0t_is_hostile_attacker",
                 |args: &[serde_json::Value]| {
@@ -2356,6 +2363,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "shop_stock", shop_stock)?;
         } else if !had {
             set(&mut scope, obj, "shop_stock", empty_rows)?;
+        }
+        if snap.has_shop_player_available() {
+            let shop_player = if snap.shop_player_available() {
+                row_array(&mut scope, &snap.shop_player())?
+            } else {
+                empty_rows
+            };
+            set(&mut scope, obj, "shop_player", shop_player)?;
+        } else if !had {
+            set(&mut scope, obj, "shop_player", empty_rows)?;
         }
         if snap.has_reach() {
             let reach = reach_object(&mut scope, snap.reach())?;
@@ -3280,6 +3297,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             crate::cake_stall::on_snapshot(&snap);
                             crate::autocast::on_snapshot(&snap);
                             crate::teleport::on_snapshot(&snap);
+                            crate::shop::on_snapshot(&snap);
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
@@ -3289,6 +3307,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 crate::autocast::on_hold(host_hold);
                                 crate::special::on_hold(host_hold);
                                 crate::teleport::on_hold(host_hold);
+                                crate::shop::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -3547,6 +3566,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::autocast::on_reset();
                     crate::special::on_reset();
                     crate::teleport::on_reset();
+                    crate::shop::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     clear_unconsumed_paint_click(&mut runtime);
                 }
@@ -3559,6 +3579,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::autocast::on_pause();
                     crate::special::on_pause();
                     crate::teleport::on_pause();
+                    crate::shop::on_pause();
                     clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Resume => {
@@ -3570,6 +3591,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::autocast::on_resume();
                     crate::special::on_resume();
                     crate::teleport::on_resume();
+                    crate::shop::on_resume();
                 }
                 IsolateCmd::PaintClick { id, generation } => {
                     if paused

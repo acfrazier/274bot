@@ -1858,6 +1858,35 @@ fn dispatch_script_interact(
                     }
                 }
             }
+            InteractReq::ShopButton {
+                kind,
+                name,
+                id,
+                slot,
+                component,
+                chunk,
+            } => {
+                // Sell acts on the shop's own player pack and Buy on its
+                // stock: never the other container, never the backpack. The
+                // exact posted row must still be there (no same-name
+                // fallback), then the api op re-resolves and sends it.
+                let rows: &[api::snapshot::ItemView] = if kind == "sell" {
+                    &snapshot.shop().player
+                } else {
+                    &snapshot.shop().stock
+                };
+                let present = rows
+                    .iter()
+                    .any(|it| it.def.id == id && it.slot == slot && it.component_id == component);
+                if present {
+                    let sent = if kind == "sell" {
+                        ix.shop_sell(&name, chunk)
+                    } else {
+                        ix.shop_buy(&name, chunk)
+                    };
+                    wrote |= matches!(sent, SendResult::Sent { .. });
+                }
+            }
             InteractReq::Close => {
                 let res = ix.close_modal();
                 if host::debug_enabled() {
@@ -2902,6 +2931,45 @@ fn with_script_snapshot_input<R>(
         trade_side_ops_store = Vec::new();
         Vec::new()
     };
+    let shop_player_ops_store: Vec<Vec<String>>;
+    let shop_player_rows: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
+        shop_player_ops_store = s
+            .shop()
+            .player
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        s.shop()
+            .player
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &shop_player_ops_store[i],
+                noted: it.def.noted,
+                cert: posted_cert(obj_names, &it.def),
+                component_id: it.component_id,
+                slot: it.slot,
+            })
+            .collect()
+    } else {
+        shop_player_ops_store = Vec::new();
+        Vec::new()
+    };
+    // `None` = the shop side interface's player pack was not decoded: the
+    // Sell path fails closed rather than acting on an empty stand-in.
+    let shop_player = snapshot
+        .filter(|s| s.shop().player_available)
+        .map(|_| shop_player_rows.as_slice());
     let shop_stock_ops_store: Vec<Vec<String>>;
     let shop_stock: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
         shop_stock_ops_store = s
@@ -3270,6 +3338,7 @@ fn with_script_snapshot_input<R>(
             .map(|controls| (controls.on_component_id, controls.off_component_id)),
         quest_statuses,
         npc_boxes,
+        shop_player,
     };
     f(&input, native)
 }

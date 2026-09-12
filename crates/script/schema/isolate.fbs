@@ -259,12 +259,19 @@ table Snapshot {
   quest_statuses_available: bool = false;
   npc_boxes: [NpcBox];
   npc_boxes_available: bool = false;
+  // The shop side interface's own view of the local player's pack
+  // (`shop_template_side:inv`, 3823) — the container Sell 1/5/10 act on.
+  // `shop_player_available` separates "not decoded this rebuild" (Sell
+  // fails closed) from "decoded and empty".
+  shop_player: [Row];
+  shop_player_available: bool = false;
 }
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-nearest-bank" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "withdraw-load" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
+// | "shop-button"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
