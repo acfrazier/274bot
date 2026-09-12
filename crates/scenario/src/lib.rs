@@ -8528,9 +8528,13 @@ const EGG_FIELD: WorldTile = WorldTile {
     z: 9952,
     level: 0,
 };
-const EDGEVILLE_BANK: WorldTile = WorldTile {
-    x: 3094,
-    z: 3493,
+/// Safe native approach stand for the selected Edgeville booth. The bank
+/// anchor is west of the booth, but its first walk target (3095,3493) is
+/// blocked in both selected revision packs. This diagonal stand makes the
+/// existing exact opener approach (3096,3492) without changing bank APIs.
+const EDGEVILLE_BANK_APPROACH: WorldTile = WorldTile {
+    x: 3095,
+    z: 3491,
     level: 0,
 };
 /// Selected 274/289 packs both contain this Edgeville booth as id 2213 with
@@ -10451,28 +10455,31 @@ fn herblore_seed_bank_readiness() -> Step {
 /// deposit, closed return, further Take. Eggs are not given.
 fn herblore_secondaries_scenario() -> Scenario {
     let field = EGG_FIELD;
-    let bank = EDGEVILLE_BANK;
+    let bank_approach = EDGEVILLE_BANK_APPROACH;
     let eggs = Proof::ItemId {
         id: RED_SPIDERS_EGGS_ID,
         count: 1,
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed banked lobster at Edgeville and tele to the egg field before Start",
+        name: "seed banked lobster and tele to the safe Edgeville booth approach before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, &format!("givebank lobster {HERBLORE_EGG_FOOD_SEED}"));
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                cheat(
+                    c,
+                    &tele_args(bank_approach.level, bank_approach.x, bank_approach.z),
+                );
                 true
             }),
         },
         wait: Wait {
             arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 8,
+                x: bank_approach.x,
+                z: bank_approach.z,
+                level: bank_approach.level,
+                radius: 1,
             },
             budget_ticks: 200,
         },
@@ -18650,6 +18657,12 @@ mod tests {
             .iter()
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
+        assert!(eggs_seed.contains(&Proof::ArrivedNear {
+            x: EDGEVILLE_BANK_APPROACH.x,
+            z: EDGEVILLE_BANK_APPROACH.z,
+            level: EDGEVILLE_BANK_APPROACH.level,
+            radius: 1,
+        }));
         assert!(eggs_seed.contains(&Proof::ArrivedNear {
             x: 3120,
             z: 9952,
