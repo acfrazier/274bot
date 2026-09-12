@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 
 pub const SUPPORT_MATRIX: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../docs/compat/support-matrix.json"
+    "/tests/fixtures/catalog-support-matrix.json"
 ));
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";

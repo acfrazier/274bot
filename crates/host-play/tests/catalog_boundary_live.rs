@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
-const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
+const SUPPORT_MATRIX: &str = include_str!("fixtures/catalog-support-matrix.json");
 const GNOME_WEST_MAGICS: (i32, i32, i32) = GNOME_SOUTH_BANK_MAGIC_STAND;
 const STEEL_PICKAXE_ID: i32 = RUNE_PICKAXE_ID;
 
