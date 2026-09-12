@@ -75,7 +75,7 @@
         "Thieving XP from Baker's stall",
         "exact Cake 1891 (not chocolate cake/bread/slice)",
         "Guard defeat with Strength XP",
-        "never ArrivedNear Flee kite tile (2662, 3288, 0)"
+        "never ArrivedNear Flee kite tile (2655, 3298, 0)"
       ],
       "out_of_cell": ["Flee kite", "bank-on-full packing"]
     },
@@ -98,7 +98,7 @@
       "post_start_requires": [
         "Thieving XP and coins from Guard pickpocket",
         "Guard defeat with Strength XP",
-        "never ArrivedNear Flee kite tile (2662, 3288, 0)",
+        "never ArrivedNear Flee kite tile (2655, 3298, 0)",
         "coins bank deposit, closed return to stand, further pickpocket"
       ],
       "out_of_cell": ["Flee kite"]

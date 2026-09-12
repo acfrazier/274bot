@@ -23,9 +23,9 @@
     "ArdyThiever.ts@8e7d965b": "3cee6ff99d8f24532a5564fc7215faba19ca78f0156386913497bf266fca8aa5"
   },
   "documentation_sha256": {
-    "docs/compat/05-options-148.md": "21ed14f7a0c8d5daacbc1e3e60bc866e4e5c8fb9a1321fd8dc1a3b60caaee58d",
+    "docs/compat/05-options-148.md": "abc57e95e7b9170c73edc021fddd71a0da394c9dc161b5cd819f55a32e69cf02",
     "docs/compat/evidence/options-148/isolated-checks.log": "1d7a2591ee0b30c8ff1f825bf9cf467747a5e02cdc5dda440ed83b58fbb1fbfd",
-    "docs/compat/evidence/options-148/source-declarations.json": "b65160ba386d4536645754de35bed2e566730122ed47c5c283056dbd5253a68c"
+    "docs/compat/evidence/options-148/source-declarations.json": "d58e043d317f8a302b53cb51bee13d93ab99cfa05ef70c7189a0461c650e415c"
   },
   "cases": {
     "chaos_druid_tower": {
@@ -60,7 +60,7 @@
       "requires": [
         "Baker's stall Cake 1891 + Thieving XP",
         "Guard defeat + Strength XP",
-        "no Flee kite tile (2662,3288,0)",
+        "no Flee kite tile (2655,3298,0)",
         "combat kit + Thieving 5 baseline"
       ],
       "inject_declared_by_both_catalogs": true
