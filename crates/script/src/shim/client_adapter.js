@@ -35,12 +35,11 @@ function inScene(lx, lz, reach) {
     return lx >= 0 && lz >= 0 && lx < reach.width && lz < reach.height;
 }
 
-// Posted ordinary-inventory rows only. Fresh objects/ops so a caller
+// Posted native item rows only. Fresh objects/ops so a caller
 // cannot mutate the shared snapshot. Missing component identity is -1,
 // never a hardcoded valid component. Occupied native slots include
 // item id 0; empty/malformed rows are omitted.
-function inventoryItems() {
-    const rows = snap().inv;
+function inventoryItems(rows = snap().inv) {
     if (!Array.isArray(rows)) return [];
     const out = [];
     for (const row of rows) {
@@ -71,6 +70,12 @@ export const reader = proxy('reader', {
     },
     inventory() {
         return inventoryItems();
+    },
+    bankSideItems() {
+        return inventoryItems(snap().bank_side);
+    },
+    sceneState() {
+        return typeof snap().scene_state === 'number' ? snap().scene_state : 0;
     },
     ingame() {
         return snap().ingame === true;

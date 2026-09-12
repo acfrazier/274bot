@@ -1871,6 +1871,51 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn reader_scene_and_bank_side_use_posted_facts_without_inventory_fallback() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        const rows = reader.bankSideItems();
+        if (rows.length) { rows[0].name = 'changed'; rows[0].ops[0] = 'changed'; }
+        globalThis.__probe = { state: reader.sceneState(), side: reader.bankSideItems() };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let inv = [nc(Some("Ordinary inventory"), 1)];
+    let ops = ["Deposit-1".to_string()];
+    let side = [script::isolate_fb::ItemRowInput {
+        slot: 2,
+        ..item_row(1741, Some("Leather"), 3, &ops, false, -1, 2006)
+    }];
+    snap.inv = &inv;
+    snap.bank_side = &side;
+    snap.scene_state = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["state"], 1);
+    assert_eq!(
+        value["side"],
+        serde_json::json!([
+            {"slot": 2, "id": 1741, "name": "Leather", "count": 3,
+             "ops": ["Deposit-1"], "comId": 2006}
+        ])
+    );
+    snap.bank_side = &[];
+    snap.scene_state = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!({"state": 2, "side": []})
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_reader_does_not_invent_chat_or_bank_component_ids() {
     let src = r#"
 import { reader } from '../../adapter/ClientAdapter.js';
