@@ -171,6 +171,7 @@ fn container_items<'a>(ctx: &'a ReadContext<'a>, container: ItemContainer) -> &'
         ItemContainer::TradeSidePack => ctx.trade_side_pack(),
         ItemContainer::ShopStock => &ctx.shop().stock,
         ItemContainer::ShopPlayer => &ctx.shop().player,
+        ItemContainer::MainMake => ctx.main_make(),
         ItemContainer::Inventory | ItemContainer::Widget => ctx.inventory(),
     }
 }

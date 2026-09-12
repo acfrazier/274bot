@@ -1523,6 +1523,35 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "make-panel",
+        fields: &[
+            TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "slot",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "component",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "operation",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
         op: "close",
         fields: &[],
     },

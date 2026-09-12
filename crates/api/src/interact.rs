@@ -670,6 +670,7 @@ fn container_items(container: ItemContainer, snapshot: &GameSnapshot) -> &[ItemV
         ItemContainer::TradeSidePack => &snapshot.trade().side_pack,
         ItemContainer::ShopStock => &snapshot.shop().stock,
         ItemContainer::ShopPlayer => &snapshot.shop().player,
+        ItemContainer::MainMake => snapshot.main_make(),
         ItemContainer::Widget => &[],
     }
 }

@@ -265,13 +265,18 @@ table Snapshot {
   // fails closed) from "decoded and empty".
   shop_player: [Row];
   shop_player_available: bool = false;
+  // Main-modal skill-multi TYPE_INV rows (anvil Make-N). Distinct from
+  // chat `make_products`. `main_make_available` separates "not decoded
+  // this rebuild" from "decoded and empty".
+  main_make: [Row];
+  main_make_available: bool = false;
 }
 
 // One shim interact request, tagged by `op`:
 // "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-nearest-bank" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "withdraw-load" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
-// | "shop-button"
+// | "shop-button" | "make-panel"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
 // Optional fields are absent (not written) when the request has none.
 table Interact {

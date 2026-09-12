@@ -2,6 +2,54 @@ import { Execution } from '../../execution/Execution.js';
 import { actions, reader } from '../../../adapter/ClientAdapter.js';
 import { snap, queue, proxy, optionalText, notImpl } from '../../../shim/_kernel.js';
 
+function callProduction(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_production
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('ChatDialog');
+    }
+    return fn(payload);
+}
+
+function dispatchVerb(step) {
+    if (step.kind !== 'ops') return false;
+    for (const op of step.ops || []) queue(op);
+    return true;
+}
+
+async function run(kind, match, count) {
+    const begin = callProduction({
+        op: 'begin',
+        kind,
+        match: match ?? '',
+        count: count ?? 0,
+    });
+    if (!begin) return false;
+    if (begin.kind === 'notImpl') throw notImpl('ChatDialog.' + kind, begin.reason);
+    if (begin.kind === 'aborted') return false;
+    if (begin.kind === 'done') return begin.result === true;
+    const token = begin.token;
+    let current = begin;
+    while (current) {
+        if (current.kind === 'done') return current.result === true;
+        if (current.kind === 'aborted') return false;
+        if (current.kind === 'notImpl') throw notImpl('ChatDialog.' + kind, current.reason);
+        if (current.kind === 'ops') {
+            dispatchVerb(current);
+        } else if (current.kind !== 'wait') {
+            return false;
+        }
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = callProduction({ op: 'next', token });
+            return next?.kind !== 'wait';
+        }, 0);
+        current = next;
+    }
+    return false;
+}
+
 export const ChatDialog = proxy('ChatDialog', {
     isOpen() {
         const s = snap();
@@ -48,26 +96,7 @@ export const ChatDialog = proxy('ChatDialog', {
         }, 3000);
     },
     async makeX(match, count) {
-        const products = reader.makeProducts();
-        if (products.length === 0) {
-            return false;
-        }
-        const want = match?.toLowerCase();
-        const product = want
-            ? products.find((p) => p.name.toLowerCase().includes(want))
-            : products[0];
-        if (!product) {
-            return false;
-        }
-        const btn = product.buttons.find((b) => b.qty === -1);
-        if (!btn) {
-            throw notImpl('ChatDialog.makeX');
-        }
-        actions.ifButton(btn.comId);
-        await Execution.delayTicks(1);
-        queue({ op: 'answer-count', value: Number(count) || 0 });
-        await Execution.delayTicks(1);
-        return Execution.delayUntil(() => !ChatDialog.isMakeMenu(), 5000);
+        return run('makeX', String(match ?? ''), count);
     },
     async continue() {
         if (!ChatDialog.canContinue()) return false;
@@ -96,16 +125,22 @@ export const ChatDialog = proxy('ChatDialog', {
         );
     },
     isMainMakePanel() {
-        throw notImpl('ChatDialog.isMainMakePanel');
+        if (snap().main_make_available !== true) {
+            throw notImpl('ChatDialog.isMainMakePanel');
+        }
+        return (snap().main_make_items || []).length > 0;
     },
     mainMakeProducts() {
-        throw notImpl('ChatDialog.mainMakeProducts');
+        if (snap().main_make_available !== true) {
+            throw notImpl('ChatDialog.mainMakeProducts');
+        }
+        return (snap().main_make_items || []).map((row) => row.name ?? '');
     },
     async makeFromPanel() {
         throw notImpl('ChatDialog.makeFromPanel');
     },
-    async makeFromPanelMax() {
-        throw notImpl('ChatDialog.makeFromPanelMax');
+    async makeFromPanelMax(match) {
+        return run('makeFromPanelMax', String(match ?? ''), 0);
     },
     async makeOne() {
         throw notImpl('ChatDialog.makeOne');

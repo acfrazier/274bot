@@ -1864,6 +1864,16 @@ mod isolate {
             .map_err(|e| format!("register shop: {e}"))?;
         runtime
             .register_function(
+                "__rs2b0t_production",
+                move |args: &[serde_json::Value]| {
+                    Ok(crate::production::dispatch(
+                        args.first().unwrap_or(&serde_json::Value::Null),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register production: {e}"))?;
+        runtime
+            .register_function(
                 "__rs2b0t_is_hostile_attacker",
                 |args: &[serde_json::Value]| {
                     let payload = args.first().unwrap_or(&serde_json::Value::Null);
@@ -2373,6 +2383,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "shop_player", shop_player)?;
         } else if !had {
             set(&mut scope, obj, "shop_player", empty_rows)?;
+        }
+        if snap.has_main_make_available() {
+            let available = v8::Boolean::new(&mut scope, snap.main_make_available());
+            set(&mut scope, obj, "main_make_available", available.into())?;
+            let main_make = if snap.main_make_available() {
+                row_array(&mut scope, &snap.main_make())?
+            } else {
+                empty_rows
+            };
+            set(&mut scope, obj, "main_make_items", main_make)?;
+        } else if !had {
+            set(&mut scope, obj, "main_make_available", falsy)?;
+            set(&mut scope, obj, "main_make_items", empty_rows)?;
         }
         if snap.has_reach() {
             let reach = reach_object(&mut scope, snap.reach())?;
@@ -3298,6 +3321,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             crate::autocast::on_snapshot(&snap);
                             crate::teleport::on_snapshot(&snap);
                             crate::shop::on_snapshot(&snap);
+                            crate::production::on_snapshot(&snap);
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
@@ -3308,6 +3332,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 crate::special::on_hold(host_hold);
                                 crate::teleport::on_hold(host_hold);
                                 crate::shop::on_hold(host_hold);
+                                crate::production::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -3567,6 +3592,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::special::on_reset();
                     crate::teleport::on_reset();
                     crate::shop::on_reset();
+                    crate::production::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     clear_unconsumed_paint_click(&mut runtime);
                 }
@@ -3580,6 +3606,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::special::on_pause();
                     crate::teleport::on_pause();
                     crate::shop::on_pause();
+                    crate::production::on_pause();
                     clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Resume => {
@@ -3592,6 +3619,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::special::on_resume();
                     crate::teleport::on_resume();
                     crate::shop::on_resume();
+                    crate::production::on_resume();
                 }
                 IsolateCmd::PaintClick { id, generation } => {
                     if paused

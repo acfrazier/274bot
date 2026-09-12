@@ -57,6 +57,9 @@ pub enum Family {
     SideTabs,
     ChatOptions,
     MakeProducts,
+    /// Main-modal TYPE_INV rows whose component ops start with Make
+    /// (the anvil skill-multi panel). Distinct from chat `MakeProducts`.
+    MainMake,
     QuestStatuses,
     Modals,
     Controls,
@@ -252,6 +255,9 @@ pub enum ItemContainer {
     /// The shop's own view of the local player's pack (`shop_template_side:inv`,
     /// 3823): the container Sell 1/5/10 read and act on.
     ShopPlayer,
+    /// Main-modal skill-multi TYPE_INV (anvil Make-N). Distinct from the
+    /// backpack and from chat make-products.
+    MainMake,
     Widget,
 }
 
@@ -696,6 +702,8 @@ pub struct GameSnapshot {
     chat_options: Vec<ChatOptionView>,
     chat_continue_component_id: i32,
     make_products: Vec<MakeProductView>,
+    /// Main-modal TYPE_INV rows whose component ops start with Make.
+    main_make: Vec<ItemView>,
     quest_statuses: Vec<QuestStatusView>,
     quest_statuses_available: bool,
     run_controls: Option<ToggleControlsView>,
@@ -733,6 +741,8 @@ pub struct GameSnapshot {
     chat_options_gate: u64,
     #[serde(skip)]
     make_products_gate: u64,
+    #[serde(skip)]
+    main_make_gate: InvIfaceGate,
     #[serde(skip)]
     quest_statuses_gate: u64,
     #[serde(skip)]
@@ -803,6 +813,7 @@ impl Default for GameSnapshot {
             chat_options: Vec::new(),
             chat_continue_component_id: -1,
             make_products: Vec::new(),
+            main_make: Vec::new(),
             quest_statuses: Vec::new(),
             quest_statuses_available: false,
             run_controls: None,
@@ -831,6 +842,7 @@ impl Default for GameSnapshot {
             side_tabs_gate: InvIfaceGate::default(),
             chat_options_gate: 0,
             make_products_gate: 0,
+            main_make_gate: InvIfaceGate::default(),
             quest_statuses_gate: 0,
             modals_gate: 0,
             controls_gate: 0,
@@ -871,6 +883,7 @@ impl GameSnapshot {
             side_tabs_gate: inv_iface_gate,
             chat_options_gate: gens.iface,
             make_products_gate: gens.iface,
+            main_make_gate: inv_iface_gate,
             quest_statuses_gate: gens.iface,
             modals_gate: gens.iface,
             controls_gate: gens.iface,
@@ -920,6 +933,7 @@ impl GameSnapshot {
             Family::SideTabs => self.rebuild_side_tabs(client),
             Family::ChatOptions => self.rebuild_chat_options(client),
             Family::MakeProducts => self.rebuild_make_products(client),
+            Family::MainMake => self.rebuild_main_make(client),
             Family::QuestStatuses => self.rebuild_quest_statuses(client),
             Family::Modals => self.rebuild_modals(client),
             Family::Controls => self.rebuild_controls(client),
@@ -944,7 +958,8 @@ impl GameSnapshot {
             | Family::Bank
             | Family::BankSide
             | Family::Trade
-            | Family::Shop => (current.inv, start.inv),
+            | Family::Shop
+            | Family::MainMake => (current.inv, start.inv),
             Family::Varp => (current.varp, start.varp),
             Family::Stat => (current.stat, start.stat),
             Family::Chat => (current.chat, start.chat),
@@ -1000,6 +1015,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::SideTabs);
         dirty |= self.rebuild_family(client, Family::ChatOptions);
         dirty |= self.rebuild_family(client, Family::MakeProducts);
+        dirty |= self.rebuild_family(client, Family::MainMake);
         dirty |= self.rebuild_family(client, Family::QuestStatuses);
         dirty |= self.rebuild_family(client, Family::Modals);
         dirty |= self.rebuild_family(client, Family::Controls);
@@ -1257,6 +1273,12 @@ impl GameSnapshot {
     /// Make-X products from the last make-products rebuild.
     pub fn make_products(&self) -> &[MakeProductView] {
         &self.make_products
+    }
+
+    /// Main-modal skill-multi rows from the last main-make rebuild. Empty
+    /// while no main modal is open or the open modal has no Make TYPE_INV.
+    pub fn main_make(&self) -> &[ItemView] {
+        &self.main_make
     }
 
     /// Quest-journal entries from the last quest-statuses rebuild.
@@ -1914,6 +1936,45 @@ impl GameSnapshot {
         true
     }
 
+    /// Main-make rebuild: TYPE_INV children of the open main modal whose
+    /// component ops start with Make (the anvil skill-multi panel). Chat
+    /// make-products stay on `rebuild_make_products`; a shop/trade main
+    /// modal has Buy/Sell/Remove ops and yields no rows.
+    fn rebuild_main_make(&mut self, client: &Client) -> bool {
+        if !self.main_make_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.main_make.clear();
+        let root = client.main_modal_id;
+        if root == -1 {
+            return true;
+        }
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.if_(id as usize) else {
+                continue;
+            };
+            if com.r#type == ComponentType::TYPE_INV
+                && com
+                    .iop
+                    .iter()
+                    .flatten()
+                    .any(|op| op.to_ascii_lowercase().starts_with("make"))
+            {
+                self.main_make.extend(read_inv_component(
+                    &client.cache,
+                    &com,
+                    ItemContainer::MainMake,
+                ));
+            }
+            queue.extend(children_of(&com));
+        }
+        true
+    }
+
     /// Quest-statuses rebuild: the quest tab's (side tab 2) TYPE_TEXT
     /// rows with their colours (m8aq `questStatuses`).
     fn rebuild_quest_statuses(&mut self, client: &Client) -> bool {
@@ -2385,6 +2446,11 @@ impl<'a> ReadContext<'a> {
     /// Make/smelt products.
     pub fn make_products(&self) -> &[MakeProductView] {
         self.0.make_products()
+    }
+
+    /// Main-modal skill-multi rows (anvil Make-N).
+    pub fn main_make(&self) -> &[ItemView] {
+        self.0.main_make()
     }
 
     /// Quest-journal entries.
