@@ -144,6 +144,30 @@ impl ShotState {
     }
 }
 
+fn deferred_readback_message(shots: &Mutex<ShotState>, surface: &str) -> Option<String> {
+    let shots = shots.lock().unwrap();
+    if shots.wanted.is_empty() {
+        return None;
+    }
+    let labels = shots
+        .wanted
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "[panel] capture readback deferred by surface {surface}: {labels}"
+    ))
+}
+
+fn report_deferred_readback(shots: &Mutex<ShotState>, surface: &str) {
+    if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+        if let Some(message) = deferred_readback_message(shots, surface) {
+            eprintln!("{message}");
+        }
+    }
+}
+
 /// Redraw behavior for the event loop.
 #[derive(Clone, Copy, Debug)]
 pub enum RedrawMode {
@@ -555,11 +579,22 @@ impl AppWindow {
         let (frame, reconfigure_after_present) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+            wgpu::CurrentSurfaceTexture::Lost => {
+                report_deferred_readback(shots, "lost");
                 self.surface.configure(&self.device, &self.surface_desc);
                 return Ok(());
             }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                report_deferred_readback(shots, "outdated");
+                self.surface.configure(&self.device, &self.surface_desc);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                report_deferred_readback(shots, "timeout");
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                report_deferred_readback(shots, "occluded");
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -1315,6 +1350,26 @@ mod tests {
         assert_eq!(
             shots.status("gnome_chop"),
             ShotStatus::Failed("readback did not complete".into())
+        );
+    }
+
+    #[test]
+    fn surface_skip_diagnostic_names_only_readback_pending_captures() {
+        let shots = Mutex::new(ShotState::default());
+        shots
+            .lock()
+            .unwrap()
+            .enqueue("still-requested".into(), "{}".into());
+        assert_eq!(deferred_readback_message(&shots, "occluded"), None);
+
+        {
+            let mut shots = shots.lock().unwrap();
+            shots.promote_requests();
+            shots.enqueue("not-promoted".into(), "{}".into());
+        }
+        assert_eq!(
+            deferred_readback_message(&shots, "occluded").as_deref(),
+            Some("[panel] capture readback deferred by surface occluded: still-requested")
         );
     }
 
