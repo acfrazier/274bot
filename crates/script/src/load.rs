@@ -2823,12 +2823,21 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         scope: &mut v8::HandleScope<'s>,
         t: &crate::isolate_fb::TileReader<'_>,
     ) -> Result<v8::Local<'s, v8::Value>, String> {
+        tile_values_object(scope, t.x(), t.z(), t.level())
+    }
+
+    fn tile_values_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        x_value: i32,
+        z_value: i32,
+        level_value: i32,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
         let o = v8::Object::new(scope);
-        let x = num(scope, t.x() as f64);
+        let x = num(scope, x_value as f64);
         set(scope, o, "x", x)?;
-        let z = num(scope, t.z() as f64);
+        let z = num(scope, z_value as f64);
         set(scope, o, "z", z)?;
-        let level = num(scope, t.level() as f64);
+        let level = num(scope, level_value as f64);
         set(scope, o, "level", level)?;
         Ok(o.into())
     }
@@ -2992,6 +3001,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "z", z)?;
         let level = num(scope, ent.level() as f64);
         set(scope, o, "level", level)?;
+        // ClientAdapter reader.locs() keeps the native flat fields for
+        // existing consumers, while compat Loc consumers read the same
+        // coordinates through the nested `tile` shape.
+        let tile = tile_values_object(scope, ent.x(), ent.z(), ent.level())?;
+        set(scope, o, "tile", tile)?;
         let distance = num(scope, ent.distance() as f64);
         set(scope, o, "distance", distance)?;
         let health = num(scope, ent.health() as f64);

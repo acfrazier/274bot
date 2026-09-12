@@ -954,6 +954,66 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_reader_locs_exposes_nested_tiles_and_preserves_flat_fields() {
+    let src = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+export default class T extends LoopingBot {
+    loop() {
+        const locs = reader.locs();
+        globalThis.__probe = {
+            occupied: locs.map((loc) => `${loc.tile.x},${loc.tile.z}`),
+            flat: locs.map((loc) => [loc.x, loc.z, loc.level]),
+            count: locs.length,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Use".to_string()];
+    let first_locs = [script::isolate_fb::SceneEntityInput {
+        index: 4,
+        id: 2783,
+        name: Some("Fire"),
+        x: 3236,
+        z: 3420,
+        level: 0,
+        distance: 2,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let mut snap = base_snapshot();
+    snap.locs = &first_locs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!({
+            "occupied": ["3236,3420"],
+            "flat": [[3236, 3420, 0]],
+            "count": 1,
+        })
+    );
+
+    snap.tick = 2;
+    snap.locs = &[];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!({"occupied": [], "flat": [], "count": 0})
+    );
+    iso.join();
+}
+
 // Task 3 — ScriptRunner.stop stops the isolate: the stop flag breaks the
 // tick loop on the isolate thread (like IsolateCmd::Stop), the Runtime is
 // dropped, and the host sees a dead isolate.
