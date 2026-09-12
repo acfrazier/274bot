@@ -99,8 +99,10 @@ fn catalog_dim_register_stamps_unloadable_even_when_imports_remap() {
         r#"
 import Woodcutter from './Woodcutter/Woodcutter.js';
 import CookBot from './CookBot/CookBot.js';
+import BankSorter from './BankSorter/BankSorter.js';
 ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });
 ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
+ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
 "#,
     )
     .unwrap();
@@ -108,6 +110,8 @@ ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
     std::fs::write(scripts.join("Woodcutter.ts"), body).unwrap();
     std::fs::create_dir_all(root.join("src/bot/scripts/CookBot")).unwrap();
     std::fs::write(root.join("src/bot/scripts/CookBot/CookBot.ts"), body).unwrap();
+    std::fs::create_dir_all(root.join("src/bot/scripts/BankSorter")).unwrap();
+    std::fs::write(root.join("src/bot/scripts/BankSorter/BankSorter.ts"), body).unwrap();
 
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
@@ -120,6 +124,13 @@ ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
         .get(ScriptSource::Catalog, "CookBot")
         .expect("CookBot listed");
     assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
+    let sorter = lib
+        .get(ScriptSource::Catalog, "BankSorter")
+        .expect("BankSorter remains listed with its availability reason");
+    assert_eq!(
+        sorter.unloadable.as_deref(),
+        Some("dim: BankSorter is unavailable until native bank sorting is implemented")
+    );
 }
 
 #[test]

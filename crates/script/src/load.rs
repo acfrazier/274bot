@@ -880,6 +880,11 @@ fn catalog_unloadable(
     scanned: Option<String>,
 ) -> Option<String> {
     if source == ScriptSource::Catalog {
+        if name == "BankSorter" {
+            return Some(
+                "dim: BankSorter is unavailable until native bank sorting is implemented".into(),
+            );
+        }
         if is_catalog_dim(name) {
             return Some(format!("dim: {name}"));
         }
