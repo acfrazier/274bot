@@ -1,0 +1,98 @@
+{
+  "task": "t_30bc0807",
+  "verified_utc": "2026-09-12T12:25:52Z",
+  "branch": "codex/rs2b0t-multirevision",
+  "brief": "docs/compat/briefs/147-ranged-consumable-options.md",
+  "brief_sha256": "d68544d03f8700653335377351c515928e40610c0ed912eba358efe81fd2d735",
+  "implementation": {
+    "commit": "c5102901b37f836e4c41681461abc7941c4c93fb",
+    "parent": "73a6dd6f1fbf8ccf6f1bc5dbe9d305b1f665fbfc",
+    "client_gitlink": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
+    "exact_export": ".superpowers/review-exports/t_30bc0807-r1b",
+    "export_kind": "git archive of the implementation commit; .superpowers/inputs and vendor/fr-client-rust symlinked to the canonical frozen inputs and submodule checkout",
+    "exclusive_target": ".superpowers/review-exports/t_30bc0807-r1b/target",
+    "raw_log": ".superpowers/review-exports/t_30bc0807-r1b/checks.log"
+  },
+  "source_sha256": {
+    "crates/scenario/src/lib.rs": "b0e1f11c0e0e835dcc55e9beb14bb6131d20ab1bb08df2370c58dadbdb72f7e6",
+    "crates/host-play/src/catalog_core.rs": "c82338c83385f90cb2ae1ada47f8f9a40e31b577bd037184eb9b3a68fbafef72",
+    "crates/host-play/tests/catalog_boundary_live.rs": "787b7ca292e0dd3bb11af16373e1f1894dce36283bc0d0a78c158a40cf91e235",
+    "AutoFighter.ts@100adccc": "d82972d038849d4a7f897a264ead850b4de218239d54eab16007a4e0c12266c2",
+    "AutoFighter.ts@8e7d965b": "d82972d038849d4a7f897a264ead850b4de218239d54eab16007a4e0c12266c2",
+    "RockCrab.ts@100adccc": "7e12b775e0133353f5f45ab8bdca48c62eabe75adec7d09ade997f4f7c62a5ff",
+    "RockCrab.ts@8e7d965b": "7e12b775e0133353f5f45ab8bdca48c62eabe75adec7d09ade997f4f7c62a5ff",
+    "GreenDragon.ts@100adccc": "46b667c46e82ca8f4d4c7461b93f6be8af05b021bd18126e82784d4264bf1fe9",
+    "GreenDragon.ts@8e7d965b": "46b667c46e82ca8f4d4c7461b93f6be8af05b021bd18126e82784d4264bf1fe9"
+  },
+  "documentation_sha256": {
+    "docs/compat/05-options-147.md": "46d21f36c38f9e1c91ed75b6422066e96589ba8b2fde6e9a50c83756688a8cbb",
+    "docs/compat/evidence/options-147/isolated-checks.log": "e0d688224377e0f3ad8beb0c52f19e8551361f7b8aa2ac58c35761aa26f9b70",
+    "docs/compat/evidence/options-147/source-declarations.json": "0042c3b7c6f50affb015e60436540b17452cbd13e72d449682a82b9ced07ecaa"
+  },
+  "cases": {
+    "auto_fighter_range": {
+      "card": "AutoFighter",
+      "core_style": "ranged",
+      "requires": ["Ranged XP above baseline", "com_mode varp 43 == rapid (1)", "worn Bronze arrow 882 below its observed peak"],
+      "inject_declared_by_both_catalogs": true
+    },
+    "rock_crab_range": {
+      "card": "RockCrab",
+      "core_style": "ranged",
+      "requires": ["dormant Rocks to Rock Crab activation", "Ranged XP above baseline", "com_mode varp 43 == rapid (1)", "worn Bronze arrow 882 below its observed peak"],
+      "inject_declared_by_both_catalogs": true
+    },
+    "green_dragon_special": {
+      "card": "GreenDragon",
+      "core_consumable": "special",
+      "requires": ["Strength XP above baseline", "sa_attack varp 301 == 1", "sa_energy varp 300 falls by the dragon dagger's 250 cost", "worn Dragonfire shield 1540"],
+      "inject_declared_by_both_catalogs": true,
+      "pre_start_requires": ["sa_energy varp 300 >= 250 acknowledged before Start"]
+    },
+    "green_dragon_potions": {
+      "card": "GreenDragon",
+      "core_consumable": "potions",
+      "requires": ["Strength XP above baseline", "Super attack(3) 145 to Super attack(2) 147 while in combat", "native attack or strength boost after the dose", "worn Dragonfire shield 1540"],
+      "inject_declared_by_both_catalogs": true,
+      "pre_start_requires": ["no seeded two-dose flask", "no pre-existing attack or strength boost"]
+    }
+  },
+  "checks": {
+    "scenario": {"passed": 108, "failed": 0, "ignored": 0, "doc_tests_failed": 0},
+    "host_play_lib": {"passed": 177, "failed": 0, "ignored": 0},
+    "catalog_boundary_live": {"passed": 53, "failed": 0, "ignored_live": 1},
+    "strict_clippy_scenario_host_play_all_targets": "passed",
+    "rustfmt_check": "passed",
+    "git_diff_check": "passed",
+    "frozen_source_identity": "passed",
+    "injected_settings_declared_by_card_source": "passed"
+  },
+  "named_false_positives_rejected": [
+    "melee Strength XP instead of Ranged XP (all frames)",
+    "non-rapid combat mode",
+    "worn projectile stack that never shrinks",
+    "queued special bar with no sa_energy payment",
+    "sa_energy payment with no armed bar",
+    "potion dose with no boost",
+    "boost with no dose",
+    "seeded or persisted two-dose flask before Start",
+    "pre-existing attack/strength boost before Start",
+    "already-armed special bar before Start",
+    "bagged bow, missing arrows, low Ranged",
+    "awake Rocks baseline for the crab range cell",
+    "crab stand used for the AutoFighter range cell",
+    "injected setting the frozen card does not read"
+  ],
+  "gold_bounds": {"deadline_seconds": 180, "watch_ticks": 150, "changed": false},
+  "post_start_cheats": false,
+  "existing_fixtures_changed": false,
+  "live_launched": false,
+  "acceptance_claimed": false,
+  "unresolved_constraints": [
+    "No LIVE; the four catalog x revision cells are root-owned and unproven",
+    "Engine-side behaviour unobservable here: the logged-in sa_energy pool, server-side super-potion boost and arrow consumption",
+    "Both frozen cards are byte-identical across catalogs, so the four cells differ only by client revision",
+    "RockCrab reads bankStrategy without declaring it in SETTINGS; the range cell injects the card's own Off default and the regression documents the gap",
+    "support-matrix.json carries no per-case status or proof ref for the four new cells; matrix refresh is root-owned"
+  ]
+}
