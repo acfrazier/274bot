@@ -50,7 +50,7 @@ specific cycles beside the existing Edgeville combat and Flee thieving cells:
   plain Chaos druid identity.
 - **Cakes Fight** (`ardy_cakes_fight`): Baker's stall Cake 1891 + Thieving XP,
   then a verified Guard defeat with Strength XP, without landing on the Flee kite
-  tile (2662,3288,0). Chocolate cake / bread / chocolate slice are not stall food.
+  tile (2655,3298,0). Chocolate cake / bread / chocolate slice are not stall food.
 - **Thiever Fight** (`ardy_thiever_fight`): pickpocket coins + Thieving XP, verified
   Guard defeat with Strength XP (no Flee kite), then the same coins bank /
   closed return / further pickpocket cycle as the Flee cell.
