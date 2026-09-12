@@ -62,6 +62,19 @@ pub struct ShotCapture {
     pub rgba: Vec<u8>,
 }
 
+/// Observable ownership stage for one labeled capture. Terminal harnesses
+/// use this ledger rather than a per-frame write count, so a completed shot
+/// remains completed while a separate proof gate is still pending.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShotStatus {
+    Missing,
+    Requested,
+    ReadbackPending,
+    WritePending,
+    Written,
+    Failed(String),
+}
+
 /// Whole-window capture coordination between the scenario sink (slot
 /// thread), the UI body (per-frame drain), the render pass (readback),
 /// and the panel frame (file write).
@@ -74,6 +87,61 @@ pub struct ShotState {
     pub wanted: Vec<(String, String)>,
     /// Captures completed by the render pass, consumed by the UI body.
     pub done: Vec<ShotCapture>,
+    /// Labels whose PNG and matching snapshot sidecar both wrote.
+    written: Vec<String>,
+    /// Terminal failures retained for the harness and diagnostics.
+    failed: Vec<(String, String)>,
+}
+
+impl ShotState {
+    pub fn enqueue(&mut self, label: String, snapshot_json: String) {
+        self.written.retain(|written| written != &label);
+        self.failed.retain(|(failed, _)| failed != &label);
+        self.requests.push((label, snapshot_json));
+    }
+
+    pub fn promote_requests(&mut self) -> usize {
+        let requests = mem::take(&mut self.requests);
+        let count = requests.len();
+        self.wanted.extend(requests);
+        count
+    }
+
+    pub fn mark_written(&mut self, label: &str) {
+        self.failed.retain(|(failed, _)| failed != label);
+        if !self.written.iter().any(|written| written == label) {
+            self.written.push(label.to_string());
+        }
+    }
+
+    pub fn mark_failed(&mut self, label: &str, error: &str) {
+        self.written.retain(|written| written != label);
+        self.failed.retain(|(failed, _)| failed != label);
+        self.failed.push((label.to_string(), error.to_string()));
+    }
+
+    pub fn status(&self, label: &str) -> ShotStatus {
+        if let Some((_, error)) = self.failed.iter().rev().find(|(failed, _)| failed == label) {
+            return ShotStatus::Failed(error.clone());
+        }
+        if self.written.iter().any(|written| written == label) {
+            return ShotStatus::Written;
+        }
+        if self.done.iter().any(|capture| capture.label == label) {
+            return ShotStatus::WritePending;
+        }
+        if self.wanted.iter().any(|(wanted, _)| wanted == label) {
+            return ShotStatus::ReadbackPending;
+        }
+        if self
+            .requests
+            .iter()
+            .any(|(requested, _)| requested == label)
+        {
+            return ShotStatus::Requested;
+        }
+        ShotStatus::Missing
+    }
 }
 
 /// Redraw behavior for the event loop.
@@ -583,8 +651,12 @@ impl AppWindow {
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         if !readbacks.is_empty() {
+            let attempted = readbacks
+                .iter()
+                .map(|readback| readback.label.clone())
+                .collect::<Vec<_>>();
             let captures = self.map_readbacks(readbacks);
-            shots.lock().unwrap().done.extend(captures);
+            record_readback_outcomes(&mut shots.lock().unwrap(), &attempted, captures);
         }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
@@ -701,6 +773,19 @@ struct ShotReadback {
     buffer: wgpu::Buffer,
     width: u32,
     height: u32,
+}
+
+fn record_readback_outcomes(
+    shots: &mut ShotState,
+    attempted: &[String],
+    captures: Vec<ShotCapture>,
+) {
+    for label in attempted {
+        if !captures.iter().any(|capture| &capture.label == label) {
+            shots.mark_failed(label, "readback did not complete");
+        }
+    }
+    shots.done.extend(captures);
 }
 
 /// The offscreen capture target for backends whose surface textures
@@ -1189,6 +1274,48 @@ mod tests {
         assert_eq!(align_up(256, 256), 256);
         assert_eq!(align_up(257, 256), 512);
         assert_eq!(align_up(0, 256), 0);
+    }
+
+    #[test]
+    fn shot_state_reports_each_owned_capture_stage() {
+        let mut shots = ShotState::default();
+        assert_eq!(shots.status("gnome_chop"), ShotStatus::Missing);
+
+        shots.enqueue("gnome_chop".into(), "{\"scene\":2}".into());
+        assert_eq!(shots.status("gnome_chop"), ShotStatus::Requested);
+
+        assert_eq!(shots.promote_requests(), 1);
+        assert_eq!(shots.status("gnome_chop"), ShotStatus::ReadbackPending);
+
+        shots.wanted.clear();
+        shots.done.push(ShotCapture {
+            label: "gnome_chop".into(),
+            snapshot_json: "{\"scene\":2}".into(),
+            width: 1,
+            height: 1,
+            rgba: vec![0, 0, 0, 255],
+        });
+        assert_eq!(shots.status("gnome_chop"), ShotStatus::WritePending);
+
+        shots.done.clear();
+        shots.mark_written("gnome_chop");
+        assert_eq!(shots.status("gnome_chop"), ShotStatus::Written);
+
+        shots.mark_failed("other", "readback did not complete");
+        assert_eq!(
+            shots.status("other"),
+            ShotStatus::Failed("readback did not complete".into())
+        );
+    }
+
+    #[test]
+    fn missing_mapped_readback_is_retained_as_a_capture_failure() {
+        let mut shots = ShotState::default();
+        record_readback_outcomes(&mut shots, &["gnome_chop".into()], Vec::new());
+        assert_eq!(
+            shots.status("gnome_chop"),
+            ShotStatus::Failed("readback did not complete".into())
+        );
     }
 
     /// The merged glyph font must cover the two non-Latin-1 codepoints
