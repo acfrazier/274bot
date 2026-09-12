@@ -1,8 +1,0 @@
-{
-  "freshRsaKeyPair": true,
-  "privateKeyRemainsLocal": true,
-  "freshSqliteSchema": true,
-  "publicKeySha256": "29e6c58371fdc8f8ba54c5fa1a561ab0387e1f46df210c9a4de7f0ddb233a053",
-  "platform": "win32",
-  "node": "v24.19.0"
-}

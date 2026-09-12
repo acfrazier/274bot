@@ -1,7 +1,0 @@
-    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/vendor/fr-client-rust/crates/client)
-    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/crates/api)
-    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/crates/script)
-    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/crates/host)
-    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/crates/nav)
-    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-8a2fafb9-6cb5a0b/crates/host-play)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.19s

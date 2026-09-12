@@ -1,8 +1,0 @@
-{
-  "time_utc": "2026-09-11T11:30:49.803202+00:00",
-  "task": "274bot-Catalog-289-04d7b1f4-Native-20260911",
-  "powershell": "$ProgressPreference='SilentlyContinue'\n$checks=Get-Content 'C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-04d7b1f4\\platform-checks.json' -Raw | ConvertFrom-Json\nif (-not $checks.all_passed) { throw 'Focused Windows checks not complete' }\n$ErrorActionPreference='Stop'\n$name='274bot-Catalog-289-04d7b1f4-Native-20260911'\nif (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { throw 'Owned task label already exists; preserve prior run' }\n$action=New-ScheduledTaskAction -Execute 'C:\\Program Files\\Python314\\python.exe' -Argument '\"C:\\ProgramData\\274bot-Test\\multirevision-20260910-native-04d7b1f4\\windows-native-watch-04d7b1f4.py\"'\n$principal=New-ScheduledTaskPrincipal -UserId 'BotTest' -LogonType Interactive -RunLevel Limited\n$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5)\nRegister-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings | Out-Null\nStart-ScheduledTask -TaskName $name\nGet-ScheduledTask -TaskName $name | Select-Object TaskName,State,@{N='User';E={$_.Principal.UserId}},@{N='RunLevel';E={$_.Principal.RunLevel}} | ConvertTo-Json\n",
-  "stdout": "{\n    \"TaskName\":  \"274bot-Catalog-289-04d7b1f4-Native-20260911\",\n    \"State\":  4,\n    \"User\":  \"BotTest\",\n    \"RunLevel\":  0\n}\n",
-  "stderr": "",
-  "exit_code": 0
-}

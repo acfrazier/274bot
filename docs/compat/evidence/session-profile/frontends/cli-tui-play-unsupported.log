@@ -1,2 +1,0 @@
-tui-play: unsupported revision "377"; use 274 or 289
-usage: tui-play [--profile local-274|local-289|public-274] [--revision 274|289] [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] [--live script_<name>] [--user USER]... (default user: first vault profile)

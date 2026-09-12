@@ -1,9 +1,0 @@
-{
-  "source_url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip",
-  "archive_sha256": "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7",
-  "binary_sha256": "04ec2385879f7e1c45dbe76c4020970555de48eeb97c23f59620ede061328f51",
-  "version": "NASM version 3.02 compiled on Jun 28 2026",
-  "path": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\tools\\nasm-3.02\\nasm.exe",
-  "at": "2026-09-10T23:05:38.864070+00:00",
-  "scope": "portable campaign tools; process-local PATH only"
-}

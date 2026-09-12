@@ -1,9 +1,0 @@
-{
-  "host_commit": "df2ba846a51e5010fe8dc8aa104222955b3b0cba",
-  "change": "Only two existing fixture StepKind choices: Repeat to Perform, native sends/waits and generic runner unchanged.",
-  "scenario_tests_passed": 105,
-  "scenario_tests_exit": 0,
-  "source_manifest": "docs/compat/evidence/catalog-headed/source-geardf2.json",
-  "cache_reused": true,
-  "source_export_isolated": true
-}

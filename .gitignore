@@ -6,3 +6,15 @@ docs/superpowers/
 .DS_Store
 imgui.ini
 274bot-panel.ini
+
+# Local operator guidance, campaign evidence, and build exports
+/AGENTS.md
+/docs/execution.md
+/docs/compat/
+/target-*/
+/.check-*/
+/.review-export-*/
+/.dump_special.py
+/.fix_generate_nl.py
+/.hash_overlay.py
+/tools/game-data/_review_check.mjs

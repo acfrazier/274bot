@@ -1,6 +1,0 @@
-2026-09-10 17:50 UTC. First start of the pinned fixture bundle on 274bot-builder exited 1.
-Command: node --import tsx src/app.ts (Node v24.20.0)
-Error: ENOENT: no such file or directory, open data/raw/wordenc
-Stack: WordEnc.load (src/cache/wordenc/WordEnc.ts:36:33) -> World.start (src/engine/World.ts:297:17).
-Following asset probe: curl exit 7, HTTP 000; no readiness pass.
-Source audit confirms data/raw contains just wordenc; all other static data runtime paths point to included data/pack or separately initialized data/config.

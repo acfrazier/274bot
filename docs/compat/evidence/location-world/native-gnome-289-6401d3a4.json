@@ -1,9 +1,0 @@
-{
-  "receipt": "docs/compat/evidence/catalog-headed/r289-gnome-course-8e7d965b-6401d3a4.json",
-  "shots": {
-    "docs/compat/evidence/catalog-headed/r289-gnome-course-8e7d965b-6401d3a4/shots/2026-09-11T03-33-46_12953/2026-09-11T03-34-45_gnome_course.json": "649da4e3c86d0fbe98ddbbeb3f4a6e2636b1393563e9063facef6655e9c90b6d",
-    "docs/compat/evidence/catalog-headed/r289-gnome-course-8e7d965b-6401d3a4/shots/2026-09-11T03-33-46_12953/2026-09-11T03-34-45_gnome_course.png": "bb93c5157db91900f688a528a0dd18213c537abddb7dca04c8bcf1177db3f5a0"
-  },
-  "observed": "Root read native panel during elevated rope/tree sections and later laps, plus the stored terminal PNG showing lap 1, seven obstacles and ground scene. Log records later lap completion and actual levels 1 and 2.",
-  "limits": "One representative newer-catalog 289 native GPU run. F12 is disabled during live scenarios, so intermediate CUA screenshots are conversation observations; the terminal PNG is the persisted capture. No all-settings, lifecycle, 274 frontend or performance claim."
-}

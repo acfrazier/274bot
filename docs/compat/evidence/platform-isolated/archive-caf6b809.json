@@ -1,9 +1,0 @@
-{
-  "archive": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809.tar.gz",
-  "archive_sha256": "03f46144508451e7942981cab6a43e9536cae0cc74ac488fe8587f808aeb6852",
-  "archive_bytes": 89335938,
-  "host_commit": "caf6b809f42294edf80b745208c206fdcccbaa0c",
-  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
-  "source_files": 6292,
-  "old_inputs_archive_sha256": "2b848e33b3e7325bfcad3f43c7693f000d2958bb4b8d7a3b55bb1c766baa81fa"
-}

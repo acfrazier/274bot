@@ -1,2 +1,0 @@
-rustfmt --edition 2021 --check crates/script/tests/client_adapter_local_walk.rs
-exit 0

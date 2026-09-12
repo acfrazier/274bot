@@ -1,4 +1,0 @@
-   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/source-d2372fe0-external/crates/nav)
-   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/source-d2372fe0-external/crates/host)
-   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/source-d2372fe0-external/crates/host-play)
-error: could not compile `host-play` (lib) due to 11 previous errors

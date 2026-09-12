@@ -1,8 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
-     Running tests/native_quest_status.rs (target-t_95823e19/debug/deps/native_quest_status-3b233db4aaeb731b)
-
-running 2 tests
-test quest_list_status_maps_only_documented_display_colours ... ok
-test quest_list_status_uses_the_frozen_declared_strings ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

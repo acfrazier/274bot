@@ -1,6 +1,0 @@
-file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/locs.js
-sha256=635ff31d9c3e2a32dfa85db27fc0399b3ff355cc6fa0fb82a17bb1a3b50b96a4
-2|import EntityQuery from '../query/Query.js';
-22|    distance() {
-23|        return typeof this.snap.distance === 'number' ? this.snap.distance : 0;
-44|    query() {

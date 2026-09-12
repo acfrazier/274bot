@@ -1,7 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
-     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/host_play-53fbf083d960886f)
-
-running 1 test
-test tests::withdraw_x_composes_script_host_dialog_and_posted_inventory_result ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 121 filtered out; finished in 0.09s

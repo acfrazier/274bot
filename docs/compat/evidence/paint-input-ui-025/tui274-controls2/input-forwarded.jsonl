@@ -1,7 +1,0 @@
-{"elapsed_seconds": 25.596, "request": {"action": "click", "x": 10, "y": 18}, "terminal_bytes_hex": "1b5b3c303b31303b31384d1b5b3c303b31303b31386d"}
-{"elapsed_seconds": 26.94, "request": {"action": "click", "x": 10, "y": 23}, "terminal_bytes_hex": "1b5b3c303b31303b32334d1b5b3c303b31303b32336d"}
-{"elapsed_seconds": 27.315, "request": {"action": "click", "x": 4, "y": 23}, "terminal_bytes_hex": "1b5b3c303b343b32334d1b5b3c303b343b32336d"}
-{"elapsed_seconds": 27.849, "request": {"action": "click", "x": 21, "y": 39}, "terminal_bytes_hex": "1b5b3c303b32313b33394d1b5b3c303b32313b33396d"}
-{"elapsed_seconds": 28.065, "request": {"action": "click", "x": 10, "y": 23}, "terminal_bytes_hex": "1b5b3c303b31303b32334d1b5b3c303b31303b32336d"}
-{"elapsed_seconds": 29.395, "request": {"action": "click", "x": 21, "y": 39}, "terminal_bytes_hex": "1b5b3c303b32313b33394d1b5b3c303b32313b33396d"}
-{"elapsed_seconds": 29.565, "request": {"action": "click", "x": 29, "y": 39}, "terminal_bytes_hex": "1b5b3c303b32393b33394d1b5b3c303b32393b33396d"}

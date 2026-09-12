@@ -1,7 +1,0 @@
-{
-  "manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
-  "complete_archive_sha256": "6524c4835aa825dc3994d7ae1a6536c1141836367eacaeccd5a3d61a5a373171",
-  "verified_files": 1213,
-  "fix": "Added missing data/raw/wordenc; original runtime files verified unchanged; original manifest retained",
-  "destination": "/home/builder/274bot-campaign/multirevision-20260910/server-289"
-}

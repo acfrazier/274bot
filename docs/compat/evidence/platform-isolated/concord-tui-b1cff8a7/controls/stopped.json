@@ -1,7 +1,0 @@
-{
-  "observed_at": "2026-09-11T06:36:58.264711+00:00",
-  "raw_sha256": "0d1fe50b3c67f549eaa0bfdd2d865132f02f79a06dd55f04fcebbfd0d055e4d5",
-  "raw_bytes": 106204,
-  "screen_sha256": "6e3e6237cceb6d30126ed653728cc6dbabbf602c751d6de942bbaf76094b4dd4",
-  "method": "Interpret actual captured PTY stdout using pyte0.8.2; stderr held separately by private runner"
-}

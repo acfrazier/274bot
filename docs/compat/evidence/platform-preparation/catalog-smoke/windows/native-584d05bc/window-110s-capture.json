@@ -1,5 +1,0 @@
-{
-  "exit_code": 1,
-  "stdout": "",
-  "stderr": "File C:\\ProgramData\\274bot-Test\\multirevision-20260910-native-584d05bc\\windows-capture-owned.ps1 cannot be loaded \nbecause running scripts is disabled on this system. For more information, see about_Execution_Policies at \nhttps:/go.microsoft.com/fwlink/?LinkID=135170.\n    + CategoryInfo          : SecurityError: (:) [], ParentContainsErrorRecordException\n    + FullyQualifiedErrorId : UnauthorizedAccess\n"
-}

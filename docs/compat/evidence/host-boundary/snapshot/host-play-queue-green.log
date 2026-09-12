@@ -1,9 +1,0 @@
-   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.14s
-     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/host_play-d573b9da06ce9f8f)
-
-running 1 test
-test tests::queue_generation_discards_pre_reconnect_work ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 0.00s
-
