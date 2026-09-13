@@ -1,6 +1,7 @@
 use host_play::paired_core::{
-    AirObservation, AirRole, FlaxObservation, FlaxRole, PairCase, PairWatch, PairWatchStatus,
-    StartBarrier, AIR_RUINS, FALADOR_EAST, FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
+    pair_settings, AirObservation, AirRole, FlaxObservation, FlaxRole, PairCase, PairWatch,
+    PairWatchStatus, StartBarrier, AIR_RUINS, FALADOR_EAST, FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP,
+    TRADE_CAP,
 };
 
 fn air_ready(player: &str, role: AirRole) -> AirObservation {
@@ -327,4 +328,53 @@ fn mule_and_flax_login_display_names_share_start() {
     assert_eq!(flax.barrier(), StartBarrier::StartBoth);
     flax.begin_shared_start("live1felgp_0", "live1felgp_1")
         .expect("flax login/display pair must share Start");
+}
+
+#[test]
+fn pair_settings_inject_native_display_partners_from_login_keys() {
+    let login_a = "livev40xor_0";
+    let login_b = "livev40xor_1";
+    let screen_a = client::util::JString::to_screen_name(login_a);
+    let screen_b = client::util::JString::to_screen_name(login_b);
+    assert_eq!(screen_a, "Livev40xor 0");
+    assert_eq!(screen_b, "Livev40xor 1");
+    assert_ne!(screen_a, screen_b);
+    assert_ne!(screen_a, login_a);
+    assert_ne!(screen_b, login_b);
+
+    for case in [PairCase::Air, PairCase::Mule, PairCase::Flax] {
+        let bag_a = pair_settings(case, &[], 0, login_a, login_b).unwrap();
+        let bag_b = pair_settings(case, &[], 1, login_b, login_a).unwrap();
+        assert_eq!(
+            bag_a.get("partner").and_then(|v| v.as_str()),
+            Some(screen_b.as_str()),
+            "{case:?} slot 0 partner must be the native display name, not the login key"
+        );
+        assert_eq!(
+            bag_b.get("partner").and_then(|v| v.as_str()),
+            Some(screen_a.as_str()),
+            "{case:?} slot 1 partner must be the native display name, not the login key"
+        );
+        assert_ne!(
+            bag_a.get("partner"),
+            bag_b.get("partner"),
+            "{case:?} slots must keep distinct partners"
+        );
+
+        let already = pair_settings(case, &[], 0, &screen_a, &screen_b).unwrap();
+        assert_eq!(
+            already.get("partner").and_then(|v| v.as_str()),
+            Some(screen_b.as_str()),
+            "{case:?} already-display partner names stay native display names"
+        );
+    }
+
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Air, login_a, login_b);
+    watch.observe_air(login_a, air_ready(&screen_a, AirRole::Master), false);
+    watch.observe_air(login_b, air_ready(&screen_b, AirRole::Runner), false);
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch
+        .begin_shared_start(login_a, login_b)
+        .expect("exact login slot keys still share Start after partner screen-name injection");
 }
