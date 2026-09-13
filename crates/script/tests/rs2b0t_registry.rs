@@ -731,12 +731,16 @@ export const SETTINGS = {
 export default class Alcher {}
 "#;
     let logic = r#"
-export const SPELL_OPTIONS = ['High', 'Low'];
+export const SPELL_HIGH = 'High';
+export const SPELL_LOW = 'Low';
+export const HIGH_ALCH_SPELL = 'High Level Alchemy';
+export const LOW_ALCH_SPELL = 'Low Level Alchemy';
+export const SPELL_OPTIONS = [SPELL_HIGH, SPELL_LOW];
 export const SPELL_OPTION_LABELS: Record<string, string> = {
-    High: 'High alchemy',
-    Low: 'Low alchemy',
+    [SPELL_HIGH]: HIGH_ALCH_SPELL,
+    [SPELL_LOW]: LOW_ALCH_SPELL,
 };
-export const defaultHigh = 'High';
+export const defaultHigh = SPELL_HIGH;
 "#;
     let mut sources = HashMap::new();
     sources.insert("./Alcher/Alcher.js".to_string(), alcher.to_string());
@@ -744,7 +748,10 @@ export const defaultHigh = 'High';
     let cards = script::parse_registry_with_sources(index, &sources).expect("alcher parses");
     let spell = &cards[0].settings_schema[0];
     assert_eq!(spell.options, vec!["High", "Low"]);
-    assert_eq!(spell.option_labels, vec!["High alchemy", "Low alchemy"]);
+    assert_eq!(
+        spell.option_labels,
+        vec!["High Level Alchemy", "Low Level Alchemy"]
+    );
     assert_eq!(spell.default.as_deref(), Some("High"));
 }
 
@@ -887,6 +894,7 @@ export const SETTINGS = {
     aliasItems: { type: 'string[]', default: LOOP_A },
     missing: { type: 'string', default: NO_SUCH_CONST },
     empty: { type: 'string[]', default: EMPTY_ARR, options: [] },
+    dynamicLabels: { type: 'string', default: 'keep', optionLabels: DYNAMIC_LABELS },
     commentHit: { type: 'string', default: COMMENTED_ONLY },
     otherDir: { type: 'string[]', default: OTHER_DIR_ITEMS },
     customItem: { type: 'string', default: '', showIf: { key: 'items', anyOf: [UNKNOWN_ALCH_KEY, ...REST] } },
@@ -902,6 +910,7 @@ export const MIXED_OPTIONS = ['custom', ...ITEMS.map(i => i.key)];
 export const LOOP_A = LOOP_B;
 export const LOOP_B = LOOP_A;
 export const EMPTY_ARR = [];
+export const DYNAMIC_LABELS = Object.fromEntries(ITEMS.map(i => [i.key, i.label]));
 "#;
     let other = r#"
 export const OTHER_DIR_ITEMS = ['should_not_inline'];
@@ -937,6 +946,11 @@ export const COMMENTED_ONLY = 'should_not_inline';
     let empty = schema.iter().find(|s| s.id == "empty").unwrap();
     assert_eq!(empty.default.as_deref(), Some("[]"));
     assert!(empty.options.is_empty(), "literal empty options stay empty");
+    let dynamic_labels = schema.iter().find(|s| s.id == "dynamicLabels").unwrap();
+    assert!(
+        dynamic_labels.option_labels.is_empty(),
+        "dynamic labels must stay unresolved"
+    );
     let comment_hit = schema.iter().find(|s| s.id == "commentHit").unwrap();
     assert!(
         comment_hit.default.is_none(),
