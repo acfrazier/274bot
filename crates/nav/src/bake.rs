@@ -1,6 +1,6 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
 //! transport graph, the bank stand table, the v8 pack bytes, the raw flags
-//! sidecar and the bound manifest. Both frontends of this logic call
+//! sidecar, the paint-reach sidecar and the bound manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
 //! (`host-play`'s build script) — so the derivation exists once.
 //!
@@ -19,7 +19,8 @@ use sha2::{Digest, Sha256};
 
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::manifest::{CacheManifest, NavManifest};
-use crate::pack::{derive_banks, encode, encode_flags_sidecar, FORMAT_ID};
+use crate::pack::{derive_banks, encode, encode_flags_sidecar, encode_reach_sidecar, FORMAT_ID};
+use crate::paint::bake_reach;
 use crate::transport::derive_transports;
 
 /// Door loc configs under `content/scripts/doors/configs`.
@@ -34,10 +35,11 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// artifact is stale after any change to one of them. Paths are relative to
 /// the `nav` crate root; keep this list to the code that decides artifact
 /// bytes (router/traveller/grid changes do not invalidate a pack).
-pub const GENERATOR_SOURCES: [&str; 4] = [
+pub const GENERATOR_SOURCES: [&str; 5] = [
     "src/bake.rs",
     "src/collision.rs",
     "src/pack.rs",
+    "src/paint.rs",
     "src/transport.rs",
 ];
 
@@ -150,6 +152,7 @@ pub struct BakeSummary {
 pub struct BakedNav {
     pub pack: Vec<u8>,
     pub flags: Vec<u8>,
+    pub reach: Vec<u8>,
     pub manifest: Option<NavManifest>,
     pub summary: BakeSummary,
     /// Non-fatal notes the caller reports (skipped door configs).
@@ -238,12 +241,22 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let flags_bytes =
         encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
     let bytes = encode(&collision, &graph, &banks);
+    let reach_bits = bake_reach(&collision, &graph);
+    let pack_digest: [u8; 32] = Sha256::digest(&bytes).into();
+    let reach_bytes = encode_reach_sidecar(
+        collision.origin,
+        collision.width,
+        collision.height,
+        &reach_bits,
+        &pack_digest,
+    );
     let manifest = match (request.revision, request.cache) {
         (Some(revision), Some(cache)) => Some(NavManifest::capture(
             revision,
             cache,
             &bytes,
             Some(&flags_bytes),
+            Some(&reach_bytes),
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
@@ -251,6 +264,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     Ok(BakedNav {
         pack: bytes,
         flags: flags_bytes,
+        reach: reach_bytes,
         manifest,
         summary: BakeSummary {
             mapsquares: squares_baked(request.maps_dir),

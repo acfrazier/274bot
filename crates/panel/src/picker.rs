@@ -256,21 +256,73 @@ fn sidecar_for_grid(
 /// from every transport seed ([`bake_reach`]), baked once per grid. The
 /// whole-world bake spans millions of tiles, so a picker frame or a 3D
 /// publish must never re-flood; only a changed world (a new [`set_pack`])
-/// recomputes.
+/// recomputes. Bundled identities never flood: they reuse the bitset
+/// decoded at profile bind.
 struct ReachCache {
     key: (i32, i32, usize, usize),
     bits: Arc<[u64]>,
 }
 
+enum ReachBinding {
+    Unbound,
+    Bundled {
+        bits: Arc<[u64]>,
+        origin: WorldTile,
+        width: usize,
+        height: usize,
+    },
+}
+
 static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
+static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
+
+/// Bind the process paint-reach bitset. Bundled provenance supplies the
+/// decoded sidecar; the external/custom path leaves this unbound and keeps
+/// its one-time [`bake_reach`].
+pub(crate) fn set_reach_binding(
+    bits: Option<Arc<[u64]>>,
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    trusted_bundled: bool,
+) {
+    *REACH_BINDING.lock().unwrap() = match (trusted_bundled, bits) {
+        (true, Some(bits)) => ReachBinding::Bundled {
+            bits,
+            origin,
+            width,
+            height,
+        },
+        _ => ReachBinding::Unbound,
+    };
+    *REACH.lock().unwrap() = None;
+}
 
 /// The reach bitset for `world`, baked once and cached; `None` only when
 /// no bake could be produced (the paint then treats every tile as
 /// reached). Reach answers connectivity through the transport network —
-/// `find` never reads it.
+/// `find` never reads it. Bundled runtime returns the bind-time sidecar
+/// and must not call [`bake_reach`].
 pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
     let key = (c.origin.x, c.origin.z, c.width, c.height);
+    {
+        let binding = REACH_BINDING.lock().unwrap();
+        if let ReachBinding::Bundled {
+            bits,
+            origin,
+            width,
+            height,
+        } = &*binding
+        {
+            if *origin == c.origin && *width == c.width && *height == c.height {
+                return Some(Arc::clone(bits));
+            }
+            // Bundled bits belong to a different world; do not flood a
+            // custom sidecar in by geometry.
+            return None;
+        }
+    }
     let mut guard = REACH.lock().unwrap();
     let bits = match guard.as_ref() {
         Some(cache) if cache.key == key => cache.bits.clone(),
@@ -1073,9 +1125,10 @@ mod tests {
     use super::{
         available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar,
         ensure_flags_sidecar, flags_content_hash_count, flags_sidecar_for, flags_sidecar_state,
-        pack, pack_map_tiles, pan_by, picker_map_window, reset_flags_content_hash_count,
-        right_align_x, set_navflags_binding, set_pack, sidecar_for_grid, snap, walkto_canvas_flags,
-        walkto_footer_labels, walkto_window_flags, FlagSidecar, FlagsSidecarState, PackView,
+        pack, pack_map_tiles, pan_by, picker_map_window, reach_bitset,
+        reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
+        set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags, walkto_footer_labels,
+        walkto_window_flags, FlagSidecar, FlagsSidecarState, PackView,
     };
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
@@ -1085,6 +1138,8 @@ mod tests {
 
     /// Process-global flags binding/hash counters; serialize tests that touch them.
     static FLAGS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
+    /// Process-global reach binding; serialize tests that touch it.
+    static REACH_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
@@ -1486,6 +1541,18 @@ mod tests {
 
     #[test]
     fn pack_map_marks_walkable_unreached_puddle() {
+        let _guard = REACH_TEST_LOCK.lock().unwrap();
+        set_reach_binding(
+            None,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            0,
+            0,
+            false,
+        );
         // 5×5 with a sealed 1×1 courtyard at (2,2) (all W_* faces) and one
         // door edge outside it: the reach BFS floods the open ground but
         // never the courtyard, so only the courtyard tile paints
@@ -1874,5 +1941,64 @@ mod tests {
         assert_eq!(flags_content_hash_count(), 2);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
+        let _guard = REACH_TEST_LOCK.lock().unwrap();
+        let mut world = bake_world(3, 3, &[]);
+        world.collision.origin.x = 7777;
+        let origin = world.collision.origin;
+        let width = world.collision.width;
+        let height = world.collision.height;
+        let expected: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
+        nav::paint::reset_bake_reach_calls();
+        set_reach_binding(Some(Arc::clone(&expected)), origin, width, height, true);
+        let first = reach_bitset(&world).expect("bundled bits");
+        let second = reach_bitset(&world).expect("slot reuse");
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(&*first, &*expected);
+        assert_eq!(
+            nav::paint::bake_reach_calls(),
+            0,
+            "bundled first/second paint must not flood"
+        );
+        let mut other = open_world(3, 3);
+        other.collision.origin.x = 99;
+        assert!(
+            reach_bitset(&other).is_none(),
+            "same-size different origin must not reuse bundled bits"
+        );
+        assert_eq!(nav::paint::bake_reach_calls(), 0);
+        set_reach_binding(None, origin, 0, 0, false);
+    }
+
+    #[test]
+    fn external_reach_floods_once_and_reuses_the_arc() {
+        let _guard = REACH_TEST_LOCK.lock().unwrap();
+        set_reach_binding(
+            None,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            0,
+            0,
+            false,
+        );
+        let world = bake_world(3, 3, &[]);
+        nav::paint::reset_bake_reach_calls();
+        let first = reach_bitset(&world).expect("external bake");
+        let second = reach_bitset(&world).expect("cached");
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(nav::paint::bake_reach_calls(), 1);
+        set_pack(None);
+        let _ = reach_bitset(&world);
+        assert_eq!(
+            nav::paint::bake_reach_calls(),
+            2,
+            "set_pack drops the computed cache"
+        );
     }
 }

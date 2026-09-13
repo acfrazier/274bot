@@ -4,6 +4,7 @@
 //! pack map and the client fork's 3D paints consume these.
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
@@ -458,6 +459,20 @@ pub fn reach_seeds(graph: &TransportGraph) -> Vec<WorldTile> {
     seeds
 }
 
+/// Process-wide `bake_reach` invocations. Bundled runtime must keep this at
+/// zero; the external/custom path may increment once per bound world.
+static BAKE_REACH_CALLS: AtomicU32 = AtomicU32::new(0);
+
+/// How many times [`bake_reach`] has run in this process.
+pub fn bake_reach_calls() -> u32 {
+    BAKE_REACH_CALLS.load(Ordering::Relaxed)
+}
+
+/// Test helper: reset the flood counter between cases.
+pub fn reset_bake_reach_calls() {
+    BAKE_REACH_CALLS.store(0, Ordering::Relaxed);
+}
+
 /// The paint-only reach bitset: one bit per walk cell per level (the same
 /// level-major indexing as the walk grid), length
 /// `ceil(walk.len() / 64)`. A bit is set when the tile is in the `step_ok`
@@ -465,6 +480,7 @@ pub fn reach_seeds(graph: &TransportGraph) -> Vec<WorldTile> {
 /// ∪ teles. `find` never reads this; it is the debug overlay's in-graph
 /// answer.
 pub fn bake_reach(c: &WorldCollision, graph: &TransportGraph) -> Vec<u64> {
+    BAKE_REACH_CALLS.fetch_add(1, Ordering::Relaxed);
     let mut bits = vec![0u64; c.walk.len().div_ceil(64)];
     let mut seen: HashSet<WorldTile> = HashSet::new();
     let mut queue: VecDeque<WorldTile> = VecDeque::new();
@@ -1058,5 +1074,85 @@ mod tests {
             !reached(&bits, &c, tile(0, 0, 1)),
             "unknown levels read false"
         );
+    }
+
+    #[test]
+    fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
+        use crate::pack::{decode_reach_sidecar, encode, encode_reach_sidecar, sha256_hex};
+        use sha2::{Digest, Sha256};
+
+        let disconnected = (
+            disconnected_world(),
+            graph(
+                vec![edge(
+                    TransportKind::Door,
+                    tile(0, 0, 0),
+                    tile(1, 1, 0),
+                    1530,
+                )],
+                vec![],
+            ),
+        );
+        let courtyard = (
+            bake(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]),
+            TransportGraph::default(),
+        );
+        for (name, (c, g)) in [("disconnected", disconnected), ("courtyard", courtyard)] {
+            let expected = bake_reach(&c, &g);
+            let pack = encode(&c, &g, &[]);
+            let digest: [u8; 32] = Sha256::digest(&pack).into();
+            let bytes = encode_reach_sidecar(c.origin, c.width, c.height, &expected, &digest);
+            let side = decode_reach_sidecar(&bytes).unwrap();
+            assert_eq!(
+                side.bits, expected,
+                "{name}: sidecar bits must equal bake_reach"
+            );
+            assert_eq!(side.word_count, expected.len());
+            assert_eq!(side.origin, c.origin);
+            assert_eq!((side.width, side.height), (c.width, c.height));
+            assert_eq!(sha256_hex(&side.binding), sha256_hex(&digest));
+        }
+    }
+
+    #[test]
+    fn same_geometry_different_transport_does_not_reuse_reach_binding() {
+        use crate::pack::{encode, encode_reach_sidecar, sha256_hex};
+        use sha2::{Digest, Sha256};
+
+        let c = disconnected_world();
+        let corner = graph(
+            vec![edge(
+                TransportKind::Door,
+                tile(0, 0, 0),
+                tile(1, 1, 0),
+                1530,
+            )],
+            vec![],
+        );
+        let island = graph(
+            vec![edge(
+                TransportKind::Door,
+                tile(5, 5, 0),
+                tile(5, 5, 0),
+                1531,
+            )],
+            vec![],
+        );
+        let bits_a = bake_reach(&c, &corner);
+        let bits_b = bake_reach(&c, &island);
+        assert_ne!(
+            bits_a, bits_b,
+            "different seeds must produce different reach"
+        );
+        let pack_a = encode(&c, &corner, &[]);
+        let pack_b = encode(&c, &island, &[]);
+        let digest_a: [u8; 32] = Sha256::digest(&pack_a).into();
+        let digest_b: [u8; 32] = Sha256::digest(&pack_b).into();
+        assert_ne!(digest_a, digest_b);
+        let side_a = encode_reach_sidecar(c.origin, c.width, c.height, &bits_a, &digest_a);
+        let decoded_a = crate::pack::decode_reach_sidecar(&side_a).unwrap();
+        assert_eq!(sha256_hex(&decoded_a.binding), sha256_hex(&digest_a));
+        assert_ne!(sha256_hex(&decoded_a.binding), sha256_hex(&digest_b));
+        assert_ne!(decoded_a.bits, bits_b);
     }
 }

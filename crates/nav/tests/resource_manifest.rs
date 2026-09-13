@@ -65,15 +65,24 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
     let dir = Fixture::new();
     fixture_cache(&dir.0);
     let cache = CacheManifest::capture(289, &dir.0).unwrap();
-    let manifest = NavManifest::capture(289, &cache, b"pack", Some(b"flags")).unwrap();
+    let manifest = NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None).unwrap();
     manifest
-        .verify(289, &cache, b"pack", Some(b"flags"))
+        .verify(289, &cache, b"pack", Some(b"flags"), None)
         .unwrap();
     assert!(manifest
-        .verify(274, &cache, b"pack", Some(b"flags"))
+        .verify(274, &cache, b"pack", Some(b"flags"), None)
         .is_err());
     assert!(manifest
-        .verify(289, &cache, b"other", Some(b"flags"))
+        .verify(289, &cache, b"other", Some(b"flags"), None)
         .is_err());
-    assert!(manifest.verify(289, &cache, b"pack", None).is_err());
+    assert!(manifest.verify(289, &cache, b"pack", None, None).is_err());
+    let with_reach =
+        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), Some(b"reach")).unwrap();
+    assert!(with_reach.reach_sha256.is_some());
+    assert!(with_reach
+        .verify(289, &cache, b"pack", Some(b"flags"), None)
+        .is_err());
+    with_reach
+        .verify(289, &cache, b"pack", Some(b"flags"), Some(b"reach"))
+        .unwrap();
 }

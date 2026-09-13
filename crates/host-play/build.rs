@@ -193,11 +193,12 @@ fn main() {
     let layout = artifact_layout(revision);
     let pack_path = resource_root.join(&layout.relative_pack);
     let flags_path = resource_root.join(&layout.relative_flags);
+    let reach_path = resource_root.join(&layout.relative_reach);
     let stamp_path = resource_root.join(&layout.relative_stamp);
     // Staged artifacts are watched so that a later build notices one that was
     // deleted or replaced (cargo treats a missing watched path as changed),
     // while a plain warm build stays a no-op.
-    for staged in [&pack_path, &flags_path, &stamp_path] {
+    for staged in [&pack_path, &flags_path, &reach_path, &stamp_path] {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
@@ -209,6 +210,7 @@ fn main() {
         inputs: &input_fingerprints,
         staged_pack_bytes: file_len(&pack_path),
         staged_flags_bytes: file_len(&flags_path),
+        staged_reach_bytes: file_len(&reach_path),
     };
     let staged = read_stamp(&stamp_path);
     let (row, reused) = match staged
@@ -222,6 +224,7 @@ fn main() {
                 format: FORMAT_ID.into(),
                 nav_sha256: staged.as_ref().expect("stamp").nav_sha256.clone(),
                 flags_sha256: Some(staged.as_ref().expect("stamp").flags_sha256.clone()),
+                reach_sha256: Some(staged.as_ref().expect("stamp").reach_sha256.clone()),
                 relative_path: layout.relative_pack.clone(),
             },
             true,
@@ -297,12 +300,14 @@ fn bake_and_stage(
 
     let pack_path = resource_root.join(&layout.relative_pack);
     let flags_path = resource_root.join(&layout.relative_flags);
+    let reach_path = resource_root.join(&layout.relative_reach);
     let dir = pack_path
         .parent()
         .ok_or_else(|| format!("resource path {} has no parent", pack_path.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("resource dir {}: {e}", dir.display()))?;
     write_atomic(&pack_path, &baked.pack)?;
     write_atomic(&flags_path, &baked.flags)?;
+    write_atomic(&reach_path, &baked.reach)?;
     let nav_manifest_bytes =
         serde_json::to_vec_pretty(&manifest).map_err(|e| format!("navigation manifest: {e}"))?;
     write_atomic(
@@ -314,6 +319,10 @@ fn bake_and_stage(
         .flags_sha256
         .clone()
         .ok_or_else(|| "a bound bake stamps the flags digest".to_string())?;
+    let reach_sha256 = manifest
+        .reach_sha256
+        .clone()
+        .ok_or_else(|| "a bound bake stamps the reach digest".to_string())?;
     let stamp = BakeStamp {
         generator: generator.to_string(),
         format: FORMAT_ID.to_string(),
@@ -322,10 +331,13 @@ fn bake_and_stage(
         cache_manifest: manifest_source.map(|path| path.to_string_lossy().into_owned()),
         nav_sha256: manifest.nav_sha256.clone(),
         flags_sha256: flags_sha256.clone(),
+        reach_sha256: reach_sha256.clone(),
         pack_bytes: baked.pack.len() as u64,
         flags_bytes: baked.flags.len() as u64,
+        reach_bytes: baked.reach.len() as u64,
         relative_pack: layout.relative_pack.clone(),
         relative_flags: layout.relative_flags.clone(),
+        relative_reach: layout.relative_reach.clone(),
         inputs: input_fingerprints.to_vec(),
     };
     let stamp_bytes =
@@ -333,7 +345,7 @@ fn bake_and_stage(
     write_atomic(&resource_root.join(&layout.relative_stamp), &stamp_bytes)?;
 
     println!(
-        "cargo:warning=nav bundle: baked {} mapsquares into a {}x{} grid, {} walkable tiles, {} edges, {} banks; pack {} bytes, flags {} bytes -> {}",
+        "cargo:warning=nav bundle: baked {} mapsquares into a {}x{} grid, {} walkable tiles, {} edges, {} banks; pack {} bytes, flags {} bytes, reach {} bytes -> {}",
         summary.mapsquares,
         summary.width,
         summary.height,
@@ -342,6 +354,7 @@ fn bake_and_stage(
         summary.banks,
         baked.pack.len(),
         baked.flags.len(),
+        baked.reach.len(),
         pack_path.display()
     );
     Ok(NavIdentityRow {
@@ -350,6 +363,7 @@ fn bake_and_stage(
         format: FORMAT_ID.to_string(),
         nav_sha256: manifest.nav_sha256,
         flags_sha256: Some(flags_sha256),
+        reach_sha256: Some(reach_sha256),
         relative_path: layout.relative_pack.clone(),
     })
 }

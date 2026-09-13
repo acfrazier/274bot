@@ -65,8 +65,16 @@ fn run() -> Result<(), String> {
     let flags_path = nav_path.with_extension("navflags");
     let flags_bytes = std::fs::read(&flags_path)
         .map_err(|e| format!("navigation flags {}: {e}", flags_path.display()))?;
+    let reach_path = nav_path.with_extension("navreach");
+    let reach_bytes = std::fs::read(&reach_path).ok();
     let nav_manifest: NavManifest = read_json(&nav_manifest_path(nav_path))?;
-    nav_manifest.verify(revision, &cache_manifest, &nav_bytes, Some(&flags_bytes))?;
+    nav_manifest.verify(
+        revision,
+        &cache_manifest,
+        &nav_bytes,
+        Some(&flags_bytes),
+        reach_bytes.as_deref(),
+    )?;
 
     let config_bytes =
         std::fs::read(cache_dir.join("config")).map_err(|e| format!("cache config: {e}"))?;

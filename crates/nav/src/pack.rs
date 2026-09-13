@@ -29,7 +29,11 @@
 //! and never indexes them into `at`. The raw flags are not on the v8 wire
 //! — the flags sidecar is separate: magic `b"274F"`, version 1, the same
 //! origin/width/height header as the pack, then the level-major u32le flags
-//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). After the edges,
+//! ([`encode_flags_sidecar`]/[`decode_flags_sidecar`]). The paint-reach
+//! bitset is a second sidecar, not on the v8 pack wire: magic `b"274R"`,
+//! version 1, the same origin/width/height header, an explicit word count,
+//! a 32-byte pack-identity binding, then `u64le` words
+//! ([`encode_reach_sidecar`]/[`decode_reach_sidecar`]). After the edges,
 //! v8 appends the content-derived bank stand table: count u32le, then per
 //! stand a length-prefixed name, the `x/z/level` tile i32le, and the
 //! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
@@ -80,6 +84,10 @@ const MAGIC: &[u8; 4] = b"274V";
 const VERSION_FLAGS: u8 = 1;
 /// Flags sidecar magic.
 const MAGIC_FLAGS: &[u8; 4] = b"274F";
+/// Paint-reach sidecar format version.
+const VERSION_REACH: u8 = 1;
+/// Paint-reach sidecar magic.
+const MAGIC_REACH: &[u8; 4] = b"274R";
 /// Pack format identity as it appears in bundled navigation identities: the
 /// file magic followed by the format version (`274V8` for the current wire).
 /// A format improvement changes this identity and therefore invalidates
@@ -499,6 +507,116 @@ fn decode_u32le_words(payload: &[u8]) -> Vec<u32> {
         flags.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
     flags
+}
+
+/// Decoded paint-reach sidecar: geometry, word count, pack-identity binding
+/// and the `bake_reach` bitset. Geometry alone is not identity — the binding
+/// is the SHA-256 of the pack that produced the bits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachSidecar {
+    pub origin: WorldTile,
+    pub width: usize,
+    pub height: usize,
+    pub word_count: usize,
+    pub binding: [u8; 32],
+    pub bits: Vec<u64>,
+}
+
+/// Hex form of a 32-byte SHA-256 (lowercase), matching [`crate::manifest::hash_bytes`].
+pub fn sha256_hex(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
+/// Serialize a paint-reach bitset: magic `b"274R"`, version 1, the same
+/// origin/width/height header as the pack, explicit word count, the 32-byte
+/// pack SHA-256 binding, then `word_count` little-endian `u64` words.
+pub fn encode_reach_sidecar(
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    bits: &[u64],
+    binding: &[u8; 32],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + 4 + 32 + bits.len() * 8);
+    out.extend_from_slice(MAGIC_REACH);
+    out.push(VERSION_REACH);
+    for v in [origin.x, origin.z, origin.level] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    out.extend_from_slice(&(bits.len() as u32).to_le_bytes());
+    out.extend_from_slice(binding);
+    for word in bits {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    out
+}
+
+/// Deserialize a paint-reach sidecar, validating magic, version, grid
+/// header, word count and that the trailing payload is exactly that many
+/// `u64le` words. Binding bytes are not interpreted here — the caller
+/// compares them to the pack identity.
+pub fn decode_reach_sidecar(bytes: &[u8]) -> Result<ReachSidecar, PackError> {
+    let mut r = Cursor::new(bytes);
+    let mut magic = [0u8; 4];
+    r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
+    if &magic != MAGIC_REACH {
+        return Err(PackError::BadMagic);
+    }
+    let mut version = [0u8; 1];
+    r.read_exact(&mut version)
+        .map_err(|_| PackError::Truncated)?;
+    if version[0] != VERSION_REACH {
+        return Err(PackError::BadVersion(version[0]));
+    }
+    let origin = WorldTile {
+        x: read_i32(&mut r)?,
+        z: read_i32(&mut r)?,
+        level: read_i32(&mut r)?,
+    };
+    let width = read_u32(&mut r)? as usize;
+    let height = read_u32(&mut r)? as usize;
+    if width == 0 || height == 0 || width > MAX_GRID || height > MAX_GRID {
+        return Err(PackError::BadLength(format!(
+            "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
+        )));
+    }
+    let word_count = read_u32(&mut r)? as usize;
+    let mut binding = [0u8; 32];
+    r.read_exact(&mut binding)
+        .map_err(|_| PackError::Truncated)?;
+    let payload = &bytes[r.position() as usize..];
+    if payload.len() != word_count.saturating_mul(8) {
+        return Err(PackError::Truncated);
+    }
+    Ok(ReachSidecar {
+        origin,
+        width,
+        height,
+        word_count,
+        binding,
+        bits: decode_u64le_words(payload),
+    })
+}
+
+/// Bulk little-endian `u64` words from a length-checked payload (`len % 8 == 0`).
+fn decode_u64le_words(payload: &[u8]) -> Vec<u64> {
+    debug_assert!(payload.len().is_multiple_of(8));
+    payload
+        .chunks_exact(8)
+        .map(|chunk| {
+            u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ])
+        })
+        .collect()
 }
 
 /// `TransportKind` as a wire byte.
@@ -1285,10 +1403,11 @@ mod tests {
     use std::io::{Cursor, Read};
 
     use super::{
-        decode, decode_flags_sidecar, decode_grid, derive_banks, encode, encode_flags_sidecar,
-        encode_grid, merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
-        parse_mapsquare_text, parse_passable_locs, walkable_dots, BankAccess, BankStand, Mapsquare,
-        FORMAT_ID, MAGIC, SQUARE, VERSION,
+        decode, decode_flags_sidecar, decode_grid, decode_reach_sidecar, derive_banks, encode,
+        encode_flags_sidecar, encode_grid, encode_reach_sidecar, merge_squares, parse_door_config,
+        parse_door_config_ids, parse_door_open_ids, parse_mapsquare_text, parse_passable_locs,
+        sha256_hex, walkable_dots, BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE,
+        VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
@@ -1570,6 +1689,80 @@ mod tests {
             format!("{:?}", decode_flags_sidecar(&partial)),
             format!("{:?}", decode_flags_sidecar_scalar_ref(&partial))
         );
+    }
+
+    #[test]
+    fn reach_sidecar_roundtrips_geometry_words_and_binding() {
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bits = vec![0x0102_0304_0506_0708u64, 0x8000_0000_0000_0001];
+        let binding = [0xABu8; 32];
+        let bytes = encode_reach_sidecar(origin, 2, 2, &bits, &binding);
+        assert_eq!(&bytes[..4], b"274R");
+        let side = decode_reach_sidecar(&bytes).unwrap();
+        assert_eq!(side.origin, origin);
+        assert_eq!((side.width, side.height, side.word_count), (2, 2, 2));
+        assert_eq!(side.binding, binding);
+        assert_eq!(side.bits, bits);
+        assert_eq!(sha256_hex(&binding).len(), 64);
+    }
+
+    #[test]
+    fn reach_sidecar_rejects_bad_magic_version_and_truncated_payload() {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let binding = [1u8; 32];
+        let full = encode_reach_sidecar(origin, 2, 2, &[0u64], &binding);
+        assert!(matches!(
+            decode_reach_sidecar(b"XXXX"),
+            Err(PackError::BadMagic)
+        ));
+        let mut bad_ver = full.clone();
+        bad_ver[4] = 2;
+        assert!(matches!(
+            decode_reach_sidecar(&bad_ver),
+            Err(PackError::BadVersion(2))
+        ));
+        assert!(matches!(
+            decode_reach_sidecar(&full[..10]),
+            Err(PackError::Truncated)
+        ));
+        let mut partial = full.clone();
+        partial.pop();
+        assert!(matches!(
+            decode_reach_sidecar(&partial),
+            Err(PackError::Truncated)
+        ));
+        let mut extra = full.clone();
+        extra.push(0);
+        assert!(matches!(
+            decode_reach_sidecar(&extra),
+            Err(PackError::Truncated)
+        ));
+    }
+
+    #[test]
+    fn reach_sidecar_binding_is_independent_of_geometry() {
+        let origin = WorldTile {
+            x: 100,
+            z: 200,
+            level: 0,
+        };
+        let bits = vec![0xFFu64];
+        let a = encode_reach_sidecar(origin, 4, 4, &bits, &[0x11u8; 32]);
+        let b = encode_reach_sidecar(origin, 4, 4, &bits, &[0x22u8; 32]);
+        let da = decode_reach_sidecar(&a).unwrap();
+        let db = decode_reach_sidecar(&b).unwrap();
+        assert_eq!(da.origin, db.origin);
+        assert_eq!((da.width, da.height), (db.width, db.height));
+        assert_eq!(da.bits, db.bits);
+        assert_ne!(da.binding, db.binding);
     }
 
     #[test]

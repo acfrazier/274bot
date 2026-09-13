@@ -274,6 +274,7 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
         cache_id: "wrong".into(),
         nav_sha256: "wrong".into(),
         flags_sha256: None,
+        reach_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&nav),
@@ -587,6 +588,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
         nav_sha256: format!("{:x}", Sha256::digest(&bytes)),
         flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
+        reach_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -709,12 +711,31 @@ fn tiny_v8_pack() -> Vec<u8> {
     )
 }
 
+fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
+    use api::snapshot::WorldTile;
+    use sha2::{Digest, Sha256};
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let digest: [u8; 32] = Sha256::digest(pack).into();
+    nav::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
+}
+
+fn write_bundled_reach(root: &std::path::Path, pack: &[u8]) -> String {
+    let bytes = tiny_v8_reach(pack);
+    std::fs::write(root.join("274bot.navreach"), &bytes).unwrap();
+    nav::manifest::hash_bytes(&bytes)
+}
+
 fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, bytes: &[u8]) {
     let manifest = NavManifest {
         revision,
         cache_id,
         nav_sha256: nav::manifest::hash_bytes(bytes),
         flags_sha256: None,
+        reach_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(pack),
@@ -731,6 +752,7 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     std::fs::create_dir_all(&root).unwrap();
     let pack = root.join("274bot.navpack");
     std::fs::write(&pack, &bytes).unwrap();
+    let reach_sha256 = write_bundled_reach(&root, &bytes);
     let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
     let table = [BundledNavIdentity {
         revision: 289,
@@ -738,6 +760,7 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
         format: "274V8".into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
+        reach_sha256: Some(reach_sha256),
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -761,6 +784,9 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
     assert_eq!(profile.nav_load_counters().pack_hashes, 0);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    assert_eq!(profile.nav_load_counters().reach_reads, 1);
+    assert_eq!(profile.nav_load_counters().reach_hashes, 0);
+    assert!(profile.reach().is_some());
     assert!(updates
         .lock()
         .unwrap()
@@ -800,6 +826,7 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
         format: "274V8".into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
+        reach_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -829,6 +856,7 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
     let sibling_flags = root.join("274bot.navflags");
     std::fs::write(&pack, &bytes).unwrap();
     std::fs::write(&sibling_flags, b"bundle-sibling-flags").unwrap();
+    let reach_sha256 = write_bundled_reach(&root, &bytes);
     let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
     let table = [BundledNavIdentity {
         revision: 289,
@@ -836,6 +864,7 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
         format: "274V8".into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
+        reach_sha256: Some(reach_sha256),
         relative_path: "274bot.navpack".into(),
     }];
 
@@ -901,6 +930,7 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         cache_id: cache_id.clone(),
         nav_sha256: "00".repeat(32),
         flags_sha256: None,
+        reach_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -986,4 +1016,77 @@ fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
     assert_eq!(profile.nav_load_counters().pack_hashes, 1);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
     assert_eq!(profile.world().unwrap().collision.width, 5);
+}
+
+#[test]
+fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let root = fixture.0.join("Resources");
+    std::fs::create_dir_all(&root).unwrap();
+    let pack = root.join("274bot.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    let mut options = fixture.options(289);
+    options.nav_pack = None;
+
+    let missing_identity = [BundledNavIdentity {
+        revision: 289,
+        cache_id: cache_id.clone(),
+        format: "274V8".into(),
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: None,
+        reach_sha256: None,
+        relative_path: "274bot.navpack".into(),
+    }];
+    let error = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &missing_identity,
+            Some(root.as_path()),
+        )
+        .unwrap_err();
+    assert!(error.contains("reach identity is missing"), "{error}");
+
+    let named = [BundledNavIdentity {
+        reach_sha256: Some("ab".repeat(32)),
+        ..missing_identity[0].clone()
+    }];
+    let error = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &named,
+            Some(root.as_path()),
+        )
+        .unwrap_err();
+    assert!(error.contains("bundled navigation"), "{error}");
+    assert!(
+        error.contains("navreach") || error.contains("missing"),
+        "{error}"
+    );
+}
+
+#[test]
+fn external_pack_does_not_load_a_sibling_reach_sidecar() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let pack = fixture.0.join("custom.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    std::fs::write(fixture.0.join("custom.navreach"), tiny_v8_reach(&bytes)).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    write_nav_sidecar(&pack, 289, cache_id, &bytes);
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack);
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert!(!profile.nav_origin().is_bundled());
+    assert!(profile.reach().is_none());
+    assert_eq!(profile.nav_load_counters().reach_reads, 0);
 }
