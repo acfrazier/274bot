@@ -364,6 +364,9 @@ impl PlayConnection {
 #[derive(Debug, Clone)]
 pub struct SlotStatus {
     pub username: String,
+    /// Client asset initialization progress; cleared when initialization ends.
+    pub startup_progress_percent: Option<i32>,
+    pub startup_progress_message: String,
     /// When the slot's first login handshake started (after its permit).
     pub login_started: Option<Instant>,
     pub ingame: bool,
@@ -695,6 +698,8 @@ impl Default for SlotStatus {
     fn default() -> Self {
         Self {
             username: String::new(),
+            startup_progress_percent: None,
+            startup_progress_message: String::new(),
             login_started: None,
             ingame: false,
             scene_state: 0,
@@ -4982,6 +4987,28 @@ fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
     }
 }
 
+fn publish_startup_progress(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    message: &str,
+    percent: i32,
+) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_progress_percent = Some(percent.clamp(0, 100));
+        s.startup_progress_message.clear();
+        s.startup_progress_message.push_str(message);
+    }
+}
+
+fn clear_startup_progress(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_progress_percent = None;
+        s.startup_progress_message.clear();
+    }
+}
+
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
     let msg = format!("code {}: {}", e.code, e.mes2);
     if debug_enabled() {
@@ -5120,6 +5147,9 @@ fn spawn_slot_thread(
                 .unwrap()
                 .entry(username.clone())
                 .or_default();
+            // Preparation has no determinate client percentage, but publish
+            // a phase immediately so a slow cache fetch is visibly active.
+            publish_startup_progress(&slot_statuses, &username, "Preparing client", 0);
             // The park end survives re-login rounds (run_client is entered
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
@@ -5134,6 +5164,7 @@ fn spawn_slot_thread(
                         if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
                             row.error = Some(error);
                         }
+                        clear_startup_progress(&slot_statuses, &username);
                         return;
                     }
                 },
@@ -5154,13 +5185,17 @@ fn spawn_slot_thread(
             // `maininit` is renderer-free now: progress recording lives on
             // the Client, and no `Renderer` is constructed for a headless
             // slot.
-            client.maininit();
+            client.maininit_with_progress(Some(&mut |_, message, percent| {
+                publish_startup_progress(&slot_statuses, &username, message, percent);
+            }));
             if client.error_loading && connection.profile().is_some() {
                 if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
                     row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
                 }
+                clear_startup_progress(&slot_statuses, &username);
                 return;
             }
+            clear_startup_progress(&slot_statuses, &username);
             if client.error_loading && debug_enabled() {
                 eprintln!("[host-play] slot {username}: maininit failed");
             }
@@ -5709,6 +5744,27 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    #[test]
+    fn startup_progress_is_latest_only_and_clears_on_completion() {
+        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+
+        publish_startup_progress(&statuses, "alice", "Requesting models", 70);
+        publish_startup_progress(&statuses, "alice", "Preparing game engine", 100);
+        {
+            let row = &statuses.lock().unwrap()[0];
+            assert_eq!(row.startup_progress_percent, Some(100));
+            assert_eq!(row.startup_progress_message, "Preparing game engine");
+        }
+
+        clear_startup_progress(&statuses, "alice");
+        let row = &statuses.lock().unwrap()[0];
+        assert_eq!(row.startup_progress_percent, None);
+        assert!(row.startup_progress_message.is_empty());
+    }
 
     #[test]
     fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
