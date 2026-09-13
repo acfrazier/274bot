@@ -5906,7 +5906,112 @@ mod tests {
         }
         assert_eq!(cycle.engagements, 2);
         assert_eq!(cycle.defeats, 1);
+        assert!(cycle.further_work);
         assert!(!cycle.last.get(&5).expect("respawned guard").defeated);
+    }
+
+    /// ArdyFighter 289/core866 receipt sequence: engage → defeat → same index still
+    /// selected at health 0. Corpse frames must not open a second engagement or
+    /// mark further_work; only a later living target (or positive-health respawn)
+    /// can.
+    #[test]
+    fn combat_observer_rejects_corpse_frames_as_further_work_on_same_defeated_target() {
+        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
+        let baseline = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let first = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 84)],
+            &levels,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        // Death frame may still carry local target / combat flags on the corpse.
+        let mut corpse_npc = combat_npc(5, "Guard", 0, true, ARDY_THIEVER_STAND);
+        corpse_npc.animation = 401;
+        let death = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 88)],
+            &levels,
+            &[corpse_npc.clone()],
+            true,
+            Some(5),
+        );
+        let corpse_still_selected = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 88)],
+            &levels,
+            &[corpse_npc],
+            true,
+            Some(5),
+        );
+        let spec = auto_fighter_spec();
+
+        let mut cycle = CombatCoreCycle::default();
+        for observation in [
+            &first,
+            &death,
+            &corpse_still_selected,
+            &corpse_still_selected,
+        ] {
+            cycle.observe(spec, &baseline, observation);
+        }
+        assert_eq!(cycle.engagements, 1);
+        assert_eq!(cycle.defeats, 1);
+        assert!(!cycle.further_work);
+        assert!(cycle.last.get(&5).expect("defeated guard").defeated);
+        assert!(witness(
+            CoreCase::AutoFighter,
+            &baseline,
+            [
+                &first,
+                &death,
+                &corpse_still_selected,
+                &corpse_still_selected
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        // Genuine continued work: second living target after the defeat.
+        let second_life = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 92)],
+            &levels,
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+        );
+        assert!(witness(
+            CoreCase::AutoFighter,
+            &baseline,
+            [&first, &death, &second_life, &second_life]
+        )
+        .qualify()
+        .is_ok());
+
+        let mut positive = CombatCoreCycle::default();
+        for observation in [&first, &death, &second_life, &second_life] {
+            positive.observe(spec, &baseline, observation);
+        }
+        assert_eq!(positive.engagements, 2);
+        assert_eq!(positive.defeats, 1);
+        assert!(positive.further_work);
     }
 
     fn combat_witness_with_ground_drop(qualified: bool) -> CoreWitness {
