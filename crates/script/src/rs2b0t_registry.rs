@@ -1157,7 +1157,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
         max: scan_key_number(obj, "max"),
         step: scan_key_number(obj, "step"),
         options,
-        option_labels: scan_key_string_array(obj, "optionLabels").unwrap_or_default(),
+        option_labels: scan_key_option_labels(obj, file_src),
         group: scan_key_quoted(obj, "group"),
         show_if: scan_key_show_if(obj, file_src),
         options_from: scan_key_quoted(obj, "optionsFrom")
@@ -1241,6 +1241,65 @@ fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
         return Vec::new();
     }
     Vec::new()
+}
+
+fn scan_key_option_labels(block: &str, file_src: &str) -> Vec<String> {
+    let mut rest = block;
+    while let Some(idx) = rest.find("optionLabels") {
+        let after = &rest[idx + "optionLabels".len()..];
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix(':').map(str::trim_start) else {
+            rest = after;
+            continue;
+        };
+        if let Some(labels) = parse_string_array(after) {
+            return labels;
+        }
+        if let Some((ident, _)) = take_ident(after) {
+            if let Some(rhs) = const_eq_rhs(file_src, ident) {
+                if let Some(labels) = parse_string_record(rhs) {
+                    return labels;
+                }
+            }
+        }
+        return Vec::new();
+    }
+    Vec::new()
+}
+
+/// Values from a static `Record<string, string>` object, in declaration order.
+/// Computed keys/values are rejected rather than partially resolved.
+fn parse_string_record(rhs: &str) -> Option<Vec<String>> {
+    let s = rhs.trim_start();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '{', '}')?;
+    let mut rest = s[1..end].trim_start();
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        let (key, after_key) = if let Some((key, n)) = scan_quoted(rest) {
+            (key, &rest[n..])
+        } else {
+            let (key, after) = take_ident(rest)?;
+            (key.to_string(), after)
+        };
+        let _ = key;
+        let after_key = after_key.trim_start().strip_prefix(':')?.trim_start();
+        let (value, n) = scan_quoted(after_key)?;
+        out.push(value);
+        rest = after_key[n..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if !rest.is_empty() {
+            return None;
+        }
+    }
+    Some(out)
 }
 
 fn scan_key_raw_value(block: &str, key: &str) -> Option<String> {
