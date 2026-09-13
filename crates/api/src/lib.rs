@@ -6,6 +6,7 @@ pub use snapshot::{LocalTile, WorldTile};
 
 pub mod cake_stall;
 pub mod content;
+pub mod ent;
 pub mod game_data;
 pub mod gather_tools;
 pub mod interact;

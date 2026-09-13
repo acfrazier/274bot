@@ -208,6 +208,16 @@
     ]
   },
   {
+    "name": "ENT_LIFE_TICKS",
+    "kind": "value",
+    "members": []
+  },
+  {
+    "name": "ENT_NPC_IDS",
+    "kind": "value",
+    "members": []
+  },
+  {
     "name": "EntityQuery",
     "kind": "class",
     "members": [
@@ -242,7 +252,8 @@
       "delay",
       "delayTicks",
       "delayUntil",
-      "delayUntilTicks"
+      "delayUntilTicks",
+      "noteProgress"
     ]
   },
   {
@@ -842,6 +853,11 @@
     "members": []
   },
   {
+    "name": "entNpcOnTile",
+    "kind": "function",
+    "members": []
+  },
+  {
     "name": "events",
     "kind": "object",
     "members": [
@@ -911,6 +927,11 @@
   },
   {
     "name": "isCowFieldLootTile",
+    "kind": "function",
+    "members": []
+  },
+  {
+    "name": "isEntNpcId",
     "kind": "function",
     "members": []
   },

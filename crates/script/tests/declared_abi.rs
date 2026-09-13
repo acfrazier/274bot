@@ -145,10 +145,80 @@ fn catalog_index_dts(root: &std::path::Path) -> std::path::PathBuf {
     root.join("packages/rs2b0t-api/index.d.ts")
 }
 
-/// When `$RS2B0T` (or the persisted catalog root) is set, the checked-in
-/// fixture must match a fresh parse of that tree's `index.d.ts`.
+/// Frozen 96410ec5 pin: 180 runtime exports, Execution.noteProgress, Ent quartet.
+#[test]
+fn frozen_declared_abi_has_180_exports_note_progress_and_ent_quartet() {
+    let fixture = load_fixture().expect("js_declared_abi.json");
+    assert_eq!(
+        fixture.len(),
+        180,
+        "frozen catalog ABI is 180 runtime exports"
+    );
+    let execution = fixture
+        .iter()
+        .find(|e| e.name == "Execution")
+        .expect("Execution");
+    assert_eq!(execution.kind, DeclaredKind::Object);
+    assert!(
+        execution.members.iter().any(|m| m == "noteProgress"),
+        "Execution.noteProgress must be a declared member"
+    );
+    for name in [
+        "ENT_NPC_IDS",
+        "ENT_LIFE_TICKS",
+        "isEntNpcId",
+        "entNpcOnTile",
+    ] {
+        assert!(
+            fixture.iter().any(|e| e.name == name),
+            "missing declared export {name}"
+        );
+    }
+    assert_eq!(
+        fixture
+            .iter()
+            .find(|e| e.name == "ENT_NPC_IDS")
+            .unwrap()
+            .kind,
+        DeclaredKind::Value
+    );
+    assert_eq!(
+        fixture
+            .iter()
+            .find(|e| e.name == "ENT_LIFE_TICKS")
+            .unwrap()
+            .kind,
+        DeclaredKind::Value
+    );
+    assert_eq!(
+        fixture
+            .iter()
+            .find(|e| e.name == "isEntNpcId")
+            .unwrap()
+            .kind,
+        DeclaredKind::Function
+    );
+    assert_eq!(
+        fixture
+            .iter()
+            .find(|e| e.name == "entNpcOnTile")
+            .unwrap()
+            .kind,
+        DeclaredKind::Function
+    );
+}
+
+/// When `$RS2B0T` is set on this process, the checked-in fixture must match
+/// a fresh parse of that tree's `index.d.ts`. Isolated from the operator
+/// persisted catalog so a dirty/older checkout cannot un-pin 96410ec5.
 #[test]
 fn declared_abi_fixture_matches_local_dts() {
+    let env = script::IsolatedEnv::enter("declared-abi");
+    if let Ok(root) = std::env::var("RS2B0T") {
+        if !root.is_empty() {
+            env.set_rs2b0t(std::path::Path::new(&root));
+        }
+    }
     let Some(root) = script::rs2b0t_root() else {
         return;
     };

@@ -534,6 +534,10 @@ const REEXPORTS: &[Reexport] = &[
         ],
         line: "export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';",
     },
+    Reexport {
+        names: &["ENT_NPC_IDS", "ENT_LIFE_TICKS", "isEntNpcId", "entNpcOnTile"],
+        line: "export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';",
+    },
 ];
 
 /// Generate the `@rs2b0t/api` surface: re-export real shims, stub the rest.

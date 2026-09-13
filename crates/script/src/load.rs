@@ -1718,6 +1718,29 @@ mod isolate {
         Ok(integer as i32)
     }
 
+    fn json_i32(value: Option<&serde_json::Value>) -> Option<i32> {
+        value.and_then(|v| {
+            v.as_i64()
+                .or_else(|| {
+                    v.as_f64()
+                        .and_then(|n| (n.is_finite() && n.fract() == 0.0).then_some(n as i64))
+                })
+                .and_then(|n| i32::try_from(n).ok())
+        })
+    }
+
+    fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
+        let object = value.and_then(serde_json::Value::as_object)?;
+        Some(api::WorldTile {
+            x: json_i32(object.get("x"))?,
+            z: json_i32(object.get("z"))?,
+            level: match object.get("level") {
+                None | Some(serde_json::Value::Null) => 0,
+                Some(other) => json_i32(Some(other))?,
+            },
+        })
+    }
+
     /// Load `source` into `runtime` as a module and wire the global tick
     /// entry. Native sources export `tick(api)`; compat sources
     /// default-export a `defineBot` config and tick through `create()`'s
@@ -2026,6 +2049,46 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register hostile attacker: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_ent_npc_ids", |_args: &[serde_json::Value]| {
+                Ok(serde_json::json!(api::ent::ENT_NPC_IDS))
+            })
+            .map_err(|e| format!("register ent npc ids: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_ent_life_ticks",
+                |_args: &[serde_json::Value]| Ok(serde_json::json!(api::ent::ENT_LIFE_TICKS)),
+            )
+            .map_err(|e| format!("register ent life ticks: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_is_ent_npc_id", |args: &[serde_json::Value]| {
+                Ok(serde_json::Value::Bool(
+                    json_i32(args.first()).is_some_and(api::ent::is_ent_npc_id),
+                ))
+            })
+            .map_err(|e| format!("register is ent npc id: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_ent_npc_on_tile",
+                |args: &[serde_json::Value]| {
+                    let npcs = args
+                        .first()
+                        .and_then(serde_json::Value::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(|row| {
+                                    Some((json_i32(row.get("id"))?, json_tile(row.get("tile"))?))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Ok(serde_json::Value::Bool(
+                        json_tile(args.get(1))
+                            .is_some_and(|tile| api::ent::ent_npc_on_tile(npcs, tile)),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register ent npc on tile: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;

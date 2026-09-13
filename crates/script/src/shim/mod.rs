@@ -294,6 +294,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("data/pickpocket_targets.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/data/woodcuttingLocations.js",
+            include_str!("data/woodcutting_locations.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/combat/CombatStyleLogic.js",
             include_str!("combat_style_logic.js"),
         ),
