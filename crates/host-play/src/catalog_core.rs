@@ -4385,8 +4385,14 @@ impl CombatCoreCycle {
             if new_spawn {
                 self.currently_engaged.remove(&npc.index);
             }
+            // Defeated indexes stay dead until a positive-health respawn. A known
+            // zero-health bar (total_health > 0) is a corpse/death frame — selected
+            // combat on it must not open a new engagement or mark further work.
+            // total_health == 0 remains unknown (no bar), not universally dead.
+            let stale_defeated = prev.as_ref().is_some_and(|prev| prev.defeated) && !new_spawn;
+            let known_corpse = npc.total_health > 0 && npc.health == 0;
             let was_engaged = self.currently_engaged.contains(&npc.index);
-            let actual_work = selected_combat || health_drop;
+            let actual_work = !stale_defeated && !known_corpse && (selected_combat || health_drop);
             if self.defeats > 0 && was_engaged && actual_work {
                 self.further_work = true;
             }
