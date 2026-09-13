@@ -291,4 +291,10 @@ export type InteractReq =
   | { op: 'set-run'; on: boolean}
   | { op: 'set-retaliate'; on: boolean}
   | { op: 'set-note-mode'; on: boolean}
-  | { op: 'set-camera-yaw'; yaw: number};
+  | { op: 'set-camera-yaw'; yaw: number}
+  | { op: 'note-progress'}
+  | { op: 'loop-settled'}
+  | { op: 'wait-enqueued'}
+  | { op: 'wait-settled'}
+  | { op: 'recovery-anchor'; x: number; z: number; level: number}
+  | { op: 'recovery-anchor-none'};

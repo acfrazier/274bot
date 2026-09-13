@@ -938,4 +938,37 @@ pub enum InteractReq {
     /// Host-side orbit yaw write (`client.orbit_camera_yaw`); no opcode.
     #[serde(rename = "set-camera-yaw")]
     SetCameraYaw { yaw: i32 },
+    /// Execution.noteProgress: stamps both watchdog clocks. Not a game op.
+    #[serde(rename = "note-progress")]
+    NoteProgress,
+    /// Compat runner: `loop()` promise fulfilled. Scheduler progress only.
+    #[serde(rename = "loop-settled")]
+    LoopSettled,
+    /// Execution wait enqueue (parked rising edge). Scheduler progress.
+    #[serde(rename = "wait-enqueued")]
+    WaitEnqueued,
+    /// Execution wait settle (including re-park in the same pump).
+    #[serde(rename = "wait-settled")]
+    WaitSettled,
+    /// Validated `recoveryAnchor()` tile, isolate→host, generation-tagged.
+    #[serde(rename = "recovery-anchor")]
+    RecoveryAnchor { x: i32, z: i32, level: i32 },
+    /// `recoveryAnchor()` missing, invalid, or threw.
+    #[serde(rename = "recovery-anchor-none")]
+    RecoveryAnchorNone,
+}
+
+impl InteractReq {
+    /// Lifecycle facts for the native watchdog. Never dispatched as game ops.
+    pub fn is_watchdog_lifecycle(&self) -> bool {
+        matches!(
+            self,
+            Self::NoteProgress
+                | Self::LoopSettled
+                | Self::WaitEnqueued
+                | Self::WaitSettled
+                | Self::RecoveryAnchor { .. }
+                | Self::RecoveryAnchorNone
+        )
+    }
 }

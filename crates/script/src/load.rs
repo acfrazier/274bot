@@ -992,6 +992,11 @@ mod isolate {
             id: String,
             generation: u64,
         },
+        /// Generation-bound recoveryAnchor sample. Evaluated on this
+        /// thread with the 50 ms budget; the reply is a FlatBuffer interact.
+        RecoveryAnchor {
+            generation: u64,
+        },
         Probe(String, Sender<Result<serde_json::Value, String>>),
         Stop,
     }
@@ -1047,6 +1052,8 @@ mod isolate {
         /// Interact requests forwarded by the tick thread (the shim
         /// `Bank`/`Banking` queue), drained by the host like logs.
         interacts: Mutex<Vec<crate::shim::InteractReq>>,
+        /// Watchdog lifecycle facts from the same FlatBuffer batch.
+        lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
         /// The latest paint frame the tick thread forwarded (a
         /// [`crate::shim::ScriptPaint`] decoded off the host handle after
         /// each tick), read by the script paint views.
@@ -1167,6 +1174,7 @@ mod isolate {
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
                 interacts: Mutex::new(Vec::new()),
+                lifecycle: Mutex::new(Vec::new()),
                 paint: Mutex::new(None),
                 ignored_randoms: Mutex::new(Vec::new()),
                 handle: Some(handle),
@@ -1314,6 +1322,19 @@ mod isolate {
             });
         }
 
+        /// Ask the isolate thread to evaluate `recoveryAnchor()` once for
+        /// this work generation. Non-blocking: the reply arrives as a
+        /// generation-tagged interact (`recovery-anchor` / `recovery-anchor-none`).
+        pub fn request_recovery_anchor(&self) {
+            if self.stopped.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            let generation = self
+                .work_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            let _ = self.tx.send(IsolateCmd::RecoveryAnchor { generation });
+        }
+
         /// Evaluate `expr` in the isolate's global scope and return its
         /// JSON value (test/status read-back; e.g. `"__rs_bot.n"`).
         pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
@@ -1356,6 +1377,14 @@ mod isolate {
             std::mem::take(&mut *self.interacts.lock().unwrap())
         }
 
+        /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
+        /// loop/wait settle, recoveryAnchor replies) from the same FlatBuffer
+        /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
+        pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
+            self.pump_logs();
+            std::mem::take(&mut *self.lifecycle.lock().unwrap())
+        }
+
         /// Discard work from the previous connection, including batches that
         /// an already running tick has not forwarded yet. Script state and
         /// parked waits survive; the next snapshot is posted before a new tick.
@@ -1367,6 +1396,7 @@ mod isolate {
                 self.paint_generation
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 interacts.clear();
+                self.lifecycle.lock().unwrap().clear();
             }
             if let Some(paint) = self.paint.lock().unwrap().as_mut() {
                 paint.generation = self
@@ -1428,6 +1458,7 @@ mod isolate {
                             .store(true, std::sync::atomic::Ordering::Release);
                         *self.in_flight.lock().unwrap() = None;
                         self.interacts.lock().unwrap().clear();
+                        self.lifecycle.lock().unwrap().clear();
                     }
                     ThreadMsg::Interact { bytes, generation } => {
                         let mut interacts = self.interacts.lock().unwrap();
@@ -1439,7 +1470,16 @@ mod isolate {
                             continue;
                         }
                         match crate::isolate_fb::decode_interact_batch(&bytes) {
-                            Ok(reqs) => interacts.extend(reqs),
+                            Ok(reqs) => {
+                                let mut lifecycle = self.lifecycle.lock().unwrap();
+                                for req in reqs {
+                                    if req.is_watchdog_lifecycle() {
+                                        lifecycle.push(req);
+                                    } else {
+                                        interacts.push(req);
+                                    }
+                                }
+                            }
                             Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
                         }
                     }
@@ -2049,10 +2089,12 @@ globalThis.__rs_tick = (n) => {
     if (!inst) return;
     globalThis.__rs2b0t_tick_async(n).catch((e) => {
         globalThis.__rs2b0t_host.lastError = String((e && e.message) || e);
+        globalThis.__rs2b0t_host.loopInFlight = false;
     });
 };
 globalThis.__rs2b0t_tick_async = async (n) => {
-    globalThis.__rs2b0t_host.tick = n;
+    const h = globalThis.__rs2b0t_host;
+    h.tick = n;
     const fire = globalThis.__rs2b0t_fire_tick_listeners;
     if (typeof fire === 'function') fire();
     if (!globalThis.__rs2b0t_started) {
@@ -2060,7 +2102,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         if (typeof inst.onStart === 'function') { await inst.onStart(); }
     }
     // IPC bus: posted chat_text changed → chat.message { text }.
-    const text = (globalThis.__rs2b0t_host.snapshot || {}).chat_text;
+    const text = (h.snapshot || {}).chat_text;
     const t = (text == null || text === '') ? '' : String(text);
     if (t !== globalThis.__rs2b0t_last_chat) {
         globalThis.__rs2b0t_last_chat = t;
@@ -2072,12 +2114,24 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             }
         }
     }
-    // Kick loop, yield so it can park on the first await, then paint —
-    // never wait for loop() to return before onPaint.
+    // Single-flight: a never-resolving loop() must not re-enter. Tick
+    // listeners, chat, and onPaint still run.
+    if (h.loopInFlight) {
+        await Promise.resolve();
+        globalThis.__rs2b0t_call_on_paint(inst);
+        return;
+    }
+    h.loopInFlight = true;
     const loopP = (typeof inst.loop === 'function') ? inst.loop() : Promise.resolve();
     await Promise.resolve();
     globalThis.__rs2b0t_call_on_paint(inst);
-    await loopP;
+    try {
+        await loopP;
+        h.interact = h.interact || [];
+        h.interact.push({ op: 'loop-settled' });
+    } finally {
+        h.loopInFlight = false;
+    }
 };
 "#;
 
@@ -3295,6 +3349,48 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             .map_err(|e| e.to_string())
     }
 
+    /// Drain Execution wait enqueue/settle counters. Each increment is a
+    /// real lifecycle fact, including settle+repark in the same pump.
+    fn take_wait_facts(runtime: &mut Runtime) -> (u32, u32) {
+        let counts: Result<Vec<u32>, rustyscript::Error> = runtime.eval(
+            "(() => { const h = globalThis.__rs2b0t_host || {}; const e = h.waitEnqueues | 0; const s = h.waitSettles | 0; h.waitEnqueues = 0; h.waitSettles = 0; return [e, s]; })()",
+        );
+        match counts.ok().as_deref() {
+            Some([e, s, ..]) => (*e, *s),
+            _ => (0, 0),
+        }
+    }
+
+    fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, settled: u32) {
+        for _ in 0..enqueued {
+            reqs.push(crate::shim::InteractReq::WaitEnqueued);
+        }
+        for _ in 0..settled {
+            reqs.push(crate::shim::InteractReq::WaitSettled);
+        }
+    }
+
+    /// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
+    fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
+        let value: Result<Option<Vec<i32>>, rustyscript::Error> = runtime.eval(
+            r#"(() => {
+                try {
+                    const inst = globalThis.__rs_bot;
+                    if (!inst || typeof inst.recoveryAnchor !== 'function') return null;
+                    const a = inst.recoveryAnchor();
+                    if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+                    const x = a.x, z = a.z, level = a.level;
+                    if (!Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(level)) return null;
+                    return [x, z, level];
+                } catch (_) { return null; }
+            })()"#,
+        );
+        match value {
+            Ok(Some(coords)) if coords.len() >= 3 => Some((coords[0], coords[1], coords[2])),
+            _ => None,
+        }
+    }
+
     /// The tick loop: commands are serialized on this thread; ticks run
     /// with a time budget, slow ticks are logged and stale queued ticks are
     /// skipped, and errors never kill the isolate.
@@ -3536,13 +3632,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // batch, not a stringified JSON document.
                     let interact: Result<Vec<crate::shim::InteractReq>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                    if let Ok(reqs) = interact {
-                        if !reqs.is_empty() {
-                            let _ = out.send(ThreadMsg::Interact {
-                                bytes: ipc.encode_interact_batch(&reqs),
-                                generation,
-                            });
-                        }
+                    let mut reqs = interact.unwrap_or_default();
+                    let (enqueued, settled) = take_wait_facts(&mut runtime);
+                    append_wait_facts(&mut reqs, enqueued, settled);
+                    if !reqs.is_empty() {
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&reqs),
+                            generation,
+                        });
                     }
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     // Forward the tick's recorded paint frame
@@ -3687,6 +3784,37 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     }
                     if let Err(e) = set_paint_click(&mut runtime, &id) {
                         let _ = out.send(ThreadMsg::Log(format!("paintClick: {e}")));
+                    }
+                }
+                IsolateCmd::RecoveryAnchor { generation } => {
+                    if paused
+                        || host_hold
+                        || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    let start = Instant::now();
+                    let req = match eval_recovery_anchor(&mut runtime) {
+                        Some((x, z, level)) => {
+                            crate::shim::InteractReq::RecoveryAnchor { x, z, level }
+                        }
+                        None => crate::shim::InteractReq::RecoveryAnchorNone,
+                    };
+                    runtime
+                        .deno_runtime()
+                        .v8_isolate()
+                        .cancel_terminate_execution();
+                    if start.elapsed() > SLOW_TICK {
+                        let _ = out.send(ThreadMsg::Log(format!(
+                            "slow recoveryAnchor: {:?}",
+                            start.elapsed()
+                        )));
+                    }
+                    if generation == work_generation.load(std::sync::atomic::Ordering::Acquire) {
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&[req]),
+                            generation,
+                        });
                     }
                 }
                 IsolateCmd::Probe(expr, reply) => {

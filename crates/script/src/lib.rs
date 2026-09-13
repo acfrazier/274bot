@@ -21,6 +21,8 @@ pub mod settings_store;
 #[cfg(feature = "load")]
 pub mod shim;
 pub mod slot;
+#[cfg(feature = "load")]
+pub mod watchdog;
 
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
@@ -51,6 +53,10 @@ pub use settings_store::{
     parameter_rows, setting_visible, ScriptSettingsStore,
 };
 pub use slot::{RunState, SlotScript};
+#[cfg(feature = "load")]
+pub use watchdog::{
+    ProgressWatchdog, RestartReason, Tile as WatchdogTile, WatchdogAction, WatchdogState,
+};
 
 #[cfg(feature = "load")]
 pub use load::{transpile_ts, LoadIsolate};

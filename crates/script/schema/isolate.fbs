@@ -277,7 +277,9 @@ table Snapshot {
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "shop-button" | "make-panel"
-// | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
+// | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
+// | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
+// | "recovery-anchor" | "recovery-anchor-none".
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;

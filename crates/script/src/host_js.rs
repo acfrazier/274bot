@@ -1872,6 +1872,49 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             doc: None,
         }],
     },
+    InteractVariant {
+        op: "note-progress",
+        fields: &[],
+    },
+    InteractVariant {
+        op: "loop-settled",
+        fields: &[],
+    },
+    InteractVariant {
+        op: "wait-enqueued",
+        fields: &[],
+    },
+    InteractVariant {
+        op: "wait-settled",
+        fields: &[],
+    },
+    InteractVariant {
+        op: "recovery-anchor",
+        fields: &[
+            TsField {
+                name: "x",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "z",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "level",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
+        op: "recovery-anchor-none",
+        fields: &[],
+    },
 ];
 
 #[cfg(test)]
