@@ -342,7 +342,7 @@ export const Bank = new Proxy(
             });
         },
         async waitReady(timeoutMs, log) {
-            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 4000;
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
             if (!Bank.isOpen() || Bank.ready()) {
                 return Bank.ready();
             }
@@ -364,7 +364,7 @@ export const Bank = new Proxy(
             if (!Number.isFinite(baseline) || baseline < 0) {
                 return false;
             }
-            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 4000;
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
             await Execution.delayUntil(
                 () => !Bank.isOpen() || Bank.snapshotGeneration() > baseline,
                 ms,
