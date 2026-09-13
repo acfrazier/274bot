@@ -14,6 +14,15 @@
 //! once per artifact set: a warm build with unchanged canonical inputs reuses
 //! the staged artifacts and only re-publishes their stamped identities.
 //!
+//! Canonical inputs are required, not optional. Besides the named dirs, the
+//! loc `config` jag and the cache archives, the build requires the inputs the
+//! bake consumes implicitly — the pack id tables, the module scripts of the
+//! derived transports, the bank booth config and the revision's canonical
+//! mapsquares ([`nav::bundle::required_content_inputs`]) — on every build,
+//! before a warm staged artifact set is accepted. A deliberate content edit
+//! or addition is not judged here; it flows through the ordinary input
+//! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
+//!
 //! Knobs (see docs/api/nav.md):
 //! - `BOT_NAV_BUILD=require|skip` (default `require`)
 //! - `BOT_NAV_REVISION=289|274` (default `289`)
@@ -119,6 +128,17 @@ fn main() {
         .collect();
     for archive in &archives {
         require_file(archive, revision);
+    }
+    // The bake also consumes inputs it does not take as named arguments: the
+    // jm2 placements and the pack id tables behind the transport graph and the
+    // bank stand table, the module scripts of each derived transport family,
+    // and the canonical mapsquares themselves. The baker skips what is absent,
+    // so they are required by name here — before a warm staged stamp can be
+    // accepted, not only when this build has to bake.
+    match nav::bundle::missing_content_inputs(revision, &content_dir) {
+        Ok(missing) if missing.is_empty() => {}
+        Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
+        Err(e) => fail(&e),
     }
     println!("cargo:rerun-if-changed={}", content_dir.display());
     println!("cargo:rerun-if-changed={}", config_jag.display());
@@ -451,6 +471,29 @@ fn require_file(path: &Path, revision: u16) {
             path.display()
         ));
     }
+}
+
+/// The canonical-input inventory failure. Naming every missing input would
+/// bury the actionable part on a reduced tree, so the first few are listed
+/// and the rest counted.
+fn incomplete_content(revision: u16, content_dir: &Path, missing: &[String]) -> String {
+    const SHOWN: usize = 8;
+    let mut listed = missing
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("; ");
+    if missing.len() > SHOWN {
+        listed.push_str(&format!("; and {} more", missing.len() - SHOWN));
+    }
+    format!(
+        "canonical revision {revision} content at {} is incomplete: {} required input(s) \
+         missing ({listed}); point BOT_NAV_CONTENT_DIR at the canonical revision {revision} \
+         content tree, or set BOT_NAV_BUILD=skip to build without bundled navigation",
+        content_dir.display(),
+        missing.len()
+    )
 }
 
 fn fail(message: &str) -> ! {

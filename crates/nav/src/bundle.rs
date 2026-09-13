@@ -1,7 +1,8 @@
 //! Build-time navigation bundling: the identities and machine-local stamps
 //! that let an ordinary application build bake the selected revision's nav
 //! artifacts once, stage them in the install resource layout, and reuse them
-//! on every warm build.
+//! on every warm build, plus the required canonical content inventory the
+//! build checks before it bakes or reuses anything.
 //!
 //! Nothing here is runtime state: the runtime keeps its cheap format/revision
 //! checks and the explicit external overrides (`--nav-pack` / `NAV_PACK`).
@@ -91,6 +92,138 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Required canonical content inputs.
+// ---------------------------------------------------------------------------
+
+/// Kind of one required canonical content input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredKind {
+    /// A file a derivation reads by name.
+    File,
+    /// One mapsquare of the revision's canonical map set (the whole-world
+    /// collision bake and the jm2 placement reader consume them).
+    Mapsquare,
+    /// A directory a derivation scans recursively; it must exist and hold at
+    /// least one entry.
+    Dir,
+}
+
+/// One canonical content input a default (`BOT_NAV_BUILD=require`) build must
+/// have. The baker quietly skips what is absent, so the build script asks for
+/// these by name before it bakes or accepts a staged artifact set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequiredInput {
+    /// Content-root-relative, `/`-separated path.
+    pub path: &'static str,
+    pub kind: RequiredKind,
+    /// What the bake consumes the input for (the actionable part of a
+    /// missing-input error); empty for mapsquares, which the kind describes.
+    pub consumer: &'static str,
+}
+
+/// The embedded revision inventory. Only the release revisions the build
+/// script accepts have one.
+fn required_inventory(revision: u16) -> Option<&'static str> {
+    match revision {
+        289 => Some(include_str!("required-content-289.tsv")),
+        274 => Some(include_str!("required-content-274.tsv")),
+        _ => None,
+    }
+}
+
+/// The required canonical content inputs of `revision`, in inventory order:
+/// `#` comments and blank lines are skipped, every other line is
+/// `kind<TAB>content-relative path[<TAB>consumer]` with kinds `file`, `dir`
+/// and `map`. The inventory is data, verified by the crate's tests against
+/// the configured canonical trees; a revision without an inventory reports
+/// none, so the tolerated path stays for revisions the build script rejects.
+pub fn required_content_inputs(revision: u16) -> Result<Vec<RequiredInput>, String> {
+    let Some(text) = required_inventory(revision) else {
+        return Ok(Vec::new());
+    };
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut columns = line.split('\t');
+        let kind = match columns.next() {
+            Some("file") => RequiredKind::File,
+            Some("map") => RequiredKind::Mapsquare,
+            Some("dir") => RequiredKind::Dir,
+            Some(other) => {
+                return Err(format!(
+                    "required-content-{revision} line {}: unknown kind {other:?}",
+                    index + 1
+                ))
+            }
+            None => unreachable!("split yields at least one column"),
+        };
+        let Some(path) = columns.next().filter(|path| !path.is_empty()) else {
+            return Err(format!(
+                "required-content-{revision} line {}: no path",
+                index + 1
+            ));
+        };
+        if path.starts_with('/') || path.split('/').any(|part| part == "..") {
+            return Err(format!(
+                "required-content-{revision} line {}: {path} is not content-relative",
+                index + 1
+            ));
+        }
+        rows.push(RequiredInput {
+            path,
+            kind,
+            consumer: columns.next().unwrap_or(""),
+        });
+    }
+    Ok(rows)
+}
+
+/// The required inputs of `revision` missing under `content_dir`, one
+/// actionable description each; an empty list means the canonical content is
+/// complete. Bytes are never judged here — a deliberate edit or addition
+/// stays eligible for the ordinary fingerprint/staleness path.
+pub fn missing_content_inputs(revision: u16, content_dir: &Path) -> Result<Vec<String>, String> {
+    let mut missing = Vec::new();
+    for input in required_content_inputs(revision)? {
+        if !required_present(&content_dir.join(input.path), input.kind) {
+            missing.push(describe_required(revision, &input));
+        }
+    }
+    Ok(missing)
+}
+
+/// Presence of one required input: a readable file (mapsquares included), or
+/// a directory with at least one entry.
+fn required_present(path: &Path, kind: RequiredKind) -> bool {
+    match kind {
+        RequiredKind::File | RequiredKind::Mapsquare => path.is_file(),
+        RequiredKind::Dir => std::fs::read_dir(path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false),
+    }
+}
+
+/// One missing required input, described for a build error.
+fn describe_required(revision: u16, input: &RequiredInput) -> String {
+    match input.kind {
+        RequiredKind::File => format!("{} ({})", input.path, input.consumer),
+        RequiredKind::Mapsquare => {
+            format!(
+                "{} (canonical mapsquare of revision {revision})",
+                input.path
+            )
+        }
+        RequiredKind::Dir => format!(
+            "{} ({}; directory missing or empty)",
+            input.path, input.consumer
+        ),
+    }
 }
 
 /// Install-relative layout of one revision's staged navigation artifacts,
@@ -303,6 +436,8 @@ fn normalize(path: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> BakeStamp {
@@ -492,5 +627,234 @@ mod tests {
         );
         assert!(resource_root_for_build(Path::new("/unexpected/out"), None).is_err());
         assert!(resource_root_for_build(out, Some(Path::new(""))).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Required canonical content inputs.
+    // -----------------------------------------------------------------------
+
+    struct RequiredFixture(PathBuf);
+
+    impl RequiredFixture {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "274bot-nav-required-{}-{}-{name}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for RequiredFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Write one file of an inventory row under `root`, creating parents.
+    fn write_required_file(root: &Path, path: &str) {
+        let file = root.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&file, b"fixture").unwrap();
+    }
+
+    /// A fixture of exactly the inventory: every required file written, every
+    /// required directory holding one entry.
+    fn write_inventory_tree(root: &Path, revision: u16) {
+        for input in required_content_inputs(revision).expect("inventory") {
+            match input.kind {
+                RequiredKind::Dir => {
+                    let dir = root.join(input.path);
+                    std::fs::create_dir_all(&dir).unwrap();
+                    std::fs::write(dir.join("present"), b"").unwrap();
+                }
+                _ => write_required_file(root, input.path),
+            }
+        }
+    }
+
+    /// The canonical local content root of a revision, the same default the
+    /// build script resolves.
+    fn canonical_content_root(revision: u16) -> Option<PathBuf> {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+        let root = PathBuf::from(home).join(if revision == 289 {
+            "experiments/lostcity-289/content"
+        } else {
+            "experiments/Server/content"
+        });
+        root.is_dir().then_some(root)
+    }
+
+    fn mapsquares(revision: u16) -> usize {
+        required_content_inputs(revision)
+            .expect("inventory")
+            .iter()
+            .filter(|row| row.kind == RequiredKind::Mapsquare)
+            .count()
+    }
+
+    #[test]
+    fn the_inventory_names_the_implicit_bake_inputs_of_each_release_revision() {
+        let rows = required_content_inputs(289).expect("289 inventory");
+        let paths: Vec<&str> = rows.iter().map(|row| row.path).collect();
+        for expected in [
+            "pack/loc.pack",
+            "pack/obj.pack",
+            "pack/varp.pack",
+            "scripts/interface_bank/configs/bank_booth.loc",
+            "scripts/ladders+stairs/scripts/ladders.rs2",
+            "scripts/ladders+stairs/scripts/stairs.rs2",
+            "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
+            "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+            "scripts/skill_magic/configs/magic_spells.dbrow",
+            "scripts/skill_magic/configs/enchanted_jewelry.obj",
+        ] {
+            assert!(paths.contains(&expected), "{expected} is required");
+        }
+        assert_eq!(mapsquares(289), 534, "the canonical 289 map set");
+        assert_eq!(mapsquares(274), 483, "the canonical 274 map set");
+        assert!(rows.iter().any(|row| row.kind == RequiredKind::Dir));
+        let mut unique = paths.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), paths.len(), "no duplicate inventory rows");
+        assert!(paths
+            .iter()
+            .all(|path| !path.starts_with('/') && !path.split('/').any(|part| part == "..")));
+        // The two revisions are distinct inventories, and a revision without
+        // one reports none (the build script rejects it before this point).
+        assert_ne!(rows.len(), required_content_inputs(274).unwrap().len());
+        assert!(required_content_inputs(1).expect("no inventory").is_empty());
+    }
+
+    #[test]
+    fn a_complete_inventory_tree_passes_and_the_reduced_round_one_set_fails() {
+        let complete = RequiredFixture::new("complete");
+        write_inventory_tree(&complete.0, 289);
+        assert!(
+            missing_content_inputs(289, &complete.0)
+                .expect("guard")
+                .is_empty(),
+            "a fixture of exactly the inventory is complete"
+        );
+        // Bytes are never the guard's business: an edit or an addition stays
+        // eligible for the ordinary fingerprint/staleness path.
+        std::fs::write(complete.0.join("pack/loc.pack"), b"edited bytes").unwrap();
+        std::fs::write(
+            complete.0.join("scripts/general_use/configs/extra.loc"),
+            b"added",
+        )
+        .unwrap();
+        std::fs::write(complete.0.join("maps/m99_99.jm2"), b"added").unwrap();
+        assert!(missing_content_inputs(289, &complete.0)
+            .expect("guard")
+            .is_empty());
+
+        // The round-1 native input set (docs/compat/release-p1b-native.md):
+        // maps, the door configs and gates.loc, nothing else.
+        let reduced = RequiredFixture::new("reduced");
+        for input in required_content_inputs(289).expect("inventory") {
+            let kept = match input.kind {
+                RequiredKind::Mapsquare => true,
+                _ => input.path.contains("doors/configs") || input.path.ends_with("gates.loc"),
+            };
+            if kept {
+                write_required_file(&reduced.0, input.path);
+            }
+        }
+        let missing = missing_content_inputs(289, &reduced.0).expect("guard");
+        for expected in [
+            "pack/loc.pack",
+            "pack/obj.pack",
+            "scripts/interface_bank/configs/bank_booth.loc",
+            "scripts/ladders+stairs/scripts/ladders.rs2",
+            "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "scripts/skill_magic/configs/magic_spells.dbrow",
+            "scripts/skill_agility/scripts",
+        ] {
+            assert!(
+                missing.iter().any(|row| row.starts_with(expected)),
+                "{expected} is reported missing: {missing:?}"
+            );
+        }
+        assert!(
+            !missing.iter().any(|row| row.starts_with("maps/")),
+            "the reduced set keeps every mapsquare: {missing:?}"
+        );
+        assert!(missing.len() > 10, "the reduced set is far from complete");
+    }
+
+    #[test]
+    fn a_single_missing_mapsquare_source_or_directory_is_reported() {
+        let root = RequiredFixture::new("single-missing");
+        write_inventory_tree(&root.0, 274);
+        assert!(missing_content_inputs(274, &root.0)
+            .expect("guard")
+            .is_empty());
+
+        let map = required_content_inputs(274)
+            .expect("inventory")
+            .into_iter()
+            .find(|row| row.kind == RequiredKind::Mapsquare)
+            .expect("a required mapsquare")
+            .path
+            .to_string();
+        std::fs::remove_file(root.0.join(&map)).unwrap();
+        std::fs::remove_file(root.0.join("scripts/ladders+stairs/scripts/stairs.rs2")).unwrap();
+        std::fs::remove_file(
+            root.0
+                .join("scripts/general/scripts/enchanted_jewellry/present"),
+        )
+        .unwrap();
+
+        let missing = missing_content_inputs(274, &root.0).expect("guard");
+        assert_eq!(missing.len(), 3, "{missing:?}");
+        assert!(
+            missing
+                .iter()
+                .any(|row| row.starts_with(&map)
+                    && row.contains("canonical mapsquare of revision 274")),
+            "{missing:?}"
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|row| row
+                    .starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
+            "{missing:?}"
+        );
+        assert!(
+            missing.iter().any(|row| row
+                .starts_with("scripts/general/scripts/enchanted_jewellry (")
+                && row.contains("directory missing or empty")),
+            "{missing:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "reads the configured canonical 289/274 content trees"]
+    fn the_canonical_content_trees_satisfy_their_inventory() {
+        for revision in [289u16, 274] {
+            let Some(root) = canonical_content_root(revision) else {
+                println!("revision {revision}: no canonical content tree here");
+                continue;
+            };
+            let missing = missing_content_inputs(revision, &root).expect("guard");
+            assert!(missing.is_empty(), "{}: {missing:?}", root.display());
+            println!(
+                "revision {revision}: {} required inputs present in {}",
+                required_content_inputs(revision).expect("inventory").len(),
+                root.display()
+            );
+        }
     }
 }
