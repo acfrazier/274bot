@@ -25,7 +25,7 @@ function obs() {
     return {
         here: s.here || null,
         bank_open: Bank.isOpen(),
-        bank_loaded: Bank.loaded(),
+        bank_loaded: Bank.snapshotReady(),
         bank_generation: Bank.snapshotGeneration(),
         nearest_booth: booth,
         booth_name: booth && booth.name ? String(booth.name) : undefined,
