@@ -33,7 +33,7 @@ cd 274bot
 
 You need a **local 274 engine** (game `43594`, HTTP `/crc` on `:80`) and the pack cache. This repo does **not** ship or download Jagex assets. Point **`$ENGINE_DIR`** at the engine root (default `$HOME/experiments/Server/engine`). Cache is `$ENGINE_DIR/data/pack/client` (override with `--cache`). On first `maininit` the client GETs `/crc` and jag files from the engine HTTP into that directory; later boots reuse the files on disk.
 
-Stock Lost City Server uses the **Java default login RSA**. That is the usual local-dev case — no key bake. If you rotated the engine `private.pem`, 274bot reads the public half from `$ENGINE_DIR/data/config/private.pem` at login (or `LOGIN_RSAN` / `LOGIN_RSAE`). Then `cargo run --release -p panel --bin panel-play`. Nav pack: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
+Stock Lost City Server uses the **Java default login RSA**. That is the usual local-dev case — no key bake. If you rotated the engine `private.pem`, 274bot reads the public half from `$ENGINE_DIR/data/config/private.pem` at login (or `LOGIN_RSAN` / `LOGIN_RSAE`). Then `cargo run --release -p panel --bin panel-play`. Nav pack: an ordinary build bakes and stages it for the selected revision — see [Nav](#nav); no manual step.
 
 Alpha’s supported world is the **local engine** (loopback `127.0.0.1:43594`,
 login RSA from the engine or `LOGIN_RSAN`/`LOGIN_RSAE`). The public world
@@ -87,7 +87,25 @@ The panel only starts the **focused** vault profile; switching the combo starts 
 
 ## Nav
 
-Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
+Application builds bake, stage and bundle the navigation world themselves: a
+default build targets revision **289**, bakes (or reuses) the pack with the
+shared baker, and stages pack + flags next to the built binary
+(`target/<profile>/nav/289/`) — exactly where the running app looks. WalkTo /
+`Traveller::follow` work with no manual bake:
+
+```bash
+cargo build --release -p panel --bin panel-play   # stages nav/289, reusing it when unchanged
+```
+
+Missing canonical inputs fail the build with a clear message instead of
+producing an app without navigation (`BOT_NAV_BUILD=skip` opts out explicitly;
+`BOT_NAV_REVISION=274` selects revision 274). A macOS bundle ships
+`Contents/Resources/nav/<revision>/`; `BOT_NAV_RESOURCE_DIR` stages into a
+packager's own layout. Warm builds reuse unchanged artifacts; a change to the
+content, the cache identity, the pack format or the baker rebakes. Full knob
+table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
+
+`nav-pack` stays for deliberate developer/custom-input bakes over a Server tree:
 
 ```bash
 cargo run -p nav --bin nav-pack

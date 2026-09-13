@@ -28,10 +28,15 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 - RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
   `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
   (or `LOGIN_RSAN` / `LOGIN_RSAE`).
-- Nav pack: `$NAV_PACK` or `~/.274bot/274bot.navpack` (`274V` v8), baked
-  with `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`.
-  `gates.loc` follows the maps dir's parent. Alpha assumes you already
-  have a Server tree. Rebake after this tag (`274V` v8; v7 is `BadVersion`).
+- Nav pack: an ordinary build bakes and stages the selected revision's pack
+  and flags next to the binary (`target/<profile>/nav/<revision>/`, revision
+  **289** by default, `BOT_NAV_REVISION=274` for 274), so the app boots with a
+  bound nav world and no manual step. Missing canonical inputs (Server content,
+  loc jag, cache archives) fail the build: `BOT_NAV_BUILD=skip` opts out.
+  `nav-pack` stays for custom bakes over `$ENGINE_DIR/../content/maps`
+  (`$NAV_PACK` or `~/.274bot/274bot.navpack`, `274V` v8; v7 is `BadVersion`),
+  and `gates.loc` follows the maps dir's parent. Rebake after this tag.
+  Details: [docs/api/nav.md](docs/api/nav.md).
 
 ## Clone and run
 
