@@ -455,3 +455,258 @@ fn explicit_note_progress_is_real_host_effect() {
     ));
     slot.stop();
 }
+
+#[test]
+fn never_resolving_on_start_is_single_flight_and_still_paints_and_fires_listeners() {
+    let src = r#"
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+    onStart() {
+        globalThis.__fires = 0;
+        globalThis.__paints = 0;
+        globalThis.__loops = 0;
+        BotHost.addTickListener(() => { globalThis.__fires += 1; });
+        return new Promise(() => {});
+    }
+    onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
+    loop() { globalThis.__loops += 1; }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1, false);
+    tick(&iso, 2, false);
+    tick(&iso, 3, false);
+    let loops = iso.probe("__loops").unwrap().as_i64().unwrap();
+    let fires = iso.probe("__fires").unwrap().as_i64().unwrap();
+    let paints = iso.probe("__paints").unwrap().as_i64().unwrap();
+    assert_eq!(loops, 0, "pending onStart must not enter loop()");
+    assert!(
+        fires >= 2,
+        "tick listeners continue during onStart: fires={fires}"
+    );
+    assert!(
+        paints >= 2,
+        "onPaint continues during onStart: paints={paints}"
+    );
+    iso.join();
+}
+
+#[test]
+fn on_start_completion_then_allows_loop_and_loop_settled() {
+    let src = r#"
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+    onStart() {
+        globalThis.__loops = 0;
+        return new Promise((resolve) => {
+            BotHost.addTickListener(() => {
+                if ((globalThis.__rs2b0t_host.tick || 0) >= 3) {
+                    globalThis.__started = true;
+                    resolve();
+                }
+            });
+        });
+    }
+    loop() { globalThis.__loops += 1; }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1, false);
+    tick(&iso, 2, false);
+    assert_eq!(
+        iso.probe("__loops").unwrap().as_i64().unwrap(),
+        0,
+        "loop must wait for onStart"
+    );
+    assert_eq!(iso.probe("globalThis.__started || false").unwrap(), false);
+    tick(&iso, 3, false);
+    assert_eq!(iso.probe("__started").unwrap(), true);
+    assert!(
+        iso.probe("__loops").unwrap().as_i64().unwrap() >= 1,
+        "loop runs after onStart completes"
+    );
+    assert!(
+        iso.drain_lifecycle()
+            .iter()
+            .any(|r| matches!(r, InteractReq::LoopSettled)),
+        "loop-settled after onStart then loop"
+    );
+    iso.join();
+}
+
+#[test]
+fn hostile_recovery_anchor_is_interrupted_and_isolate_survives() {
+    let src = r#"
+export default class T extends LoopingBot {
+    recoveryAnchor() { while(true){} }
+    loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1, false);
+    iso.request_recovery_anchor();
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    iso.pause();
+    iso.resume();
+    iso.on_game_tick(2);
+    let n = iso
+        .probe("__n")
+        .expect("isolate must stay usable after an interrupted recoveryAnchor");
+    assert!(
+        n.as_i64().unwrap() >= 1,
+        "post-interrupt tick reached JS: {n}"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|l| l.contains("interrupted") || l.contains("slow recoveryAnchor")),
+        "recoveryAnchor must use the terminate path: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn join_bounds_a_hostile_recovery_anchor() {
+    let src = r#"
+export default class T extends LoopingBot {
+    recoveryAnchor() { while(true){} }
+    loop() {}
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1, false);
+    iso.request_recovery_anchor();
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let t0 = std::time::Instant::now();
+    iso.join();
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(10),
+        "join must be bounded on a hostile recoveryAnchor"
+    );
+}
+
+#[test]
+fn pause_aborts_recovery_state_even_when_already_frozen() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let t = Instant::now();
+    slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    assert_eq!(
+        slot.feed_watchdog(
+            t + script::watchdog::WEDGE,
+            Some((0, 0, 0)),
+            &[],
+            false,
+            true,
+            &[]
+        ),
+        WatchdogAction::RequestAnchor
+    );
+    assert!(matches!(
+        slot.feed_watchdog(
+            t + script::watchdog::WEDGE,
+            Some((0, 0, 0)),
+            &[],
+            false,
+            true,
+            &[InteractReq::RecoveryAnchor {
+                x: 3200,
+                z: 3200,
+                level: 0
+            }]
+        ),
+        WatchdogAction::ArmWalk { .. }
+    ));
+    assert!(slot.watchdog().recovering_anchor().is_some());
+    slot.pause();
+    assert_eq!(slot.state(), script::RunState::Paused);
+    assert!(
+        slot.watchdog().recovering_anchor().is_none(),
+        "Pause must drop Recovering"
+    );
+    assert_eq!(slot.watchdog().state(), WatchdogState::Armed);
+    slot.stop();
+}
+
+#[test]
+fn session_reset_aborts_recovery_state() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let t = Instant::now();
+    slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    slot.feed_watchdog(
+        t + script::watchdog::WEDGE,
+        Some((0, 0, 0)),
+        &[],
+        false,
+        true,
+        &[],
+    );
+    slot.feed_watchdog(
+        t + script::watchdog::WEDGE,
+        Some((0, 0, 0)),
+        &[],
+        false,
+        true,
+        &[InteractReq::RecoveryAnchor {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        }],
+    );
+    assert!(slot.watchdog().recovering_anchor().is_some());
+    slot.reset_session_work();
+    assert!(
+        slot.watchdog().recovering_anchor().is_none(),
+        "session reset must drop Recovering"
+    );
+    slot.stop();
+}
+
+#[test]
+fn restart_load_from_identity_refuses_pause_and_frozen() {
+    let mut slot = SlotScript::new();
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() { globalThis.__alive = 1; } }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let t = Instant::now();
+    slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);
+    slot.pause();
+    let err = slot
+        .restart_load_from_identity(t + script::watchdog::WEDGE)
+        .unwrap_err();
+    assert!(
+        err.contains("not running") || err.contains("pause") || err.contains("frozen"),
+        "paused restart: {err}"
+    );
+    slot.resume();
+    slot.feed_watchdog(
+        t + script::watchdog::WEDGE,
+        Some((0, 0, 0)),
+        &[],
+        true,
+        true,
+        &[],
+    );
+    let err = slot
+        .restart_load_from_identity(t + script::watchdog::WEDGE)
+        .unwrap_err();
+    assert!(
+        err.contains("frozen") || err.contains("not running") || err.contains("pause"),
+        "frozen restart: {err}"
+    );
+    slot.stop();
+}

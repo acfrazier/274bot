@@ -105,6 +105,33 @@ impl ProgressWatchdog {
         }
     }
 
+    /// Host-owned recovery is live: suspend ordinary script action
+    /// dispatch/continuation. Distinct from guardian hold.
+    pub fn holds_script_actions(&self) -> bool {
+        matches!(
+            self.state,
+            WatchdogState::SamplingAnchor
+                | WatchdogState::Recovering { .. }
+                | WatchdogState::RestartPending { .. }
+        )
+    }
+
+    /// Drop in-flight recovery without consuming cooldown. AbortWalk when a
+    /// recovery walk was live, even if clocks are already frozen.
+    pub fn abort_owned_recovery(&mut self) -> WatchdogAction {
+        match self.state {
+            WatchdogState::Recovering { .. } => {
+                self.state = WatchdogState::Armed;
+                WatchdogAction::AbortWalk
+            }
+            WatchdogState::SamplingAnchor | WatchdogState::RestartPending { .. } => {
+                self.state = WatchdogState::Armed;
+                WatchdogAction::None
+            }
+            _ => WatchdogAction::None,
+        }
+    }
+
     pub fn wait_active(&self) -> bool {
         self.wait_inflight > 0
     }
@@ -786,6 +813,40 @@ mod tests {
             w.set_frozen(true, t + WEDGE + Duration::from_secs(1)),
             WatchdogAction::AbortWalk
         );
+        assert_eq!(w.state(), WatchdogState::Armed);
+        assert!(w.last_recovery().is_none());
+    }
+
+    #[test]
+    fn abort_owned_recovery_clears_recovering_and_pending() {
+        let mut w = ProgressWatchdog::new();
+        let t = t0();
+        w.arm_fresh(t);
+        assert!(!w.holds_script_actions());
+        assert_eq!(w.observe(t + WEDGE, true), WatchdogAction::RequestAnchor);
+        assert!(w.holds_script_actions());
+        assert_eq!(w.abort_owned_recovery(), WatchdogAction::None);
+        assert_eq!(w.state(), WatchdogState::Armed);
+        assert!(!w.holds_script_actions());
+        w.observe(t + WEDGE, true);
+        assert_eq!(
+            w.on_anchor(
+                t + WEDGE,
+                Some((0, 0)),
+                Some(Tile {
+                    x: 50,
+                    z: 50,
+                    level: 0,
+                }),
+            ),
+            WatchdogAction::ArmWalk {
+                x: 50,
+                z: 50,
+                level: 0,
+            }
+        );
+        assert!(w.holds_script_actions());
+        assert_eq!(w.abort_owned_recovery(), WatchdogAction::AbortWalk);
         assert_eq!(w.state(), WatchdogState::Armed);
         assert!(w.last_recovery().is_none());
     }
