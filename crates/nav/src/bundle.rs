@@ -106,14 +106,71 @@ pub enum RequiredKind {
     /// One mapsquare of the revision's canonical map set (the whole-world
     /// collision bake and the jm2 placement reader consume them).
     Mapsquare,
-    /// A directory a derivation scans recursively; it must exist and hold at
-    /// least one entry.
-    Dir,
+    /// One script of the baker's recursive `scripts/**/*.rs2` scan (door open
+    /// scripts, agility shortcuts, jewellery rubs).
+    Rs2,
+    /// One config of the baker's recursive `scripts/**/*.constant` scan
+    /// (script constants, spirit-tree and lever destinations).
+    Constant,
+    /// One config of the baker's recursive `scripts/**/*.obj` scan
+    /// (slash-attack blades).
+    Obj,
+    /// One door config of the baker's recursive `*.loc` scan
+    /// (`scripts/doors/configs`, `scripts/quests`, `scripts/areas`,
+    /// `scripts/general_use/configs`).
+    Loc,
+}
+
+impl RequiredKind {
+    /// The inventory's name for this kind.
+    fn name(self) -> &'static str {
+        match self {
+            RequiredKind::File => "file",
+            RequiredKind::Mapsquare => "map",
+            RequiredKind::Rs2 => "rs2",
+            RequiredKind::Constant => "constant",
+            RequiredKind::Obj => "obj",
+            RequiredKind::Loc => "loc",
+        }
+    }
+
+    /// The inventory name → kind, `None` for an unknown name.
+    fn from_name(name: &str) -> Option<Self> {
+        [
+            RequiredKind::File,
+            RequiredKind::Mapsquare,
+            RequiredKind::Rs2,
+            RequiredKind::Constant,
+            RequiredKind::Obj,
+            RequiredKind::Loc,
+        ]
+        .into_iter()
+        .find(|kind| kind.name() == name)
+    }
+
+    /// What the bake reads a scanned input of this kind for; the consumer of
+    /// a named [`RequiredKind::File`] comes from its inventory row instead,
+    /// and a mapsquare's kind already says what it is.
+    fn scan_consumer(self) -> &'static str {
+        match self {
+            RequiredKind::Rs2 => {
+                "recursive scripts/**/*.rs2 scan (door open scripts, agility shortcuts, jewellery rubs)"
+            }
+            RequiredKind::Constant => {
+                "recursive scripts/**/*.constant scan (script constants, lever and spirit-tree destinations)"
+            }
+            RequiredKind::Obj => "recursive scripts/**/*.obj scan (slash-attack blades)",
+            RequiredKind::Loc => {
+                "recursive *.loc door config scan (doors/configs, quests, areas, general_use/configs)"
+            }
+            RequiredKind::File | RequiredKind::Mapsquare => "",
+        }
+    }
 }
 
 /// One canonical content input a default (`BOT_NAV_BUILD=require`) build must
-/// have. The baker quietly skips what is absent, so the build script asks for
-/// these by name before it bakes or accepts a staged artifact set.
+/// have. The baker quietly skips what is absent, so the build script requires
+/// them before it bakes or accepts a staged artifact set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequiredInput {
     /// Content-root-relative, `/`-separated path.
@@ -136,10 +193,13 @@ fn required_inventory(revision: u16) -> Option<&'static str> {
 
 /// The required canonical content inputs of `revision`, in inventory order:
 /// `#` comments and blank lines are skipped, every other line is
-/// `kind<TAB>content-relative path[<TAB>consumer]` with kinds `file`, `dir`
-/// and `map`. The inventory is data, verified by the crate's tests against
-/// the configured canonical trees; a revision without an inventory reports
-/// none, so the tolerated path stays for revisions the build script rejects.
+/// `kind<TAB>content-relative path[<TAB>consumer]` with kinds `file` (read by
+/// name), `map` (one canonical mapsquare) and the recursive scans' `rs2`,
+/// `constant`, `obj` and `loc` (an actual file of the scan, listed one row
+/// each, so a missing child is reported while its siblings remain). The
+/// inventory is data, verified by the crate's tests against the configured
+/// canonical trees; a revision without an inventory reports none, so the
+/// tolerated path stays for revisions the build script rejects.
 pub fn required_content_inputs(revision: u16) -> Result<Vec<RequiredInput>, String> {
     let Some(text) = required_inventory(revision) else {
         return Ok(Vec::new());
@@ -151,17 +211,12 @@ pub fn required_content_inputs(revision: u16) -> Result<Vec<RequiredInput>, Stri
             continue;
         }
         let mut columns = line.split('\t');
-        let kind = match columns.next() {
-            Some("file") => RequiredKind::File,
-            Some("map") => RequiredKind::Mapsquare,
-            Some("dir") => RequiredKind::Dir,
-            Some(other) => {
-                return Err(format!(
-                    "required-content-{revision} line {}: unknown kind {other:?}",
-                    index + 1
-                ))
-            }
-            None => unreachable!("split yields at least one column"),
+        let kind_name = columns.next().unwrap_or_default();
+        let Some(kind) = RequiredKind::from_name(kind_name) else {
+            return Err(format!(
+                "required-content-{revision} line {}: unknown kind {kind_name:?}",
+                index + 1
+            ));
         };
         let Some(path) = columns.next().filter(|path| !path.is_empty()) else {
             return Err(format!(
@@ -191,22 +246,11 @@ pub fn required_content_inputs(revision: u16) -> Result<Vec<RequiredInput>, Stri
 pub fn missing_content_inputs(revision: u16, content_dir: &Path) -> Result<Vec<String>, String> {
     let mut missing = Vec::new();
     for input in required_content_inputs(revision)? {
-        if !required_present(&content_dir.join(input.path), input.kind) {
+        if !content_dir.join(input.path).is_file() {
             missing.push(describe_required(revision, &input));
         }
     }
     Ok(missing)
-}
-
-/// Presence of one required input: a readable file (mapsquares included), or
-/// a directory with at least one entry.
-fn required_present(path: &Path, kind: RequiredKind) -> bool {
-    match kind {
-        RequiredKind::File | RequiredKind::Mapsquare => path.is_file(),
-        RequiredKind::Dir => std::fs::read_dir(path)
-            .map(|mut entries| entries.next().is_some())
-            .unwrap_or(false),
-    }
 }
 
 /// One missing required input, described for a build error.
@@ -219,10 +263,7 @@ fn describe_required(revision: u16, input: &RequiredInput) -> String {
                 input.path
             )
         }
-        RequiredKind::Dir => format!(
-            "{} ({}; directory missing or empty)",
-            input.path, input.consumer
-        ),
+        kind => format!("{} ({})", input.path, kind.scan_consumer()),
     }
 }
 
@@ -436,6 +477,7 @@ fn normalize(path: &Path) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -664,19 +706,89 @@ mod tests {
         std::fs::write(&file, b"fixture").unwrap();
     }
 
-    /// A fixture of exactly the inventory: every required file written, every
-    /// required directory holding one entry.
+    /// A fixture of exactly the inventory: every required input written.
     fn write_inventory_tree(root: &Path, revision: u16) {
         for input in required_content_inputs(revision).expect("inventory") {
-            match input.kind {
-                RequiredKind::Dir => {
-                    let dir = root.join(input.path);
-                    std::fs::create_dir_all(&dir).unwrap();
-                    std::fs::write(dir.join("present"), b"").unwrap();
-                }
-                _ => write_required_file(root, input.path),
+            write_required_file(root, input.path);
+        }
+    }
+
+    /// Whether a kind names a file of one of the baker's recursive scans.
+    fn is_scan_kind(kind: RequiredKind) -> bool {
+        matches!(
+            kind,
+            RequiredKind::Rs2 | RequiredKind::Constant | RequiredKind::Obj | RequiredKind::Loc
+        )
+    }
+
+    /// The scan classes' roots and extensions, mirroring the baker
+    /// (`transport.rs` `visit_rs2`, `script_constants`, `slash_weapon_ids`,
+    /// `door_config_names`).
+    const SCAN_CLASSES: &[(RequiredKind, &[&str], &str)] = &[
+        (RequiredKind::Rs2, &["scripts"], "rs2"),
+        (RequiredKind::Constant, &["scripts"], "constant"),
+        (RequiredKind::Obj, &["scripts"], "obj"),
+        (
+            RequiredKind::Loc,
+            &[
+                "scripts/doors/configs",
+                "scripts/quests",
+                "scripts/areas",
+                "scripts/general_use/configs",
+            ],
+            "loc",
+        ),
+    ];
+
+    /// Every file of the scan classes under a canonical content tree, as
+    /// `content-relative path → class kind`.
+    fn scan_inputs(root: &Path) -> BTreeMap<String, RequiredKind> {
+        let mut out = BTreeMap::new();
+        for (kind, roots, extension) in SCAN_CLASSES {
+            for root_rel in *roots {
+                collect_scan_files(root, &root.join(root_rel), extension, *kind, &mut out);
             }
         }
+        out
+    }
+
+    fn collect_scan_files(
+        root: &Path,
+        dir: &Path,
+        extension: &str,
+        kind: RequiredKind,
+        out: &mut BTreeMap<String, RequiredKind>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_scan_files(root, &path, extension, kind, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some(extension) {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("scan file is under the content root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.insert(relative, kind);
+            }
+        }
+    }
+
+    /// Every canonical mapsquare of a content tree, `maps/*.jm2`.
+    fn canonical_maps(root: &Path) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        if let Ok(entries) = std::fs::read_dir(root.join("maps")) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".jm2") {
+                    out.insert(format!("maps/{name}"));
+                }
+            }
+        }
+        out
     }
 
     /// The canonical local content root of a revision, the same default the
@@ -719,9 +831,60 @@ mod tests {
         ] {
             assert!(paths.contains(&expected), "{expected} is required");
         }
+        // The scans' members are named one row each, not anchored by their
+        // directory: the concrete holes of the round-1 guard.
+        for scanned in [
+            "scripts/skill_agility/scripts/shortcuts.rs2",
+            "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
+            "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+            "scripts/doors/configs/doubledoors.constant",
+        ] {
+            assert!(
+                rows.iter()
+                    .any(|row| row.path == scanned && is_scan_kind(row.kind)),
+                "{scanned} is a scan-class input"
+            );
+        }
+        // Every scan-class row is the file its kind promises, under the scan
+        // roots, and every class is populated in both revisions.
+        for revision in [289u16, 274] {
+            let rows = required_content_inputs(revision).expect("inventory");
+            for row in &rows {
+                let extension = match row.kind {
+                    RequiredKind::Rs2 => Some("rs2"),
+                    RequiredKind::Constant => Some("constant"),
+                    RequiredKind::Obj => Some("obj"),
+                    RequiredKind::Loc => Some("loc"),
+                    RequiredKind::Mapsquare => Some("jm2"),
+                    RequiredKind::File => None,
+                };
+                if matches!(row.kind, RequiredKind::Mapsquare) {
+                    assert!(row.path.starts_with("maps/"), "{}", row.path);
+                } else if let Some(extension) = extension {
+                    assert!(
+                        row.path.ends_with(&format!(".{extension}")),
+                        "{} is a {} row",
+                        row.path,
+                        extension
+                    );
+                    assert!(row.path.starts_with("scripts/"), "{}", row.path);
+                }
+            }
+            for kind in [
+                RequiredKind::Rs2,
+                RequiredKind::Constant,
+                RequiredKind::Obj,
+                RequiredKind::Loc,
+            ] {
+                assert!(
+                    rows.iter().any(|row| row.kind == kind),
+                    "revision {revision} has {} rows",
+                    kind.name()
+                );
+            }
+        }
         assert_eq!(mapsquares(289), 534, "the canonical 289 map set");
         assert_eq!(mapsquares(274), 483, "the canonical 274 map set");
-        assert!(rows.iter().any(|row| row.kind == RequiredKind::Dir));
         let mut unique = paths.clone();
         unique.sort_unstable();
         unique.dedup();
@@ -779,7 +942,8 @@ mod tests {
             "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
             "scripts/areas/area_alkharid/configs/border_gate.loc",
             "scripts/skill_magic/configs/magic_spells.dbrow",
-            "scripts/skill_agility/scripts",
+            "scripts/skill_agility/scripts/shortcuts.rs2",
+            "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
         ] {
             assert!(
                 missing.iter().any(|row| row.starts_with(expected)),
@@ -794,7 +958,43 @@ mod tests {
     }
 
     #[test]
-    fn a_single_missing_mapsquare_source_or_directory_is_reported() {
+    fn a_missing_scan_child_is_reported_while_its_siblings_remain() {
+        let root = RequiredFixture::new("scan-child");
+        write_inventory_tree(&root.0, 289);
+        assert!(missing_content_inputs(289, &root.0)
+            .expect("guard")
+            .is_empty());
+
+        // Consumed children whose directory anchor stayed non-empty: the
+        // concrete holes of the round-1 directory-anchor guard.
+        let removed = [
+            "scripts/skill_agility/scripts/shortcuts.rs2",
+            "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
+            "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+        ];
+        for path in removed {
+            std::fs::remove_file(root.0.join(path)).unwrap();
+            let siblings = std::fs::read_dir(root.0.join(path).parent().unwrap())
+                .unwrap()
+                .count();
+            assert!(siblings > 0, "{path}: its directory is not empty");
+        }
+
+        let missing = missing_content_inputs(289, &root.0).expect("guard");
+        assert_eq!(missing.len(), removed.len(), "{missing:?}");
+        for path in removed {
+            assert!(
+                missing
+                    .iter()
+                    .any(|row| row.starts_with(&format!("{path} ("))
+                        && row.contains("recursive scripts/**/*.rs2 scan")),
+                "{path} is reported missing: {missing:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_missing_mapsquare_or_named_input_is_reported() {
         let root = RequiredFixture::new("single-missing");
         write_inventory_tree(&root.0, 274);
         assert!(missing_content_inputs(274, &root.0)
@@ -810,14 +1010,9 @@ mod tests {
             .to_string();
         std::fs::remove_file(root.0.join(&map)).unwrap();
         std::fs::remove_file(root.0.join("scripts/ladders+stairs/scripts/stairs.rs2")).unwrap();
-        std::fs::remove_file(
-            root.0
-                .join("scripts/general/scripts/enchanted_jewellry/present"),
-        )
-        .unwrap();
 
         let missing = missing_content_inputs(274, &root.0).expect("guard");
-        assert_eq!(missing.len(), 3, "{missing:?}");
+        assert_eq!(missing.len(), 2, "{missing:?}");
         assert!(
             missing
                 .iter()
@@ -832,12 +1027,6 @@ mod tests {
                     .starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
             "{missing:?}"
         );
-        assert!(
-            missing.iter().any(|row| row
-                .starts_with("scripts/general/scripts/enchanted_jewellry (")
-                && row.contains("directory missing or empty")),
-            "{missing:?}"
-        );
     }
 
     #[test]
@@ -848,11 +1037,50 @@ mod tests {
                 println!("revision {revision}: no canonical content tree here");
                 continue;
             };
+            let rows = required_content_inputs(revision).expect("inventory");
             let missing = missing_content_inputs(revision, &root).expect("guard");
             assert!(missing.is_empty(), "{}: {missing:?}", root.display());
+
+            // The scan classes are file membership of the canonical tree, not
+            // a sample: every file the scans read is a row of its class (or a
+            // named `file` row), and no class row names a file the tree does
+            // not read. A mismatch here means the inventory needs refreshing.
+            let scanned = scan_inputs(&root);
+            let mut class_rows = 0;
+            for row in &rows {
+                if !is_scan_kind(row.kind) {
+                    continue;
+                }
+                class_rows += 1;
+                assert_eq!(
+                    scanned.get(row.path).copied(),
+                    Some(row.kind),
+                    "revision {revision}: {} is not a canonical {} scan input",
+                    row.path,
+                    row.kind.name()
+                );
+            }
+            for (path, kind) in &scanned {
+                let row_kind = rows.iter().find(|row| row.path == path).map(|row| row.kind);
+                assert!(
+                    row_kind == Some(*kind) || row_kind == Some(RequiredKind::File),
+                    "revision {revision}: canonical {} scan input {path} is {row_kind:?} \
+                     in the inventory",
+                    kind.name()
+                );
+            }
+
+            // The mapsquare rows are the canonical map set, all of it.
+            let maps: BTreeSet<String> = rows
+                .iter()
+                .filter(|row| row.kind == RequiredKind::Mapsquare)
+                .map(|row| row.path.to_string())
+                .collect();
+            assert_eq!(maps, canonical_maps(&root), "the canonical map set");
+
             println!(
-                "revision {revision}: {} required inputs present in {}",
-                required_content_inputs(revision).expect("inventory").len(),
+                "revision {revision}: {} required inputs ({class_rows} scan-class rows) present in {}",
+                rows.len(),
                 root.display()
             );
         }
