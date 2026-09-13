@@ -714,6 +714,40 @@ export const PRODUCT_OPTIONS = ['Arrow shafts', 'Short bow'];
     assert_eq!(product.options, vec!["Arrow shafts", "Short bow"]);
 }
 
+#[test]
+fn parse_registry_resolves_imported_choice_array_and_record_labels() {
+    let index = r#"
+import Alcher, { SETTINGS } from './Alcher/Alcher.js';
+ScriptRegistry.register({ name: 'Alcher', settingsSchema: SETTINGS, create: () => new Alcher() });
+"#;
+    let alcher = r#"
+import { SPELL_OPTIONS, SPELL_OPTION_LABELS, defaultHigh } from './AlcherLogic.js';
+export const SETTINGS = {
+    spell: {
+        type: 'string', default: defaultHigh, options: SPELL_OPTIONS,
+        optionLabels: SPELL_OPTION_LABELS,
+    },
+};
+export default class Alcher {}
+"#;
+    let logic = r#"
+export const SPELL_OPTIONS = ['High', 'Low'];
+export const SPELL_OPTION_LABELS: Record<string, string> = {
+    High: 'High alchemy',
+    Low: 'Low alchemy',
+};
+export const defaultHigh = 'High';
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Alcher/Alcher.js".to_string(), alcher.to_string());
+    sources.insert("./Alcher/AlcherLogic.js".to_string(), logic.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("alcher parses");
+    let spell = &cards[0].settings_schema[0];
+    assert_eq!(spell.options, vec!["High", "Low"]);
+    assert_eq!(spell.option_labels, vec!["High alchemy", "Low alchemy"]);
+    assert_eq!(spell.default.as_deref(), Some("High"));
+}
+
 const ALCHER_DEFAULT_KEYS: [&str; 11] = [
     "black_dragonhide_body",
     "red_dragonhide_body",
