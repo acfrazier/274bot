@@ -303,7 +303,13 @@ mod tests {
         let err = contained_pack_path(Path::new("/app"), "../escape.navpack").unwrap_err();
         assert!(err.contains("stay under the install resource root"));
         let err = contained_pack_path(Path::new("/app"), "/etc/passwd").unwrap_err();
-        assert!(err.contains("install-relative"));
+        // A leading slash is rooted but not drive-absolute on Windows;
+        // both forms must be rejected by the corresponding path check.
+        if cfg!(windows) {
+            assert!(err.contains("stay under the install resource root"));
+        } else {
+            assert!(err.contains("install-relative"));
+        }
         let table = [identity("../escape.navpack")];
         assert!(select_nav_origin(
             &table,
