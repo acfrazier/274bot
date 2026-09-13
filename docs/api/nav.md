@@ -88,7 +88,7 @@ otherwise the captured identity must be one of the checked-in
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
 records the cache identity, the pack/flags/reach digests, the generator identity
 (the manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/
-`paint.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
+`paint.rs`/`router.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
 identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes; nothing else re-hashes
