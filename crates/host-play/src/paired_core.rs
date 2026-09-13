@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use api::game_data::{DuelControls, SelectedGameData};
 use api::snapshot::{GameSnapshot, ItemView, WidgetView};
+use client::util::JString;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -546,6 +547,15 @@ pub fn bank_ack_target_absence(
     }
 }
 
+fn account_identity_eq(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    JString::to_userhash(left) == JString::to_userhash(right)
+}
+
 pub fn air_prepared_current(
     role: AirRole,
     expected_player: &str,
@@ -563,7 +573,7 @@ pub fn air_prepared_current(
         .player
         .as_deref()
         .ok_or_else(|| "Start baseline has no local player".to_string())?;
-    if !player.eq_ignore_ascii_case(expected_player) {
+    if !account_identity_eq(player, expected_player) {
         return Err(format!(
             "Start baseline player {player:?} is not fresh account {expected_player:?}"
         ));
@@ -631,7 +641,7 @@ pub fn mule_prepared_current(
         .player
         .as_deref()
         .ok_or_else(|| "Start baseline has no local player".to_string())?;
-    if !player.eq_ignore_ascii_case(expected_player) {
+    if !account_identity_eq(player, expected_player) {
         return Err(format!(
             "Start baseline player {player:?} is not fresh account {expected_player:?}"
         ));
@@ -698,7 +708,7 @@ pub fn flax_prepared_current(
         .player
         .as_deref()
         .ok_or_else(|| "Start baseline has no local player".to_string())?;
-    if !player.eq_ignore_ascii_case(expected_player) {
+    if !account_identity_eq(player, expected_player) {
         return Err(format!(
             "Start baseline player {player:?} is not fresh account {expected_player:?}"
         ));
@@ -757,7 +767,7 @@ pub fn duel_prepared_current(
         .player
         .as_deref()
         .ok_or_else(|| "Start baseline has no local player".to_string())?;
-    if !player.eq_ignore_ascii_case(expected_player) {
+    if !account_identity_eq(player, expected_player) {
         return Err(format!(
             "Start baseline player {player:?} is not fresh account {expected_player:?}"
         ));
@@ -952,7 +962,7 @@ impl DuelObservation {
                 .actor
                 .name
                 .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(peer))
+                .is_some_and(|name| account_identity_eq(name, peer))
         });
         Self {
             ingame: snapshot.ingame() && snapshot.attached(),
@@ -1089,16 +1099,16 @@ impl AirSlotRecord {
         if observation
             .player
             .as_deref()
-            .is_some_and(|player| !player.eq_ignore_ascii_case(&self.expected_player))
+            .is_some_and(|player| !account_identity_eq(player, &self.expected_player))
         {
             self.mixed_identity = true;
         }
         if observation.trade_active() {
             if let Some(partner) = observation.trade_partner.as_deref() {
-                if !partner.is_empty() && !partner.eq_ignore_ascii_case(&self.partner) {
+                if !partner.is_empty() && !account_identity_eq(partner, &self.partner) {
                     self.saw_wrong_partner = true;
                 }
-                if partner.eq_ignore_ascii_case(&self.partner) {
+                if account_identity_eq(partner, &self.partner) {
                     if observation.trade_offer_open {
                         self.saw_offer_with_partner = true;
                     }
@@ -1234,11 +1244,7 @@ impl AirPairWitness {
     }
 
     fn qualify_common(&self) -> Result<(), String> {
-        if self
-            .master
-            .account
-            .eq_ignore_ascii_case(&self.runner.account)
-        {
+        if account_identity_eq(&self.master.account, &self.runner.account) {
             return Err("mixed identities: master and runner share one account".into());
         }
         if self.master.mixed_identity || self.runner.mixed_identity {
@@ -1250,14 +1256,8 @@ impl AirPairWitness {
         if self.master.saw_wrong_partner || self.runner.saw_wrong_partner {
             return Err("wrong partner: trade header was not the minted counterpart".into());
         }
-        if !self
-            .master
-            .partner
-            .eq_ignore_ascii_case(&self.runner.expected_player)
-            || !self
-                .runner
-                .partner
-                .eq_ignore_ascii_case(&self.master.expected_player)
+        if !account_identity_eq(&self.master.partner, &self.runner.expected_player)
+            || !account_identity_eq(&self.runner.partner, &self.master.expected_player)
         {
             return Err("wrong partner: configured partner is not the minted counterpart".into());
         }
@@ -1362,7 +1362,7 @@ impl MuleSlotRecord {
         if observation
             .player
             .as_deref()
-            .is_some_and(|player| !player.eq_ignore_ascii_case(&self.expected_player))
+            .is_some_and(|player| !account_identity_eq(player, &self.expected_player))
         {
             self.mixed_identity = true;
         }
@@ -1389,10 +1389,10 @@ impl MuleSlotRecord {
         let named_partner = observation
             .trade_partner
             .as_deref()
-            .is_some_and(|partner| partner.eq_ignore_ascii_case(&self.partner));
+            .is_some_and(|partner| account_identity_eq(partner, &self.partner));
         if observation.trade_active() {
             if let Some(partner) = observation.trade_partner.as_deref() {
-                if !partner.is_empty() && !partner.eq_ignore_ascii_case(&self.partner) {
+                if !partner.is_empty() && !account_identity_eq(partner, &self.partner) {
                     self.saw_wrong_partner = true;
                 }
             }
@@ -1631,11 +1631,7 @@ impl MulePairWitness {
         if self.crafter.role != MuleRole::Crafter || self.mule.role != MuleRole::Mule {
             return Err("fixture miss: both Crafter is not a Crafter+Mule pair".into());
         }
-        if self
-            .crafter
-            .account
-            .eq_ignore_ascii_case(&self.mule.account)
-        {
+        if account_identity_eq(&self.crafter.account, &self.mule.account) {
             return Err("mixed identities: crafter and mule share one account".into());
         }
         if self.crafter.mixed_identity || self.mule.mixed_identity {
@@ -1647,14 +1643,8 @@ impl MulePairWitness {
         if self.crafter.saw_wrong_partner || self.mule.saw_wrong_partner {
             return Err("wrong partner: trade header was not the minted counterpart".into());
         }
-        if !self
-            .crafter
-            .partner
-            .eq_ignore_ascii_case(&self.mule.expected_player)
-            || !self
-                .mule
-                .partner
-                .eq_ignore_ascii_case(&self.crafter.expected_player)
+        if !account_identity_eq(&self.crafter.partner, &self.mule.expected_player)
+            || !account_identity_eq(&self.mule.partner, &self.crafter.expected_player)
         {
             return Err("wrong partner: configured partner is not the minted counterpart".into());
         }
@@ -1720,7 +1710,7 @@ impl DuelSlotRecord {
         if observation
             .player
             .as_deref()
-            .is_some_and(|player| !player.eq_ignore_ascii_case(&self.expected_player))
+            .is_some_and(|player| !account_identity_eq(player, &self.expected_player))
         {
             self.mixed_identity = true;
         }
@@ -1731,7 +1721,7 @@ impl DuelSlotRecord {
             self.saw_confirm = true;
         }
         if let Some(partner) = observation.duel_partner.as_deref() {
-            if !partner.eq_ignore_ascii_case(&self.partner) {
+            if !account_identity_eq(partner, &self.partner) {
                 self.saw_wrong_partner = true;
             }
         }
@@ -1806,7 +1796,7 @@ impl DuelPairWitness {
     }
 
     fn qualify_common(&self) -> Result<(), String> {
-        if self.a.account.eq_ignore_ascii_case(&self.b.account) {
+        if account_identity_eq(&self.a.account, &self.b.account) {
             return Err("mixed identities: both duel slots share one account".into());
         }
         if self.a.mixed_identity || self.b.mixed_identity {
@@ -1818,8 +1808,8 @@ impl DuelPairWitness {
         if self.a.saw_wrong_partner || self.b.saw_wrong_partner {
             return Err("wrong partner: duel header was not the minted counterpart".into());
         }
-        if !self.a.partner.eq_ignore_ascii_case(&self.b.expected_player)
-            || !self.b.partner.eq_ignore_ascii_case(&self.a.expected_player)
+        if !account_identity_eq(&self.a.partner, &self.b.expected_player)
+            || !account_identity_eq(&self.b.partner, &self.a.expected_player)
         {
             return Err("wrong partner: configured partner is not the minted counterpart".into());
         }
@@ -2056,7 +2046,7 @@ impl FlaxSlotRecord {
         if observation
             .player
             .as_deref()
-            .is_some_and(|player| !player.eq_ignore_ascii_case(&self.expected_player))
+            .is_some_and(|player| !account_identity_eq(player, &self.expected_player))
         {
             self.mixed_identity = true;
         }
@@ -2081,10 +2071,10 @@ impl FlaxSlotRecord {
         let named_partner = observation
             .trade_partner
             .as_deref()
-            .is_some_and(|partner| partner.eq_ignore_ascii_case(&self.partner));
+            .is_some_and(|partner| account_identity_eq(partner, &self.partner));
         if observation.trade_active() {
             if let Some(partner) = observation.trade_partner.as_deref() {
-                if !partner.is_empty() && !partner.eq_ignore_ascii_case(&self.partner) {
+                if !partner.is_empty() && !account_identity_eq(partner, &self.partner) {
                     self.saw_wrong_partner = true;
                 }
             }
@@ -2249,11 +2239,7 @@ impl FlaxPairWitness {
         if self.runner.role != FlaxRole::Runner || self.spinner.role != FlaxRole::Spinner {
             return Err("fixture miss: both Runner is not a Runner+Spinner pair".into());
         }
-        if self
-            .runner
-            .account
-            .eq_ignore_ascii_case(&self.spinner.account)
-        {
+        if account_identity_eq(&self.runner.account, &self.spinner.account) {
             return Err("mixed identities: runner and spinner share one account".into());
         }
         if self.runner.mixed_identity || self.spinner.mixed_identity {
@@ -2265,14 +2251,8 @@ impl FlaxPairWitness {
         if self.runner.saw_wrong_partner || self.spinner.saw_wrong_partner {
             return Err("wrong partner: trade header was not the minted counterpart".into());
         }
-        if !self
-            .runner
-            .partner
-            .eq_ignore_ascii_case(&self.spinner.expected_player)
-            || !self
-                .spinner
-                .partner
-                .eq_ignore_ascii_case(&self.runner.expected_player)
+        if !account_identity_eq(&self.runner.partner, &self.spinner.expected_player)
+            || !account_identity_eq(&self.spinner.partner, &self.runner.expected_player)
         {
             return Err("wrong partner: configured partner is not the minted counterpart".into());
         }
