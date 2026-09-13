@@ -12,7 +12,8 @@ pub mod paired_core;
 pub mod profile;
 pub mod progress;
 pub use nav_identity::{
-    bundled_nav_identities, install_resource_root, BundledNavIdentity, NavLoadCounters, NavOrigin,
+    bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
+    NavLoadCounters, NavOrigin,
 };
 pub use profile::{
     parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
@@ -364,6 +365,11 @@ impl PlayConnection {
 #[derive(Debug, Clone)]
 pub struct SlotStatus {
     pub username: String,
+    /// Native lifecycle phase; `ingame` is producer-gated and cannot
+    /// distinguish login from a scene rebuild.
+    pub startup_phase: StartupPhase,
+    /// Monotonic instant at which `startup_phase` began.
+    pub startup_phase_started: Instant,
     /// Client asset initialization progress; cleared when initialization ends.
     pub startup_progress_percent: Option<i32>,
     pub startup_progress_message: String,
@@ -413,6 +419,16 @@ pub struct SlotStatus {
     /// isolate each observe — the TUI shows it in the chat pane in place
     /// of the game chat.
     pub script_paint: Option<script::shim::ScriptPaint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupPhase {
+    Preparing,
+    Queueing,
+    Connecting,
+    LoadingScene,
+    Ready,
+    Error,
 }
 
 impl SlotStatus {
@@ -698,6 +714,8 @@ impl Default for SlotStatus {
     fn default() -> Self {
         Self {
             username: String::new(),
+            startup_phase: StartupPhase::Preparing,
+            startup_phase_started: Instant::now(),
             startup_progress_percent: None,
             startup_progress_message: String::new(),
             login_started: None,
@@ -4983,6 +5001,8 @@ fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
         if s.login_started.is_none() {
             s.login_started = Some(Instant::now());
         }
+        s.startup_phase = StartupPhase::Connecting;
+        s.startup_phase_started = Instant::now();
         s.error = None;
     }
 }
@@ -4990,6 +5010,8 @@ fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
 fn publish_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, message: &str) {
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_phase = StartupPhase::Preparing;
+        s.startup_phase_started = Instant::now();
         s.startup_progress_percent = None;
         s.startup_progress_message.clear();
         s.startup_progress_message.push_str(message);
@@ -5018,6 +5040,19 @@ fn clear_startup_progress(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
     }
 }
 
+fn set_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, phase: StartupPhase) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        if s.startup_phase != phase {
+            s.startup_phase = phase;
+            s.startup_phase_started = Instant::now();
+            if debug_enabled() {
+                eprintln!("[host-play] slot {name}: startup phase {phase:?}");
+            }
+        }
+    }
+}
+
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
     let msg = format!("code {}: {}", e.code, e.mes2);
     if debug_enabled() {
@@ -5025,6 +5060,8 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     }
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_phase = StartupPhase::Error;
+        s.startup_phase_started = Instant::now();
         s.error = Some(msg);
     }
 }
@@ -5080,6 +5117,9 @@ fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str)
     {
         s.ingame = false;
         s.scene_state = 0;
+        s.startup_phase = StartupPhase::Queueing;
+        s.startup_phase_started = Instant::now();
+        s.login_started = None;
         s.runenergy = 0;
         s.main_modal_id = -1;
         s.tile_x = -1;
@@ -5171,6 +5211,8 @@ fn spawn_slot_thread(
                     Ok(client) => client,
                     Err(error) => {
                         if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                            row.startup_phase = StartupPhase::Error;
+                            row.startup_phase_started = Instant::now();
                             row.error = Some(error);
                         }
                         clear_startup_progress(&slot_statuses, &username);
@@ -5199,12 +5241,15 @@ fn spawn_slot_thread(
             }));
             if client.error_loading && connection.profile().is_some() {
                 if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                    row.startup_phase = StartupPhase::Error;
+                    row.startup_phase_started = Instant::now();
                     row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
                 }
                 clear_startup_progress(&slot_statuses, &username);
                 return;
             }
             clear_startup_progress(&slot_statuses, &username);
+            set_startup_phase(&slot_statuses, &username, StartupPhase::Queueing);
             if client.error_loading && debug_enabled() {
                 eprintln!("[host-play] slot {username}: maininit failed");
             }
@@ -5237,6 +5282,7 @@ fn spawn_slot_thread(
                         Ok(()) => {
                             backoff.reset();
                             on_login_success(&arm);
+                            set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             if debug_enabled() {
                                 eprintln!("[host-play] slot {username}: handshake ok");
                             }
@@ -5344,6 +5390,18 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
+                                        let next_phase = if ready {
+                                            StartupPhase::Ready
+                                        } else {
+                                            StartupPhase::LoadingScene
+                                        };
+                                        if s.startup_phase != next_phase {
+                                            s.startup_phase = next_phase;
+                                            s.startup_phase_started = Instant::now();
+                                            if debug_enabled() {
+                                                eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
+                                            }
+                                        }
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;
                                         s.main_modal_id = nav_snapshot.modals().main;
@@ -5771,6 +5829,7 @@ mod tests {
             let rows = statuses.lock().unwrap();
             assert_eq!(rows[0].startup_progress_percent, None);
             assert_eq!(rows[0].startup_progress_message, "Preparing client");
+            assert_eq!(rows[0].startup_phase, StartupPhase::Preparing);
             assert!(rows[1].startup_progress_message.is_empty());
         }
         publish_startup_progress(&statuses, "alice", "Requesting models", 70);
@@ -5784,9 +5843,31 @@ mod tests {
         }
 
         clear_startup_progress(&statuses, "alice");
-        let row = &statuses.lock().unwrap()[0];
-        assert_eq!(row.startup_progress_percent, None);
-        assert!(row.startup_progress_message.is_empty());
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_progress_percent, None);
+            assert!(rows[0].startup_progress_message.is_empty());
+        }
+
+        set_startup_phase(&statuses, "alice", StartupPhase::Queueing);
+        set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
+            assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
+        }
+        record_login_error(
+            &statuses,
+            "alice",
+            &LoginError {
+                code: 16,
+                mes1: "busy".into(),
+                mes2: "busy".into(),
+            },
+        );
+        let rows = statuses.lock().unwrap();
+        assert_eq!(rows[0].startup_phase, StartupPhase::Error);
+        assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
     }
 
     #[test]

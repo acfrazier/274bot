@@ -2105,18 +2105,37 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             .find(|status| session.focused_name().as_deref() == Some(status.username.as_str()))
             .or_else(|| statuses.first());
         if let Some(status) = status {
-            if !status.startup_progress_message.is_empty()
-                || status.startup_progress_percent.is_some()
-            {
-                let message = if status.startup_progress_message.is_empty() {
-                    "Starting client"
-                } else {
-                    status.startup_progress_message.as_str()
-                };
-                ui.text_colored(ACCENT, message);
-                if let Some(percent) = status.startup_progress_percent {
-                    ui.text_disabled(format!("[client startup {:>3}%]", percent));
+            if let Some(error) = status.error.as_deref() {
+                ui.text_colored(ERROR, error);
+                return;
+            }
+            let message = match status.startup_phase {
+                host_play::StartupPhase::Preparing => {
+                    if status.startup_progress_message.is_empty() {
+                        "Preparing client".to_string()
+                    } else if let Some(percent) = status.startup_progress_percent {
+                        format!("{} — {}%", status.startup_progress_message, percent)
+                    } else {
+                        status.startup_progress_message.clone()
+                    }
                 }
+                host_play::StartupPhase::Queueing => {
+                    if status.queue_position > 0 && status.queue_total > 0 {
+                        format!(
+                            "Waiting in login queue ({}/{})",
+                            status.queue_position, status.queue_total
+                        )
+                    } else {
+                        "Waiting to connect".to_string()
+                    }
+                }
+                host_play::StartupPhase::Connecting => "Logging in".to_string(),
+                host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
+                host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
+            };
+            if !message.is_empty() {
+                let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
+                ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
             }
         }
     }
