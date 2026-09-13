@@ -254,6 +254,10 @@ fn run_nav(
         println!("{{\"phase\":\"nav_full-fixture\",\"engine_speed_ms\":null}}");
     }
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    // Preparation above independently proved the exact mainland landing;
+    // this runner starts from that preseeded fixture rather than issuing the
+    // production mainland hop again.
+    runner.no_mainland_gate();
     runner.set_live_names(std::slice::from_ref(&name));
     runner.set_shot_sink(Box::new(|_, _| {}));
 

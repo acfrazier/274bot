@@ -75,10 +75,9 @@ pub struct ScenarioRunner {
     /// The wall-clock instant the scene first read `scene_state == 2`,
     /// None while it is not 2. Any drop below 2 resets it.
     scene2_since: Option<Instant>,
-    /// The seed waits for a mainland hop to leave its initial ready frame
-    /// and return to a valid mainland observation.
+    /// The seed waits for a mainland hop to return to its requested landing.
     seed_ready_observed: bool,
-    seed_hop_observed: bool,
+    seed_arrival_observed: bool,
     /// Mainland seeds require a completed hop; tests on fixture grids can
     /// explicitly relax this.
     require_mainland_base: bool,
@@ -156,7 +155,7 @@ impl ScenarioRunner {
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
             seed_ready_observed: false,
-            seed_hop_observed: false,
+            seed_arrival_observed: false,
             require_mainland_base,
             live_names: Vec::new(),
             relog_logout_sent: false,
@@ -366,13 +365,16 @@ impl ScenarioRunner {
             self.scene2_since = None;
         }
         if matches!(self.phase, Phase::Seeding) && self.require_mainland_base {
-            if self.seed_ready_observed
-                && (!self.snapshot.ingame() || self.snapshot.scene_state() != 2)
-            {
-                self.seed_hop_observed = true;
-            }
+            let was_ready = self.seed_ready_observed;
             if self.snapshot.ingame() && self.snapshot.scene_state() == 2 {
                 self.seed_ready_observed = true;
+            }
+            // Do not accept an unrelated scene rebuild as the hop. The
+            // mainlandAccount tele lands at this exact tile; checking it on
+            // a later observation also handles a hop whose rebuild is too
+            // fast to expose an intermediate scene_state.
+            if was_ready && self.snapshot.tile() == Some((3220, 3220, 0)) {
+                self.seed_arrival_observed = true;
             }
         }
         if matches!(self.phase, Phase::Seeding) && self.seed_done() {
@@ -500,13 +502,9 @@ impl ScenarioRunner {
         }
     }
 
-    /// Seed complete: ingame, scene 2, a mainland build base, and — when a
-    /// nav world is loaded — the player standing on a tile inside the
-    /// packed collision's bounds. The base heuristic alone is not enough:
-    /// the tutorial island's build base is also `>= 3000`, so the mainland
-    /// hop must have actually landed (the pack covers Lumbridge only). A
-    /// loc-blocked tele landing is still inside the bounds, so it releases
-    /// the gate.
+    /// Seed complete: ingame, scene 2, a mainland build base, and the
+    /// requested mainland landing. The tutorial island's build base is also
+    /// `>= 3000`, so the base heuristic alone cannot release the gate.
     fn seed_done(&self) -> bool {
         if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
             return false;
@@ -514,7 +512,7 @@ impl ScenarioRunner {
         if !self.require_mainland_base {
             return true;
         }
-        if !self.seed_hop_observed {
+        if !self.seed_arrival_observed {
             return false;
         }
         let base_ok = self
@@ -1200,13 +1198,13 @@ mod tests {
             "a sub-3000 base is still seeding (tutorial island)"
         );
 
-        // The queued hop must first leave the initial ready frame.
+        // The queued hop may leave the initial ready frame.
         c.scene_state = 1;
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
 
-        // A mainland build base after the hop releases the seed.
+        // A mainland build base and the requested landing release the seed.
         c.scene_state = 2;
         c.map_build_base_x = 3200;
         c.map_build_base_z = 3200;
@@ -1236,15 +1234,19 @@ mod tests {
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
 
-        // A queued mainland hop must be observed leaving scene 2 before a
-        // later scene-2 frame can authorize the run.
-        c.scene_state = 1;
+        // An unrelated rebuild on the tutorial island is not the requested
+        // mainland arrival, even though its base lies inside the full pack.
+        c.local_player = Some(ClientPlayer::at(20, 20));
+        c.bump_gens(ServerProt::PLAYER_INFO);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Seeding);
 
-        c.scene_state = 2;
-        c.local_player = Some(ClientPlayer::at(20, 20));
+        // The actual mainland landing releases the seed, without requiring
+        // an intermediate scene_state != 2 frame.
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.bump_gens(ServerProt::PLAYER_INFO);
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
