@@ -16,11 +16,12 @@
 //!
 //! Canonical inputs are required, not optional. Besides the named dirs, the
 //! loc `config` jag and the cache archives, the build requires the inputs the
-//! bake consumes implicitly — the pack id tables, the module scripts of the
-//! derived transports, the bank booth config and the revision's canonical
-//! mapsquares ([`nav::bundle::required_content_inputs`]) — on every build,
-//! before a warm staged artifact set is accepted. A deliberate content edit
-//! or addition is not judged here; it flows through the ordinary input
+//! bake consumes implicitly — the pack id tables, the files of each recursive
+//! script scan (one row per file, so a missing child fails even when its
+//! directory keeps siblings), the bank booth config and the revision's
+//! canonical mapsquares ([`nav::bundle::required_content_inputs`]) — on every
+//! build, before a warm staged artifact set is accepted. A deliberate content
+//! edit or addition is not judged here; it flows through the ordinary input
 //! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
 //!
 //! Knobs (see docs/api/nav.md):
@@ -131,10 +132,10 @@ fn main() {
     }
     // The bake also consumes inputs it does not take as named arguments: the
     // jm2 placements and the pack id tables behind the transport graph and the
-    // bank stand table, the module scripts of each derived transport family,
-    // and the canonical mapsquares themselves. The baker skips what is absent,
-    // so they are required by name here — before a warm staged stamp can be
-    // accepted, not only when this build has to bake.
+    // bank stand table, every file of the recursive script scans behind the
+    // derived transports, and the canonical mapsquares themselves. The baker
+    // skips what is absent, so they are required here — before a warm staged
+    // stamp can be accepted, not only when this build has to bake.
     match nav::bundle::missing_content_inputs(revision, &content_dir) {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
