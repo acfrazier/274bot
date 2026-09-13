@@ -5395,6 +5395,146 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn bank_ready_loaded_and_snapshot_ready_are_distinct() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            loaded: Bank.loaded(),
+            snapshotReady: Bank.snapshotReady(),
+            ready: Bank.ready(),
+            isOpen: Bank.isOpen(),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let empty = iso.probe("__probe").unwrap();
+    assert_eq!(empty["loaded"], false, "empty items are not Bank.loaded");
+    assert_eq!(
+        empty["snapshotReady"], true,
+        "posted bank_loaded is snapshotReady"
+    );
+    assert_eq!(empty["ready"], true, "empty complete banks are ready");
+    assert_eq!(empty["isOpen"], true);
+
+    let ops = ["Withdraw 1".to_string()];
+    let bank = [item_row(526, Some("Bones"), 12, &ops, false, -1, -1)];
+    snap.bank = &bank;
+    snap.bank_loaded = false;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let items = iso.probe("__probe").unwrap();
+    assert_eq!(items["loaded"], true, "posted rows are Bank.loaded");
+    assert_eq!(items["snapshotReady"], false);
+    assert_eq!(
+        items["ready"], true,
+        "non-empty items keep ready when snapshotReady is false"
+    );
+
+    snap.bank_open = false;
+    snap.bank = &[];
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let closed = iso.probe("__probe").unwrap();
+    assert_eq!(closed["loaded"], false);
+    assert_eq!(closed["snapshotReady"], false);
+    assert_eq!(closed["ready"], false);
+    iso.join();
+}
+
+#[test]
+fn bank_wait_ready_returns_immediately_when_closed_or_already_ready() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__closed === undefined) {
+            globalThis.__closed = await Bank.waitReady(1000);
+            return;
+        }
+        if (globalThis.__ready === undefined) {
+            globalThis.__ready = await Bank.waitReady(1000);
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__closed").unwrap(), false);
+
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__ready").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+fn bank_wait_ready_resolves_false_when_the_bank_closes_before_ready() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__probe = await Bank.waitReady(5000);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert!(
+        iso.probe("__probe").is_err(),
+        "waitReady stays parked until open-and-ready or close"
+    );
+
+    snap.bank_open = false;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__probe").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn bank_wait_snapshot_after_rejects_negative_generation() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__probe = await Bank.waitSnapshotAfter(-1, 1000);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), false);
+    iso.join();
+}
+
+#[test]
 fn traversal_pure_walk_and_with_teles_are_nav_flag_objects() {
     let src = r#"
 import { Traversal } from '../../api/walking/Traversal.js';

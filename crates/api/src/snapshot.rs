@@ -691,9 +691,26 @@ pub struct GameSnapshot {
     bank_session_generation: u64,
     #[serde(skip)]
     bank_modal_generation_seen: u64,
-    /// True only when the selected withdraw component has a current full
-    /// inventory packet after the last main-modal close and is transmitting.
+    /// True when the open withdraw component is transmitting a full inventory
+    /// snapshot whose last-full generation is at least the inv generation
+    /// recorded at the previous close (0 if this component was never closed).
     bank_loaded: bool,
+    #[serde(skip)]
+    bank_inventory_session: Option<BankInvSession>,
+    #[serde(skip)]
+    bank_prev_inv_com: i32,
+    #[serde(skip)]
+    bank_prev_inv_generation: u64,
+    #[serde(skip)]
+    bank_full_generation: u64,
+    #[serde(skip)]
+    bank_full_com: i32,
+    #[serde(skip)]
+    bank_last_inv_com: i32,
+    #[serde(skip)]
+    bank_last_inv_generation: u64,
+    #[serde(skip)]
+    bank_last_full_observation: u64,
     trade: TradeView,
     shop: ShopView,
     widgets: Vec<WidgetView>,
@@ -805,6 +822,14 @@ impl Default for GameSnapshot {
             bank_session_generation: 0,
             bank_modal_generation_seen: 0,
             bank_loaded: false,
+            bank_inventory_session: None,
+            bank_prev_inv_com: -1,
+            bank_prev_inv_generation: 0,
+            bank_full_generation: 0,
+            bank_full_com: -1,
+            bank_last_inv_com: -1,
+            bank_last_inv_generation: 0,
+            bank_last_full_observation: 0,
             trade: TradeView::default(),
             shop: ShopView::default(),
             widgets: Vec::new(),
@@ -1221,7 +1246,8 @@ impl GameSnapshot {
         self.bank_session_generation
     }
 
-    /// Whether the current bank component has fresh, transmitting full data.
+    /// Whether the current bank component has a transmitting full snapshot
+    /// that is current for this open session.
     pub fn bank_loaded(&self) -> bool {
         self.bank_loaded
     }
@@ -1653,24 +1679,99 @@ impl GameSnapshot {
             })
             .unwrap_or(-1)
         };
-        let modal_generation = client.main_modal_packet_state().generation;
-        let modal_delta = modal_generation.wrapping_sub(self.bank_modal_generation_seen);
+        let modal = client.main_modal_packet_state();
+        let modal_delta = modal
+            .generation
+            .wrapping_sub(self.bank_modal_generation_seen);
         if modal_delta != 0 {
             self.bank_session_generation = self.bank_session_generation.wrapping_add(modal_delta);
-            self.bank_modal_generation_seen = modal_generation;
+            self.bank_modal_generation_seen = modal.generation;
         } else if bank_component_id != self.bank_component_id {
             self.bank_session_generation = self.bank_session_generation.wrapping_add(1);
         }
+
+        let track_com = if bank_component_id >= 0 {
+            bank_component_id
+        } else {
+            self.bank_component_id
+        };
+        if track_com >= 0 {
+            if let Some(state) = client.inventory_packet_state(track_com) {
+                self.note_bank_inv_state(
+                    track_com,
+                    state.generation,
+                    state.full_generation,
+                    state.full_observation,
+                    state.transmitting,
+                );
+            } else if self.bank_full_com != track_com {
+                self.bank_full_generation = 0;
+                self.bank_last_inv_com = -1;
+                self.bank_last_inv_generation = 0;
+                self.bank_last_full_observation = 0;
+            }
+        }
+
+        if bank_component_id < 0 {
+            if self.bank_inventory_session.is_some() || self.bank_component_id >= 0 {
+                let com = if self.bank_component_id >= 0 {
+                    self.bank_component_id
+                } else {
+                    self.bank_inventory_session
+                        .map(|session| session.main_com_id)
+                        .unwrap_or(-1)
+                };
+                let generation = if self.bank_last_inv_com == com {
+                    self.bank_last_inv_generation
+                } else {
+                    0
+                };
+                self.close_bank_inv_session(com, generation);
+            }
+        } else {
+            let same_com = bank_component_id == self.bank_component_id;
+            let closed_then_opened = same_com
+                && self.bank_component_id >= 0
+                && modal_delta != 0
+                && modal.closed_observation != 0
+                && modal.closed_observation < modal.opened_observation;
+            if closed_then_opened {
+                let generation = if self.bank_last_inv_com == bank_component_id {
+                    self.bank_last_inv_generation
+                } else {
+                    0
+                };
+                self.close_bank_inv_session(bank_component_id, generation);
+            } else if !same_com {
+                if let Some(session) = self.bank_inventory_session {
+                    let generation = if self.bank_last_inv_com == session.main_com_id {
+                        self.bank_last_inv_generation
+                    } else {
+                        0
+                    };
+                    self.close_bank_inv_session(session.main_com_id, generation);
+                }
+            }
+            let needs_open = match self.bank_inventory_session {
+                Some(session) if session.main_com_id == bank_component_id => false,
+                _ => true,
+            };
+            if needs_open {
+                self.open_bank_inv_session(bank_component_id);
+            }
+        }
+
         self.bank_component_id = bank_component_id;
-        self.bank_loaded = self.bank_component_id >= 0
-            && client
-                .inventory_packet_state(self.bank_component_id)
+        self.bank_loaded = match self.bank_inventory_session {
+            Some(session) if session.main_com_id == bank_component_id => client
+                .inventory_packet_state(bank_component_id)
                 .is_some_and(|state| {
                     state.transmitting
-                        && state.full_generation != 0
-                        && state.full_observation
-                            > client.main_modal_packet_state().closed_observation
-                });
+                        && self.bank_full_generation > 0
+                        && self.bank_full_generation >= session.main_opened_at
+                }),
+            _ => false,
+        };
         self.bank = if self.bank_component_id == -1 {
             Vec::new()
         } else {
@@ -1682,6 +1783,47 @@ impl GameSnapshot {
             bank_note_controls(client, client.main_modal_id)
         };
         true
+    }
+
+    fn note_bank_inv_state(
+        &mut self,
+        com_id: i32,
+        generation: u64,
+        full_generation: u64,
+        full_observation: u64,
+        transmitting: bool,
+    ) {
+        if !transmitting {
+            self.bank_full_generation = 0;
+        } else if self.bank_last_inv_com != com_id
+            || self.bank_last_full_observation != full_observation
+        {
+            self.bank_full_generation = if full_generation > 0 { generation } else { 0 };
+        }
+        self.bank_full_com = com_id;
+        self.bank_last_inv_com = com_id;
+        self.bank_last_inv_generation = generation;
+        self.bank_last_full_observation = full_observation;
+    }
+
+    fn close_bank_inv_session(&mut self, com_id: i32, generation: u64) {
+        if com_id >= 0 {
+            self.bank_prev_inv_com = com_id;
+            self.bank_prev_inv_generation = generation;
+        }
+        self.bank_inventory_session = None;
+    }
+
+    fn open_bank_inv_session(&mut self, com_id: i32) {
+        let main_opened_at = if self.bank_prev_inv_com == com_id {
+            self.bank_prev_inv_generation
+        } else {
+            0
+        };
+        self.bank_inventory_session = Some(BankInvSession {
+            main_com_id: com_id,
+            main_opened_at,
+        });
     }
 
     /// Bank-side rebuild: the open side modal's deposit component (m8aq
@@ -2884,6 +3026,14 @@ const fn empty_loc_model_stamp() -> u64 {
         i += 1;
     }
     stamp
+}
+
+/// Session marker for bank snapshot readiness: last-full inv generation
+/// must be at least the inv generation recorded when this component closed.
+#[derive(Clone, Copy)]
+struct BankInvSession {
+    main_com_id: i32,
+    main_opened_at: u64,
 }
 
 /// The two-counter gate of the item-bearing iface families: rebuild when

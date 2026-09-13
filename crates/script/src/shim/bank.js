@@ -168,13 +168,11 @@ export const Bank = new Proxy(
         isOpen() {
             return snap().bank_open === true;
         },
-        // The withdraw list has actually been decoded (a bank whose list
-        // has not filled reads empty, which is not proof of an empty bank).
         loaded() {
-            return snap().bank_loaded === true;
+            return (snap().bank || []).length > 0;
         },
         ready() {
-            return Bank.isOpen() && Bank.loaded();
+            return Bank.isOpen() && (Bank.snapshotReady() || Bank.loaded());
         },
         items() {
             return (snap().bank || []).map((row) => ({
@@ -343,23 +341,38 @@ export const Bank = new Proxy(
                 booth_action: null,
             });
         },
-        async waitReady(timeoutMs, _log) {
-            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
-            return Execution.delayUntil(() => Bank.ready(), ms);
+        async waitReady(timeoutMs, log) {
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 4000;
+            if (!Bank.isOpen() || Bank.ready()) {
+                return Bank.ready();
+            }
+            await Execution.delayUntil(() => !Bank.isOpen() || Bank.ready(), ms);
+            if (Bank.isOpen() && !Bank.ready() && typeof log === 'function') {
+                log('bank: opened but the item list never arrived');
+            }
+            return Bank.ready();
         },
         snapshotReady() {
-            return Bank.ready();
+            return snap().bank_loaded === true;
         },
         snapshotGeneration() {
             const generation = snap().bank_generation;
             return Number.isFinite(generation) && generation >= 0 ? generation : 0;
         },
         async waitSnapshotAfter(generation, timeoutMs) {
-            const baseline = Number.isFinite(Number(generation)) ? Number(generation) : 0;
-            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
-            return Execution.delayUntil(
-                () => Bank.snapshotReady() && Bank.snapshotGeneration() > baseline,
+            const baseline = Number(generation);
+            if (!Number.isFinite(baseline) || baseline < 0) {
+                return false;
+            }
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 4000;
+            await Execution.delayUntil(
+                () => !Bank.isOpen() || Bank.snapshotGeneration() > baseline,
                 ms,
+            );
+            return (
+                Bank.isOpen() &&
+                Bank.snapshotReady() &&
+                Bank.snapshotGeneration() > baseline
             );
         },
         countById(id) {

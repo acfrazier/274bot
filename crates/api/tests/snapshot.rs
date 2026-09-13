@@ -1334,6 +1334,44 @@ fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
     c.set_iface_mut(id, m);
 }
 
+fn plant_withdraw_bank(c: &mut Client) {
+    set_iface(
+        c,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+}
+
+fn rebuild_bank(snap: &mut GameSnapshot, c: &Client) {
+    assert!(snap.rebuild_family(c, Family::Bank));
+}
+
 /// Plant an obj def at `id` so def-name resolution reads it.
 fn plant_obj(c: &mut Client, id: i32, name: &str) {
     let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -3355,39 +3393,9 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
 }
 
 #[test]
-fn bank_loaded_requires_current_component_full_after_last_close_and_transmission() {
+fn bank_loaded_matches_native_session_full_generation_and_transmission() {
     let mut c = client_with_npc();
-    set_iface(
-        &mut c,
-        600,
-        IfType {
-            id: 600,
-            layer_id: 600,
-            r#type: ComponentType::TYPE_LAYER,
-            children: Some(vec![601]),
-            ..Default::default()
-        },
-    );
-    set_iface(
-        &mut c,
-        601,
-        IfType {
-            id: 601,
-            layer_id: 600,
-            r#type: ComponentType::TYPE_INV,
-            iop: [Some("Withdraw 1".into()), None, None, None, None],
-            ..Default::default()
-        },
-    );
-    set_iface_mut(
-        &mut c,
-        601,
-        IfTypeMut {
-            link_obj_type: Some(vec![0]),
-            link_obj_number: Some(vec![0]),
-            ..Default::default()
-        },
-    );
+    plant_withdraw_bank(&mut c);
 
     let mut full = Packet::new(vec![2, 89, 1, 0, 0, 0]);
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
@@ -3395,33 +3403,50 @@ fn bank_loaded_requires_current_component_full_after_last_close_and_transmission
     c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
 
     let mut snap = GameSnapshot::new();
-    assert!(snap.rebuild_family(&c, Family::Bank));
+    rebuild_bank(&mut snap, &c);
     assert_eq!(snap.bank_component_id(), 601);
     assert_eq!(snap.bank_session_generation(), 1);
-    assert!(snap.bank_loaded(), "the pre-open full is still current");
+    assert!(
+        snap.bank_loaded(),
+        "a complete snapshot before open is current"
+    );
+    assert!(snap.bank().is_empty(), "an empty full is still complete");
 
     let mut close = Packet::new(vec![]);
     c.handle_packet(ServerProt::IF_CLOSE, &mut close);
-    assert!(snap.rebuild_family(&c, Family::Bank));
+    rebuild_bank(&mut snap, &c);
     assert_eq!(snap.bank_component_id(), -1);
     assert_eq!(snap.bank_session_generation(), 2);
     assert!(!snap.bank_loaded());
 
     let mut reopen = Packet::new(vec![2, 88]);
     c.handle_packet(ServerProt::IF_OPENMAIN, &mut reopen);
-    assert!(snap.rebuild_family(&c, Family::Bank));
+    rebuild_bank(&mut snap, &c);
     assert_eq!(snap.bank_session_generation(), 3);
-    assert!(!snap.bank_loaded(), "the pre-close full is stale");
-
-    let mut refresh = Packet::new(vec![2, 89, 1, 0, 0, 0]);
-    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut refresh);
-    assert!(snap.rebuild_family(&c, Family::Bank));
-    assert!(snap.bank_loaded());
+    assert!(
+        snap.bank_loaded(),
+        "a still-transmitting full stays ready after close and reopen"
+    );
 
     let mut stop = Packet::new(vec![2, 89]);
     c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut stop);
-    assert!(snap.rebuild_family(&c, Family::Bank));
+    rebuild_bank(&mut snap, &c);
     assert!(!snap.bank_loaded(), "stop-transmit is never ready");
+
+    let mut close_stopped = Packet::new(vec![]);
+    c.handle_packet(ServerProt::IF_CLOSE, &mut close_stopped);
+    let mut reopen_stopped = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut reopen_stopped);
+    rebuild_bank(&mut snap, &c);
+    assert!(
+        !snap.bank_loaded(),
+        "stopped transmission still requires a new full after reopen"
+    );
+
+    let mut refresh = Packet::new(vec![2, 89, 1, 0, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut refresh);
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded());
 
     let mut close_and_reopen = Packet::new(vec![]);
     c.handle_packet(ServerProt::IF_CLOSE, &mut close_and_reopen);
@@ -3429,13 +3454,99 @@ fn bank_loaded_requires_current_component_full_after_last_close_and_transmission
     c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut same_drain_full);
     let mut same_drain_reopen = Packet::new(vec![2, 88]);
     c.handle_packet(ServerProt::IF_OPENMAIN, &mut same_drain_reopen);
-    assert!(snap.rebuild_family(&c, Family::Bank));
+    rebuild_bank(&mut snap, &c);
     assert_eq!(
         snap.bank_session_generation(),
-        5,
+        7,
         "close plus reopen remain visible when the final component is unchanged"
     );
     assert!(snap.bank_loaded(), "the same-drain full followed the close");
+}
+
+#[test]
+fn bank_loaded_requires_a_full_when_the_modal_arrives_first() {
+    let mut c = client_with_npc();
+    plant_withdraw_bank(&mut c);
+    let mut open = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+
+    let mut snap = GameSnapshot::new();
+    rebuild_bank(&mut snap, &c);
+    assert!(!snap.bank_loaded(), "open without a full is not ready");
+
+    let mut partial = Packet::new(vec![2, 89]);
+    c.handle_packet(ServerProt::UPDATE_INV_PARTIAL, &mut partial);
+    rebuild_bank(&mut snap, &c);
+    assert!(!snap.bank_loaded(), "a partial without a full is not ready");
+
+    let mut full = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded(), "the empty full completes the session");
+    assert!(snap.bank().is_empty());
+}
+
+#[test]
+fn bank_loaded_rejects_partial_after_full_across_close_until_a_new_full() {
+    let mut c = client_with_npc();
+    plant_withdraw_bank(&mut c);
+    let mut full = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let mut open = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+    let mut snap = GameSnapshot::new();
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded());
+
+    let mut partial = Packet::new(vec![2, 89]);
+    c.handle_packet(ServerProt::UPDATE_INV_PARTIAL, &mut partial);
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded(), "partials keep a live transmitting full");
+
+    let mut close = Packet::new(vec![]);
+    c.handle_packet(ServerProt::IF_CLOSE, &mut close);
+    let mut reopen = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut reopen);
+    rebuild_bank(&mut snap, &c);
+    assert!(
+        !snap.bank_loaded(),
+        "a full older than the close marker is stale"
+    );
+
+    let mut refresh = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut refresh);
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded());
+}
+
+#[test]
+fn bank_loaded_clears_on_session_reset_until_a_new_full() {
+    let mut c = client_with_npc();
+    plant_withdraw_bank(&mut c);
+    let mut full = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let mut open = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+    let mut snap = GameSnapshot::new();
+    rebuild_bank(&mut snap, &c);
+    assert!(snap.bank_loaded());
+
+    c.logout();
+    snap.reset_session(c.gens);
+    assert!(!snap.bank_loaded());
+    assert_eq!(snap.bank_component_id(), -1);
+
+    plant_withdraw_bank(&mut c);
+    let mut next_full = Packet::new(vec![2, 89, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut next_full);
+    let mut next_open = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut next_open);
+    assert!(snap.rebuild_family(&c, Family::Inv));
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert!(
+        snap.bank_loaded(),
+        "a later login's transmitting full is current"
+    );
 }
 
 /// `ReadContext` reads every §3.2 accessor from a rebuilt snapshot without
