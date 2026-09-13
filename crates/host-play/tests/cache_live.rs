@@ -122,8 +122,8 @@ fn cache_live() {
         .map(|d| d.as_millis())
         .unwrap_or_default();
     let (first, second) = (
-        format!("c{revision}{:08}a", stamp % 100_000_000),
-        format!("c{revision}{:08}b", stamp % 100_000_000),
+        format!("c{revision}{:07}a", stamp % 10_000_000),
+        format!("c{revision}{:07}b", stamp % 10_000_000),
     );
     let actors = profiles(&[(first.as_str(), "test"), (second.as_str(), "test")]);
     let play = host_play::run_with_profile(
@@ -143,6 +143,16 @@ fn cache_live() {
         Ok(SnapshotState::Ready(_))
     );
     let statuses = play.statuses();
+    let workers = client::io::ondemand::OnDemand::live_workers_for(
+        profile.client().game_host(),
+        profile.client().game_port(),
+    );
+    println!("cache_live: workers={workers} statuses={statuses:?}");
+    if workers != 1 {
+        fail(&format!(
+            "two actors must share one OnDemand worker, saw {workers}"
+        ));
+    }
     println!(
         "cache_live: slots={} delta=attempts {} jags {} published {} warm {} network {} injections {}",
         statuses.len(),
