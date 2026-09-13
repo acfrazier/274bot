@@ -377,6 +377,12 @@ pub fn dispatch(input: &Value) -> Value {
         "begin" => begin(input),
         "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
         "next-tile" => next_tile(input),
+        "in-fire-plot" => in_fire_plot(input),
+        "burn-lane-want" => burn_lane_want(input),
+        "is-burn-west" => is_burn_west(input),
+        "fire-reaction-ticks" => json!(1),
+        "run-in-dir" | "run-in-dir-result" => run_in_dir(input),
+        "no-light" => no_light(input),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
     }
 }
@@ -657,6 +663,126 @@ fn next_tile(input: &Value) -> Value {
             "run": 1,
         }),
         None => json!({ "kind": "none" }),
+    }
+}
+
+fn in_fire_plot(input: &Value) -> Value {
+    let (Some(tile), Some(plot)) = (
+        tile_from(input.get("tile")),
+        input.get("plot").and_then(plot_from),
+    ) else {
+        return json!(false);
+    };
+    json!(
+        tile.level == plot.level
+            && tile.x >= plot.x0
+            && tile.x <= plot.x1
+            && tile.z >= plot.z0
+            && tile.z <= plot.z1
+    )
+}
+
+fn burn_lane_want(input: &Value) -> Value {
+    let count = input
+        .get("logCount")
+        .and_then(Value::as_f64)
+        .filter(|count| count.is_finite())
+        .map(|count| count.floor() as i64)
+        .unwrap_or(0);
+    json!(count.clamp(1, 27))
+}
+
+fn is_burn_west(input: &Value) -> Value {
+    let dir = input.get("dir").unwrap_or(&Value::Null);
+    json!(i32_field(dir, "dx") == Some(-1) && i32_field(dir, "dz") == Some(0))
+}
+
+fn run_in_dir(input: &Value) -> Value {
+    if input.get("op").and_then(Value::as_str) == Some("run-in-dir-result") {
+        return json!({
+            "kind": "run",
+            "run": if input.get("walkable").and_then(Value::as_bool).unwrap_or(false) { 1 } else { 0 },
+        });
+    }
+    let (Some(from), Some(plot)) = (
+        tile_from(input.get("from")),
+        input.get("plot").and_then(plot_from),
+    ) else {
+        return json!({ "kind": "run", "run": 0 });
+    };
+    let cap = input.get("cap").and_then(Value::as_f64).unwrap_or(0.0);
+    if cap <= 0.0
+        || from.level != plot.level
+        || from.x < plot.x0
+        || from.x > plot.x1
+        || from.z < plot.z0
+        || from.z > plot.z1
+        || refused_keys(input.get("occupied")).contains(&(from.x, from.z))
+    {
+        return json!({ "kind": "run", "run": 0 });
+    }
+    if input
+        .get("hasWalkable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        json!({ "kind": "callback", "callback": "walkable" })
+    } else {
+        json!({ "kind": "run", "run": 1 })
+    }
+}
+
+fn no_light(input: &Value) -> Value {
+    let keys = input
+        .get("keys")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    match input.get("action").and_then(Value::as_str).unwrap_or("") {
+        "add" => {
+            let key = input.get("key").and_then(Value::as_str).unwrap_or("");
+            let mut out = keys;
+            if !out.iter().any(|item| item == key) {
+                out.push(key.to_string());
+            }
+            json!(out)
+        }
+        "has" => json!(input
+            .get("key")
+            .and_then(Value::as_str)
+            .is_some_and(|key| keys.iter().any(|item| item == key))),
+        "size" => json!(keys.len()),
+        "merge" => {
+            let occupied = input
+                .get("occupied")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut out = Vec::new();
+            for key in occupied {
+                if !out.iter().any(|item| item == &key) {
+                    out.push(key);
+                }
+            }
+            for key in keys {
+                if !out.iter().any(|item| item == &key) {
+                    out.push(key);
+                }
+            }
+            json!(out)
+        }
+        "clear" => json!([]),
+        _ => json!({ "kind": "notImpl", "reason": "unknown no-light operation" }),
     }
 }
 

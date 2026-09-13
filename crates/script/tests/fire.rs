@@ -183,7 +183,7 @@ export default class T extends LoopingBot {
 "#;
 
 const LANE: &str = r#"
-import { findBurnLane, inFirePlot, NoLightTiles, tileKey, burnLaneWant, fireReactionTicks, isBurnWest } from '../../api/firemaking/Firemaking.js';
+import { findBurnLane, inFirePlot, NoLightTiles, tileKey, burnLaneWant, fireReactionTicks, isBurnWest, runInDir } from '../../api/firemaking/Firemaking.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
@@ -197,9 +197,14 @@ export default class T extends LoopingBot {
             globalThis.__want = burnLaneWant(20);
             globalThis.__ticks = fireReactionTicks();
             globalThis.__west = isBurnWest({ dx: -1, dz: 0 });
+            globalThis.__events = [];
+            globalThis.__early = runInDir(globalThis.__here, plot, {}, occupied, () => { globalThis.__events.push('walkable'); return true; }, () => { globalThis.__events.push('canStep'); return true; }, 0);
+            globalThis.__callback = runInDir(globalThis.__here, plot, {}, new Set(), () => { globalThis.__events.push('walkable'); return false; }, () => { globalThis.__events.push('canStep'); return true; }, 1);
             const no = new NoLightTiles();
             no.add({ x: 1, z: 2 });
-            globalThis.__refused = no.has({ x: 1, z: 2 }) && no.size === 1 && tileKey({ x: 1, z: 2 }) === '1,2';
+            globalThis.__merged = [...no.merge(new Set(['2,3', '1,2']))];
+            no.clear();
+            globalThis.__refused = no.has({ x: 1, z: 2 }) === false && no.size === 0 && tileKey({ x: 1, z: 2 }) === '1,2';
             globalThis.__ok = true;
         } catch (e) {
             globalThis.__ok = String(e.message || e);
@@ -459,6 +464,16 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
     assert_eq!(iso.probe("__ticks").unwrap(), 1);
     assert_eq!(iso.probe("__west").unwrap(), true);
     assert_eq!(iso.probe("__refused").unwrap(), true);
+    assert_eq!(iso.probe("__early").unwrap(), 0);
+    assert_eq!(iso.probe("__callback").unwrap(), 0);
+    assert_eq!(
+        iso.probe("__events").unwrap(),
+        serde_json::json!(["walkable"])
+    );
+    assert_eq!(
+        iso.probe("__merged").unwrap(),
+        serde_json::json!(["2,3", "1,2"])
+    );
     iso.join();
 }
 
