@@ -13,6 +13,7 @@ use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::BotTarget;
 use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
+use nav::pack::{decode_reach_sidecar, sha256_hex};
 use nav::world::NavWorld;
 
 use crate::cache::CacheAvailability;
@@ -444,6 +445,7 @@ pub struct ServerProfile {
     nav_identity: Option<NavManifest>,
     nav_load: NavLoadCounters,
     world: SharedWorld,
+    reach: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
     vault_path: PathBuf,
@@ -454,6 +456,7 @@ struct LoadedNav {
     availability: NavAvailability,
     identity: Option<NavManifest>,
     world: Option<Arc<NavWorld>>,
+    reach: Option<Arc<[u64]>>,
     counters: NavLoadCounters,
 }
 
@@ -695,6 +698,7 @@ impl ProfileSelection {
             nav_identity: loaded.identity,
             nav_load: loaded.counters,
             world: SharedWorld(loaded.world),
+            reach: loaded.reach,
             nav: loaded.availability,
             content_dir: self.content_dir.clone(),
             vault_path: self.vault_path.clone(),
@@ -741,6 +745,7 @@ impl ProfileSelection {
                 )),
                 identity: None,
                 world: None,
+                reach: None,
                 counters,
             });
         }
@@ -762,6 +767,7 @@ impl ProfileSelection {
                     cache_id: identity.cache_id.clone(),
                     nav_sha256: identity.nav_sha256.clone(),
                     flags_sha256: identity.flags_sha256.clone(),
+                    reach_sha256: identity.reach_sha256.clone(),
                 }
             }
             NavOrigin::External { .. } => {
@@ -782,11 +788,13 @@ impl ProfileSelection {
                             cache_id: cache.identity(),
                             nav_sha256: nav_hash,
                             flags_sha256: None,
+                            reach_sha256: None,
                         };
                         return Ok(LoadedNav {
                             availability: NavAvailability::Legacy274,
                             identity: Some(identity),
                             world: Some(world),
+                            reach: None,
                             counters,
                         });
                     }
@@ -804,10 +812,24 @@ impl ProfileSelection {
             }
         };
         let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+        let reach = if origin.is_bundled() {
+            if identity.reach_sha256.is_none() {
+                return Err("bundled navigation reach identity is missing".into());
+            }
+            Some(load_bundled_reach(
+                pack_path,
+                &world,
+                &identity.nav_sha256,
+                &mut counters,
+            )?)
+        } else {
+            None
+        };
         Ok(LoadedNav {
             availability: NavAvailability::Bound,
             identity: Some(identity),
             world: Some(world),
+            reach,
             counters,
         })
     }
@@ -861,6 +883,11 @@ impl ServerProfile {
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.0.clone()
     }
+    /// Bundled paint-reach bitset decoded at bind. `None` on the external
+    /// path, which keeps its one-time `bake_reach`.
+    pub fn reach(&self) -> Option<Arc<[u64]>> {
+        self.reach.clone()
+    }
     pub fn content_dir(&self) -> &Path {
         &self.content_dir
     }
@@ -913,6 +940,46 @@ impl ServerProfile {
         }
         Ok(())
     }
+}
+
+fn load_bundled_reach(
+    pack_path: &Path,
+    world: &NavWorld,
+    nav_sha256: &str,
+    counters: &mut NavLoadCounters,
+) -> Result<Arc<[u64]>, String> {
+    let reach_path = pack_path.with_extension("navreach");
+    if !reach_path.exists() {
+        return Err(format!(
+            "bundled navigation {} is missing",
+            reach_path.display()
+        ));
+    }
+    let bytes = std::fs::read(&reach_path)
+        .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
+    counters.reach_reads = 1;
+    let side = decode_reach_sidecar(&bytes)
+        .map_err(|e| format!("bundled navigation {}: {e}", reach_path.display()))?;
+    if sha256_hex(&side.binding) != nav_sha256 {
+        return Err(format!(
+            "bundled navigation {} binding does not match pack identity",
+            reach_path.display()
+        ));
+    }
+    let c = &world.collision;
+    let words = c.walk.len().div_ceil(64);
+    if side.origin != c.origin
+        || side.width != c.width
+        || side.height != c.height
+        || side.word_count != words
+        || side.bits.len() != words
+    {
+        return Err(format!(
+            "bundled navigation {} geometry does not match pack",
+            reach_path.display()
+        ));
+    }
+    Ok(Arc::from(side.bits))
 }
 
 fn decode_nav_world(

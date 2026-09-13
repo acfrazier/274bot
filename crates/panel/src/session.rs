@@ -1345,6 +1345,27 @@ impl Session {
                 .and_then(|identity| identity.flags_sha256.clone()),
             profile.nav_flags_origin().is_bundled(),
         );
+        if let Some(world) = profile.world() {
+            crate::picker::set_reach_binding(
+                profile.reach(),
+                world.collision.origin,
+                world.collision.width,
+                world.collision.height,
+                profile.nav_origin().is_bundled(),
+            );
+        } else {
+            crate::picker::set_reach_binding(
+                None,
+                api::snapshot::WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                0,
+                0,
+                false,
+            );
+        }
         self.options = PlayOptions {
             host: profile.client().game_host().to_string(),
             port: profile.client().game_port(),

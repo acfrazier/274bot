@@ -75,6 +75,8 @@ pub struct NavLoadCounters {
     pub pack_reads: u32,
     pub pack_hashes: u32,
     pub pack_decodes: u32,
+    pub reach_reads: u32,
+    pub reach_hashes: u32,
 }
 
 /// Compile-time table published by the build script: the identity (or
@@ -169,6 +171,13 @@ fn validate_identity_shape(identity: &BundledNavIdentity) -> Result<(), String> 
             );
         }
     }
+    if let Some(reach) = &identity.reach_sha256 {
+        if reach.len() != 64 || !reach.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(
+                "bundled navigation identity reach_sha256 is not a SHA-256 hex digest".into(),
+            );
+        }
+    }
     match identity.revision {
         274 | 289 => Ok(()),
         revision => Err(format!("unsupported revision {revision}; use 274 or 289")),
@@ -213,6 +222,7 @@ mod tests {
             format: "274V8".into(),
             nav_sha256: "ab".repeat(32),
             flags_sha256: None,
+            reach_sha256: None,
             relative_path: relative_path.into(),
         }
     }
@@ -255,6 +265,10 @@ mod tests {
                 .flags_sha256
                 .as_ref()
                 .is_none_or(|flags| flags.len() == 64));
+            assert!(row
+                .reach_sha256
+                .as_ref()
+                .is_none_or(|reach| reach.len() == 64));
             assert!(
                 !Path::new(&row.relative_path).is_absolute()
                     && !row.relative_path.split('/').any(|part| part == ".."),

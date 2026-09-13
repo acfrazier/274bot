@@ -89,6 +89,8 @@ pub struct NavManifest {
     pub cache_id: String,
     pub nav_sha256: String,
     pub flags_sha256: Option<String>,
+    #[serde(default)]
+    pub reach_sha256: Option<String>,
 }
 
 impl NavManifest {
@@ -97,6 +99,7 @@ impl NavManifest {
         cache: &CacheManifest,
         nav: &[u8],
         flags: Option<&[u8]>,
+        reach: Option<&[u8]>,
     ) -> Result<Self, String> {
         validate_revision(revision)?;
         if cache.revision != revision {
@@ -110,6 +113,7 @@ impl NavManifest {
             cache_id: cache.identity(),
             nav_sha256: hash_bytes(nav),
             flags_sha256: flags.map(hash_bytes),
+            reach_sha256: reach.map(hash_bytes),
         })
     }
 
@@ -119,8 +123,9 @@ impl NavManifest {
         cache: &CacheManifest,
         nav: &[u8],
         flags: Option<&[u8]>,
+        reach: Option<&[u8]>,
     ) -> Result<(), String> {
-        let actual = Self::capture(revision, cache, nav, flags)?;
+        let actual = Self::capture(revision, cache, nav, flags, reach)?;
         if actual != *self {
             return Err(
                 "navigation/profile mismatch: revision, cache identity or pack/flags content differs"

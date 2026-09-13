@@ -118,6 +118,25 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
                 assert_eq!(path, &profile_dir.join(&row.relative_path));
                 assert!(path.is_file(), "staged pack {} is missing", path.display());
                 assert_eq!(identity.nav_sha256, row.nav_sha256);
+                let reach_path = path.with_extension("navreach");
+                assert!(
+                    reach_path.is_file(),
+                    "staged reach {} is missing",
+                    reach_path.display()
+                );
+                let pack_bytes = std::fs::read(path).expect("staged pack");
+                let world = nav::world::NavWorld::from_bytes(&pack_bytes).expect("decode pack");
+                let expected = nav::paint::bake_reach(&world.collision, &world.graph);
+                let side = nav::pack::decode_reach_sidecar(
+                    &std::fs::read(&reach_path).expect("staged reach"),
+                )
+                .expect("decode reach");
+                assert_eq!(side.bits, expected, "staged reach must equal bake_reach");
+                assert_eq!(
+                    nav::pack::sha256_hex(&side.binding),
+                    row.nav_sha256,
+                    "reach binding is the pack identity"
+                );
                 println!(
                     "bundled nav: revision {} pack {} ({}) in {}",
                     row.revision,
@@ -139,6 +158,12 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
             (1, 0, 1),
             "the bundled path reads and decodes the staged pack exactly once and never hashes it"
         );
+        assert_eq!(
+            (counters.reach_reads, counters.reach_hashes),
+            (1, 0),
+            "bundled reach is read once and never content-hashed"
+        );
+        assert!(profile.reach().is_some());
         let template = SharedClientTemplate::load(profile).expect("shared template");
         assert!(template.world().is_some(), "bundled world decoded");
         std::fs::remove_dir_all(&root).ok();

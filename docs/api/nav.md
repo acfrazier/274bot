@@ -9,7 +9,7 @@ follower. It acts only through the kernel API (`api::interact`,
 
 Application builds bake the pack themselves. `crates/host-play/build.rs` runs
 the shared baker (`nav::bake::bake_world`) for the selected release revision,
-stages pack + flags + sidecar manifest + stamp under the install resource root
+stages pack + flags + reach + sidecar manifest + stamp under the install resource root
 (`nav/<revision>/` — next to the built binary, `Contents/Resources` in a macOS
 bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
 the identity that the compile-time table `host_play::bundled_nav_identities()`
@@ -35,7 +35,8 @@ The pack serializes the whole-world `WorldCollision` (four planes, packed
 the derived `TransportGraph`. Magic `b"274V"`, version byte **8** (v8
 appends the content-derived bank-stand table after the edges; raw `u32`
 flags are not on the v8 wire, the optional `274F` sidecar holds them for
-collision paint). `decode` accepts version 8 only — v7 and older are
+collision paint; the paint-reach bitset is a separate `274R` sidecar bound
+to the pack identity). `decode` accepts version 8 only — v7 and older are
 `BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
 boolean-walk files.
 
@@ -85,16 +86,17 @@ otherwise the captured identity must be one of the checked-in
 `crates/host-play/src/known-cache-identities.json` rows.
 
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
-records the cache identity, the pack/flags digests, the generator identity
+records the cache identity, the pack/flags/reach digests, the generator identity
 (the manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/
-`transport.rs`) and a fingerprint (size + mtime) of every canonical input
+`paint.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, or a missing/replaced staged artifact rebakes; nothing else re-hashes
+identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes; nothing else re-hashes
 the world at build or runtime. The bundled fast path keeps its cheap
-revision/cache-identity check and reads + decodes the staged pack once
-(`NavLoadCounters`), while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
-keep the external path and a differing cache identity falls back to it.
+revision/cache-identity check, reads + decodes the staged pack once
+(`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
+checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
+keep the external path (including its one-time reach flood) and a differing cache identity falls back to it.
 
 Real-artifact check (needs a default application build in this target profile
 plus the canonical cache):
