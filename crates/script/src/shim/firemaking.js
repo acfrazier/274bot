@@ -83,27 +83,29 @@ export class NoLightTiles {
     }
 
     add(tile) {
-        this.refused.add(tileKey(tile));
+        this.refused = new Set(callFire({
+            op: 'no-light', action: 'add', keys: [...this.refused], key: tileKey(tile),
+        }));
     }
 
     has(tile) {
-        return this.refused.has(tileKey(tile));
+        return !!callFire({
+            op: 'no-light', action: 'has', keys: [...this.refused], key: tileKey(tile),
+        });
     }
 
     get size() {
-        return this.refused.size;
+        return Number(callFire({ op: 'no-light', action: 'size', keys: [...this.refused] }));
     }
 
     merge(occupied) {
-        const all = new Set(occupied);
-        for (const key of this.refused) {
-            all.add(key);
-        }
-        return all;
+        return new Set(callFire({
+            op: 'no-light', action: 'merge', keys: [...this.refused], occupied: [...occupied],
+        }));
     }
 
     clear() {
-        this.refused.clear();
+        this.refused = new Set(callFire({ op: 'no-light', action: 'clear', keys: [...this.refused] }));
     }
 }
 
@@ -118,30 +120,32 @@ function callFire(payload) {
 }
 
 export function inFirePlot(t, plot) {
-    if (!t || !plot) return false;
-    const level = (plot.bank && plot.bank.level) ?? 0;
-    return t.x >= plot.x0 && t.x <= plot.x1 && t.z >= plot.z0 && t.z <= plot.z1 && (t.level ?? 0) === level;
+    return !!callFire({ op: 'in-fire-plot', tile: t, plot });
 }
 
 export function burnLaneWant(logCount) {
-    return Math.max(1, Math.min(27, Math.floor(logCount) || 1));
+    return Number(callFire({ op: 'burn-lane-want', logCount }));
 }
 
 export function isBurnWest(dir) {
-    return !!dir && dir.dx === BURN_WEST.dx && dir.dz === BURN_WEST.dz;
+    return !!callFire({ op: 'is-burn-west', dir });
 }
 
 export function fireReactionTicks() {
-    return 1;
+    return Number(callFire({ op: 'fire-reaction-ticks' }));
 }
 
 /** Honest single-tile run: in-plot and not refused. Does not walk a west lane. */
 export function runInDir(from, plot, _dir, occupied, walkable, _canStep, cap) {
-    if (!from || !plot || !(cap > 0)) return 0;
-    if (!inFirePlot(from, plot)) return 0;
-    if (occupied && typeof occupied.has === 'function' && occupied.has(tileKey(from))) return 0;
-    if (typeof walkable === 'function' && !walkable(from)) return 0;
-    return 1;
+    const step = callFire({
+        op: 'run-in-dir', from, plot,
+        occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [],
+        hasWalkable: typeof walkable === 'function', cap,
+    });
+    if (step.kind === 'callback') {
+        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from) }).run;
+    }
+    return step.run || 0;
 }
 
 export function findBurnLane(plot, here, occupied) {
