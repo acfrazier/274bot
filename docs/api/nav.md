@@ -50,11 +50,28 @@ boolean-walk files.
 | `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
 | `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
 
-Missing canonical inputs (maps, doors, `gates.loc`, the loc `config` jag, a
-cache archive) fail the build instead of shipping an app without nav. The cache
-identity is verified at build time exactly like the runtime verifies it: a
-supplied manifest must match the cache bytes and the selected jag, otherwise
-the captured identity must be one of the checked-in
+Missing canonical inputs fail the build instead of shipping an app without nav,
+and the guard names the input class, not just a directory: besides `maps/`, the
+door configs, `gates.loc`, the loc `config` jag and the cache archives, the
+build requires what the bake consumes implicitly — the `pack/loc.pack`,
+`pack/obj.pack` and `pack/varp.pack` id tables, the module scripts of every
+derived transport family (`scripts/ladders+stairs/`, the `area_gnome` spirit
+tree, the `area_ardougne_east` levers, `area_alkharid/configs/border_gate.loc`,
+`quest_zanaris`, `skill_magic/configs/{magic_spells.dbrow,enchanted_jewelry.obj}`),
+the `scripts/interface_bank/configs/bank_booth.loc` bank name, the directory
+anchors of the recursive script scans, and every mapsquare of the revision's
+canonical map set. That inventory is revision-owned data
+(`crates/nav/src/required-content-{289,274}.tsv`, embedded in `nav::bundle` and
+verified against the canonical trees; refresh it when the canonical content
+legitimately changes) and it is checked on every default build — including one
+that would otherwise reuse a warm staged artifact set. It judges presence only:
+a deliberate content edit or addition is not rejected, it flows through the
+ordinary input fingerprints and rebakes. `BOT_NAV_BUILD=skip` and the
+custom-input `nav-pack` CLI keep their behavior.
+
+The cache identity is verified at build time exactly like the runtime verifies
+it: a supplied manifest must match the cache bytes and the selected jag,
+otherwise the captured identity must be one of the checked-in
 `crates/host-play/src/known-cache-identities.json` rows.
 
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
