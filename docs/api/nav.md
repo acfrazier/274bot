@@ -7,7 +7,17 @@ follower. It acts only through the kernel API (`api::interact`,
 
 ## Pack bake
 
-`nav-pack` reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
+Application builds bake the pack themselves. `crates/host-play/build.rs` runs
+the shared baker (`nav::bake::bake_world`) for the selected release revision,
+stages pack + flags + sidecar manifest + stamp under the install resource root
+(`nav/<revision>/` — next to the built binary, `Contents/Resources` in a macOS
+bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
+the identity that the compile-time table `host_play::bundled_nav_identities()`
+serves. Normal WalkTo in that build needs no manual step. The default revision
+is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead.
+
+`nav-pack` remains for deliberate developer/custom-input bakes. It calls the
+same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
 and writes the current whole-world pack (`encode` in
 `crates/nav/src/pack.rs`):
 
@@ -28,6 +38,40 @@ flags are not on the v8 wire, the optional `274F` sidecar holds them for
 collision paint). `decode` accepts version 8 only — v7 and older are
 `BadVersion`. The `274N` grid decoder (`decode_grid`) stays for old
 boolean-walk files.
+
+### Build-time selection, reuse and overrides
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `BOT_NAV_BUILD` | `require` | `skip`: no artifact baked/staged, checked-in identities only |
+| `BOT_NAV_REVISION` | `289` | selected release revision (`274` supported) |
+| `BOT_NAV_ENGINE_DIR`, `ENGINE_DIR` | revision's canonical engine | bake input root |
+| `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree |
+| `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
+| `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
+
+Missing canonical inputs (maps, doors, `gates.loc`, the loc `config` jag, a
+cache archive) fail the build instead of shipping an app without nav. The cache
+identity is verified at build time exactly like the runtime verifies it: a
+supplied manifest must match the cache bytes and the selected jag, otherwise
+the captured identity must be one of the checked-in
+`crates/host-play/src/known-cache-identities.json` rows.
+
+Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
+records the cache identity, the pack/flags digests, the generator identity
+(the manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/
+`transport.rs`) and a fingerprint (size + mtime) of every canonical input
+(content tree, config jag, cache archives). Any change to those inputs, to the
+pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
+identity, or a missing/replaced staged artifact rebakes; nothing else re-hashes
+the world at build or runtime. The bundled fast path keeps its cheap
+revision/cache-identity check and reads + decodes the staged pack once
+(`NavLoadCounters`), while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
+keep the external path and a differing cache identity falls back to it.
+
+Real-artifact check (needs a default application build in this target profile
+plus the canonical cache):
+`cargo test -p host-play --test bundled_nav_build -- --ignored --nocapture`.
 
 ## Collision (`nav::collision`)
 

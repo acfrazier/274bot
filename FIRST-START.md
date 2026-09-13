@@ -17,7 +17,7 @@ If the cache directory is empty, run [`scripts/fetch-cache.sh`](scripts/fetch-ca
 
 **Prod** downloads `/crc` and jags into **`~/.274bot/unpack`** (not the engine pack). Versioned model/anim snapshots from `unpack-cache` live in a child folder named the first 8 hex bytes of SHA-256(`versionlist`) — e.g. `~/.274bot/unpack/2faf336eeb0462ed/` — not the `/crc` table.
 
-Nav pack: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps`. Output is `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). Rebake after a version bump.
+Nav pack: an ordinary build bakes and stages the selected revision's pack next to the binary (`target/<profile>/nav/289/` by default), so the app has a bound nav world with no manual step. Missing canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out; `BOT_NAV_REVISION=274` builds 274). `nav-pack` stays for custom bakes: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps` (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`, version byte **8**). Details: [docs/api/nav.md](docs/api/nav.md).
 
 Catalog scripts (optional): set **`$RS2B0T`** to an rs2b0t checkout so panel/TUI can Start catalog cards.
 
