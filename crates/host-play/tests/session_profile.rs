@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use client::{io::ClientRevision, BotTarget};
+use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::{
@@ -751,6 +752,12 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
         .bind_with_nav_identities(&observer, &table, Some(root.as_path()))
         .unwrap();
     assert!(matches!(profile.nav_origin(), NavOrigin::Bundled { .. }));
+    assert_eq!(profile.nav_flags_origin(), NavFlagsOrigin::Bundled);
+    assert_eq!(
+        profile.nav_flags(),
+        root.join("274bot.navflags"),
+        "bundled flags path is the pack sibling under the install root"
+    );
     assert_eq!(profile.nav_load_counters().pack_reads, 1);
     assert_eq!(profile.nav_load_counters().pack_hashes, 0);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
@@ -807,8 +814,71 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
         )
         .unwrap();
     assert!(!profile.nav_origin().is_bundled());
+    assert_eq!(profile.nav_flags_origin(), NavFlagsOrigin::External);
     assert_eq!(profile.nav_load_counters().pack_hashes, 1);
     assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+}
+
+#[test]
+fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let root = fixture.0.join("Resources");
+    std::fs::create_dir_all(&root).unwrap();
+    let pack = root.join("274bot.navpack");
+    let sibling_flags = root.join("274bot.navflags");
+    std::fs::write(&pack, &bytes).unwrap();
+    std::fs::write(&sibling_flags, b"bundle-sibling-flags").unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    let table = [BundledNavIdentity {
+        revision: 289,
+        cache_id: cache_id.clone(),
+        format: "274V8".into(),
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
+        relative_path: "274bot.navpack".into(),
+    }];
+
+    // Default bundled selection trusts flags provenance.
+    let mut options = fixture.options(289);
+    options.nav_pack = None;
+    options.nav_flags = None;
+    let bundled = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &table,
+            Some(root.as_path()),
+        )
+        .unwrap();
+    assert!(bundled.nav_origin().is_bundled());
+    assert_eq!(bundled.nav_flags_origin(), NavFlagsOrigin::Bundled);
+    assert_eq!(bundled.nav_flags(), sibling_flags);
+
+    // Explicit same-path override must remain external — never bless by path.
+    let mut overridden = fixture.options(289);
+    overridden.nav_pack = None;
+    overridden.nav_flags = Some(sibling_flags.clone());
+    let profile = overridden
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &table,
+            Some(root.as_path()),
+        )
+        .unwrap();
+    assert!(
+        profile.nav_origin().is_bundled(),
+        "pack stays bundled when only flags are overridden"
+    );
+    assert_eq!(
+        profile.nav_flags_origin(),
+        NavFlagsOrigin::External,
+        "explicit --nav-flags must not inherit pack bundled trust"
+    );
+    assert_eq!(profile.nav_flags(), sibling_flags);
 }
 
 #[test]

@@ -18,7 +18,7 @@ use nav::world::NavWorld;
 use crate::cache::CacheAvailability;
 use crate::nav_identity::{
     bundled_nav_identities, install_resource_root, select_nav_origin, BundledNavIdentity,
-    NavLoadCounters, NavOrigin,
+    NavFlagsOrigin, NavLoadCounters, NavOrigin,
 };
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 
@@ -440,6 +440,7 @@ pub struct ServerProfile {
     nav_pack: PathBuf,
     nav_flags: PathBuf,
     nav_origin: NavOrigin,
+    nav_flags_origin: NavFlagsOrigin,
     nav_identity: Option<NavManifest>,
     nav_load: NavLoadCounters,
     world: SharedWorld,
@@ -659,10 +660,13 @@ impl ProfileSelection {
             &self.nav_pack,
         )?;
         let nav_pack = origin.path().to_path_buf();
-        let nav_flags = if origin.is_bundled() && !self.nav_flags_overridden {
-            nav_pack.with_extension("navflags")
+        // Flags provenance is captured explicitly at bind time. A bundled
+        // pack does not imply bundled flags: --nav-flags / NAV_FLAGS keeps
+        // external validation even when the path equals the bundle sibling.
+        let (nav_flags, nav_flags_origin) = if origin.is_bundled() && !self.nav_flags_overridden {
+            (nav_pack.with_extension("navflags"), NavFlagsOrigin::Bundled)
         } else {
-            self.nav_flags.clone()
+            (self.nav_flags.clone(), NavFlagsOrigin::External)
         };
         let loaded = self.load_nav(&origin, &actual, &nav_pack, observer)?;
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
@@ -687,6 +691,7 @@ impl ProfileSelection {
             nav_pack,
             nav_flags,
             nav_origin: origin,
+            nav_flags_origin,
             nav_identity: loaded.identity,
             nav_load: loaded.counters,
             world: SharedWorld(loaded.world),
@@ -841,6 +846,11 @@ impl ServerProfile {
     }
     pub fn nav_origin(&self) -> &NavOrigin {
         &self.nav_origin
+    }
+    /// Explicit flags provenance captured at bind. Do not infer this from
+    /// pack origin or path equality: an override stays external.
+    pub fn nav_flags_origin(&self) -> NavFlagsOrigin {
+        self.nav_flags_origin
     }
     pub fn nav_identity(&self) -> Option<&NavManifest> {
         self.nav_identity.as_ref()
