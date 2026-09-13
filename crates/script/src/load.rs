@@ -3834,8 +3834,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     }
                 }
                 IsolateCmd::RecoveryAnchor { generation } => {
+                    // Pause / generation still reject. host_hold freezes
+                    // loop/pump (guardian or recovery) but must not skip
+                    // the async recoveryAnchor sample: OR-ing recovery into
+                    // snapshot.hold would otherwise stick SamplingAnchor.
+                    // Guardian freeze aborts sampling on the host before a
+                    // new request is posted.
                     if paused
-                        || host_hold
                         || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
                     {
                         let _ = out.send(ThreadMsg::InFlightDone {
