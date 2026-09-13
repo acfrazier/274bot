@@ -4,6 +4,7 @@
 //! must return; panics are caught, never abort the process.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::ctx::{Script, ScriptCtx};
@@ -11,6 +12,8 @@ use crate::ctx::{Script, ScriptCtx};
 use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 #[cfg(feature = "load")]
 use crate::load::{LoadIsolate, LoadShape};
+#[cfg(feature = "load")]
+use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::random::{DetectedRandom, RandomClaim};
 
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
@@ -186,6 +189,20 @@ impl PendingBankOp {
     }
 }
 
+/// Frozen Load identity retained for watchdog recreate. Shared via Arc so
+/// observe never copies source bytes.
+#[cfg(feature = "load")]
+#[derive(Clone)]
+pub struct SlotLoadIdentity {
+    pub source: Arc<str>,
+    pub shape: LoadShape,
+    pub siblings: Arc<[(String, String)]>,
+    pub settings_bag: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
+    pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    pub named_banks: Arc<api::named_banks::NamedBankFacts>,
+    pub loadouts: Arc<[crate::loadouts_store::Loadout]>,
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -221,6 +238,12 @@ pub struct SlotScript {
     bank_op_result_seq: u64,
     bank_op_result: bool,
     work_epoch: u64,
+    /// Frozen source/settings used for watchdog recreate. Cleared on
+    /// operator Stop / new manual Start.
+    #[cfg(feature = "load")]
+    load_identity: Option<SlotLoadIdentity>,
+    #[cfg(feature = "load")]
+    watchdog: ProgressWatchdog,
 }
 
 impl Default for SlotScript {
@@ -255,6 +278,10 @@ impl SlotScript {
             bank_op_result_seq: 0,
             bank_op_result: false,
             work_epoch: 0,
+            #[cfg(feature = "load")]
+            load_identity: None,
+            #[cfg(feature = "load")]
+            watchdog: ProgressWatchdog::new(),
         }
     }
 
@@ -345,15 +372,29 @@ impl SlotScript {
                 if self.compiled.is_some() {
                     return Err("compiled script active: stop it first".to_string());
                 }
+                let source: Arc<str> = Arc::from(source);
+                let siblings: Arc<[(String, String)]> = siblings.into();
+                let loadouts_arc: Arc<[crate::loadouts_store::Loadout]> =
+                    Arc::from(loadouts.to_vec());
                 let isolate = LoadIsolate::spawn_with_content(
-                    source,
+                    source.to_string(),
                     shape,
-                    siblings,
-                    game_data,
-                    named_banks,
+                    siblings.iter().cloned().collect(),
+                    game_data.clone(),
+                    Arc::clone(&named_banks),
                 )?;
                 isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
+                self.load_identity = Some(SlotLoadIdentity {
+                    source,
+                    shape,
+                    siblings,
+                    settings_bag: None,
+                    game_data,
+                    named_banks,
+                    loadouts: loadouts_arc,
+                });
+                self.watchdog.arm_fresh(Instant::now());
                 self.want_run = true;
                 self.last_error = None;
                 self.ticks = 0;
@@ -389,6 +430,10 @@ impl SlotScript {
             if let Some(isolate) = &self.load {
                 isolate.pause();
             }
+            #[cfg(feature = "load")]
+            {
+                let _ = self.watchdog.set_frozen(true, Instant::now());
+            }
             self.state = RunState::Paused;
         }
     }
@@ -408,6 +453,10 @@ impl SlotScript {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
                 isolate.resume();
+            }
+            #[cfg(feature = "load")]
+            {
+                let _ = self.watchdog.set_frozen(false, Instant::now());
             }
             self.state = RunState::Running;
         }
@@ -434,6 +483,11 @@ impl SlotScript {
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
         self.state = RunState::Idle;
+        #[cfg(feature = "load")]
+        {
+            self.load_identity = None;
+            self.watchdog.cancel_clear();
+        }
     }
 
     /// Recompute the gate from client presence. With an instance, the slot
@@ -471,6 +525,7 @@ impl SlotScript {
             }
             self.last_snapshot = None;
             self.last_world_id = None;
+            let _ = self.watchdog.on_session_reset(Instant::now());
         }
     }
 
@@ -576,16 +631,22 @@ impl SlotScript {
 
     /// Post the merged operator settings bag into a Load isolate.
     #[cfg(feature = "load")]
-    pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
+    pub fn post_settings_bag(&mut self, bag: &serde_json::Map<String, serde_json::Value>) {
         if let Some(isolate) = &self.load {
             isolate.post_settings_bag(bag);
+        }
+        if let Some(identity) = &mut self.load_identity {
+            identity.settings_bag = Some(Arc::new(bag.clone()));
         }
     }
 
     #[cfg(feature = "load")]
-    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+    pub fn post_loadouts(&mut self, loadouts: &[crate::loadouts_store::Loadout]) {
         if let Some(isolate) = &self.load {
             isolate.post_loadouts(loadouts);
+        }
+        if let Some(identity) = &mut self.load_identity {
+            identity.loadouts = Arc::from(loadouts.to_vec());
         }
     }
 
@@ -692,6 +753,136 @@ impl SlotScript {
             Some(isolate) => isolate.drain_interacts(),
             None => Vec::new(),
         }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
+        match &self.load {
+            Some(isolate) => isolate.drain_lifecycle(),
+            None => Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn request_recovery_anchor(&self) {
+        if let Some(isolate) = &self.load {
+            isolate.request_recovery_anchor();
+        }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn load_identity(&self) -> Option<&SlotLoadIdentity> {
+        self.load_identity.as_ref()
+    }
+
+    #[cfg(feature = "load")]
+    pub fn watchdog(&self) -> &ProgressWatchdog {
+        &self.watchdog
+    }
+
+    /// Apply isolate lifecycle facts and host tile/XP, then decide.
+    #[cfg(feature = "load")]
+    pub fn feed_watchdog(
+        &mut self,
+        now: Instant,
+        here: Option<(i32, i32, i32)>,
+        xp: &[i32],
+        frozen: bool,
+        running: bool,
+        lifecycle: &[crate::shim::InteractReq],
+    ) -> WatchdogAction {
+        if self.load.is_none() {
+            return WatchdogAction::None;
+        }
+        let freeze_action = self.watchdog.set_frozen(frozen, now);
+        if matches!(freeze_action, WatchdogAction::AbortWalk) {
+            return freeze_action;
+        }
+        use crate::shim::InteractReq;
+        let mut anchor_reply = None;
+        for op in lifecycle {
+            match op {
+                InteractReq::NoteProgress => self.watchdog.stamp_note_progress(now),
+                InteractReq::LoopSettled => self.watchdog.stamp_scheduler(now),
+                InteractReq::WaitEnqueued => self.watchdog.on_wait_enqueued(now),
+                InteractReq::WaitSettled => self.watchdog.on_wait_settled(now),
+                InteractReq::RecoveryAnchor { x, z, level } => {
+                    anchor_reply = Some(Some(WatchdogTile {
+                        x: *x,
+                        z: *z,
+                        level: *level,
+                    }));
+                }
+                InteractReq::RecoveryAnchorNone => anchor_reply = Some(None),
+                _ => {}
+            }
+        }
+        if let Some(reply) = anchor_reply {
+            let player = here.map(|(x, z, _)| (x, z));
+            return self.watchdog.on_anchor(now, player, reply);
+        }
+        if let Some((x, z, level)) = here {
+            let arrived = self.watchdog.on_tile(now, WatchdogTile { x, z, level });
+            if arrived != WatchdogAction::None {
+                return arrived;
+            }
+        }
+        self.watchdog.on_xp(now, xp);
+        let action = self.watchdog.observe(now, running && self.want_run);
+        if matches!(action, WatchdogAction::WarnHungLoop) {
+            self.pending_logs
+                .push("watchdog: hung loop (10s, no scheduler progress)".into());
+        }
+        action
+    }
+
+    /// Recreate the Load isolate from retained identity. Consumes cooldown.
+    #[cfg(feature = "load")]
+    pub fn restart_load_from_identity(&mut self, now: Instant) -> Result<(), String> {
+        if !self.want_run {
+            return Err("watchdog restart cancelled: operator is not running".into());
+        }
+        let identity = self
+            .load_identity
+            .clone()
+            .ok_or_else(|| "watchdog restart: no retained identity".to_string())?;
+        if let Some(isolate) = self.load.take() {
+            isolate.join();
+        }
+        self.last_snapshot = None;
+        self.last_world_id = None;
+        self.ipc = IsolateBuf::new();
+        self.pending_withdraw_x = None;
+        self.pending_bank_op = None;
+        self.work_epoch = self.work_epoch.wrapping_add(1);
+        self.state = RunState::Idle;
+        let isolate = LoadIsolate::spawn_with_content(
+            identity.source.to_string(),
+            identity.shape,
+            identity.siblings.iter().cloned().collect(),
+            identity.game_data.clone(),
+            Arc::clone(&identity.named_banks),
+        )?;
+        isolate.post_loadouts(&identity.loadouts);
+        if let Some(bag) = identity.settings_bag.as_deref() {
+            isolate.post_settings_bag(bag);
+        }
+        self.load = Some(isolate);
+        self.last_error = None;
+        self.ticks = 0;
+        self.state = RunState::Running;
+        self.watchdog.on_restart_applied(now);
+        Ok(())
+    }
+
+    #[cfg(feature = "load")]
+    pub fn notify_walk_failed(&mut self, now: Instant) -> WatchdogAction {
+        self.watchdog.on_walk_failed(now)
+    }
+
+    #[cfg(feature = "load")]
+    pub fn notify_hold_during_walk(&mut self) -> WatchdogAction {
+        self.watchdog.on_hold_during_walk()
     }
 
     /// The slot script's latest recorded paint frame (a Load isolate's

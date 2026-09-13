@@ -4498,6 +4498,16 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
             "set-camera-yaw" => out.push(crate::shim::InteractReq::SetCameraYaw { yaw: row.x() }),
+            "note-progress" => out.push(crate::shim::InteractReq::NoteProgress),
+            "loop-settled" => out.push(crate::shim::InteractReq::LoopSettled),
+            "wait-enqueued" => out.push(crate::shim::InteractReq::WaitEnqueued),
+            "wait-settled" => out.push(crate::shim::InteractReq::WaitSettled),
+            "recovery-anchor" => out.push(crate::shim::InteractReq::RecoveryAnchor {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+            }),
+            "recovery-anchor-none" => out.push(crate::shim::InteractReq::RecoveryAnchorNone),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -4542,6 +4552,12 @@ fn interact_off<'b>(
         InteractReq::SetRetaliate { .. } => "set-retaliate",
         InteractReq::SetNoteMode { .. } => "set-note-mode",
         InteractReq::SetCameraYaw { .. } => "set-camera-yaw",
+        InteractReq::NoteProgress => "note-progress",
+        InteractReq::LoopSettled => "loop-settled",
+        InteractReq::WaitEnqueued => "wait-enqueued",
+        InteractReq::WaitSettled => "wait-settled",
+        InteractReq::RecoveryAnchor { .. } => "recovery-anchor",
+        InteractReq::RecoveryAnchorNone => "recovery-anchor-none",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -4666,7 +4682,9 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
-        InteractReq::Walk { x, z, level, .. } | InteractReq::WalkTo { x, z, level } => {
+        InteractReq::Walk { x, z, level, .. }
+        | InteractReq::WalkTo { x, z, level }
+        | InteractReq::RecoveryAnchor { x, z, level } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
@@ -4816,7 +4834,13 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_INDEX, *idx);
             }
         }
-        InteractReq::ContinueDialog | InteractReq::CloseModal => {}
+        InteractReq::ContinueDialog
+        | InteractReq::CloseModal
+        | InteractReq::NoteProgress
+        | InteractReq::LoopSettled
+        | InteractReq::WaitEnqueued
+        | InteractReq::WaitSettled
+        | InteractReq::RecoveryAnchorNone => {}
         InteractReq::Answer { option } => {
             b.push_slot_always(VT_IN_STAND_OP, *option);
         }
@@ -5114,6 +5138,16 @@ pub(crate) mod tests {
                 z: 4,
                 level: 0,
             },
+            InteractReq::NoteProgress,
+            InteractReq::LoopSettled,
+            InteractReq::WaitEnqueued,
+            InteractReq::WaitSettled,
+            InteractReq::RecoveryAnchor {
+                x: 10,
+                z: 20,
+                level: 1,
+            },
+            InteractReq::RecoveryAnchorNone,
         ];
         let ibytes = buf.encode_interact_batch(&reqs);
         let got = decode_interact_batch(&ibytes).expect("interact");

@@ -1145,7 +1145,80 @@ fn script_observe_with_npc_boxes(
         // Fold forwarded shim requests on running frames. Pause leaves the
         // isolate queue untouched so Resume can dispatch it; guardian hold
         // retains the existing drain/drop policy below.
-        if slot.state() == script::RunState::Running {
+        if slot.load_active() {
+            let mut lifecycle = Vec::new();
+            if slot.state() == script::RunState::Running {
+                interact.extend(slot.drain_interacts());
+                lifecycle.extend(slot.drain_lifecycle());
+            }
+            let ready = up
+                && here.is_some()
+                && snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
+            let frozen = hold || !ready || slot.state() == script::RunState::Paused;
+            let xp: Vec<i32> = snapshot
+                .map(|snap| snap.stats().iter().map(|stat| stat.xp).collect())
+                .unwrap_or_default();
+            let now = Instant::now();
+            if slot.watchdog().recovering_anchor().is_some() {
+                let far = here
+                    .map(|(x, z, _)| {
+                        slot.watchdog().recovering_anchor().is_some_and(|anchor| {
+                            script::watchdog::chebyshev_xz((x, z), (anchor.x, anchor.z))
+                                > script::watchdog::WALK_RADIUS
+                        })
+                    })
+                    .unwrap_or(true);
+                if hold {
+                    let _ = slot.notify_hold_during_walk();
+                    abort_script_walk(navs, name);
+                } else if far && recovery_walk_idle(navs, name) {
+                    match slot.notify_walk_failed(now) {
+                        script::WatchdogAction::Restart { .. } => {
+                            interact.clear();
+                            if let Err(e) = slot.restart_load_from_identity(now) {
+                                eprintln!("[script {name}] watchdog restart failed: {e}");
+                            }
+                        }
+                        other => apply_watchdog_nav_action(
+                            other,
+                            driver,
+                            snapshot,
+                            here,
+                            navs,
+                            world,
+                            state.clone(),
+                            name,
+                        ),
+                    }
+                }
+            }
+            let running = slot.state() == script::RunState::Running;
+            let action = slot.feed_watchdog(now, here, &xp, frozen, running, &lifecycle);
+            match action {
+                script::WatchdogAction::Restart { .. } => {
+                    interact.clear();
+                    if let Err(e) = slot.restart_load_from_identity(now) {
+                        eprintln!("[script {name}] watchdog restart failed: {e}");
+                    }
+                }
+                script::WatchdogAction::RequestAnchor => slot.request_recovery_anchor(),
+                script::WatchdogAction::WarnHungLoop => {
+                    if debug_enabled() {
+                        eprintln!("[script {name}] watchdog hung loop (10s)");
+                    }
+                }
+                other => apply_watchdog_nav_action(
+                    other,
+                    driver,
+                    snapshot,
+                    here,
+                    navs,
+                    world,
+                    state.clone(),
+                    name,
+                ),
+            }
+        } else if slot.state() == script::RunState::Running {
             interact.extend(slot.drain_interacts());
         }
     }
@@ -2194,6 +2267,12 @@ fn dispatch_script_interact(
                 wrote |= matches!(res, SendResult::Sent { .. });
             }
             InteractReq::SetCameraYaw { .. } => {}
+            InteractReq::NoteProgress
+            | InteractReq::LoopSettled
+            | InteractReq::WaitEnqueued
+            | InteractReq::WaitSettled
+            | InteractReq::RecoveryAnchor { .. }
+            | InteractReq::RecoveryAnchorNone => {}
         }
     }
     for yaw in camera_yaws {
@@ -2202,6 +2281,66 @@ fn dispatch_script_interact(
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::sent(name, wrote);
     wrote
+}
+
+fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+    if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+        bot.route = None;
+        bot.route_worker = None;
+        bot.pending_route = None;
+        bot.requested_route = None;
+    }
+}
+
+fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) -> bool {
+    let all = navs.lock().unwrap();
+    let Some(bot) = all.get(name) else {
+        return true;
+    };
+    bot.route_worker.is_none() && bot.route.is_none() && bot.pending_route.is_none()
+}
+
+fn apply_watchdog_nav_action(
+    action: script::WatchdogAction,
+    _driver: &mut dyn Driver,
+    snapshot: Option<&GameSnapshot>,
+    here: Option<(i32, i32, i32)>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    name: &str,
+) {
+    match action {
+        script::WatchdogAction::AbortWalk => abort_script_walk(navs, name),
+        script::WatchdogAction::ArmWalk { x, z, level } => {
+            let Some(snapshot) = snapshot else {
+                return;
+            };
+            let arm = ScriptWalkArm {
+                here,
+                world: world.clone(),
+                navs: Arc::clone(navs),
+                name: name.to_string(),
+                state,
+                bank: snapshot
+                    .bank()
+                    .iter()
+                    .map(|item| (item.def.id, item.count))
+                    .collect(),
+            };
+            let armed = arm.route_with_radius(
+                x,
+                z,
+                level,
+                FindOptions::default(),
+                script::watchdog::WALK_RADIUS,
+            );
+            if !armed {
+                abort_script_walk(navs, name);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

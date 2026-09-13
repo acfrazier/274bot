@@ -15,7 +15,9 @@ const park = {
     enqueue(spec) {
         return new Promise((resolve, reject) => {
             park.active = { ...spec, resolve, reject };
-            host().parked = true;
+            const h = host();
+            h.parked = true;
+            h.waitEnqueues = (h.waitEnqueues || 0) + 1;
         });
     },
 
@@ -28,7 +30,9 @@ const park = {
         }
         const done = (value) => {
             park.active = null;
-            host().parked = false;
+            const h = host();
+            h.parked = false;
+            h.waitSettles = (h.waitSettles || 0) + 1;
             wait.resolve(value);
         };
         if (wait.kind === 'tick') {
@@ -46,7 +50,9 @@ const park = {
             }
         } catch (err) {
             park.active = null;
-            host().parked = false;
+            const h = host();
+            h.parked = false;
+            h.waitSettles = (h.waitSettles || 0) + 1;
             wait.reject(err instanceof Error ? err : new Error(String(err)));
             return;
         }
@@ -93,6 +99,15 @@ export const Execution = {
             dueTick: (host().tick || 0) + Math.max(0, Math.floor(maxTicks)),
             timeoutAt: null,
         });
+    },
+
+    // Explicit gameplay+scheduler progress. No timestamp: the host stamps
+    // Instant when the generation-matched interact is drained.
+    noteProgress() {
+        const h = globalThis.__rs2b0t_host;
+        if (!h) return;
+        h.interact = h.interact || [];
+        h.interact.push({ op: 'note-progress' });
     },
 };
 
