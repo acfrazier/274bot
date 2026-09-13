@@ -450,6 +450,11 @@ pub fn encode_flags_sidecar(
 /// Deserialize a flags sidecar, validating magic, version, and the grid
 /// header, then reading the trailing u32le flags to the end of the
 /// buffer (a partial trailing u32 is [`PackError::Truncated`]).
+///
+/// After the header is validated, the already length-checked trailing
+/// payload is bulk-converted with little-endian `u32` interpretation —
+/// not a per-word [`Cursor`] `read_exact` loop — so large sidecars do not
+/// stall startup on scalar decode overhead.
 pub fn decode_flags_sidecar(
     bytes: &[u8],
 ) -> Result<(WorldTile, usize, usize, Vec<u32>), PackError> {
@@ -477,15 +482,23 @@ pub fn decode_flags_sidecar(
             "grid {width}x{height} exceeds the {MAX_GRID} tile cap"
         )));
     }
-    let remaining = bytes.len().saturating_sub(r.position() as usize);
-    if !remaining.is_multiple_of(4) {
+    let payload = &bytes[r.position() as usize..];
+    if !payload.len().is_multiple_of(4) {
         return Err(PackError::Truncated);
     }
-    let mut flags = Vec::with_capacity(remaining / 4);
-    for _ in 0..remaining / 4 {
-        flags.push(read_u32(&mut r)?);
+    Ok((origin, width, height, decode_u32le_words(payload)))
+}
+
+/// Bulk little-endian `u32` words from a length-checked payload (`len % 4 == 0`).
+fn decode_u32le_words(payload: &[u8]) -> Vec<u32> {
+    debug_assert!(payload.len().is_multiple_of(4));
+    let n = payload.len() / 4;
+    let mut flags = Vec::with_capacity(n);
+    for chunk in payload.chunks_exact(4) {
+        // chunks_exact guarantees 4 bytes; avoid Cursor/read_exact per word.
+        flags.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
-    Ok((origin, width, height, flags))
+    flags
 }
 
 /// `TransportKind` as a wire byte.
@@ -1269,6 +1282,7 @@ fn read_u64(r: &mut Cursor<&[u8]>) -> Result<u64, PackError> {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::io::{Cursor, Read};
 
     use super::{
         decode, decode_flags_sidecar, decode_grid, derive_banks, encode, encode_flags_sidecar,
@@ -1383,6 +1397,179 @@ mod tests {
         assert_eq!(o, origin);
         assert_eq!((w, h), (2, 2));
         assert_eq!(out, flags);
+    }
+
+    /// Scalar Cursor `read_u32` reference used only to pin bulk decode
+    /// semantics against the pre-bulk path (not production decode).
+    fn decode_flags_sidecar_scalar_ref(
+        bytes: &[u8],
+    ) -> Result<(WorldTile, usize, usize, Vec<u32>), PackError> {
+        let mut r = Cursor::new(bytes);
+        let mut magic = [0u8; 4];
+        r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
+        if &magic != super::MAGIC_FLAGS {
+            return Err(PackError::BadMagic);
+        }
+        let mut version = [0u8; 1];
+        r.read_exact(&mut version)
+            .map_err(|_| PackError::Truncated)?;
+        if version[0] != super::VERSION_FLAGS {
+            return Err(PackError::BadVersion(version[0]));
+        }
+        let origin = WorldTile {
+            x: super::read_i32(&mut r)?,
+            z: super::read_i32(&mut r)?,
+            level: super::read_i32(&mut r)?,
+        };
+        let width = super::read_u32(&mut r)? as usize;
+        let height = super::read_u32(&mut r)? as usize;
+        if width == 0 || height == 0 || width > super::MAX_GRID || height > super::MAX_GRID {
+            return Err(PackError::BadLength(format!(
+                "grid {width}x{height} exceeds the {} tile cap",
+                super::MAX_GRID
+            )));
+        }
+        let remaining = bytes.len().saturating_sub(r.position() as usize);
+        if !remaining.is_multiple_of(4) {
+            return Err(PackError::Truncated);
+        }
+        let mut flags = Vec::with_capacity(remaining / 4);
+        for _ in 0..remaining / 4 {
+            flags.push(super::read_u32(&mut r)?);
+        }
+        Ok((origin, width, height, flags))
+    }
+
+    fn flags_header(origin: WorldTile, width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"274F");
+        bytes.push(1);
+        for v in [origin.x, origin.z, origin.level] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn flags_sidecar_rejects_bad_magic_and_version() {
+        assert!(matches!(
+            decode_flags_sidecar(b"XXXX"),
+            Err(PackError::BadMagic)
+        ));
+        let mut bad_ver = flags_header(
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            1,
+            1,
+        );
+        bad_ver[4] = 9;
+        assert!(matches!(
+            decode_flags_sidecar(&bad_ver),
+            Err(PackError::BadVersion(9))
+        ));
+    }
+
+    #[test]
+    fn flags_sidecar_rejects_truncated_header_and_partial_payload() {
+        let full = encode_flags_sidecar(
+            WorldTile {
+                x: 1,
+                z: 2,
+                level: 3,
+            },
+            1,
+            1,
+            &[0xA1B2C3D4],
+        );
+        // Cut inside the fixed header (before any payload words).
+        assert!(matches!(
+            decode_flags_sidecar(&full[..10]),
+            Err(PackError::Truncated)
+        ));
+        // Complete header + one trailing byte (partial u32).
+        let mut partial = flags_header(
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            1,
+            1,
+        );
+        partial.push(0x11);
+        assert!(matches!(
+            decode_flags_sidecar(&partial),
+            Err(PackError::Truncated)
+        ));
+        // Three of four payload bytes after a valid word-aligned start.
+        let mut almost = full.clone();
+        almost.pop();
+        assert!(matches!(
+            decode_flags_sidecar(&almost),
+            Err(PackError::Truncated)
+        ));
+    }
+
+    #[test]
+    fn flags_sidecar_accepts_empty_payload_and_endian_distinct_words() {
+        let origin = WorldTile {
+            x: -7,
+            z: 99,
+            level: 2,
+        };
+        let empty = encode_flags_sidecar(origin, 2, 2, &[]);
+        let (o, w, h, out) = decode_flags_sidecar(&empty).unwrap();
+        assert_eq!((o, w, h, out), (origin, 2, 2, vec![]));
+
+        // Multi-byte values that differ under LE vs BE interpretation.
+        let flags = vec![0x0000_00FFu32, 0x0102_0304, 0xAABB_CCDD, 0x8000_0001];
+        let bytes = encode_flags_sidecar(origin, 2, 2, &flags);
+        // Payload starts after 25-byte header; first word is FF 00 00 00 LE.
+        assert_eq!(&bytes[25..29], &[0xFF, 0x00, 0x00, 0x00]);
+        assert_eq!(&bytes[29..33], &[0x04, 0x03, 0x02, 0x01]);
+        let (_, _, _, out) = decode_flags_sidecar(&bytes).unwrap();
+        assert_eq!(out, flags);
+        assert_eq!(
+            decode_flags_sidecar_scalar_ref(&bytes).unwrap().3,
+            out,
+            "bulk path must match scalar Cursor reference"
+        );
+    }
+
+    #[test]
+    fn flags_sidecar_bulk_matches_scalar_on_errors_and_roundtrip() {
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let flags: Vec<u32> = (0u32..64).map(|i| i.wrapping_mul(0x0100_0307)).collect();
+        let good = encode_flags_sidecar(origin, 4, 4, &flags);
+        assert_eq!(
+            decode_flags_sidecar(&good).unwrap(),
+            decode_flags_sidecar_scalar_ref(&good).unwrap()
+        );
+
+        for bad in [
+            &b"XXXX"[..],
+            &good[..3],
+            &good[..24], // header short of height
+        ] {
+            let bulk = decode_flags_sidecar(bad);
+            let scalar = decode_flags_sidecar_scalar_ref(bad);
+            assert_eq!(format!("{bulk:?}"), format!("{scalar:?}"));
+        }
+        let mut partial = good.clone();
+        partial.push(0x42); // breaks word alignment
+        assert_eq!(
+            format!("{:?}", decode_flags_sidecar(&partial)),
+            format!("{:?}", decode_flags_sidecar_scalar_ref(&partial))
+        );
     }
 
     #[test]
