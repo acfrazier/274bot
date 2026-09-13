@@ -2105,9 +2105,18 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             .find(|status| session.focused_name().as_deref() == Some(status.username.as_str()))
             .or_else(|| statuses.first());
         if let Some(status) = status {
-            if let Some(percent) = status.startup_progress_percent {
-                ui.text_colored(ACCENT, &status.startup_progress_message);
-                ui.text_disabled(format!("[client startup {:>3}%]", percent));
+            if !status.startup_progress_message.is_empty()
+                || status.startup_progress_percent.is_some()
+            {
+                let message = if status.startup_progress_message.is_empty() {
+                    "Starting client"
+                } else {
+                    status.startup_progress_message.as_str()
+                };
+                ui.text_colored(ACCENT, message);
+                if let Some(percent) = status.startup_progress_percent {
+                    ui.text_disabled(format!("[client startup {:>3}%]", percent));
+                }
             }
         }
     }
@@ -3603,16 +3612,20 @@ fn status_section(ui: &Ui, session: &mut Session) {
         format!("ingame scene {}", s.scene_state)
     } else if let Some(err) = &s.error {
         format!("login {err}")
-    } else if let Some(percent) = s.startup_progress_percent {
-        format!(
-            "{} ({}%)",
-            if s.startup_progress_message.is_empty() {
-                "starting client"
-            } else {
-                s.startup_progress_message.as_str()
-            },
-            percent
-        )
+    } else if !s.startup_progress_message.is_empty() || s.startup_progress_percent.is_some() {
+        if let Some(percent) = s.startup_progress_percent {
+            format!(
+                "{} ({}%)",
+                if s.startup_progress_message.is_empty() {
+                    "starting client"
+                } else {
+                    s.startup_progress_message.as_str()
+                },
+                percent
+            )
+        } else {
+            s.startup_progress_message.clone()
+        }
     } else if s.login_started.is_some() {
         "logging in…".to_string()
     } else {

@@ -4987,6 +4987,15 @@ fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
     }
 }
 
+fn publish_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, message: &str) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_progress_percent = None;
+        s.startup_progress_message.clear();
+        s.startup_progress_message.push_str(message);
+    }
+}
+
 fn publish_startup_progress(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
@@ -5149,7 +5158,7 @@ fn spawn_slot_thread(
                 .or_default();
             // Preparation has no determinate client percentage, but publish
             // a phase immediately so a slow cache fetch is visibly active.
-            publish_startup_progress(&slot_statuses, &username, "Preparing client", 0);
+            publish_startup_phase(&slot_statuses, &username, "Preparing client");
             // The park end survives re-login rounds (run_client is entered
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
@@ -5747,17 +5756,31 @@ mod tests {
 
     #[test]
     fn startup_progress_is_latest_only_and_clears_on_completion() {
-        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
-            username: "alice".into(),
-            ..SlotStatus::default()
-        }]));
+        let statuses = Arc::new(Mutex::new(
+            ["alice", "bob"]
+                .into_iter()
+                .map(|username| SlotStatus {
+                    username: username.into(),
+                    ..SlotStatus::default()
+                })
+                .collect(),
+        ));
 
+        publish_startup_phase(&statuses, "alice", "Preparing client");
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_progress_percent, None);
+            assert_eq!(rows[0].startup_progress_message, "Preparing client");
+            assert!(rows[1].startup_progress_message.is_empty());
+        }
         publish_startup_progress(&statuses, "alice", "Requesting models", 70);
         publish_startup_progress(&statuses, "alice", "Preparing game engine", 100);
         {
-            let row = &statuses.lock().unwrap()[0];
+            let rows = statuses.lock().unwrap();
+            let row = &rows[0];
             assert_eq!(row.startup_progress_percent, Some(100));
             assert_eq!(row.startup_progress_message, "Preparing game engine");
+            assert!(rows[1].startup_progress_message.is_empty());
         }
 
         clear_startup_progress(&statuses, "alice");
