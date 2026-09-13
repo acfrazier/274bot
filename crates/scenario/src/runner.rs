@@ -73,10 +73,14 @@ pub struct ScenarioRunner {
     /// + settle idea).
     scene_settle: Duration,
     /// The wall-clock instant the scene first read `scene_state == 2`,
-    /// `None` while it is not 2. Any drop below 2 resets it.
+    /// None while it is not 2. Any drop below 2 resets it.
     scene2_since: Option<Instant>,
-    /// The seed waits for a mainland build base (>= 3000); tests on
-    /// fixture grids relax this.
+    /// The seed waits for a mainland hop to leave its initial ready frame
+    /// and return to a valid mainland observation.
+    seed_ready_observed: bool,
+    seed_hop_observed: bool,
+    /// Mainland seeds require a completed hop; tests on fixture grids can
+    /// explicitly relax this.
     require_mainland_base: bool,
     /// Per-run minted usernames replacing `seed.profiles` (live boots mint
     /// unique names so the engine auto-registers a fresh account instead
@@ -131,7 +135,8 @@ impl ScenarioRunner {
         // moves into the runner below.
         let deadline = scenario.settings.deadline;
         let terminal_shot = scenario.settings.terminal_shot;
-        let require_mainland_base = scenario.settings.require_mainland_base;
+        let require_mainland_base =
+            scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         Self {
             scenario,
@@ -150,6 +155,8 @@ impl ScenarioRunner {
             deadline,
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
+            seed_ready_observed: false,
+            seed_hop_observed: false,
             require_mainland_base,
             live_names: Vec::new(),
             relog_logout_sent: false,
@@ -358,6 +365,16 @@ impl ScenarioRunner {
         } else {
             self.scene2_since = None;
         }
+        if matches!(self.phase, Phase::Seeding) && self.require_mainland_base {
+            if self.seed_ready_observed
+                && (!self.snapshot.ingame() || self.snapshot.scene_state() != 2)
+            {
+                self.seed_hop_observed = true;
+            }
+            if self.snapshot.ingame() && self.snapshot.scene_state() == 2 {
+                self.seed_ready_observed = true;
+            }
+        }
         if matches!(self.phase, Phase::Seeding) && self.seed_done() {
             self.phase = Phase::Running;
             self.begin_step();
@@ -496,6 +513,9 @@ impl ScenarioRunner {
         }
         if !self.require_mainland_base {
             return true;
+        }
+        if !self.seed_hop_observed {
+            return false;
         }
         let base_ok = self
             .snapshot
@@ -1180,11 +1200,52 @@ mod tests {
             "a sub-3000 base is still seeding (tutorial island)"
         );
 
-        // A mainland build base releases the seed.
+        // The queued hop must first leave the initial ready frame.
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Seeding);
+
+        // A mainland build base after the hop releases the seed.
+        c.scene_state = 2;
         c.map_build_base_x = 3200;
         c.map_build_base_z = 3200;
         c.local_player = Some(ClientPlayer::at(20, 20));
         c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    }
+
+    #[test]
+    fn mainland_seed_requires_a_completed_hop_before_releasing() {
+        let mut c = Client::new(cfg());
+        c.ingame = true;
+        c.scene_state = 2;
+        // The observed tutorial frame can carry a mainland-looking build
+        // base and a tile inside the full-world pack.
+        c.map_build_base_x = 3072;
+        c.map_build_base_z = 3072;
+        c.local_player = Some(ClientPlayer::at(22, 34));
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut scenario = stat_scenario(1, 10);
+        scenario.seed.mainland = true;
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Seeding);
+
+        // A queued mainland hop must be observed leaving scene 2 before a
+        // later scene-2 frame can authorize the run.
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Seeding);
+
+        c.scene_state = 2;
+        c.local_player = Some(ClientPlayer::at(20, 20));
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     }
