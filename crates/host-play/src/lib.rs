@@ -5053,6 +5053,26 @@ fn set_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, phase: 
     }
 }
 
+fn startup_phase_after_observation(
+    current: StartupPhase,
+    ready: bool,
+    session_boundary: bool,
+) -> Option<StartupPhase> {
+    if session_boundary
+        || !matches!(
+            current,
+            StartupPhase::Connecting | StartupPhase::LoadingScene | StartupPhase::Ready
+        )
+    {
+        return None;
+    }
+    Some(if ready {
+        StartupPhase::Ready
+    } else {
+        StartupPhase::LoadingScene
+    })
+}
+
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
     let msg = format!("code {}: {}", e.code, e.mes2);
     if debug_enabled() {
@@ -5390,16 +5410,17 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
-                                        let next_phase = if ready {
-                                            StartupPhase::Ready
-                                        } else {
-                                            StartupPhase::LoadingScene
-                                        };
-                                        if s.startup_phase != next_phase {
-                                            s.startup_phase = next_phase;
-                                            s.startup_phase_started = Instant::now();
-                                            if debug_enabled() {
-                                                eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
+                                        if let Some(next_phase) = startup_phase_after_observation(
+                                            s.startup_phase,
+                                            ready,
+                                            session_boundary,
+                                        ) {
+                                            if s.startup_phase != next_phase {
+                                                s.startup_phase = next_phase;
+                                                s.startup_phase_started = Instant::now();
+                                                if debug_enabled() {
+                                                    eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
+                                                }
                                             }
                                         }
                                         s.runenergy = if ready { c.runenergy } else { 0 };
@@ -5868,6 +5889,26 @@ mod tests {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::Error);
         assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
+    }
+
+    #[test]
+    fn startup_observation_preserves_queueing_across_session_boundary() {
+        assert_eq!(
+            startup_phase_after_observation(StartupPhase::Queueing, false, true),
+            None
+        );
+        assert_eq!(
+            startup_phase_after_observation(StartupPhase::Queueing, false, false),
+            None
+        );
+        assert_eq!(
+            startup_phase_after_observation(StartupPhase::LoadingScene, false, false),
+            Some(StartupPhase::LoadingScene)
+        );
+        assert_eq!(
+            startup_phase_after_observation(StartupPhase::LoadingScene, true, false),
+            Some(StartupPhase::Ready)
+        );
     }
 
     #[test]
