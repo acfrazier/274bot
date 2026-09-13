@@ -203,3 +203,128 @@ fn mule_seed_only_cannot_qualify() {
         "{error}"
     );
 }
+
+#[test]
+fn nature_air_login_and_display_names_share_start() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Air, "live1felgp_0", "live1felgp_1");
+    watch.observe_air(
+        "live1felgp_0",
+        air_ready("Live1felgp 0", AirRole::Master),
+        false,
+    );
+    watch.observe_air(
+        "live1felgp_1",
+        air_ready("Live1felgp 1", AirRole::Runner),
+        false,
+    );
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch
+        .begin_shared_start("live1felgp_0", "live1felgp_1")
+        .expect("login underscores and native spaced display names are one account");
+
+    let mut master = air_ready("Live1felgp 0", AirRole::Master);
+    let mut runner = air_ready("Live1felgp 1", AirRole::Runner);
+    master.tick = 1;
+    runner.tick = 1;
+    master.trade_offer_open = true;
+    runner.trade_offer_open = true;
+    master.trade_partner = Some("Live1felgp 1".into());
+    runner.trade_partner = Some("Live1felgp 0".into());
+    watch.observe_air("live1felgp_0", master, false);
+    watch.observe_air("live1felgp_1", runner, false);
+    let error = watch.qualify().unwrap_err();
+    assert!(
+        !error.contains("mixed identities"),
+        "display names must not mark mixed identity: {error}"
+    );
+    assert!(
+        !error.contains("wrong partner"),
+        "native partner display names must match login counterparts: {error}"
+    );
+}
+
+#[test]
+fn nature_air_rejects_missing_empty_wrong_identity_and_wrong_partner() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Air, "live1felgp_0", "live1felgp_1");
+    let runner = air_ready("Live1felgp 1", AirRole::Runner);
+
+    let mut missing = air_ready("Live1felgp 0", AirRole::Master);
+    missing.player = None;
+    watch.observe_air("live1felgp_0", missing, false);
+    watch.observe_air("live1felgp_1", runner.clone(), false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+    assert!(watch
+        .begin_shared_start("live1felgp_0", "live1felgp_1")
+        .is_err());
+
+    let mut empty = air_ready("Live1felgp 0", AirRole::Master);
+    empty.player = Some(String::new());
+    watch.observe_air("live1felgp_0", empty, false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+
+    watch.observe_air(
+        "live1felgp_0",
+        air_ready("Live1felgp 1", AirRole::Master),
+        false,
+    );
+    assert_eq!(
+        watch.barrier(),
+        StartBarrier::Wait,
+        "runner display name must not prepare the master slot"
+    );
+
+    watch.observe_air(
+        "live1felgp_0",
+        air_ready("Live1felgp 0", AirRole::Master),
+        false,
+    );
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch
+        .begin_shared_start("live1felgp_0", "live1felgp_1")
+        .unwrap();
+
+    let mut master = air_ready("Live1felgp 0", AirRole::Master);
+    let mut runner = air_ready("Live1felgp 1", AirRole::Runner);
+    master.tick = 1;
+    runner.tick = 1;
+    master.trade_offer_open = true;
+    master.trade_partner = Some("Live1felgp 9".into());
+    watch.observe_air("live1felgp_0", master, false);
+    watch.observe_air("live1felgp_1", runner, false);
+    let error = watch.qualify().unwrap_err();
+    assert!(error.contains("wrong partner"), "{error}");
+}
+
+#[test]
+fn mule_and_flax_login_display_names_share_start() {
+    let mule = PairWatch::default();
+    mule.configure(PairCase::Mule, "live1felgp_0", "live1felgp_1");
+    let mut crafter = air_ready("Live1felgp 0", AirRole::Master);
+    crafter.essence_unnoted = MULE_TRADE_CAP;
+    let mut pack = air_ready("Live1felgp 1", AirRole::Runner);
+    pack.essence_unnoted = MULE_TRADE_CAP;
+    pack.air_talisman = 0;
+    mule.observe_air("live1felgp_0", crafter, false);
+    mule.observe_air("live1felgp_1", pack, false);
+    assert_eq!(mule.barrier(), StartBarrier::StartBoth);
+    mule.begin_shared_start("live1felgp_0", "live1felgp_1")
+        .expect("mule login/display pair must share Start");
+
+    let flax = PairWatch::default();
+    flax.configure(PairCase::Flax, "live1felgp_0", "live1felgp_1");
+    flax.observe_flax(
+        "live1felgp_0",
+        flax_ready("Live1felgp 0", FlaxRole::Runner),
+        false,
+    );
+    flax.observe_flax(
+        "live1felgp_1",
+        flax_ready("Live1felgp 1", FlaxRole::Spinner),
+        false,
+    );
+    assert_eq!(flax.barrier(), StartBarrier::StartBoth);
+    flax.begin_shared_start("live1felgp_0", "live1felgp_1")
+        .expect("flax login/display pair must share Start");
+}
