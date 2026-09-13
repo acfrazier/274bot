@@ -5838,8 +5838,16 @@ mod tests {
             let bag_b = host_play::paired_core::pair_settings(case, &[], 1, b, a).unwrap();
             assert_eq!(bag_a.get("mode").and_then(|v| v.as_str()), Some(mode_a));
             assert_eq!(bag_b.get("mode").and_then(|v| v.as_str()), Some(mode_b));
-            assert_eq!(bag_a.get("partner").and_then(|v| v.as_str()), Some(b));
-            assert_eq!(bag_b.get("partner").and_then(|v| v.as_str()), Some(a));
+            let screen_a = client::util::JString::to_screen_name(a);
+            let screen_b = client::util::JString::to_screen_name(b);
+            assert_eq!(
+                bag_a.get("partner").and_then(|v| v.as_str()),
+                Some(screen_b.as_str())
+            );
+            assert_eq!(
+                bag_b.get("partner").and_then(|v| v.as_str()),
+                Some(screen_a.as_str())
+            );
 
             let watch = PairWatch::default();
             watch.configure(case, a, b);

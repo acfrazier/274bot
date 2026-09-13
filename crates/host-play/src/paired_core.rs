@@ -1883,6 +1883,8 @@ pub fn pair_settings(
     _self_name: &str,
     partner: &str,
 ) -> Result<Map<String, Value>, String> {
+    let partner = JString::to_screen_name(partner);
+    let partner = partner.as_str();
     match (case, slot_index) {
         (PairCase::Air, 0) => Ok(air_settings(schema, AirRole::Master, partner)),
         (PairCase::Air, 1) => Ok(air_settings(schema, AirRole::Runner, partner)),
