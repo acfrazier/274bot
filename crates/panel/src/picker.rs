@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
@@ -97,10 +97,26 @@ static BOUND_NAV_FLAGS: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Expected flags digest from the selected nav identity. `None` means the
 /// identity does not name flags, so a sidecar cannot be applied.
 static EXPECTED_FLAGS_SHA256: Mutex<Option<String>> = Mutex::new(None);
+/// True when the bound flags path is the build-stamped sibling of a bundled
+/// pack (not an explicit `--nav-flags` / `NAV_FLAGS` override). Trusted
+/// provenance skips runtime content hashing on first paint.
+static FLAGS_TRUSTED_BUNDLED: AtomicBool = AtomicBool::new(false);
+/// Content-hash attempts while loading the flags sidecar. Tests assert the
+/// bundled fast path never increments this; external overrides always do.
+static FLAGS_CONTENT_HASHES: AtomicU32 = AtomicU32::new(0);
 
-pub(crate) fn set_navflags_binding(path: PathBuf, flags_sha256: Option<String>) {
+/// Bind the process-profile flags path, expected digest, and provenance.
+/// `trusted_bundled` is true only for the build-stamped sibling of a bundled
+/// pack; an explicit flags override must pass `false` even when its path
+/// equals that sibling.
+pub(crate) fn set_navflags_binding(
+    path: PathBuf,
+    flags_sha256: Option<String>,
+    trusted_bundled: bool,
+) {
     *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
     *EXPECTED_FLAGS_SHA256.lock().unwrap() = flags_sha256;
+    FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
     drop_flags_sidecar();
 }
 
@@ -139,24 +155,35 @@ fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
 /// Decode the flags sidecar once while a collision paint is on; no-op
 /// when already attempted for this paint-on. Missing, unknown, or
 /// mismatched identity falls back to the walk word and is not retried
-/// until the sidecar is dropped.
+/// until the sidecar is dropped. Build-stamped bundled flags skip the
+/// content hash; external overrides always validate against the digest.
 pub(crate) fn ensure_flags_sidecar() {
     if !matches!(*FLAGS.lock().unwrap(), FlagsSlot::Unloaded) {
         return;
     }
     let expected = EXPECTED_FLAGS_SHA256.lock().unwrap().clone();
     let path = navflags_path();
+    let trusted_bundled = FLAGS_TRUSTED_BUNDLED.load(Ordering::Relaxed);
     let slot = match expected {
         None => FlagsSlot::Refused("flags identity is unknown"),
         Some(expected) => match std::fs::read(&path) {
             Err(_) => FlagsSlot::Missing,
-            Ok(bytes) if nav::manifest::hash_bytes(&bytes) != expected => {
-                FlagsSlot::Refused("flags sidecar hash mismatch")
+            Ok(bytes) => {
+                let identity_ok = if trusted_bundled {
+                    true
+                } else {
+                    FLAGS_CONTENT_HASHES.fetch_add(1, Ordering::Relaxed);
+                    nav::manifest::hash_bytes(&bytes) == expected
+                };
+                if !identity_ok {
+                    FlagsSlot::Refused("flags sidecar hash mismatch")
+                } else {
+                    match decode_sidecar_bytes(&bytes) {
+                        Some(sidecar) => FlagsSlot::Loaded(sidecar),
+                        None => FlagsSlot::Refused("flags sidecar is unreadable"),
+                    }
+                }
             }
-            Ok(bytes) => match decode_sidecar_bytes(&bytes) {
-                Some(sidecar) => FlagsSlot::Loaded(sidecar),
-                None => FlagsSlot::Refused("flags sidecar is unreadable"),
-            },
         },
     };
     let mut guard = FLAGS.lock().unwrap();
@@ -169,6 +196,16 @@ pub(crate) fn ensure_flags_sidecar() {
 /// paint-on re-decodes.
 pub(crate) fn drop_flags_sidecar() {
     *FLAGS.lock().unwrap() = FlagsSlot::Unloaded;
+}
+
+#[cfg(test)]
+pub(crate) fn flags_content_hash_count() -> u32 {
+    FLAGS_CONTENT_HASHES.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_flags_content_hash_count() {
+    FLAGS_CONTENT_HASHES.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -1035,15 +1072,19 @@ mod tests {
 
     use super::{
         available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar,
-        ensure_flags_sidecar, flags_sidecar_for, flags_sidecar_state, pack, pack_map_tiles, pan_by,
-        picker_map_window, right_align_x, set_navflags_binding, set_pack, sidecar_for_grid, snap,
-        walkto_canvas_flags, walkto_footer_labels, walkto_window_flags, FlagSidecar,
-        FlagsSidecarState, PackView,
+        ensure_flags_sidecar, flags_content_hash_count, flags_sidecar_for, flags_sidecar_state,
+        pack, pack_map_tiles, pan_by, picker_map_window, reset_flags_content_hash_count,
+        right_align_x, set_navflags_binding, set_pack, sidecar_for_grid, snap, walkto_canvas_flags,
+        walkto_footer_labels, walkto_window_flags, FlagSidecar, FlagsSidecarState, PackView,
     };
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
     use dear_imgui_rs::WindowFlags;
     use nav::router::{Leg, Route};
+    use std::sync::Mutex as StdMutex;
+
+    /// Process-global flags binding/hash counters; serialize tests that touch them.
+    static FLAGS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
@@ -1711,6 +1752,7 @@ mod tests {
 
     #[test]
     fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
+        let _guard = FLAGS_TEST_LOCK.lock().unwrap();
         let path = std::env::temp_dir().join(format!(
             "274bot-panel-flags-identity-{}.navflags",
             std::process::id()
@@ -1725,34 +1767,112 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let digest = nav::manifest::hash_bytes(&bytes);
 
-        set_navflags_binding(path.clone(), None);
+        reset_flags_content_hash_count();
+        set_navflags_binding(path.clone(), None, false);
         ensure_flags_sidecar();
         assert_eq!(
             flags_sidecar_state(),
             FlagsSidecarState::Refused("flags identity is unknown")
         );
         assert!(flags_sidecar_for(origin, 1, 1).is_none());
+        assert_eq!(flags_content_hash_count(), 0);
 
         drop_flags_sidecar();
-        set_navflags_binding(path.clone(), Some("00".repeat(32)));
+        set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
         ensure_flags_sidecar();
         assert_eq!(
             flags_sidecar_state(),
             FlagsSidecarState::Refused("flags sidecar hash mismatch")
         );
         assert!(flags_sidecar_for(origin, 1, 1).is_none());
+        assert_eq!(flags_content_hash_count(), 1);
 
         drop_flags_sidecar();
-        set_navflags_binding(path.clone(), Some(digest));
+        set_navflags_binding(path.clone(), Some(digest), false);
         ensure_flags_sidecar();
         assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
         assert_eq!(
             flags_sidecar_for(origin, 1, 1).as_deref(),
             Some(flags.as_slice())
         );
+        assert_eq!(flags_content_hash_count(), 2);
         drop_flags_sidecar();
         assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
         assert!(flags_sidecar_for(origin, 1, 1).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
+        let _guard = FLAGS_TEST_LOCK.lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "274bot-panel-flags-bundled-{}.navflags",
+            std::process::id()
+        ));
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
+        let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+        std::fs::write(&path, &bytes).unwrap();
+        // Digest is still bound (identity names flags) but must not be rehashed.
+        let digest = nav::manifest::hash_bytes(&bytes);
+
+        reset_flags_content_hash_count();
+        set_navflags_binding(path.clone(), Some(digest.clone()), true);
+        ensure_flags_sidecar();
+        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
+        assert_eq!(
+            flags_sidecar_for(origin, 1, 1).as_deref(),
+            Some(flags.as_slice())
+        );
+        assert_eq!(
+            flags_content_hash_count(),
+            0,
+            "trusted bundled flags must not content-hash on first paint"
+        );
+
+        // Per-session reuse: second ensure is a no-op and still does not hash.
+        ensure_flags_sidecar();
+        assert_eq!(flags_content_hash_count(), 0);
+        assert_eq!(
+            flags_sidecar_for(origin, 1, 1).as_deref(),
+            Some(flags.as_slice())
+        );
+
+        // Geometry mismatch still refuses paint application without a rehash.
+        assert!(flags_sidecar_for(origin, 2, 1).is_none());
+        assert_eq!(flags_content_hash_count(), 0);
+
+        drop_flags_sidecar();
+        // Explicit same-path override remains external and must hash.
+        set_navflags_binding(path.clone(), Some(digest), false);
+        ensure_flags_sidecar();
+        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
+        assert_eq!(flags_content_hash_count(), 1);
+
+        drop_flags_sidecar();
+        set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
+        ensure_flags_sidecar();
+        assert_eq!(
+            flags_sidecar_state(),
+            FlagsSidecarState::Refused("flags sidecar hash mismatch")
+        );
+        assert_eq!(flags_content_hash_count(), 2);
+
+        // Malformed header refused after trusted bind without hashing.
+        drop_flags_sidecar();
+        std::fs::write(&path, b"not-a-flags-sidecar").unwrap();
+        set_navflags_binding(path.clone(), Some("ab".repeat(32)), true);
+        ensure_flags_sidecar();
+        assert_eq!(
+            flags_sidecar_state(),
+            FlagsSidecarState::Refused("flags sidecar is unreadable")
+        );
+        assert_eq!(flags_content_hash_count(), 2);
+
         let _ = std::fs::remove_file(path);
     }
 }

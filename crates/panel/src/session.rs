@@ -1343,6 +1343,7 @@ impl Session {
             profile
                 .nav_identity()
                 .and_then(|identity| identity.flags_sha256.clone()),
+            profile.nav_flags_origin().is_bundled(),
         );
         self.options = PlayOptions {
             host: profile.client().game_host().to_string(),

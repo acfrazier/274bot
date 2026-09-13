@@ -46,6 +46,28 @@ impl NavOrigin {
     }
 }
 
+/// Provenance of the bound navigation flags sidecar.
+///
+/// Distinct from [`NavOrigin`]: a bundled pack can still pair with an
+/// explicit `--nav-flags` / `NAV_FLAGS` override, and that override must
+/// keep external content validation even when its path equals the usual
+/// bundle sibling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavFlagsOrigin {
+    /// Build-stamped sibling of a bundled pack. Identity is trusted at bake
+    /// time; first paint must not rehash the flags file.
+    Bundled,
+    /// External pack path or an explicit flags override. Content must match
+    /// the selected identity digest before decode.
+    External,
+}
+
+impl NavFlagsOrigin {
+    pub fn is_bundled(self) -> bool {
+        matches!(self, Self::Bundled)
+    }
+}
+
 /// Read/hash/decode counts for one origin-aware load. Tests use these instead
 /// of restating progress labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
