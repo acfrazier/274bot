@@ -4,7 +4,9 @@
 //! magic `274V`, version byte 8.
 
 pub mod arrival;
+pub mod bake;
 pub mod bank_fetch;
+pub mod bundle;
 pub mod camera;
 pub mod collision;
 pub mod essence;

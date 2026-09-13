@@ -1,25 +1,19 @@
 //! Compile-time bundled navigation identities and install-path selection.
 //!
-//! The checked-in table is empty until a packager fills it. An empty table,
-//! `--nav-pack` / `NAV_PACK`, or a user-authored sidecar never selects the
-//! bundled path. `--release` is not a product class.
+//! The table is published by the build script (`crates/host-play/build.rs`):
+//! for an ordinary build it holds the identity of the nav pack that same build
+//! baked and staged under the install resource root; rows checked in at
+//! `src/bundled-nav-identities.json` describe prebuilt resource bundles a
+//! packager shipped. `BOT_NAV_BUILD=skip` publishes only the checked-in rows.
+//! An empty table, `--nav-pack` / `NAV_PACK`, or a user-authored sidecar never
+//! selects the bundled path. `--release` is not a product class.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Serialize};
-
 /// One shipped navpack identity, analogue of `known-cache-identities.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BundledNavIdentity {
-    pub revision: u16,
-    pub cache_id: String,
-    pub format: String,
-    pub nav_sha256: String,
-    pub flags_sha256: Option<String>,
-    pub relative_path: String,
-}
+/// The schema and its writer live in [`nav::bundle`].
+pub use nav::bundle::NavIdentityRow as BundledNavIdentity;
 
 /// Origin of the loaded navigation pack.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,12 +55,16 @@ pub struct NavLoadCounters {
     pub pack_decodes: u32,
 }
 
-/// Compile-time table. Empty in git until release assets are assembled.
+/// Compile-time table published by the build script: the identity (or
+/// identities) of the staged/prebuilt resource bundles this build trusts.
 pub fn bundled_nav_identities() -> &'static [BundledNavIdentity] {
     static TABLE: OnceLock<Vec<BundledNavIdentity>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        serde_json::from_str(include_str!("bundled-nav-identities.json"))
-            .expect("bundled nav identities")
+        serde_json::from_str(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/bundled-nav-identities.json"
+        )))
+        .expect("bundled nav identities")
     })
 }
 
@@ -130,10 +128,11 @@ pub fn select_nav_origin(
 }
 
 fn validate_identity_shape(identity: &BundledNavIdentity) -> Result<(), String> {
-    if identity.format != "274V8" {
+    if identity.format != nav::pack::FORMAT_ID {
         return Err(format!(
-            "bundled navigation format {} is unsupported; expected 274V8",
-            identity.format
+            "bundled navigation format {} is unsupported; expected {}",
+            identity.format,
+            nav::pack::FORMAT_ID
         ));
     }
     if identity.nav_sha256.len() != 64
@@ -197,8 +196,55 @@ mod tests {
     }
 
     #[test]
-    fn compiled_table_is_empty_until_packaging() {
-        assert!(bundled_nav_identities().is_empty());
+    fn the_compiled_table_matches_what_this_build_staged() {
+        // The build script publishes the identity of the artifact set it baked
+        // and staged; `BOT_NAV_BUNDLED` records what that was for this build.
+        let published = option_env!("BOT_NAV_BUNDLED").unwrap_or("none");
+        let table = bundled_nav_identities();
+        if published == "none" {
+            assert!(
+                table.is_empty(),
+                "BOT_NAV_BUILD=skip must publish no generated identity: {table:?}"
+            );
+            return;
+        }
+        let revision: u16 = published.parse().expect("BOT_NAV_BUNDLED is a revision");
+        let generated: Vec<_> = table
+            .iter()
+            .filter(|row| row.revision == revision && row.relative_path.starts_with("nav/"))
+            .collect();
+        assert_eq!(
+            generated.len(),
+            1,
+            "one generated identity row per built revision: {table:?}"
+        );
+        let row = generated[0];
+        assert_eq!(row.format, nav::pack::FORMAT_ID);
+        assert_eq!(row.nav_sha256.len(), 64);
+        assert!(row.relative_path.ends_with("274bot.navpack"));
+
+        // Every published row must be an install-relative, unambiguous identity.
+        let mut seen = std::collections::HashSet::new();
+        for row in table {
+            assert!(matches!(row.revision, 274 | 289));
+            assert_eq!(row.format, nav::pack::FORMAT_ID);
+            assert_eq!(row.nav_sha256.len(), 64);
+            assert!(row
+                .flags_sha256
+                .as_ref()
+                .is_none_or(|flags| flags.len() == 64));
+            assert!(
+                !Path::new(&row.relative_path).is_absolute()
+                    && !row.relative_path.split('/').any(|part| part == ".."),
+                "{} must stay under the install resource root",
+                row.relative_path
+            );
+            assert!(
+                seen.insert((row.revision, row.cache_id.clone())),
+                "duplicate identity row for revision {}",
+                row.revision
+            );
+        }
     }
 
     #[test]
