@@ -5056,21 +5056,32 @@ fn set_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, phase: 
 fn startup_phase_after_observation(
     current: StartupPhase,
     ready: bool,
-    session_boundary: bool,
+    client_ingame: bool,
 ) -> Option<StartupPhase> {
-    if session_boundary
-        || !matches!(
-            current,
-            StartupPhase::Connecting | StartupPhase::LoadingScene | StartupPhase::Ready
-        )
-    {
+    if matches!(current, StartupPhase::Preparing | StartupPhase::Error) {
         return None;
+    }
+    if !client_ingame {
+        return Some(StartupPhase::Queueing);
     }
     Some(if ready {
         StartupPhase::Ready
     } else {
         StartupPhase::LoadingScene
     })
+}
+
+fn apply_startup_phase(s: &mut SlotStatus, name: &str, ready: bool, client_ingame: bool) {
+    if let Some(next_phase) = startup_phase_after_observation(s.startup_phase, ready, client_ingame)
+    {
+        if s.startup_phase != next_phase {
+            s.startup_phase = next_phase;
+            s.startup_phase_started = Instant::now();
+            if debug_enabled() {
+                eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
+            }
+        }
+    }
 }
 
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
@@ -5126,6 +5137,36 @@ fn reset_slot_session_work(
     }
 }
 
+/// Drop producer-gated observation without changing the display phase.
+/// A successful login/reconnect (`Pump` session gen) must reset snapshot
+/// fields without mislabeling the new session as a queue wait.
+fn reset_slot_observation(s: &mut SlotStatus) {
+    s.ingame = false;
+    s.scene_state = 0;
+    s.runenergy = 0;
+    s.main_modal_id = -1;
+    s.tile_x = -1;
+    s.tile_z = -1;
+    s.tile_level = -1;
+    s.player.clear();
+    s.chat_head.clear();
+    s.walk_x = -1;
+    s.walk_z = -1;
+    s.walk_level = -1;
+    s.random = RandomStatus::default();
+}
+
+fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
+    if let Some(s) = statuses
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s.username == name)
+    {
+        reset_slot_observation(s);
+    }
+}
+
 /// Close the producer gate before clearing any queued work. Never hold this
 /// lock while locking a script: script -> statuses is the established order.
 fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
@@ -5135,23 +5176,40 @@ fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str)
         .iter_mut()
         .find(|s| s.username == name)
     {
-        s.ingame = false;
-        s.scene_state = 0;
-        s.startup_phase = StartupPhase::Queueing;
-        s.startup_phase_started = Instant::now();
+        reset_slot_observation(s);
         s.login_started = None;
-        s.runenergy = 0;
-        s.main_modal_id = -1;
-        s.tile_x = -1;
-        s.tile_z = -1;
-        s.tile_level = -1;
-        s.player.clear();
-        s.chat_head.clear();
-        s.walk_x = -1;
-        s.walk_z = -1;
-        s.walk_level = -1;
-        s.random = RandomStatus::default();
+        if s.startup_phase != StartupPhase::Error && s.startup_phase != StartupPhase::Queueing {
+            s.startup_phase = StartupPhase::Queueing;
+            s.startup_phase_started = Instant::now();
+            if debug_enabled() {
+                eprintln!(
+                    "[host-play] slot {name}: startup phase {:?}",
+                    StartupPhase::Queueing
+                );
+            }
+        }
     }
+}
+
+/// `session_changed` is a successful login/reconnect, not a drop. Close the
+/// producer gate in both cases; only a native logout returns the banner to
+/// queue/connect wait.
+fn publish_session_boundary_status(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    session_changed: bool,
+    client_ingame: bool,
+    snapshot_ingame: bool,
+) -> bool {
+    let session_boundary = session_changed || (!client_ingame && snapshot_ingame);
+    if session_boundary {
+        if client_ingame {
+            publish_slot_observation_reset(statuses, name);
+        } else {
+            publish_slot_disconnected(statuses, name);
+        }
+    }
+    session_boundary
 }
 
 /// Every profile spawns one slot thread; shared handles are threaded through
@@ -5364,10 +5422,14 @@ fn spawn_slot_thread(
                         move |c, _ignored, run_sends, status: &RandomStatus| {
                             let name = &obs_name;
                             let drain = pump.drain_client(c);
-                            let session_boundary = drain.session_changed
-                                || (!c.ingame && nav_snapshot.ingame());
+                            let session_boundary = publish_session_boundary_status(
+                                &slot_statuses,
+                                name,
+                                drain.session_changed,
+                                c.ingame,
+                                nav_snapshot.ingame(),
+                            );
                             if session_boundary {
-                                publish_slot_disconnected(&slot_statuses, name);
                                 reset_slot_session_work(name, &slot_scripts, &slot_cheats, &slot_wires, &slot_navs);
                                 last_nav_step = None;
                             }
@@ -5410,19 +5472,7 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
-                                        if let Some(next_phase) = startup_phase_after_observation(
-                                            s.startup_phase,
-                                            ready,
-                                            session_boundary,
-                                        ) {
-                                            if s.startup_phase != next_phase {
-                                                s.startup_phase = next_phase;
-                                                s.startup_phase_started = Instant::now();
-                                                if debug_enabled() {
-                                                    eprintln!("[host-play] slot {name}: startup phase {next_phase:?}");
-                                                }
-                                            }
-                                        }
+                                        apply_startup_phase(s, name, ready, c.ingame);
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;
                                         s.main_modal_id = nav_snapshot.modals().main;
@@ -5891,24 +5941,154 @@ mod tests {
         assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
     }
 
-    #[test]
-    fn startup_observation_preserves_queueing_across_session_boundary() {
-        assert_eq!(
-            startup_phase_after_observation(StartupPhase::Queueing, false, true),
-            None
+    fn drive_startup_observe(
+        pump: &mut Pump,
+        snapshot: &mut GameSnapshot,
+        statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+        name: &str,
+        client: &Client,
+    ) {
+        let drain = pump.drain_client(client);
+        let _session_boundary = publish_session_boundary_status(
+            statuses,
+            name,
+            drain.session_changed,
+            client.ingame,
+            snapshot.ingame(),
         );
+        host::publish_snapshot(snapshot, client, drain);
+        let ready = client.ingame && client.scene_state == 2 && snapshot.local_player().is_some();
+        let mut all = statuses.lock().unwrap();
+        let s = all.iter_mut().find(|s| s.username == name).unwrap();
+        s.ingame = ready;
+        s.scene_state = snapshot.scene_state();
+        apply_startup_phase(s, name, ready, client.ingame);
+    }
+
+    #[test]
+    fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         assert_eq!(
             startup_phase_after_observation(StartupPhase::Queueing, false, false),
-            None
+            Some(StartupPhase::Queueing)
         );
         assert_eq!(
-            startup_phase_after_observation(StartupPhase::LoadingScene, false, false),
+            startup_phase_after_observation(StartupPhase::Queueing, false, true),
             Some(StartupPhase::LoadingScene)
         );
         assert_eq!(
-            startup_phase_after_observation(StartupPhase::LoadingScene, true, false),
-            Some(StartupPhase::Ready)
+            startup_phase_after_observation(StartupPhase::Preparing, true, true),
+            None
         );
+        assert_eq!(
+            startup_phase_after_observation(StartupPhase::Error, true, true),
+            None
+        );
+
+        let statuses = Arc::new(Mutex::new(
+            ["alice", "bob"]
+                .into_iter()
+                .map(|username| SlotStatus {
+                    username: username.into(),
+                    ..SlotStatus::default()
+                })
+                .collect(),
+        ));
+        set_startup_phase(&statuses, "alice", StartupPhase::Queueing);
+        mark_login_started(&statuses, "alice");
+        set_startup_phase(&statuses, "alice", StartupPhase::LoadingScene);
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 1;
+        client.gens.session = 1;
+
+        let mut pump = Pump::new();
+        let mut snapshot = GameSnapshot::new();
+
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
+            assert!(
+                !rows[0].ingame,
+                "producer gate stays closed until a current player"
+            );
+            assert!(rows[0].login_started.is_some());
+            assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
+            assert!(snapshot.local_player().is_none());
+        }
+
+        client.local_player = Some(client::client::ClientPlayer::at(10, 10));
+        client.scene_state = 2;
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(
+                rows[0].startup_phase,
+                StartupPhase::LoadingScene,
+                "stale actor tables must not authorize Ready"
+            );
+            assert!(!rows[0].ingame);
+            assert!(snapshot.local_player().is_none());
+        }
+
+        client.gens.player += 1;
+        client.gens.player_info += 1;
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::Ready);
+            assert!(rows[0].ingame);
+            assert!(snapshot.local_player().is_some());
+            assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
+        }
+
+        client.ingame = false;
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
+            assert!(!rows[0].ingame);
+            assert!(rows[0].login_started.is_none());
+        }
+
+        mark_login_started(&statuses, "alice");
+        set_startup_phase(&statuses, "alice", StartupPhase::LoadingScene);
+        client.ingame = true;
+        client.scene_state = 1;
+        client.local_player = None;
+        client.gens.session += 1;
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
+            assert!(!rows[0].ingame);
+            assert!(rows[0].login_started.is_some());
+        }
+
+        record_login_error(
+            &statuses,
+            "alice",
+            &LoginError {
+                code: 5,
+                mes1: "invalid".into(),
+                mes2: "invalid".into(),
+            },
+        );
+        client.ingame = false;
+        drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
+        {
+            let rows = statuses.lock().unwrap();
+            assert_eq!(rows[0].startup_phase, StartupPhase::Error);
+            assert!(rows[0].error.is_some());
+            assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
+        }
     }
 
     #[test]
