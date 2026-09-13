@@ -15,6 +15,7 @@ use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
 use nav::world::NavWorld;
 
+use crate::cache::CacheAvailability;
 use crate::nav_identity::{
     bundled_nav_identities, install_resource_root, select_nav_origin, BundledNavIdentity,
     NavLoadCounters, NavOrigin,
@@ -434,6 +435,7 @@ pub enum NavAvailability {
 pub struct ServerProfile {
     selection: ServerSelection,
     client: Arc<ClientSessionProfile>,
+    cache: CacheAvailability,
     cache_manifest: CacheManifest,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
@@ -549,6 +551,37 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
+        // The declared identity is read before any preparation: a manifest for
+        // another revision must be rejected without touching the update server
+        // for the selected cache directory.
+        let supplied = match &self.cache_manifest {
+            Some(path) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
+                let manifest = serde_json::from_slice::<CacheManifest>(&bytes)
+                    .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
+                let revision = self.revision().as_i32() as u16;
+                if manifest.revision != revision {
+                    return Err(format!(
+                        "cache/profile mismatch for revision {revision} at {}: \
+                         declared manifest revision {}",
+                        self.cache_dir.display(),
+                        manifest.revision
+                    ));
+                }
+                Some(manifest)
+            }
+            None => None,
+        };
+
+        let prepared = crate::cache::prepare(
+            &self.cache_dir,
+            &self.unpack_dir,
+            self.target(),
+            &self.asset_host,
+            self.asset_port,
+            observer,
+        );
         let actual = CacheManifest::capture_with_progress(
             self.revision().as_i32() as u16,
             &self.cache_dir,
@@ -560,17 +593,15 @@ impl ProfileSelection {
                 ));
             },
         )?;
-        let declared = if let Some(path) = &self.cache_manifest {
-            let bytes = std::fs::read(path)
-                .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
-            serde_json::from_slice::<CacheManifest>(&bytes)
-                .map_err(|e| format!("cache manifest {}: {e}", path.display()))?
-        } else {
-            let known: Vec<CacheManifest> =
-                serde_json::from_str(include_str!("known-cache-identities.json"))
-                    .expect("bundled cache identities");
-            known.into_iter().find(|m| m.archives == actual.archives)
-                .ok_or_else(|| "cache revision is unverified; supply --cache-manifest for the prepared server/cache pairing".to_string())?
+        let declared = match supplied {
+            Some(manifest) => manifest,
+            None => {
+                let known: Vec<CacheManifest> =
+                    serde_json::from_str(include_str!("known-cache-identities.json"))
+                        .expect("bundled cache identities");
+                known.into_iter().find(|m| m.archives == actual.archives)
+                    .ok_or_else(|| "cache revision is unverified; supply --cache-manifest for the prepared server/cache pairing".to_string())?
+            }
         };
         if declared != actual {
             return Err(format!(
@@ -651,6 +682,7 @@ impl ProfileSelection {
         Ok(Arc::new(ServerProfile {
             selection: self.selection,
             client: binding,
+            cache: prepared.availability,
             cache_manifest: actual,
             nav_pack,
             nav_flags,
@@ -791,6 +823,12 @@ impl ServerProfile {
     }
     pub fn cache_id(&self) -> &str {
         self.client.content_id()
+    }
+    /// Prepared-snapshot availability for the selected cache version: cold
+    /// (published by this preparation), warm (already complete), or degraded
+    /// with the failing check named.
+    pub fn cache_availability(&self) -> &CacheAvailability {
+        &self.cache
     }
     pub fn nav_pack(&self) -> &Path {
         &self.nav_pack
