@@ -287,7 +287,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn hold_skips_recovery_anchor_request() {
+fn posted_hold_still_samples_recovery_anchor() {
     let src = r#"
 export default class T extends LoopingBot {
     recoveryAnchor() { globalThis.__sampled = true; return { x: 1, z: 2, level: 0 }; }
@@ -298,8 +298,41 @@ export default class T extends LoopingBot {
     tick(&iso, 1, true);
     iso.request_recovery_anchor();
     let _ = iso.probe("true");
+    assert_eq!(iso.probe("globalThis.__sampled || false").unwrap(), true);
+    let life = iso.drain_lifecycle();
+    assert!(
+        life.iter().any(|r| matches!(
+            r,
+            InteractReq::RecoveryAnchor {
+                x: 1,
+                z: 2,
+                level: 0
+            }
+        )),
+        "recovery hold must not reject recoveryAnchor: {life:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_skips_recovery_anchor_request() {
+    let src = r#"
+export default class T extends LoopingBot {
+    recoveryAnchor() { globalThis.__sampled = true; return { x: 1, z: 2, level: 0 }; }
+    loop() {}
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1, false);
+    let _ = iso.drain_lifecycle();
+    iso.pause();
+    iso.request_recovery_anchor();
+    let _ = iso.probe("true");
     assert_eq!(iso.probe("globalThis.__sampled || false").unwrap(), false);
-    assert!(iso.drain_lifecycle().is_empty());
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "paused recoveryAnchor must not emit a reply"
+    );
     iso.join();
 }
 
