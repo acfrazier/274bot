@@ -956,6 +956,8 @@ mod isolate {
     /// Per-tick budget: ticks taking longer than this are interrupted and
     /// logged, and stale ticks are skipped.
     const SLOW_TICK: Duration = Duration::from_millis(50);
+    /// `in_flight` tick id for a live `recoveryAnchor` eval (not a game tick).
+    const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
     /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
     const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
     /// How long `join` waits for the isolate thread after Stop + terminate
@@ -1027,6 +1029,11 @@ mod isolate {
         },
         /// ScriptRunner.stop ended this isolate lifetime.
         Stopped,
+        /// A non-tick isolate command finished; clear matching `in_flight`.
+        InFlightDone {
+            generation: u64,
+            tick: u64,
+        },
     }
 
     /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -1253,10 +1260,12 @@ mod isolate {
                 self.terminate.terminate_execution();
                 // `in_flight` was released before this lock, so the lock
                 // order (never `in_flight` -> `logs`) holds everywhere.
-                self.logs
-                    .lock()
-                    .unwrap()
-                    .push(format!("interrupted slow tick {tick} ({elapsed:?})"));
+                let line = if tick == RECOVERY_ANCHOR_TICK {
+                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
+                } else {
+                    format!("interrupted slow tick {tick} ({elapsed:?})")
+                };
+                self.logs.lock().unwrap().push(line);
             }
             let _ = self.tx.send(IsolateCmd::Tick {
                 tick: snap_tick,
@@ -1332,6 +1341,24 @@ mod isolate {
             let generation = self
                 .work_generation
                 .load(std::sync::atomic::Ordering::Acquire);
+            let interrupted = {
+                let mut in_flight = self.in_flight.lock().unwrap();
+                let over = in_flight
+                    .as_ref()
+                    .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                    .map(|(_, tick, started)| (*tick, started.elapsed()));
+                *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
+                over
+            };
+            if let Some((tick, elapsed)) = interrupted {
+                self.terminate.terminate_execution();
+                let line = if tick == RECOVERY_ANCHOR_TICK {
+                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
+                } else {
+                    format!("interrupted slow tick {tick} ({elapsed:?})")
+                };
+                self.logs.lock().unwrap().push(line);
+            }
             let _ = self.tx.send(IsolateCmd::RecoveryAnchor { generation });
         }
 
@@ -1514,6 +1541,19 @@ mod isolate {
                         self.last_completed
                             .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
                         if in_flight.is_some_and(|(g, t, _)| g == generation && t <= tick) {
+                            *in_flight = None;
+                        }
+                    }
+                    ThreadMsg::InFlightDone { generation, tick } => {
+                        if generation
+                            != self
+                                .work_generation
+                                .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            continue;
+                        }
+                        let mut in_flight = self.in_flight.lock().unwrap();
+                        if in_flight.is_some_and(|(g, t, _)| g == generation && t == tick) {
                             *in_flight = None;
                         }
                     }
@@ -2099,7 +2139,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     if (typeof fire === 'function') fire();
     if (!globalThis.__rs2b0t_started) {
         globalThis.__rs2b0t_started = true;
-        if (typeof inst.onStart === 'function') { await inst.onStart(); }
+        // Same single-flight as loop(): a pending onStart must not let a
+        // later tick enter loop(). Listeners/chat/onPaint still run.
+        h.loopInFlight = true;
+        try {
+            if (typeof inst.onStart === 'function') { await inst.onStart(); }
+        } finally {
+            h.loopInFlight = false;
+        }
     }
     // IPC bus: posted chat_text changed → chat.message { text }.
     const text = (h.snapshot || {}).chat_text;
@@ -3791,6 +3838,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         || host_hold
                         || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
                     {
+                        let _ = out.send(ThreadMsg::InFlightDone {
+                            generation,
+                            tick: RECOVERY_ANCHOR_TICK,
+                        });
                         continue;
                     }
                     let start = Instant::now();
@@ -3816,6 +3867,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             generation,
                         });
                     }
+                    let _ = out.send(ThreadMsg::InFlightDone {
+                        generation,
+                        tick: RECOVERY_ANCHOR_TICK,
+                    });
                 }
                 IsolateCmd::Probe(expr, reply) => {
                     let value: Result<serde_json::Value, String> =

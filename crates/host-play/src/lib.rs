@@ -1073,9 +1073,11 @@ fn script_observe_with_npc_boxes(
                 slot.post_snapshot(bytes);
                 slot.store_last_world_id(world_id);
             }
-            if hold {
+            if hold || (slot.load_active() && slot.watchdog().holds_script_actions()) {
                 // Isolate: tick for onPaint only (hold gate inside V8).
-                // Compiled: skip — keep tick/nav follow frozen.
+                // Recovery hold is distinct from guardian hold: nav follow
+                // of the owned recovery route continues, but script walk
+                // arms are not provided. Compiled: skip on guardian hold.
                 if slot.load_active() {
                     slot.on_game_tick(&mut ScriptCtx {
                         driver,
@@ -1148,7 +1150,6 @@ fn script_observe_with_npc_boxes(
         if slot.load_active() {
             let mut lifecycle = Vec::new();
             if slot.state() == script::RunState::Running {
-                interact.extend(slot.drain_interacts());
                 lifecycle.extend(slot.drain_lifecycle());
             }
             let ready = up
@@ -1159,7 +1160,16 @@ fn script_observe_with_npc_boxes(
                 .map(|snap| snap.stats().iter().map(|stat| stat.xp).collect())
                 .unwrap_or_default();
             let now = Instant::now();
-            if slot.watchdog().recovering_anchor().is_some() {
+            if frozen {
+                if slot.watchdog().recovering_anchor().is_some() {
+                    if hold {
+                        let _ = slot.notify_hold_during_walk();
+                    } else {
+                        let _ = slot.abort_owned_recovery();
+                    }
+                    abort_script_walk(navs, name);
+                }
+            } else if slot.watchdog().recovering_anchor().is_some() {
                 let far = here
                     .map(|(x, z, _)| {
                         slot.watchdog().recovering_anchor().is_some_and(|anchor| {
@@ -1168,10 +1178,7 @@ fn script_observe_with_npc_boxes(
                         })
                     })
                     .unwrap_or(true);
-                if hold {
-                    let _ = slot.notify_hold_during_walk();
-                    abort_script_walk(navs, name);
-                } else if far && recovery_walk_idle(navs, name) {
+                if far && recovery_walk_idle(navs, name) {
                     match slot.notify_walk_failed(now) {
                         script::WatchdogAction::Restart { .. } => {
                             interact.clear();
@@ -1197,7 +1204,9 @@ fn script_observe_with_npc_boxes(
             match action {
                 script::WatchdogAction::Restart { .. } => {
                     interact.clear();
-                    if let Err(e) = slot.restart_load_from_identity(now) {
+                    if frozen {
+                        eprintln!("[script {name}] watchdog restart ignored: frozen");
+                    } else if let Err(e) = slot.restart_load_from_identity(now) {
                         eprintln!("[script {name}] watchdog restart failed: {e}");
                     }
                 }
@@ -1217,6 +1226,13 @@ fn script_observe_with_npc_boxes(
                     state.clone(),
                     name,
                 ),
+            }
+            if slot.state() == script::RunState::Running {
+                if slot.watchdog().holds_script_actions() {
+                    let _ = slot.drain_interacts();
+                } else {
+                    interact.extend(slot.drain_interacts());
+                }
             }
         } else if slot.state() == script::RunState::Running {
             interact.extend(slot.drain_interacts());
@@ -4739,7 +4755,10 @@ impl Play {
     /// Resume re-arms it). No-op when the slot has no script.
     pub fn script_pause(&self, name: &str) {
         if let Some(slot) = script_slot(&self.scripts, name) {
-            slot.lock().unwrap().pause();
+            let abort = slot.lock().unwrap().pause();
+            if abort {
+                abort_script_walk(&self.navs, name);
+            }
         }
         self.wake(name);
     }
@@ -12668,6 +12687,333 @@ export default class T extends LoopingBot {
             .probe("globalThis.__rs_loops || 0")
             .unwrap();
         assert_eq!(loops, 1, "unheld isolate tick runs loop()");
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .stop();
+    }
+
+    fn force_watchdog_recovering(slot: &mut script::SlotScript, here: (i32, i32, i32)) {
+        let t = Instant::now();
+        slot.feed_watchdog(t, Some(here), &[], false, true, &[]);
+        assert_eq!(
+            slot.feed_watchdog(
+                t + script::watchdog::WEDGE,
+                Some(here),
+                &[],
+                false,
+                true,
+                &[]
+            ),
+            script::WatchdogAction::RequestAnchor
+        );
+        assert!(matches!(
+            slot.feed_watchdog(
+                t + script::watchdog::WEDGE,
+                Some(here),
+                &[],
+                false,
+                true,
+                &[script::shim::InteractReq::RecoveryAnchor {
+                    x: 3200,
+                    z: 3200,
+                    level: 0
+                }]
+            ),
+            script::WatchdogAction::ArmWalk { .. }
+        ));
+        assert!(slot.watchdog().recovering_anchor().is_some());
+    }
+
+    #[test]
+    fn recovery_hold_drops_script_actions_and_keeps_paint() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let src = r#"
+export default class T extends LoopingBot {
+    onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
+    loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        globalThis.__rs2b0t_host.interact = globalThis.__rs2b0t_host.interact || [];
+        globalThis.__rs2b0t_host.interact.push({ op: 'set-camera-yaw', yaw: 1234 });
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("load isolate starts");
+        c.ingame = true;
+        c.scene_state = 2;
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let observe = |c: &mut Client, tick_edge: bool, tick: u64| {
+            script_observe(
+                c,
+                "alice",
+                true,
+                tick_edge,
+                tick,
+                Some((100, 100, 0)),
+                None,
+                None,
+                Some(&snap),
+                None,
+                &scripts,
+                &cheats,
+                &navs,
+                &world,
+                false,
+                false,
+            );
+        };
+        observe(&mut c, true, 1);
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        observe(&mut c, false, 1);
+        assert_eq!(
+            c.orbit_camera_yaw, 1234,
+            "ordinary dispatch writes camera yaw"
+        );
+
+        force_watchdog_recovering(
+            &mut script_slot(&scripts, "alice").unwrap().lock().unwrap(),
+            (100, 100, 0),
+        );
+        navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                route_worker: Some(Arc::new(())),
+                ..NavBot::default()
+            },
+        );
+        c.orbit_camera_yaw = 0;
+        let paints_before = script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__paints || 0")
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        observe(&mut c, true, 2);
+        let slot = script_slot(&scripts, "alice").unwrap();
+        let slot = slot.lock().unwrap();
+        slot.probe("true").unwrap();
+        let loops = slot.probe("globalThis.__loops || 0").unwrap();
+        let paints = slot
+            .probe("globalThis.__paints || 0")
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        drop(slot);
+        observe(&mut c, false, 2);
+        assert_eq!(
+            c.orbit_camera_yaw, 0,
+            "recovery must not dispatch ordinary script actions"
+        );
+        assert!(loops.as_i64().unwrap() >= 1, "tick still runs: {loops}");
+        assert!(
+            paints > paints_before,
+            "onPaint continues during recovery: before={paints_before} after={paints}"
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .stop();
+    }
+
+    #[test]
+    fn pause_clears_live_recovery_walk() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
+        play.script_start_load(
+            "alice",
+            "export default class T extends LoopingBot { loop() {} }".into(),
+            script::LoadShape::CompatClass,
+            None,
+            vec![],
+        )
+        .unwrap();
+        force_watchdog_recovering(
+            &mut script_slot(&play.scripts, "alice").unwrap().lock().unwrap(),
+            (100, 100, 0),
+        );
+        play.navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                route_worker: Some(Arc::new(())),
+                ..NavBot::default()
+            },
+        );
+        play.script_pause("alice");
+        assert_eq!(play.script_state("alice"), script::RunState::Paused);
+        let navs = play.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("nav bot");
+        assert!(bot.route_worker.is_none(), "Pause must abort recovery nav");
+        assert!(bot.route.is_none());
+        assert!(bot.pending_route.is_none());
+        drop(navs);
+        play.script_stop("alice");
+    }
+
+    #[test]
+    fn session_reset_clears_live_recovery_walk() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, _world) = empty_nav();
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(
+                "export default class T extends LoopingBot { loop() {} }".into(),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+        force_watchdog_recovering(
+            &mut script_slot(&scripts, "alice").unwrap().lock().unwrap(),
+            (100, 100, 0),
+        );
+        navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                route_worker: Some(Arc::new(())),
+                ..NavBot::default()
+            },
+        );
+        reset_slot_session_work("alice", &scripts, &cheats, &wires, &navs);
+        assert!(script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .watchdog()
+            .recovering_anchor()
+            .is_none());
+        let bot = navs.lock().unwrap();
+        let bot = bot.get("alice").unwrap();
+        assert!(bot.route_worker.is_none());
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .stop();
+    }
+
+    #[test]
+    fn watchdog_restart_does_not_override_not_ready_freeze() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let src = r#"
+export default class T extends LoopingBot {
+    onStart() { globalThis.__alive = 1; }
+    loop() { globalThis.__alive = 1; }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((100, 100, 0)),
+            None,
+            None,
+            None,
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        force_watchdog_recovering(
+            &mut script_slot(&scripts, "alice").unwrap().lock().unwrap(),
+            (100, 100, 0),
+        );
+        // !ready (no here): freeze first; idle recovery must not recreate.
+        script_observe(
+            &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, false, false,
+        );
+        let slot = script_slot(&scripts, "alice").unwrap();
+        let slot = slot.lock().unwrap();
+        let alive = slot
+            .probe("globalThis.__alive || 0")
+            .expect("isolate must not have been recreated");
+        assert_eq!(alive, 1, "restart must not override !ready freeze");
+        assert!(
+            !matches!(
+                slot.watchdog().state(),
+                script::WatchdogState::RestartPending { .. }
+            ),
+            "frozen fail branch must not pend restart: {:?}",
+            slot.watchdog().state()
+        );
+        drop(slot);
         script_slot(&scripts, "alice")
             .unwrap()
             .lock()

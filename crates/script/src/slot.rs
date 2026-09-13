@@ -416,8 +416,9 @@ impl SlotScript {
     }
 
     /// Operator Pause: `want_run` stays false (survives login) until
-    /// Resume. Instance kept. No-op when there is no instance.
-    pub fn pause(&mut self) {
+    /// Resume. Instance kept. Returns whether a live recovery walk must be
+    /// aborted on the host nav bot.
+    pub fn pause(&mut self) -> bool {
         self.want_run = false;
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
@@ -425,6 +426,7 @@ impl SlotScript {
         if let Some(pending) = &mut self.pending_bank_op {
             pending.freeze();
         }
+        let mut abort_recovery = false;
         if self.has_instance() && self.state == RunState::Running {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
@@ -432,10 +434,15 @@ impl SlotScript {
             }
             #[cfg(feature = "load")]
             {
+                abort_recovery = matches!(
+                    self.watchdog.abort_owned_recovery(),
+                    WatchdogAction::AbortWalk
+                );
                 let _ = self.watchdog.set_frozen(true, Instant::now());
             }
             self.state = RunState::Paused;
         }
+        abort_recovery
     }
 
     /// Operator Resume: `want_run` back on. Assumes the client is up; the
@@ -525,7 +532,9 @@ impl SlotScript {
             }
             self.last_snapshot = None;
             self.last_world_id = None;
-            let _ = self.watchdog.on_session_reset(Instant::now());
+            let abort = self.watchdog.abort_owned_recovery();
+            let reset = self.watchdog.on_session_reset(Instant::now());
+            let _ = (abort, reset);
         }
     }
 
@@ -839,8 +848,11 @@ impl SlotScript {
     /// Recreate the Load isolate from retained identity. Consumes cooldown.
     #[cfg(feature = "load")]
     pub fn restart_load_from_identity(&mut self, now: Instant) -> Result<(), String> {
-        if !self.want_run {
+        if !self.want_run || self.state == RunState::Paused {
             return Err("watchdog restart cancelled: operator is not running".into());
+        }
+        if self.watchdog.frozen() {
+            return Err("watchdog restart cancelled: frozen".into());
         }
         let identity = self
             .load_identity
@@ -883,6 +895,11 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn notify_hold_during_walk(&mut self) -> WatchdogAction {
         self.watchdog.on_hold_during_walk()
+    }
+
+    #[cfg(feature = "load")]
+    pub fn abort_owned_recovery(&mut self) -> WatchdogAction {
+        self.watchdog.abort_owned_recovery()
     }
 
     /// The slot script's latest recorded paint frame (a Load isolate's
