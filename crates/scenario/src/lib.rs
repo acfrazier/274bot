@@ -13877,6 +13877,7 @@ struct PairCompanionSlot {
     stage: PairPrepStage,
     logout_sent: bool,
     saw_logout: bool,
+    logout_session: u64,
     seed_sent: bool,
     first_load_sent: bool,
     last_action: Instant,
@@ -13889,6 +13890,7 @@ impl PairCompanionSlot {
             stage: PairPrepStage::WaitMainland,
             logout_sent: false,
             saw_logout: false,
+            logout_session: 0,
             seed_sent: false,
             first_load_sent: false,
             last_action: Instant::now() - Duration::from_secs(1),
@@ -13927,6 +13929,7 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                 let ifaces = std::sync::Arc::clone(&c.ifaces);
                 if logout(c, ifaces.as_slice()) {
                     slot.logout_sent = true;
+                    slot.logout_session = c.gens.session;
                     slot.last_action = now;
                     slot.stage = PairPrepStage::WaitRelog;
                 }
@@ -13935,13 +13938,16 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
         PairPrepStage::WaitRelog => {
             // Host::run_client probe returns on !ingame before the next
             // observe, so companion_tick never sees the off-world frame.
-            // Reconnect login is the delivered post-logout signal; stale
-            // pre-logout scene2 (reconnect != Some(true)) must not seed.
+            // A successful login/reconnect bumps c.gens.session; that
+            // change since intentional logout is the delivered signal.
+            // last_login_reconnect may already be true from an earlier
+            // grant and must not admit stale pre-logout scene2.
             if pair_relog_seen(
                 slot.logout_sent,
                 slot.saw_logout,
                 snap.ingame(),
-                c.last_login_reconnect,
+                slot.logout_session,
+                c.gens.session,
             ) {
                 slot.saw_logout = true;
                 if !snap.ingame() {
@@ -14086,9 +14092,10 @@ fn pair_relog_seen(
     logout_sent: bool,
     saw_logout: bool,
     ingame: bool,
-    last_login_reconnect: Option<bool>,
+    logout_session: u64,
+    session: u64,
 ) -> bool {
-    saw_logout || !ingame || (logout_sent && last_login_reconnect == Some(true))
+    saw_logout || !ingame || (logout_sent && session != logout_session)
 }
 
 fn pair_near(snap: &GameSnapshot, dest: WorldTile, radius: i32) -> bool {
@@ -20262,7 +20269,7 @@ mod tests {
         client.map_build_base_x = 3200;
         client.map_build_base_z = 3200;
         client.local_player = Some(ClientPlayer::at(20, 20));
-        client.last_login_reconnect = Some(false);
+        client.last_login_reconnect = Some(true);
         client.side_icon[3] = 1;
         let mut ifaces = vec![None; 16];
         ifaces[7] = Some(Box::new(IfType {
@@ -20286,9 +20293,10 @@ mod tests {
     }
 
     /// Host::run_client returns on !ingame before another observe, so the
-    /// companion callback never sees the off-world frame. Reconnect login
-    /// is the delivered post-logout signal; stale pre-logout scene2 must
-    /// not seed.
+    /// companion callback never sees the off-world frame. A successful
+    /// session generation after intentional logout is the delivered
+    /// post-logout signal; last_login_reconnect may already be true from
+    /// an earlier grant and must not admit stale pre-logout scene2.
     #[test]
     fn pair_companion_seeds_after_reconnect_without_an_off_world_frame() {
         let scenario = get("nature_crafter_air").expect("nature_crafter_air is registered");
@@ -20297,6 +20305,7 @@ mod tests {
             .companion_for("test2")
             .expect("air runner is profile 1");
         let mut client = pair_companion_client();
+        assert_eq!(client.last_login_reconnect, Some(true));
 
         runner.companion_tick(index, &mut client);
         std::thread::sleep(Duration::from_millis(400));
@@ -20310,19 +20319,21 @@ mod tests {
 
         let after_relog = pair_out_len(&client);
         runner.companion_tick(index, &mut client);
+        std::thread::sleep(Duration::from_millis(400));
+        runner.companion_tick(index, &mut client);
         assert_eq!(
             pair_out_len(&client),
             after_relog,
-            "pre-logout scene2 must not seed"
+            "stale pre-logout scene2 must not seed even when last_login_reconnect is already true"
         );
 
-        client.last_login_reconnect = Some(true);
+        client.gens.session = client.gens.session.wrapping_add(1);
         runner.companion_tick(index, &mut client);
         std::thread::sleep(Duration::from_millis(400));
         runner.companion_tick(index, &mut client);
         assert!(
             pair_out_len(&client) > after_relog,
-            "reconnect login without a delivered !ingame frame must admit WaitRelog and seed"
+            "session generation change without a delivered !ingame frame must admit WaitRelog and seed"
         );
     }
 

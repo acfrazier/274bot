@@ -1130,14 +1130,6 @@ fn actor_snapshot_json(
     let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
     if let Some(object) = value.as_object_mut() {
         object.insert("actor".into(), serde_json::Value::String(actor.to_string()));
-        match object.get_mut("player") {
-            Some(serde_json::Value::Object(player)) => {
-                player.insert("name".into(), serde_json::Value::String(actor.to_string()));
-            }
-            _ => {
-                object.insert("player".into(), serde_json::json!({ "name": actor }));
-            }
-        }
     }
     serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
 }
@@ -6395,11 +6387,20 @@ mod tests {
         watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
         s.install_paired_core_watch(Some(watch));
 
+        let mut alice_client = script_client();
+        let mut alice_player = client::dash3d::ClientPlayer::at(20, 20);
+        alice_player.name = Some("NatureMaster".into());
+        alice_client.local_player = Some(alice_player);
         let mut snap_a = api::snapshot::GameSnapshot::new();
-        snap_a.rebuild(&script_client());
+        snap_a.rebuild(&alice_client);
+
+        let mut bob_client = script_client();
+        bob_client.local_player = None;
         let mut snap_b = api::snapshot::GameSnapshot::new();
-        snap_b.rebuild(&script_client());
+        snap_b.rebuild(&bob_client);
+
         assert!(snap_a.ingame() && snap_a.scene_state() == 2);
+        assert!(snap_b.ingame() && snap_b.scene_state() == 2);
         s.nav_states
             .lock()
             .unwrap()
@@ -6429,6 +6430,7 @@ mod tests {
         let guard = shots.lock().unwrap();
         assert_eq!(guard.requests.len(), 2, "both actors must be captured");
         let mut actors = HashSet::new();
+        let mut payloads = HashSet::new();
         for (label, json) in &guard.requests {
             let value: serde_json::Value = serde_json::from_str(json).expect("snapshot json");
             assert_eq!(value.get("ingame"), Some(&serde_json::Value::Bool(true)));
@@ -6436,23 +6438,47 @@ mod tests {
             let actor = value
                 .get("actor")
                 .and_then(|v| v.as_str())
-                .or_else(|| {
-                    value
-                        .get("player")
-                        .and_then(|player| player.get("name"))
-                        .and_then(|v| v.as_str())
-                })
-                .unwrap_or("");
+                .expect("actor label metadata is the profile identity");
             assert!(
                 label.contains(actor),
                 "label {label} must name actor {actor}"
             );
+            match actor {
+                "alice" => {
+                    assert_eq!(
+                        value.pointer("/player/player/actor/name"),
+                        Some(&serde_json::json!("NatureMaster")),
+                        "observed player name must be retained"
+                    );
+                    assert!(
+                        value
+                            .get("player")
+                            .and_then(|player| player.get("name"))
+                            .is_none(),
+                        "actor metadata must not overwrite or synthesize player.name"
+                    );
+                }
+                "bob" => {
+                    assert_eq!(
+                        value.get("player"),
+                        Some(&serde_json::Value::Null),
+                        "missing-player stays missing"
+                    );
+                }
+                other => panic!("unexpected actor {other}"),
+            }
             actors.insert(actor.to_string());
+            payloads.insert(json.clone());
         }
         assert_eq!(
             actors.len(),
             2,
             "paired headed snapshots must identify two distinct actors"
+        );
+        assert_eq!(
+            payloads.len(),
+            2,
+            "paired headed snapshots must retain distinct observed payloads"
         );
     }
 
