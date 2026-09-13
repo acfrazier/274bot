@@ -34,12 +34,15 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// Baker sources whose bytes join the generator identity: a generated
 /// artifact is stale after any change to one of them. Paths are relative to
 /// the `nav` crate root; keep this list to the code that decides artifact
-/// bytes (router/traveller/grid changes do not invalidate a pack).
-pub const GENERATOR_SOURCES: [&str; 5] = [
+/// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
+/// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
+/// and grid-search changes do not decide those bytes.
+pub const GENERATOR_SOURCES: [&str; 6] = [
     "src/bake.rs",
     "src/collision.rs",
     "src/pack.rs",
     "src/paint.rs",
+    "src/router.rs",
     "src/transport.rs",
 ];
 
@@ -349,6 +352,80 @@ mod tests {
             generator_identity(&[("a.rs", "x"), ("b.rs", "y")]),
             generator_identity(&[("b.rs", "x"), ("a.rs", "y")])
         );
+    }
+
+    #[test]
+    fn router_source_bytes_invalidate_a_warm_reach_stamp() {
+        // bake_reach floods with router::step_ok; a movement change must not
+        // keep a warm-stamped 274R sidecar while pack/flags stamps still match.
+        assert!(
+            GENERATOR_SOURCES.contains(&"src/router.rs"),
+            "GENERATOR_SOURCES must include the step_ok-owning source"
+        );
+        assert!(GENERATOR_SOURCES.contains(&"src/paint.rs"));
+
+        let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
+            .iter()
+            .map(|path| (*path, "fn a() {}"))
+            .collect();
+        let mut router_only = baseline.clone();
+        for (label, text) in &mut router_only {
+            if *label == "src/router.rs" {
+                *text = "fn step_ok_changed() {}";
+            }
+        }
+        assert_eq!(
+            router_only
+                .iter()
+                .find(|(path, _)| *path == "src/paint.rs")
+                .map(|(_, text)| *text),
+            Some("fn a() {}"),
+            "paint.rs bytes stay the same; only router.rs changes"
+        );
+
+        let warm = generator_identity(&baseline);
+        let after_router = generator_identity(&router_only);
+        assert_ne!(
+            warm, after_router,
+            "router.rs bytes join generator_identity"
+        );
+
+        let inputs = [crate::bundle::InputFingerprint {
+            path: "/content/maps/m1.jm2".into(),
+            bytes: 10,
+            modified_nanos: 5,
+        }];
+        let baked = crate::bundle::BakeStamp {
+            generator: warm,
+            format: "274V8".into(),
+            revision: 289,
+            cache_id: "cache-1".into(),
+            cache_manifest: None,
+            nav_sha256: "ab".repeat(32),
+            flags_sha256: "cd".repeat(32),
+            reach_sha256: "ef".repeat(32),
+            pack_bytes: 11,
+            flags_bytes: 7,
+            reach_bytes: 9,
+            relative_pack: "nav/289/274bot.navpack".into(),
+            relative_flags: "nav/289/274bot.navflags".into(),
+            relative_reach: "nav/289/274bot.navreach".into(),
+            inputs: inputs.to_vec(),
+        };
+        let expected = crate::bundle::StampExpectation {
+            revision: 289,
+            format: "274V8",
+            generator: &after_router,
+            cache_id: "cache-1",
+            inputs: &inputs,
+            staged_pack_bytes: Some(11),
+            staged_flags_bytes: Some(7),
+            staged_reach_bytes: Some(9),
+        };
+        let error = baked
+            .covers(&expected)
+            .expect_err("router source change must fail covers and force reach rebake");
+        assert!(error.contains("generator"), "{error}");
     }
 
     #[test]
