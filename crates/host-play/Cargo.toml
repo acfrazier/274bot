@@ -18,6 +18,12 @@ libc = "0.2"
 vault = { path = "../vault" }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
 
+# The build script bakes/stages the selected revision's navigation artifact
+# and publishes its identities to the compile-time table (`nav_identity`).
+[build-dependencies]
+nav = { path = "../nav" }
+serde_json = "=1.0.140"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

@@ -80,6 +80,11 @@ const MAGIC: &[u8; 4] = b"274V";
 const VERSION_FLAGS: u8 = 1;
 /// Flags sidecar magic.
 const MAGIC_FLAGS: &[u8; 4] = b"274F";
+/// Pack format identity as it appears in bundled navigation identities: the
+/// file magic followed by the format version (`274V8` for the current wire).
+/// A format improvement changes this identity and therefore invalidates
+/// staged build artifacts.
+pub const FORMAT_ID: &str = "274V8";
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 /// Bytes per door entry.
@@ -1269,7 +1274,7 @@ mod tests {
         decode, decode_flags_sidecar, decode_grid, derive_banks, encode, encode_flags_sidecar,
         encode_grid, merge_squares, parse_door_config, parse_door_config_ids, parse_door_open_ids,
         parse_mapsquare_text, parse_passable_locs, walkable_dots, BankAccess, BankStand, Mapsquare,
-        SQUARE, VERSION,
+        FORMAT_ID, MAGIC, SQUARE, VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
@@ -1278,6 +1283,14 @@ mod tests {
     use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
+
+    #[test]
+    fn format_id_names_the_current_wire() {
+        assert_eq!(
+            FORMAT_ID,
+            format!("{}{VERSION}", std::str::from_utf8(MAGIC).unwrap())
+        );
+    }
 
     #[test]
     fn pack_roundtrip_fixture_door() {
