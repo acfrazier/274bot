@@ -5,6 +5,7 @@
 #![recursion_limit = "256"]
 
 pub mod audio;
+pub mod cache;
 pub mod catalog_core;
 pub mod nav_identity;
 pub mod paired_core;
