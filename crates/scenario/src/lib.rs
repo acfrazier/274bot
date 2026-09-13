@@ -1773,6 +1773,7 @@ fn nav_paint_path_scenario() -> Scenario {
             full_rate: true,
             nav: nav_test_paints().with_tick_ms(300),
             require_mainland_base: true,
+            terminal_shot: Some("nav_paint_path terminal"),
             ..Default::default()
         },
     }
