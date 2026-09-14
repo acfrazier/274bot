@@ -126,6 +126,8 @@ struct PanelState {
     rail_dock_node: Option<Id>,
     docked_game_title: String,
     last_upload: Option<(String, u64)>,
+    /// Focus to restore after sequenced pair terminal captures.
+    pair_capture_restore: Option<String>,
     /// Cached queue-card overlay for the focused slot (see `overlay`).
     overlay: PathOverlay,
     /// Cached script-paint overlay over the Game chatbox (see `paint`).
@@ -855,6 +857,7 @@ impl Default for PanelState {
             rail_dock_node: None,
             docked_game_title: String::new(),
             last_upload: None,
+            pair_capture_restore: None,
             overlay: PathOverlay::new(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
@@ -1254,14 +1257,18 @@ fn enqueue_pair_terminal_shots(session: &Session, shots: &Mutex<ShotState>, base
                 if !snapshot.ingame() || snapshot.scene_state() != 2 {
                     return None;
                 }
-                Some((label.clone(), actor_snapshot_json(name, snapshot).ok()?))
+                Some((
+                    label.clone(),
+                    name.to_string(),
+                    actor_snapshot_json(name, snapshot).ok()?,
+                ))
             })
             .collect::<Vec<_>>()
     };
     let mut shots = shots.lock().unwrap();
-    for (label, json) in requests {
+    for (label, actor, json) in requests {
         if matches!(shots.status(&label), ShotStatus::Missing) {
-            shots.enqueue(label, json);
+            shots.enqueue_for_actor(label, json, actor);
         }
     }
 }
@@ -1303,6 +1310,7 @@ fn hold_script_terminal_shot(
     shots: Option<&Mutex<ShotState>>,
 ) -> Result<bool, String> {
     let owned;
+    let mut pair_labels: Option<[String; 2]> = None;
     let status = match (
         shots,
         terminal_shot,
@@ -1315,6 +1323,7 @@ fn hold_script_terminal_shot(
                 Some((a, b)) => {
                     let labels = pair_shot_labels(label, &a, &b);
                     owned = pair_terminal_shot_status(&shots.lock().unwrap(), &labels);
+                    pair_labels = Some(labels);
                     &owned
                 }
                 None => fallback,
@@ -1331,7 +1340,11 @@ fn hold_script_terminal_shot(
         }
         _ => fallback,
     };
-    hold_terminal_shot(live, terminal_shot, status)
+    let result = hold_terminal_shot(live, terminal_shot, status);
+    if let (Err(error), Some(shots), Some(labels)) = (&result, shots, pair_labels) {
+        shots.lock().unwrap().fail_labels(&labels, error);
+    }
+    result
 }
 
 /// Hold a terminal-shot exit until `pump_shots` writes. The drain remains
@@ -1914,12 +1927,15 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
-            if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
+            let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 if let Some(view) = state.game_view.as_mut() {
                     view.present(gpu, frame);
                 }
-            }
-            state.last_upload = Some((name, gen));
+                true
+            } else {
+                false
+            };
+            record_presented_upload(&mut state.last_upload, name, gen, took_frame);
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
@@ -5330,19 +5346,110 @@ fn pump_shots(state: &mut PanelState) -> usize {
         _ => false,
     };
     if !hold {
+        drive_pair_capture_focus(state);
+        let focused = state.session.focused_name();
+        let ready_json = focused
+            .as_deref()
+            .and_then(|actor| pair_actor_capture_ready(state, actor));
+        let presented = ready_json.is_some().then(|| focused.clone()).flatten();
         let mut shots = state.shot_state.lock().unwrap();
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") && !shots.requests.is_empty() {
             let labels = shots
                 .requests
                 .iter()
-                .map(|(label, _)| label.as_str())
+                .map(|request| request.label.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
             eprintln!("[panel] capture queued for readback: {labels}");
         }
-        shots.promote_requests();
+        if let (Some(actor), Some(json)) = (presented.as_deref(), ready_json) {
+            shots.refresh_actor_sidecar(actor, json);
+        }
+        shots.promote_ready(focused.as_deref(), presented.as_deref());
     }
     written
+}
+
+/// Focus the next pending pair actor only after the previous capture has
+/// left the GPU readback/write path. Restore the prior focus when no
+/// actor-tagged job remains.
+fn drive_pair_capture_focus(state: &mut PanelState) {
+    let (next, in_flight) = {
+        let shots = state.shot_state.lock().unwrap();
+        (
+            shots
+                .pending_actor_request()
+                .and_then(|request| request.actor.clone()),
+            shots.capture_in_flight(),
+        )
+    };
+    if in_flight {
+        return;
+    }
+    if let Some(actor) = next {
+        if state.pair_capture_restore.is_none() {
+            state.pair_capture_restore = state.session.focused_name();
+        }
+        if let Err(error) = state.session.focus_existing(&actor) {
+            let labels = {
+                let shots = state.shot_state.lock().unwrap();
+                shots
+                    .requests
+                    .iter()
+                    .filter(|request| request.actor.as_deref() == Some(actor.as_str()))
+                    .map(|request| request.label.clone())
+                    .collect::<Vec<_>>()
+            };
+            state
+                .shot_state
+                .lock()
+                .unwrap()
+                .fail_labels(&labels, &error);
+        }
+        return;
+    }
+    if let Some(restore) = state.pair_capture_restore.take() {
+        let _ = state.session.focus_existing(&restore);
+    }
+}
+
+fn presented_capture_actor(state: &PanelState) -> Option<String> {
+    let focused = state.session.focused_name()?;
+    match state.last_upload.as_ref() {
+        Some((name, gen)) if *name == focused && *gen > 0 => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// Current scene2 sidecar for an actor whose selected frame is already in
+/// the game view. A previously presented matching frame plus a stale
+/// enqueue-time sidecar does not prove a now-offworld actor.
+fn pair_actor_capture_ready(state: &PanelState, actor: &str) -> Option<String> {
+    let presented = presented_capture_actor(state)?;
+    if presented != actor {
+        return None;
+    }
+    current_pair_actor_sidecar(&state.session, actor)
+}
+
+fn current_pair_actor_sidecar(session: &Session, actor: &str) -> Option<String> {
+    let states = session.nav_states.lock().unwrap();
+    let (snapshot, _) = states.get(actor)?;
+    if !snapshot.ingame() || snapshot.scene_state() != 2 {
+        return None;
+    }
+    actor_snapshot_json(actor, snapshot).ok()
+}
+
+fn record_presented_upload(
+    last_upload: &mut Option<(String, u64)>,
+    name: String,
+    gen: u64,
+    took_frame: bool,
+) {
+    if took_frame {
+        *last_upload = Some((name, gen));
+    }
 }
 
 /// The per-frame UI body: session pump, live harness ticks, dock host,
@@ -7439,7 +7546,9 @@ mod tests {
         assert_eq!(guard.requests.len(), 2, "both actors must be captured");
         let mut actors = HashSet::new();
         let mut payloads = HashSet::new();
-        for (label, json) in &guard.requests {
+        for request in &guard.requests {
+            let label = &request.label;
+            let json = &request.snapshot_json;
             let value: serde_json::Value = serde_json::from_str(json).expect("snapshot json");
             assert_eq!(value.get("ingame"), Some(&serde_json::Value::Bool(true)));
             assert_eq!(value.get("scene_state"), Some(&serde_json::json!(2)));
@@ -7447,6 +7556,11 @@ mod tests {
                 .get("actor")
                 .and_then(|v| v.as_str())
                 .expect("actor label metadata is the profile identity");
+            assert_eq!(
+                request.actor.as_deref(),
+                Some(actor),
+                "queued capture must be bound to the selected actor, not a label clone"
+            );
             assert!(
                 label.contains(actor),
                 "label {label} must name actor {actor}"
@@ -7488,6 +7602,239 @@ mod tests {
             2,
             "paired headed snapshots must retain distinct observed payloads"
         );
+    }
+
+    fn dummy_slot() -> crate::session::SlotIo {
+        crate::session::SlotIo {
+            input: host::SlotInput::new(),
+            pixels: host::FrameBuf::new(),
+        }
+    }
+
+    fn insert_named_scene2(session: &crate::session::Session, name: &str, player: Option<&str>) {
+        let mut client = script_client();
+        match player {
+            Some(player_name) => {
+                let mut player = client::dash3d::ClientPlayer::at(20, 20);
+                player.name = Some(player_name.into());
+                client.local_player = Some(player);
+            }
+            None => client.local_player = None,
+        }
+        let mut snap = api::snapshot::GameSnapshot::new();
+        snap.rebuild(&client);
+        assert!(snap.ingame() && snap.scene_state() == 2);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert(name.into(), (snap, nav::WorldState::default()));
+    }
+
+    fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
+        let value: serde_json::Value = serde_json::from_str(json).expect("sidecar json");
+        (
+            value
+                .get("actor")
+                .and_then(|v| v.as_str())
+                .expect("actor")
+                .to_string(),
+            value
+                .get("scene_state")
+                .and_then(|v| v.as_i64())
+                .expect("scene_state"),
+        )
+    }
+
+    #[test]
+    fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
+        let mut state = PanelState::default();
+        state.session.slots.insert("alice".into(), dummy_slot());
+        state.session.slots.insert("bob".into(), dummy_slot());
+        state.session.focus.lock().unwrap().focused = Some("alice".into());
+        insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
+        insert_named_scene2(&state.session, "bob", None);
+        {
+            let mut shots = state.shot_state.lock().unwrap();
+            shots.enqueue_for_actor(
+                "air-alice".into(),
+                "{\"actor\":\"alice\"}".into(),
+                "alice".into(),
+            );
+            shots.enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into());
+        }
+
+        assert_eq!(super::pump_shots(&mut state), 0);
+        {
+            let shots = state.shot_state.lock().unwrap();
+            assert!(
+                shots.wanted.is_empty(),
+                "unready selected buffer must not capture"
+            );
+            assert_eq!(shots.requests.len(), 2);
+            assert_eq!(shots.status("air-alice"), ShotStatus::Requested);
+            assert_eq!(shots.status("air-bob"), ShotStatus::Requested);
+        }
+
+        state.last_upload = Some(("alice".into(), 1));
+        assert_eq!(super::pump_shots(&mut state), 0);
+        {
+            let shots = state.shot_state.lock().unwrap();
+            assert_eq!(shots.wanted.len(), 1);
+            assert_eq!(shots.wanted[0].0, "air-alice");
+            assert_eq!(
+                sidecar_actor_and_scene(&shots.wanted[0].1),
+                ("alice".into(), 2),
+                "promoted sidecar must be the current scene2 snapshot, not the enqueue-time clone"
+            );
+            assert_eq!(shots.requests.len(), 1);
+            assert_eq!(shots.requests[0].actor.as_deref(), Some("bob"));
+        }
+
+        state.shot_state.lock().unwrap().wanted.clear();
+        state.shot_state.lock().unwrap().mark_written("air-alice");
+        state.last_upload = Some(("alice".into(), 1));
+        super::pump_shots(&mut state);
+        assert_eq!(
+            state.session.focused_name().as_deref(),
+            Some("bob"),
+            "next queued actor is selected only after the previous capture writes"
+        );
+        assert!(
+            state.shot_state.lock().unwrap().wanted.is_empty(),
+            "bob is focused but not yet presented"
+        );
+
+        state.last_upload = Some(("bob".into(), 2));
+        super::pump_shots(&mut state);
+        {
+            let shots = state.shot_state.lock().unwrap();
+            assert_eq!(shots.wanted.len(), 1);
+            assert_eq!(shots.wanted[0].0, "air-bob");
+            assert_eq!(
+                sidecar_actor_and_scene(&shots.wanted[0].1),
+                ("bob".into(), 2)
+            );
+            assert!(shots.requests.is_empty());
+        }
+    }
+
+    #[test]
+    fn pump_shots_fails_a_missing_pair_actor_without_deadlocking() {
+        let mut state = PanelState::default();
+        state.shot_state.lock().unwrap().enqueue_for_actor(
+            "air-ghost".into(),
+            "{\"actor\":\"ghost\"}".into(),
+            "ghost".into(),
+        );
+        assert_eq!(super::pump_shots(&mut state), 0);
+        let shots = state.shot_state.lock().unwrap();
+        match shots.status("air-ghost") {
+            ShotStatus::Failed(error) => {
+                assert!(
+                    error.contains("not a live slot"),
+                    "missing actor must fail closed: {error}"
+                );
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        assert!(shots.requests.is_empty());
+        assert!(shots.wanted.is_empty());
+    }
+
+    #[test]
+    fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
+        let mut state = PanelState::default();
+        state.session.slots.insert("alice".into(), dummy_slot());
+        state.session.focus.lock().unwrap().focused = Some("alice".into());
+        state.last_upload = Some(("alice".into(), 1));
+        state.session.nav_states.lock().unwrap().insert(
+            "alice".into(),
+            (
+                api::snapshot::GameSnapshot::new(),
+                nav::WorldState::default(),
+            ),
+        );
+        state.shot_state.lock().unwrap().enqueue_for_actor(
+            "air-alice".into(),
+            "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}".into(),
+            "alice".into(),
+        );
+        assert_eq!(super::pump_shots(&mut state), 0);
+        let shots = state.shot_state.lock().unwrap();
+        assert!(
+            shots.wanted.is_empty(),
+            "stale scene2 sidecar must not prove a currently offworld actor"
+        );
+        assert_eq!(shots.status("air-alice"), ShotStatus::Requested);
+        assert_eq!(
+            shots.requests[0].snapshot_json,
+            "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}"
+        );
+    }
+
+    #[test]
+    fn pair_deadline_fails_remaining_queued_actors() {
+        let s = crate::session::Session::new();
+        let scenario = scenario::get("nature_crafter_air").expect("paired cell");
+        let mut runner = scenario::ScenarioRunner::new(scenario);
+        runner.set_live_names(&["alice".into(), "bob".into()]);
+        *s.scenario.lock().unwrap() = Some(runner);
+        let watch = host_play::paired_core::PairWatch::default();
+        watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
+        s.install_paired_core_watch(Some(watch));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots.lock().unwrap().enqueue_for_actor(
+            "nature_crafter_air-alice".into(),
+            "{}".into(),
+            "alice".into(),
+        );
+        shots.lock().unwrap().enqueue_for_actor(
+            "nature_crafter_air-bob".into(),
+            "{}".into(),
+            "bob".into(),
+        );
+        let mut live = LiveScript {
+            name: "script_nature_crafter_air".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: None,
+        };
+        let error = super::hold_script_terminal_shot(
+            &mut live,
+            &s,
+            Some("nature_crafter_air"),
+            &ShotStatus::Missing,
+            Some(&shots),
+        )
+        .expect_err("drain lapse is FAIL");
+        assert!(error.contains("not written"), "{error}");
+        let guard = shots.lock().unwrap();
+        assert!(matches!(
+            guard.status("nature_crafter_air-alice"),
+            ShotStatus::Failed(_)
+        ));
+        assert!(matches!(
+            guard.status("nature_crafter_air-bob"),
+            ShotStatus::Failed(_)
+        ));
+        assert!(guard.requests.is_empty());
+        assert!(guard.wanted.is_empty());
+    }
+
+    #[test]
+    fn record_presented_upload_ignores_a_failed_take_after_focus_switch() {
+        let mut last = Some(("alice".into(), 3));
+        super::record_presented_upload(&mut last, "bob".into(), 4, false);
+        assert_eq!(last, Some(("alice".into(), 3)));
+        super::record_presented_upload(&mut last, "bob".into(), 4, true);
+        assert_eq!(last, Some(("bob".into(), 4)));
     }
 
     fn passed_prereq_runner() -> scenario::ScenarioRunner {
