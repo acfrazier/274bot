@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod cache;
 pub mod catalog_core;
+pub mod external_loader;
 pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
