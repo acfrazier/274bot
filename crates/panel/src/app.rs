@@ -255,6 +255,24 @@ fn catalog_core_gate(
     }
 }
 
+fn external_core_gate(watch: Option<&host_play::external_loader::ExternalWatch>) -> CoreGate {
+    let Some(watch) = watch else {
+        return CoreGate::Disabled;
+    };
+    use host_play::external_loader::ExternalWatchStatus;
+    match watch.status() {
+        ExternalWatchStatus::Disabled => CoreGate::Disabled,
+        ExternalWatchStatus::Qualified => CoreGate::Qualified(None),
+        ExternalWatchStatus::Failed => CoreGate::Failed(
+            watch
+                .failure()
+                .unwrap_or_else(|| "external loader failed".into()),
+        ),
+        // Inner 180s/10s live on the watch. BUDGET_S must not replace them.
+        ExternalWatchStatus::Ready | ExternalWatchStatus::Running => CoreGate::Pending,
+    }
+}
+
 fn pair_core_gate(
     watch: Option<&host_play::paired_core::PairWatch>,
     deadline: Option<Instant>,
@@ -453,8 +471,14 @@ impl LiveBoot {
             }
             LiveBoot::Script { name } => {
                 let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
-                let scenario = scenario::get(scenario_name)
-                    .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
+                let scenario = if state.session.external_core_enabled()
+                    && scenario_name == host_play::external_loader::LIVE_SCENARIO
+                {
+                    crate::session::external_loader_fixture()
+                } else {
+                    scenario::get(scenario_name)
+                        .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
+                };
                 let scenario_deadline = scenario.settings.deadline;
                 state.session.live_prepare_script(scenario)?;
                 arm_scenario_shots(state);
@@ -869,6 +893,10 @@ pub struct PanelArgs {
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
     pub pair_core: bool,
+    /// Dedicated external_watch proof bridge; ordinary panel-play stays false.
+    pub external_core: bool,
+    /// Absolute raw `.ts` override; absent uses the tracked host-play fixture.
+    pub external_ts: Option<std::path::PathBuf>,
     /// Session-only headed live paint choice; absent preserves panel behavior.
     pub nav_paints: Option<bool>,
 }
@@ -879,13 +907,16 @@ pub fn parse_args(
 ) -> Result<PanelArgs, (i32, String)> {
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
-    let (nav_paints, live_args) = parse_nav_paints(rest)?;
+    let (nav_paints, rest) = parse_nav_paints(rest)?;
+    let (external_ts, live_args) = parse_external_ts(rest)?;
     let mode = parse_live_args(live_args, env_live)?;
     Ok(PanelArgs {
         mode,
         profile,
         catalog_core: false,
         pair_core: false,
+        external_core: false,
+        external_ts,
         nav_paints,
     })
 }
@@ -912,6 +943,30 @@ fn parse_nav_paints(args: Vec<String>) -> Result<(Option<bool>, Vec<String>), (i
                 ))
             }
         });
+    }
+    Ok((value, rest))
+}
+
+fn parse_external_ts(args: Vec<String>) -> Result<(Option<PathBuf>, Vec<String>), (i32, String)> {
+    let mut value = None;
+    let mut rest = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        if arg != "--external-ts" {
+            rest.push(arg);
+            continue;
+        }
+        let Some(raw) = it.next() else {
+            return Err((2, "panel-play: --external-ts needs an absolute path".into()));
+        };
+        let path = PathBuf::from(&raw);
+        if !path.is_absolute() {
+            return Err((
+                2,
+                format!("panel-play: --external-ts {raw} is relative; pass an absolute path"),
+            ));
+        }
+        value = Some(path);
     }
     Ok((value, rest))
 }
@@ -1046,9 +1101,9 @@ pub fn parse_live_args(
         return Ok(RunMode::Smoke);
     }
     if let Some(name) = live.as_deref() {
-        let script_ok = name
-            .strip_prefix("script_")
-            .is_some_and(|n| scenario::get(n).is_some());
+        let script_ok = name.strip_prefix("script_").is_some_and(|n| {
+            n == host_play::external_loader::LIVE_SCENARIO || scenario::get(n).is_some()
+        });
         if name != "null_raster"
             && name != "stress50"
             && name != "stress50_full"
@@ -1298,6 +1353,16 @@ fn live_script_tick(
     let core_gate = catalog_core_gate(core_watch.as_ref(), live.core_deadline, Instant::now());
     let pair_watch = session.paired_core_watch();
     let pair_gate = pair_core_gate(pair_watch.as_ref(), live.core_deadline, Instant::now());
+    if let Some(watch) = session.external_core_watch() {
+        match &status {
+            Some(scenario::RunnerStatus::Passed) => watch.note_prereq_passed(),
+            Some(scenario::RunnerStatus::Failed(msg)) => watch.note_prereq_failed(msg),
+            _ => {}
+        }
+    }
+    session.pump_external_loader();
+    let ext_watch = session.external_core_watch();
+    let ext_gate = external_core_gate(ext_watch.as_ref());
     let record = |evidence: &Option<scenario::Evidence>| {
         evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
     };
@@ -1328,6 +1393,18 @@ fn live_script_tick(
                     .unwrap_or_else(|_| watch.evidence().to_string()),
             })
     };
+    let record_ext = || {
+        ext_watch
+            .as_ref()
+            .filter(|watch| watch.configured())
+            .map(|watch| match &ext_gate {
+                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
+                _ => watch
+                    .qualify()
+                    .map(|evidence| evidence.to_string())
+                    .unwrap_or_else(|_| watch.evidence().to_string()),
+            })
+    };
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
         if let Some(core) = record_core() {
@@ -1342,6 +1419,13 @@ fn live_script_tick(
                 println!("PAIRED_CORE: {proof_name} {pair}");
             } else {
                 eprintln!("PAIRED_CORE: {proof_name} {pair}");
+            }
+        }
+        if let Some(ext) = record_ext() {
+            if ok {
+                println!("EXTERNAL_LOADER: {proof_name} {ext}");
+            } else {
+                eprintln!("EXTERNAL_LOADER: {proof_name} {ext}");
             }
         }
     };
@@ -1367,9 +1451,23 @@ fn live_script_tick(
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
+    if let CoreGate::Failed(message) = &ext_gate {
+        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
+            Ok(true) => return None,
+            Err(error) => eprintln!("[panel] {error}"),
+            Ok(false) => {}
+        }
+        emit_proof(false);
+        eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+        live.failed = Some(message.clone());
+        return Some(message.clone());
+    }
     match status {
         Some(scenario::RunnerStatus::Passed) => {
-            if matches!(core_gate, CoreGate::Pending) || matches!(pair_gate, CoreGate::Pending) {
+            if matches!(core_gate, CoreGate::Pending)
+                || matches!(pair_gate, CoreGate::Pending)
+                || matches!(ext_gate, CoreGate::Pending)
+            {
                 return None;
             }
             match hold_script_terminal_shot(
@@ -1417,6 +1515,9 @@ fn live_script_tick(
             }
             if let Some(pair) = record_pair() {
                 eprintln!("PAIRED_CORE: {} {pair}", live.name);
+            }
+            if let Some(ext) = record_ext() {
+                eprintln!("EXTERNAL_LOADER: {} {ext}", live.name);
             }
             eprintln!("FAIL: live {} {}", live.name, record(&evidence));
             live.failed = Some(msg.clone());
@@ -5011,6 +5112,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
+    state.session.set_external_core_enabled(args.external_core);
+    state.session.set_external_ts(args.external_ts);
     state
         .session
         .configure_profile(args.profile)
@@ -6593,6 +6696,27 @@ mod tests {
             parse_live_args(["--live", "script_"], None),
             Err((2, LIVE_USAGE.into()))
         );
+    }
+
+    #[test]
+    fn parse_live_args_accepts_external_loader_without_scenario_catalog() {
+        assert_eq!(
+            parse_live_args(["--live", "script_external_loader"], None),
+            Ok(RunMode::Live("script_external_loader".into()))
+        );
+        assert!(scenario::get("external_loader").is_none());
+    }
+
+    #[test]
+    fn parse_args_external_ts_refuses_relative_and_keeps_ordinary_watchers_off() {
+        let err = parse_args(["--external-ts", "ExampleBot.ts"], None).unwrap_err();
+        assert_eq!(err.0, 2);
+        assert!(err.1.contains("relative"), "{}", err.1);
+        let args = parse_args(["--live", "script_bone_burier"], None).unwrap();
+        assert!(!args.external_core);
+        assert!(args.external_ts.is_none());
+        assert!(!args.catalog_core);
+        assert!(!args.pair_core);
     }
 
     #[test]

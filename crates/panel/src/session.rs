@@ -1037,6 +1037,9 @@ pub struct Session {
     catalog_core_enabled: bool,
     paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
     pair_core_enabled: bool,
+    external_core_watch: Arc<Mutex<Option<host_play::external_loader::ExternalWatch>>>,
+    external_core_enabled: bool,
+    external_ts: Option<PathBuf>,
     /// Focused-slot speaker gate: at most one cpal speaker, owned by the
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
@@ -1062,6 +1065,74 @@ fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
     vec.push(line);
     while vec.len() > LOG_CAP {
         vec.remove(0);
+    }
+}
+
+fn parse_define_bot_version(origin: &str) -> String {
+    origin
+        .split("version:")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split(['\'', '"'])
+                .nth(1)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })
+        .unwrap_or(host_play::external_loader::SCRIPT_VERSION)
+        .to_string()
+}
+
+pub(crate) fn external_loader_fixture() -> scenario::Scenario {
+    use api::interact::cheat;
+    use host_play::external_loader::{BONES_COUNT, PREP_DEADLINE, TERMINAL_SHOT};
+    use scenario::{Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
+    Scenario {
+        name: host_play::external_loader::LIVE_SCENARIO,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "prepare twenty-five carried bones",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "getvar tutorial");
+                        cheat(c, "give bones 25");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Chat {
+                        needle: "get tutorial: 1000",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            Step {
+                name: "relog so the inv tab binds",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+        ],
+        proof: Proof::Item {
+            name: "Bones",
+            count: BONES_COUNT,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: PREP_DEADLINE,
+            start_script: None,
+            terminal_shot: Some(TERMINAL_SHOT),
+            nav: scenario::ScenarioNav::default().with_tick_ms(600),
+            ..Default::default()
+        },
     }
 }
 
@@ -1249,6 +1320,9 @@ impl Session {
             catalog_core_enabled: false,
             paired_core_watch: Arc::new(Mutex::new(None)),
             pair_core_enabled: false,
+            external_core_watch: Arc::new(Mutex::new(None)),
+            external_core_enabled: false,
+            external_ts: None,
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: {
@@ -1305,6 +1379,159 @@ impl Session {
         watch: Option<host_play::paired_core::PairWatch>,
     ) {
         *self.paired_core_watch.lock().unwrap() = watch;
+    }
+
+    pub fn set_external_core_enabled(&mut self, enabled: bool) {
+        self.external_core_enabled = enabled;
+    }
+
+    pub fn external_core_enabled(&self) -> bool {
+        self.external_core_enabled
+    }
+
+    pub fn set_external_ts(&mut self, path: Option<PathBuf>) {
+        self.external_ts = path;
+    }
+
+    pub fn external_core_watch(&self) -> Option<host_play::external_loader::ExternalWatch> {
+        self.external_core_watch.lock().unwrap().clone()
+    }
+
+    pub(crate) fn install_external_core_watch(
+        &self,
+        watch: Option<host_play::external_loader::ExternalWatch>,
+    ) {
+        *self.external_core_watch.lock().unwrap() = watch;
+    }
+
+    pub fn pump_external_loader(&mut self) {
+        use host_play::external_loader::{
+            apply_harmless_whitespace, Operation, BONES_ID, PRAYER_STAT_ID, SCRIPT_NAME,
+            SCRIPT_VERSION,
+        };
+        let Some(watch) = self.external_core_watch() else {
+            return;
+        };
+        if !watch.configured() {
+            return;
+        }
+        let now = Instant::now();
+        watch.poll_deadlines(now);
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if let Some(slot) = self.statuses.iter().find(|s| s.username == name) {
+            watch.note_scene(slot.ingame, slot.scene_state);
+            watch.note_paint(slot.script_paint.is_some());
+        }
+        if let Some((snap, _)) = self.nav_states.lock().unwrap().get(&name) {
+            let bones: i32 = snap
+                .inventory()
+                .iter()
+                .filter(|item| item.def.id == BONES_ID)
+                .map(|item| item.count)
+                .sum();
+            let prayer = snap
+                .stats()
+                .iter()
+                .find(|stat| stat.index == PRAYER_STAT_ID)
+                .map(|stat| stat.xp)
+                .unwrap_or(0);
+            watch.note_inventory(bones, prayer);
+        }
+        match watch.requested_operation() {
+            Some(Operation::LoadRawTs) => {
+                let path = watch.source_path();
+                self.load_js(&path);
+                if let Some(error) = self.error.clone() {
+                    watch.fail(format!("load: {error}"));
+                    return;
+                }
+                let lookup = match &self.script_sel {
+                    Some(script::ScriptSel::Loaded(_, lookup)) => lookup.clone(),
+                    _ => path.to_string_lossy().into_owned(),
+                };
+                if let Err(error) = self.js.ensure_js(script::ScriptSource::File, &lookup) {
+                    watch.fail(format!("transpile: {error}"));
+                    return;
+                }
+                let count = self
+                    .js
+                    .cards()
+                    .iter()
+                    .filter(|card| card.name == SCRIPT_NAME)
+                    .count();
+                let version = self
+                    .js
+                    .get(script::ScriptSource::File, &lookup)
+                    .map(|c| parse_define_bot_version(&c.origin))
+                    .unwrap_or_else(|| SCRIPT_VERSION.to_string());
+                let selected = self.script_sel.is_some() || self.pending_browse.contains_key(&name);
+                let running = self.play.as_ref().is_some_and(|play| {
+                    !matches!(play.script_state(&name), script::RunState::Idle)
+                });
+                watch.note_load(count, SCRIPT_NAME, &version, selected, running);
+            }
+            Some(Operation::Start) => {
+                if watch.begin_start(now).is_err() {
+                    return;
+                }
+                self.script_start_selected();
+                if let Some(error) = self.error.clone() {
+                    watch.fail_start(error);
+                }
+            }
+            Some(Operation::Stop) => {
+                let state = self
+                    .play
+                    .as_ref()
+                    .map(|play| play.script_state(&name))
+                    .unwrap_or(script::RunState::Idle);
+                let paint = self
+                    .statuses
+                    .iter()
+                    .find(|s| s.username == name)
+                    .is_some_and(|s| s.script_paint.is_some());
+                match state {
+                    script::RunState::Idle => watch.note_stop(now, true, paint),
+                    script::RunState::Stopping => {}
+                    _ => self.script_stop(),
+                }
+            }
+            Some(Operation::ReloadUnchanged) => match self.script_reload_clicked() {
+                crate::profile_script::ReloadOutcome::NothingChanged => {
+                    watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
+                }
+                other => watch.fail(format!("unchanged reload: {other:?}")),
+            },
+            Some(Operation::ReloadChanged) => {
+                if let Err(error) = apply_harmless_whitespace(&watch.source_path()) {
+                    watch.fail(error);
+                    return;
+                }
+                match self.script_reload(true) {
+                    crate::profile_script::ReloadOutcome::Applied { .. }
+                    | crate::profile_script::ReloadOutcome::NothingChanged => {}
+                    crate::profile_script::ReloadOutcome::Failed(error) => {
+                        watch.fail(format!("changed reload: {error}"));
+                        return;
+                    }
+                    other => {
+                        watch.fail(format!("changed reload: {other:?}"));
+                        return;
+                    }
+                }
+                let count = self
+                    .js
+                    .cards()
+                    .iter()
+                    .filter(|card| card.name == SCRIPT_NAME)
+                    .count();
+                watch.note_reload_changed(count);
+            }
+            Some(Operation::Capture) => watch.note_capture_requested(),
+            _ => {}
+        }
     }
 
     /// Install production launch inputs while the locked panel still exposes
@@ -2049,6 +2276,11 @@ impl Session {
         if self.catalog_core_enabled && self.pair_core_enabled {
             return Err("catalog core and pair core watches are mutually exclusive".into());
         }
+        if self.external_core_enabled && (self.catalog_core_enabled || self.pair_core_enabled) {
+            return Err(
+                "external loader watch is mutually exclusive with catalog/pair core".into(),
+            );
+        }
         let core_case = if self.catalog_core_enabled {
             if names.len() != 1 {
                 return Err("catalog core watch supports exactly one driven slot".into());
@@ -2096,6 +2328,17 @@ impl Session {
                 .paired_core_watch()
                 .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
             watch.configure(case, names[0].clone(), names[1].clone());
+        }
+        if self.external_core_enabled {
+            let frozen = host_play::external_loader::resolve_source(self.external_ts.as_deref())?;
+            let owned = host_play::external_loader::materialize_owned_source(&frozen)?;
+            let watch = host_play::external_loader::ExternalWatch::default();
+            watch.configure(
+                names[0].clone(),
+                owned,
+                host_play::external_loader::FROZEN_SHA256.into(),
+            );
+            self.install_external_core_watch(Some(watch));
         }
         self.mainland
             .store(scenario.seed.mainland, Ordering::Relaxed);
@@ -2593,6 +2836,11 @@ impl Session {
             let mut log_by = self.log_by.lock().unwrap();
             for s in &current {
                 for line in play.script_take_pending_logs(&s.username) {
+                    if let Some(watch) = self.external_core_watch() {
+                        if watch.configured() && watch.account() == s.username {
+                            watch.note_logs(std::slice::from_ref(&line));
+                        }
+                    }
                     push_log(&mut log_by, &s.username, format!("script: {line}"));
                 }
             }

@@ -1480,6 +1480,40 @@ mod tests {
     }
 
     #[test]
+    fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "once.ts", BOT_TS);
+        s.load_js(&path);
+        s.enqueue_transpile(
+            script::ScriptSource::File,
+            path.to_string_lossy().into_owned(),
+            true,
+        );
+        assert_eq!(s.error, None, "{:?}", s.error);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Idle,
+            "load must not Start"
+        );
+        let first =
+            s.js.cards()
+                .iter()
+                .filter(|c| c.source == script::ScriptSource::File)
+                .count();
+        assert_eq!(first, 1);
+        s.load_js(&path);
+        let again =
+            s.js.cards()
+                .iter()
+                .filter(|c| c.source == script::ScriptSource::File)
+                .count();
+        assert_eq!(again, 1, "same path must replace, not duplicate");
+        s.script_start_selected();
+        s.play.as_ref().unwrap().script_stop("alice");
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NothingChanged);
+    }
+
+    #[test]
     fn reload_unchanged_reports_exact_string() {
         let (mut s, dir) = session_with_play(&["alice"]);
         let path = write_bot(&dir, "same.ts", BOT_TS);
