@@ -143,12 +143,13 @@ export function runInDir(from, plot, _dir, occupied, walkable, _canStep, cap) {
         hasWalkable: typeof walkable === 'function', cap,
     });
     if (step.kind === 'callback') {
-        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from) }).run;
+        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from), from, dir: _dir,
+            plot, occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [], cap }).run;
     }
     return step.run || 0;
 }
 
-export function findBurnLane(plot, here, occupied) {
+export function findBurnLane(plot, here, occupied, want = 1, directions = [BURN_WEST]) {
     if (!plot || typeof plot.x0 !== 'number' || typeof plot.x1 !== 'number') {
         throw notImpl('Firemaking.findBurnLane');
     }
@@ -168,13 +169,15 @@ export function findBurnLane(plot, here, occupied) {
         },
         here: here || snap().here || null,
         refused,
+        want: burnLaneWant(want),
+        directions,
     });
     if (!step || step.kind === 'none') return null;
     if (step.kind === 'notImpl') throw notImpl('Firemaking.findBurnLane', step.reason);
     if (step.kind !== 'tile') return null;
     return {
         start: new Tile(step.x, step.z, step.level ?? 0),
-        run: 1,
-        dir: BURN_WEST,
+        run: step.run,
+        dir: step.dir || BURN_WEST,
     };
 }

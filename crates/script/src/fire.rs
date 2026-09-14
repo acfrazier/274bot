@@ -53,6 +53,7 @@ struct ReachBits {
     width: i32,
     height: i32,
     walkable: Vec<u32>,
+    step: Vec<u8>,
 }
 
 impl ReachBits {
@@ -65,6 +66,7 @@ impl ReachBits {
             width: 0,
             height: 0,
             walkable: Vec::new(),
+            step: Vec::new(),
         }
     }
 
@@ -83,6 +85,30 @@ impl ReachBits {
                     level: tile.level,
                 },
             )
+    }
+
+    fn can_step(&self, from: Tile, to: Tile) -> bool {
+        if !self.available || from.level != self.level || to.level != self.level {
+            return false;
+        }
+        let bit = match (to.x - from.x, to.z - from.z) {
+            (-1, -1) => 0,
+            (0, -1) => 1,
+            (1, -1) => 2,
+            (-1, 0) => 3,
+            (1, 0) => 4,
+            (-1, 1) => 5,
+            (0, 1) => 6,
+            (1, 1) => 7,
+            _ => return false,
+        };
+        let lx = from.x - self.base_x;
+        let lz = from.z - self.base_z;
+        if lx < 0 || lz < 0 || lx >= self.width || lz >= self.height {
+            return false;
+        }
+        let i = (lx as usize) * (self.height as usize) + lz as usize;
+        self.step.get(i).is_some_and(|mask| mask & (1 << bit) != 0)
     }
 }
 
@@ -201,6 +227,7 @@ fn reach_bits(reach: crate::isolate_fb::ReachReader<'_>) -> ReachBits {
         width: reach.width(),
         height: reach.height(),
         walkable: reach.walkable(),
+        step: reach.step(),
     }
 }
 
@@ -591,15 +618,58 @@ fn refused_keys(value: Option<&Value>) -> HashSet<(i32, i32)> {
         .collect()
 }
 
-/// One walkable posted-plot tile with no Fire loc and outside `refused`.
-/// Closest Chebyshev to `here`, then smaller x/z. Not a west-lane ranker.
+fn direction_from(value: Option<&Value>) -> Option<(i32, i32)> {
+    let value = value?;
+    Some((i32_field(value, "dx")?, i32_field(value, "dz")?))
+}
+
+fn fire_at(fire_locs: &[Tile], tile: Tile) -> bool {
+    fire_locs.iter().any(|fire| *fire == tile)
+}
+
+fn run_length(
+    start: Tile,
+    direction: (i32, i32),
+    cap: i32,
+    refused: &HashSet<(i32, i32)>,
+    fire_locs: &[Tile],
+    reach: &ReachBits,
+    plot: Plot,
+) -> i32 {
+    let mut current = start;
+    let mut run = 1;
+    while run < cap {
+        let next = Tile {
+            x: current.x + direction.0,
+            z: current.z + direction.1,
+            level: current.level,
+        };
+        if next.x < plot.x0
+            || next.x > plot.x1
+            || next.z < plot.z0
+            || next.z > plot.z1
+            || refused.contains(&(next.x, next.z))
+            || fire_at(fire_locs, next)
+            || !reach.walkable_at(next)
+            || !reach.can_step(current, next)
+        {
+            break;
+        }
+        run += 1;
+        current = next;
+    }
+    run
+}
+
 fn select_burn_tile(
     plot: Plot,
     here: Option<Tile>,
     refused: &HashSet<(i32, i32)>,
     fire_locs: &[Tile],
     reach: &ReachBits,
-) -> Option<Tile> {
+    want: i32,
+    directions: &[(i32, i32)],
+) -> Option<(Tile, (i32, i32), i32)> {
     if plot.x1 < plot.x0 || plot.z1 < plot.z0 {
         return None;
     }
@@ -608,7 +678,7 @@ fn select_burn_tile(
         z: plot.z0,
         level: plot.level,
     });
-    let mut best: Option<(Tile, i32)> = None;
+    let mut best: Option<(Tile, (i32, i32), i32, bool, bool, i32)> = None;
     for z in plot.z0..=plot.z1 {
         for x in plot.x0..=plot.x1 {
             if refused.contains(&(x, z)) {
@@ -628,17 +698,26 @@ fn select_burn_tile(
             if !reach.walkable_at(tile) {
                 continue;
             }
-            let d = (x - here.x).abs().max((z - here.z).abs());
-            let better = match best {
-                None => true,
-                Some((cur, cur_d)) => d < cur_d || (d == cur_d && (x, z) < (cur.x, cur.z)),
-            };
-            if better {
-                best = Some((tile, d));
+            for &direction in directions {
+                let run = run_length(tile, direction, want, refused, fire_locs, reach, plot);
+                let full = run >= want;
+                let west = direction == (-1, 0);
+                let d = (x - here.x).abs().max((z - here.z).abs());
+                let better = match best {
+                    None => true,
+                    Some((cur, _, cur_run, cur_full, cur_west, cur_d)) => {
+                        (full, west, run, -d) > (cur_full, cur_west, cur_run, -cur_d)
+                            || ((full, west, run, d) == (cur_full, cur_west, cur_run, cur_d)
+                                && (x, z) < (cur.x, cur.z))
+                    }
+                };
+                if better {
+                    best = Some((tile, direction, run, full, west, d));
+                }
             }
         }
     }
-    best.map(|(tile, _)| tile)
+    best.map(|(tile, direction, run, _, _, _)| (tile, direction, run))
 }
 
 fn next_tile(input: &Value) -> Value {
@@ -647,6 +726,21 @@ fn next_tile(input: &Value) -> Value {
     };
     let here = tile_from(input.get("here"));
     let refused = refused_keys(input.get("refused"));
+    let want = input
+        .get("want")
+        .and_then(Value::as_i64)
+        .unwrap_or(1)
+        .clamp(1, 27) as i32;
+    let directions = input
+        .get("directions")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| direction_from(Some(row)))
+                .collect::<Vec<_>>()
+        })
+        .filter(|rows| !rows.is_empty())
+        .unwrap_or_else(|| vec![(-1, 0)]);
     let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
         let o = o.borrow();
         (o.reach.clone(), o.fire_locs.clone())
@@ -654,13 +748,14 @@ fn next_tile(input: &Value) -> Value {
     if !reach.available {
         return json!({ "kind": "notImpl", "reason": "missing walkable" });
     }
-    match select_burn_tile(plot, here, &refused, &fire_locs, &reach) {
-        Some(tile) => json!({
+    match select_burn_tile(plot, here, &refused, &fire_locs, &reach, want, &directions) {
+        Some((tile, direction, run)) => json!({
             "kind": "tile",
             "x": tile.x,
             "z": tile.z,
             "level": tile.level,
-            "run": 1,
+            "run": run,
+            "dir": { "dx": direction.0, "dz": direction.1 },
         }),
         None => json!({ "kind": "none" }),
     }
@@ -699,9 +794,33 @@ fn is_burn_west(input: &Value) -> Value {
 
 fn run_in_dir(input: &Value) -> Value {
     if input.get("op").and_then(Value::as_str) == Some("run-in-dir-result") {
+        if !input
+            .get("walkable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return json!({ "kind": "run", "run": 0 });
+        }
+        let (Some(from), Some(plot)) = (
+            tile_from(input.get("from")),
+            input.get("plot").and_then(plot_from),
+        ) else {
+            return json!({ "kind": "run", "run": 0 });
+        };
+        let direction = direction_from(input.get("dir")).unwrap_or((-1, 0));
+        let cap = input
+            .get("cap")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            .floor()
+            .clamp(0.0, 27.0) as i32;
+        let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
+            let o = o.borrow();
+            (o.reach.clone(), o.fire_locs.clone())
+        });
         return json!({
             "kind": "run",
-            "run": if input.get("walkable").and_then(Value::as_bool).unwrap_or(false) { 1 } else { 0 },
+            "run": if cap > 0 { run_length(from, direction, cap, &refused_keys(input.get("occupied")), &fire_locs, &reach, plot) } else { 0 },
         });
     }
     let (Some(from), Some(plot)) = (
@@ -817,6 +936,7 @@ mod tests {
             width,
             height,
             walkable,
+            step: vec![0xff; n],
         }
     }
 
@@ -851,7 +971,9 @@ mod tests {
             z: 3418,
             level: 0,
         };
-        let picked = select_burn_tile(plot(), Some(here), &refused, &fire, &reach).expect("tile");
+        let picked = select_burn_tile(plot(), Some(here), &refused, &fire, &reach, 1, &[(-1, 0)])
+            .expect("tile")
+            .0;
         assert_eq!(
             picked,
             Tile {
@@ -870,15 +992,65 @@ mod tests {
             z: 3419,
             level: 0,
         };
-        let picked =
-            select_burn_tile(plot(), Some(here), &HashSet::new(), &[], &reach).expect("tile");
+        let picked = select_burn_tile(
+            plot(),
+            Some(here),
+            &HashSet::new(),
+            &[],
+            &reach,
+            1,
+            &[(-1, 0)],
+        )
+        .expect("tile")
+        .0;
         assert_eq!(picked, here, "closest tile wins; no west-run ranking");
     }
 
     #[test]
     fn unavailable_reach_is_not_a_guessed_walkable_tile() {
         let reach = ReachBits::empty();
-        assert!(select_burn_tile(plot(), None, &HashSet::new(), &[], &reach).is_none());
+        assert!(
+            select_burn_tile(plot(), None, &HashSet::new(), &[], &reach, 1, &[(-1, 0)]).is_none()
+        );
+    }
+
+    #[test]
+    fn full_requested_lane_beats_closer_single_tile() {
+        let mut reach = reach_covering(
+            &[(3235, 3418), (3236, 3418), (3237, 3418)],
+            3235,
+            3418,
+            4,
+            3,
+        );
+        // The west end has a complete east lane; the current tile is closer
+        // but its west step is blocked by the posted mask.
+        reach.step[(3235 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1 << 4;
+        reach.step[(3236 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1 << 4;
+        let here = Tile {
+            x: 3237,
+            z: 3418,
+            level: 0,
+        };
+        let selected = select_burn_tile(
+            Plot {
+                x0: 3235,
+                x1: 3237,
+                z0: 3418,
+                z1: 3418,
+                level: 0,
+            },
+            Some(here),
+            &HashSet::new(),
+            &[],
+            &reach,
+            3,
+            &[(-1, 0), (1, 0)],
+        )
+        .expect("lane");
+        assert_eq!(selected.0.x, 3235);
+        assert_eq!(selected.1, (1, 0));
+        assert_eq!(selected.2, 3);
     }
 
     #[test]
