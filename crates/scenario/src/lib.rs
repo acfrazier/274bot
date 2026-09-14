@@ -13911,6 +13911,13 @@ fn smithing_bot_variant(
                 count: bar_quantity,
             },
         ),
+        (
+            "confirm no noted bronze bars remain in bank",
+            Proof::BankItemIdAtMost {
+                id: BRONZE_BAR_CERT_ID,
+                count: 0,
+            },
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
@@ -14222,6 +14229,13 @@ fn leather_crafter_variant(
                 count: 100,
             },
         ),
+        (
+            "confirm no noted leather remains in bank",
+            Proof::BankItemIdAtMost {
+                id: leather_note,
+                count: 0,
+            },
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
@@ -14462,6 +14476,13 @@ fn firemaker_variant(
             Proof::BankItemIdAtMost {
                 id: TINDERBOX_ID,
                 count: 1,
+            },
+        ),
+        (
+            "confirm no noted logs remain in bank",
+            Proof::BankItemIdAtMost {
+                id: log_note,
+                count: 0,
             },
         ),
     ] {
