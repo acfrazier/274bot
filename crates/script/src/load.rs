@@ -2609,19 +2609,27 @@ mod isolate {
                         .first()
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("");
-                    Ok(serde_json::json!(crate::canvas::measure_text(text)))
+                    match crate::canvas::measure_text(text) {
+                        Ok(w) => Ok(serde_json::json!(w)),
+                        Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                    }
                 },
             )
             .map_err(|e| format!("register canvas measureText: {e}"))?;
         runtime
-            .register_function("__rs2b0t_canvas_take", |_args: &[serde_json::Value]| {
-                let taken = crate::canvas::take();
-                Ok(serde_json::json!({
-                    "ops": taken.ops,
-                    "overflow": taken.overflow,
-                }))
-            })
-            .map_err(|e| format!("register canvas take: {e}"))?;
+            .register_function(
+                "__rs2b0t_canvas_onpaint_done",
+                |args: &[serde_json::Value]| {
+                    let kind = args
+                        .first()
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
+                    let msg = args.get(1).and_then(serde_json::Value::as_str);
+                    crate::canvas::onpaint_done(kind, msg);
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas onpaint done: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
@@ -3963,8 +3971,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(arr.into())
     }
 
-    /// Forward a paint frame to the host when it differs from the last one
-    /// sent on this isolate thread (skips FlatBuffer encode on quiet ticks).
+    /// Drain the native recorder and compose it with user Paint.end (if any).
+    fn compose_forwarded_paint(
+        runtime: &mut Runtime,
+    ) -> Result<crate::shim::ScriptPaint, rustyscript::Error> {
+        let user: Option<crate::shim::ScriptPaint> =
+            runtime.eval("globalThis.__rs2b0t_host.paint || null")?;
+        Ok(crate::canvas::compose_paint(user))
+    }
     fn forward_paint_if_changed(
         ipc: &mut crate::isolate_fb::IsolateBuf,
         out: &Sender<ThreadMsg>,
@@ -4166,11 +4180,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
                         );
-                        // Forward paint the same as a normal tick.
-                        let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
-                            runtime.eval("globalThis.__rs2b0t_host.paint || null");
-                        match paint {
-                            Ok(Some(frame)) => {
+                        match compose_forwarded_paint(&mut runtime) {
+                            Ok(frame) => {
                                 forward_paint_if_changed(
                                     &mut ipc,
                                     &out,
@@ -4178,7 +4189,6 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                     frame,
                                 );
                             }
-                            Ok(None) => {}
                             Err(e) => {
                                 let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
                             }
@@ -4297,10 +4307,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // in onStart/loop. Invoke it here so the forward always
                     // sees this tick's frame (or the catch/placeholder).
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
-                    let paint: Result<Option<crate::shim::ScriptPaint>, rustyscript::Error> =
-                        runtime.eval("globalThis.__rs2b0t_host.paint || null");
-                    match paint {
-                        Ok(Some(frame)) => {
+                    match compose_forwarded_paint(&mut runtime) {
+                        Ok(frame) => {
                             forward_paint_if_changed(
                                 &mut ipc,
                                 &out,
@@ -4308,7 +4316,6 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 frame,
                             );
                         }
-                        Ok(None) => {}
                         Err(e) => {
                             let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
                         }

@@ -19,14 +19,14 @@ fn spawn(src: &str) -> LoadIsolate {
 }
 
 fn examplebot_source() -> String {
-    let campaign = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/compat/p2-external/ExampleBot.ts");
-    let frozen = PathBuf::from(
-        "/Users/acfrazier/experiments/274bot/.superpowers/inputs/rs2b0t-96410ec5c779f3d8fe537268cae1a21c0174d16c/docs/script-template/src/ExampleBot.ts",
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ExampleBot.ts");
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let pin = script::js_cache::JsCache::origin_sha(&bytes);
+    assert_eq!(
+        pin, "8e8e27cd9c2e57cd6478132e4bfaf910678664898db44915acc08ffc501c0973",
+        "tracked ExampleBot fixture drifted from rs2b0t 96410ec5 script-template"
     );
-    let path = if campaign.is_file() { campaign } else { frozen };
-    let src =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let src = String::from_utf8(bytes).expect("ExampleBot utf-8");
     script::transpile_ts(&src).expect("transpile ExampleBot")
 }
 
@@ -414,4 +414,114 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
         decode_paint(&over).is_err(),
         "oversized canvas vector must fail closed"
     );
+
+    let mut huge_font = old.clone();
+    huge_font.canvas = vec![CanvasOp::FillText {
+        text: "x".into(),
+        x: 0,
+        y: 10,
+        color: 0,
+        font_px: 65535,
+        mono: true,
+    }];
+    let over_font = IsolateBuf::new().encode_paint(&huge_font);
+    assert!(
+        decode_paint(&over_font).is_err(),
+        "decoded font_px must not exceed parser cap 256"
+    );
+}
+
+#[test]
+fn user_onpaint_title_and_paint_end_line_survive_with_canvas() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        const p = Paint.begin(null, { accent: '#ff5555' });
+        p.title('onPaint');
+        p.row('Paint.end was not called');
+        p.end();
+        ctx.fillRect(6, 6, 20, 8);
+        ctx.fillText('banner', 8, 14);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(paint.title.as_deref(), Some("onPaint"));
+    assert_eq!(paint.accent.as_deref(), Some("#ff5555"));
+    assert!(
+        paint.lines.iter().any(|l| l.contains("Paint.end")),
+        "{paint:?}"
+    );
+    assert!(
+        !paint.canvas.is_empty(),
+        "user structured paint must keep canvas: {paint:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn oversized_ops_plant_diagnostic_then_recover() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        const t = globalThis.__rs2b0t_host.tick;
+        if (t === 1) {
+            for (let i = 0; i < 300; i++) ctx.fillRect(i % 50, 1, 1, 1);
+            globalThis.__alive = true;
+            return;
+        }
+        ctx.fillRect(6, 6, 10, 10);
+        ctx.fillText('ok', 8, 14);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let first = tick_paint(&iso, 1);
+    assert_eq!(iso.probe("__alive").unwrap(), true);
+    assert!(first.canvas.is_empty(), "{first:?}");
+    assert!(
+        first.lines.iter().any(|l| l.contains("canvas:")),
+        "bounded diagnostic, not silent drop or Paint.end fallback: {first:?}"
+    );
+    let second = tick_paint(&iso, 2);
+    assert!(!is_fallback(&second) && !is_error(&second), "{second:?}");
+    assert!(!second.canvas.is_empty(), "{second:?}");
+    iso.join();
+}
+
+#[test]
+fn oversized_measure_fails_closed_then_recovers() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        const t = globalThis.__rs2b0t_host.tick;
+        if (t === 1) {
+            ctx.measureText('x'.repeat(600));
+            return;
+        }
+        ctx.fillText('ok', 8, 14);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let first = tick_paint(&iso, 1);
+    assert!(first.canvas.is_empty(), "{first:?}");
+    assert!(
+        first
+            .lines
+            .iter()
+            .any(|l| l.contains("measureText") || l.contains("canvas:")),
+        "{first:?}"
+    );
+    let second = tick_paint(&iso, 2);
+    assert!(
+        second
+            .canvas
+            .iter()
+            .any(|op| matches!(op, CanvasOp::FillText { text, .. } if text == "ok")),
+        "{second:?}"
+    );
+    iso.join();
 }

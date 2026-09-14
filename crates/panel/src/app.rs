@@ -1419,6 +1419,28 @@ fn focused_slot<'a>(
         .find(|s| focused.as_deref() == Some(s.username.as_str()))
 }
 
+fn overlay_script_paint(
+    ui: &Ui,
+    gpu: &mut Gpu,
+    state: &mut PanelState,
+    slot: Option<&host_play::SlotStatus>,
+    min: [f32; 2],
+    size: [f32; 2],
+) {
+    match slot {
+        Some(slot) => {
+            if let Some((id, generation)) =
+                state
+                    .paint
+                    .frame(ui, Some(gpu), slot.script_paint.as_ref(), min, size)
+            {
+                state.session.script_paint_click(&id, generation);
+            }
+        }
+        None => state.paint.release_canvas(gpu),
+    }
+}
+
 /// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
 /// this frame: the smoke's single scene2 shot landing passes the run (the
 /// caller exits 0). Before that, the pure trigger latches scene 2 on the
@@ -1713,15 +1735,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let statuses = state.session.statuses();
-        if let Some(slot) = focused_slot(&state.session, &statuses) {
-            if let Some((id, generation)) =
-                state
-                    .paint
-                    .frame(ui, Some(gpu), slot.script_paint.as_ref(), min, size)
-            {
-                state.session.script_paint_click(&id, generation);
-            }
-        }
+        overlay_script_paint(
+            ui,
+            gpu,
+            state,
+            focused_slot(&state.session, &statuses),
+            min,
+            size,
+        );
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
         // also None).
@@ -1743,6 +1764,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
     } else {
         ui.text_disabled("renderer off");
+        state.paint.release_canvas(gpu);
     }
 }
 
@@ -1754,6 +1776,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let members = state.session.wall.members.clone();
     if members.is_empty() {
         ui.text_disabled("no wall members");
+        state.paint.release_canvas(gpu);
         return;
     }
     let cells = grid_cells(members.len(), avail);
@@ -1823,16 +1846,17 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             }
             if is_focused {
                 draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
-                if let Some(slot) = statuses.iter().find(|s| s.username == *name) {
-                    state.paint.frame(
-                        ui,
-                        Some(gpu),
-                        slot.script_paint.as_ref(),
-                        ui.item_rect_min(),
-                        size,
-                    );
-                }
+                overlay_script_paint(
+                    ui,
+                    gpu,
+                    state,
+                    statuses.iter().find(|s| s.username == *name),
+                    ui.item_rect_min(),
+                    size,
+                );
             }
+        } else if is_focused {
+            state.paint.release_canvas(gpu);
         }
         if cap_fold {
             let next = !preview;

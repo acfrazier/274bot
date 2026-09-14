@@ -18,6 +18,8 @@ pub const APPLET_H: i32 = 503;
 pub const MAX_CANVAS_OPS: usize = 256;
 /// Max UTF-8 bytes per fillText / measureText string.
 pub const MAX_PAINT_TEXT: usize = 512;
+/// Font size cap (CSS parser and decode/raster share this).
+pub const MAX_FONT_PX: u16 = 256;
 
 const SANS_BYTES: &[u8] = include_bytes!("../fonts/LiberationSans-Regular.ttf");
 const MONO_BYTES: &[u8] = include_bytes!("../fonts/LiberationMono-Regular.ttf");
@@ -102,10 +104,26 @@ impl Default for Style {
     }
 }
 
+/// Why this onPaint call failed closed (typed, not inferred from user text).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundFail {
+    Ops,
+    Text,
+}
+
+/// Wrapper-reported onPaint result. Never inferred from title/accent/lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnPaintOutcome {
+    Success,
+    Missing,
+    Error(String),
+}
+
 struct Recorder {
     style: Style,
     ops: Vec<CanvasOp>,
     overflow: bool,
+    fail: Option<BoundFail>,
 }
 
 impl Recorder {
@@ -114,6 +132,7 @@ impl Recorder {
             style: Style::default(),
             ops: Vec::new(),
             overflow: false,
+            fail: None,
         }
     }
 
@@ -121,12 +140,19 @@ impl Recorder {
         *self = Self::new();
     }
 
+    fn fail(&mut self, kind: BoundFail) {
+        self.overflow = true;
+        if self.fail.is_none() {
+            self.fail = Some(kind);
+        }
+    }
+
     fn push(&mut self, op: CanvasOp) {
         if self.overflow {
             return;
         }
         if self.ops.len() >= MAX_CANVAS_OPS {
-            self.overflow = true;
+            self.fail(BoundFail::Ops);
             return;
         }
         self.ops.push(op);
@@ -135,11 +161,23 @@ impl Recorder {
 
 thread_local! {
     static RECORDER: RefCell<Recorder> = RefCell::new(Recorder::new());
+    static OUTCOME: RefCell<Option<OnPaintOutcome>> = const { RefCell::new(None) };
 }
 
 /// Start a new per-call recorder (HTML 2D defaults).
 pub fn begin() {
     RECORDER.with(|r| r.borrow_mut().reset());
+    OUTCOME.with(|o| *o.borrow_mut() = None);
+}
+
+/// Record the wrapper's typed onPaint result (`0` ok, `1` missing, `2` error).
+pub fn onpaint_done(kind: i64, message: Option<&str>) {
+    let outcome = match kind {
+        1 => OnPaintOutcome::Missing,
+        2 => OnPaintOutcome::Error(message.unwrap_or("onPaint").to_string()),
+        _ => OnPaintOutcome::Success,
+    };
+    OUTCOME.with(|o| *o.borrow_mut() = Some(outcome));
 }
 
 /// CSS `font` getter (last accepted string).
@@ -177,33 +215,45 @@ pub fn set_style(prop: &str, value: &str) {
 }
 
 pub fn fill_rect(x: f64, y: f64, w: f64, h: f64) {
+    let Some(x) = round_px(x) else {
+        return;
+    };
+    let Some(y) = round_px(y) else {
+        return;
+    };
+    let Some(w) = round_px(w) else {
+        return;
+    };
+    let Some(h) = round_px(h) else {
+        return;
+    };
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
         let color = rec.style.fill;
-        rec.push(CanvasOp::FillRect {
-            x: round_px(x),
-            y: round_px(y),
-            w: round_px(w),
-            h: round_px(h),
-            color,
-        });
+        rec.push(CanvasOp::FillRect { x, y, w, h, color });
     });
 }
 
 pub fn fill_text(text: &str, x: f64, y: f64) {
+    let Some(x) = round_px(x) else {
+        return;
+    };
+    let Some(y) = round_px(y) else {
+        return;
+    };
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
         if text.len() > MAX_PAINT_TEXT {
-            rec.overflow = true;
+            rec.fail(BoundFail::Text);
             return;
         }
         let color = rec.style.fill;
-        let font_px = rec.style.font_px;
+        let font_px = rec.style.font_px.min(MAX_FONT_PX).max(1);
         let mono = rec.style.mono;
         rec.push(CanvasOp::FillText {
             text: text.to_string(),
-            x: round_px(x),
-            y: round_px(y),
+            x,
+            y,
             color,
             font_px,
             mono,
@@ -211,21 +261,26 @@ pub fn fill_text(text: &str, x: f64, y: f64) {
     });
 }
 
-/// Advance-sum width for the current font. Never a constant.
-pub fn measure_text(text: &str) -> f64 {
+/// Advance-sum width for the current font. Oversized input fails closed
+/// instead of inventing width 0.
+pub fn measure_text(text: &str) -> Result<f64, String> {
     if text.len() > MAX_PAINT_TEXT {
-        return 0.0;
+        RECORDER.with(|r| r.borrow_mut().fail(BoundFail::Text));
+        return Err(format!(
+            "canvas: measureText exceeds {MAX_PAINT_TEXT} byte cap"
+        ));
     }
     RECORDER.with(|r| {
         let rec = r.borrow();
-        measure_with(rec.style.font_px, rec.style.mono, text)
+        Ok(measure_with(rec.style.font_px, rec.style.mono, text))
     })
 }
 
 /// Same metrics as [`measure_text`] for a concrete face/size (tests / panel).
 pub fn measure_with(font_px: u16, mono: bool, text: &str) -> f64 {
+    let font_px = font_px.min(MAX_FONT_PX).max(1);
     let font = font_for(mono);
-    let scale = PxScale::from(font_px.max(1) as f32);
+    let scale = PxScale::from(font_px as f32);
     let scaled = font.as_scaled(scale);
     let mut width = 0.0f32;
     for ch in text.chars() {
@@ -237,24 +292,106 @@ pub fn measure_with(font_px: u16, mono: bool, text: &str) -> f64 {
 pub struct Take {
     pub ops: Vec<CanvasOp>,
     pub overflow: bool,
+    pub fail: Option<&'static str>,
+}
+
+impl Take {
+    fn fail_message(&self) -> Option<&'static str> {
+        self.fail
+    }
 }
 
 /// Drain this call's ops. Overflow means the frame must drop canvas.
 pub fn take() -> Take {
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
+        let fail = match rec.fail {
+            Some(BoundFail::Ops) => Some("canvas: exceeded 256 ops"),
+            Some(BoundFail::Text) => Some("canvas: text exceeds 512 byte cap"),
+            None => None,
+        };
         Take {
             ops: std::mem::take(&mut rec.ops),
             overflow: rec.overflow,
+            fail,
         }
     })
 }
 
-fn round_px(v: f64) -> i32 {
+fn take_outcome() -> OnPaintOutcome {
+    OUTCOME.with(|o| o.borrow_mut().take().unwrap_or(OnPaintOutcome::Success))
+}
+
+fn diagnostic_paint(accent: bool, line: &str) -> crate::shim::ScriptPaint {
+    crate::shim::ScriptPaint {
+        title: Some("onPaint".into()),
+        accent: accent.then(|| "#ff5555".into()),
+        lines: vec![line.to_string()],
+        buttons: Vec::new(),
+        generation: 0,
+        canvas: Vec::new(),
+    }
+}
+
+fn canvas_only(ops: Vec<CanvasOp>) -> crate::shim::ScriptPaint {
+    crate::shim::ScriptPaint {
+        title: None,
+        accent: None,
+        lines: Vec::new(),
+        buttons: Vec::new(),
+        generation: 0,
+        canvas: ops,
+    }
+}
+
+fn user_has_structured(paint: &crate::shim::ScriptPaint) -> bool {
+    paint.title.is_some() || !paint.lines.is_empty() || !paint.buttons.is_empty()
+}
+
+/// Compose this call's native recorder with user `Paint.end` state.
+/// Wrapper diagnostics are typed (`OnPaintOutcome`); user title/accent/lines
+/// are never used as provenance.
+pub fn compose_paint(user: Option<crate::shim::ScriptPaint>) -> crate::shim::ScriptPaint {
+    let outcome = take_outcome();
+    let taken = take();
+    match outcome {
+        OnPaintOutcome::Missing => diagnostic_paint(true, "no onPaint on bot"),
+        OnPaintOutcome::Error(msg) => diagnostic_paint(true, &msg),
+        OnPaintOutcome::Success => {
+            if let Some(msg) = taken.fail_message() {
+                return diagnostic_paint(true, msg);
+            }
+            if !taken.ops.is_empty() {
+                return match user {
+                    Some(mut paint) if user_has_structured(&paint) => {
+                        paint.canvas = taken.ops;
+                        paint
+                    }
+                    _ => canvas_only(taken.ops),
+                };
+            }
+            match user {
+                Some(mut paint) if user_has_structured(&paint) => {
+                    paint.canvas = Vec::new();
+                    paint
+                }
+                _ => diagnostic_paint(false, "onPaint ran but Paint.end was not called"),
+            }
+        }
+    }
+}
+
+fn round_px(v: f64) -> Option<i32> {
     if !v.is_finite() {
-        0
+        return None;
+    }
+    let r = v.round();
+    if r > i32::MAX as f64 {
+        Some(i32::MAX)
+    } else if r < i32::MIN as f64 {
+        Some(i32::MIN)
     } else {
-        v.round() as i32
+        Some(r as i32)
     }
 }
 
@@ -347,7 +484,7 @@ pub fn parse_font(input: &str) -> Option<(u16, bool)> {
         return None;
     }
     let size: f64 = s[start..px].parse().ok()?;
-    if !size.is_finite() || size <= 0.0 || size > 256.0 {
+    if !size.is_finite() || size <= 0.0 || size > f64::from(MAX_FONT_PX) {
         return None;
     }
     let family = s[px + 2..]
@@ -379,39 +516,45 @@ pub struct DirtyRect {
 
 impl DirtyRect {
     fn union(self, other: DirtyRect) -> DirtyRect {
-        let x1 = self.x.min(other.x);
-        let y1 = self.y.min(other.y);
-        let x2 = (self.x + self.w).max(other.x + other.w);
-        let y2 = (self.y + self.h).max(other.y + other.h);
+        let x1 = (self.x as i64).min(other.x as i64);
+        let y1 = (self.y as i64).min(other.y as i64);
+        let x2 = (self.x as i64 + self.w as i64).max(other.x as i64 + other.w as i64);
+        let y2 = (self.y as i64 + self.h as i64).max(other.y as i64 + other.h as i64);
         DirtyRect {
-            x: x1,
-            y: y1,
-            w: x2 - x1,
-            h: y2 - y1,
+            x: x1 as i32,
+            y: y1 as i32,
+            w: (x2 - x1) as i32,
+            h: (y2 - y1) as i32,
         }
     }
 
     fn clip_applet(self) -> Option<DirtyRect> {
-        let x1 = self.x.max(0);
-        let y1 = self.y.max(0);
-        let x2 = (self.x + self.w).min(APPLET_W);
-        let y2 = (self.y + self.h).min(APPLET_H);
-        if x2 <= x1 || y2 <= y1 {
-            None
-        } else {
-            Some(DirtyRect {
-                x: x1,
-                y: y1,
-                w: x2 - x1,
-                h: y2 - y1,
-            })
-        }
+        clip_to_applet(self.x as i64, self.y as i64, self.w as i64, self.h as i64)
     }
 }
 
-fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i32, i32, i32, i32)> {
-    let (mut x, mut w) = (x, w);
-    let (mut y, mut h) = (y, h);
+fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect> {
+    let x1 = x.max(0);
+    let y1 = y.max(0);
+    let x2 = x.saturating_add(w).min(i64::from(APPLET_W));
+    let y2 = y.saturating_add(h).min(i64::from(APPLET_H));
+    if x2 <= x1 || y2 <= y1 {
+        None
+    } else {
+        Some(DirtyRect {
+            x: x1 as i32,
+            y: y1 as i32,
+            w: (x2 - x1) as i32,
+            h: (y2 - y1) as i32,
+        })
+    }
+}
+
+fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i64, i64, i64, i64)> {
+    let mut x = i64::from(x);
+    let mut y = i64::from(y);
+    let mut w = i64::from(w);
+    let mut h = i64::from(h);
     if w < 0 {
         x += w;
         w = -w;
@@ -427,28 +570,30 @@ fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i32, i32, i32, i32)
     }
 }
 
-fn text_dirty(op_x: i32, op_y: i32, font_px: u16, mono: bool, text: &str) -> DirtyRect {
-    let font = font_for(mono);
-    let scale = PxScale::from(font_px.max(1) as f32);
-    let scaled = font.as_scaled(scale);
-    let width = measure_with(font_px, mono, text).ceil() as i32;
-    let ascent = scaled.ascent().ceil() as i32;
-    let descent = scaled.descent().abs().ceil() as i32;
-    // Glyphs can overhang the advance box; pad by one em.
-    let pad = font_px as i32;
-    DirtyRect {
-        x: op_x - pad,
-        y: op_y - ascent - pad,
-        w: width + pad * 2,
-        h: ascent + descent + pad * 2,
+fn text_dirty(op_x: i32, op_y: i32, font_px: u16, mono: bool, text: &str) -> Option<DirtyRect> {
+    if font_px == 0 || font_px > MAX_FONT_PX {
+        return None;
     }
+    let font = font_for(mono);
+    let scale = PxScale::from(font_px as f32);
+    let scaled = font.as_scaled(scale);
+    let width = measure_with(font_px, mono, text).ceil() as i64;
+    let ascent = scaled.ascent().ceil() as i64;
+    let descent = scaled.descent().abs().ceil() as i64;
+    let pad = i64::from(font_px);
+    clip_to_applet(
+        i64::from(op_x) - pad,
+        i64::from(op_y) - ascent - pad,
+        width + pad * 2,
+        ascent + descent + pad * 2,
+    )
 }
 
 fn op_dirty(op: &CanvasOp) -> Option<DirtyRect> {
     match op {
         CanvasOp::FillRect { x, y, w, h, .. } => {
             let (x, y, w, h) = normalize_rect(*x, *y, *w, *h)?;
-            Some(DirtyRect { x, y, w, h })
+            clip_to_applet(x, y, w, h)
         }
         CanvasOp::FillText {
             text,
@@ -457,8 +602,13 @@ fn op_dirty(op: &CanvasOp) -> Option<DirtyRect> {
             font_px,
             mono,
             ..
-        } => Some(text_dirty(*x, *y, *font_px, *mono, text)),
+        } => text_dirty(*x, *y, *font_px, *mono, text),
     }
+}
+
+/// True when a decoded/recorded font size is inside the parser cap.
+pub fn font_px_allowed(font_px: u16) -> bool {
+    font_px > 0 && font_px <= MAX_FONT_PX
 }
 
 /// Union of op bounds, clipped to the applet. None if nothing is visible.
@@ -510,6 +660,9 @@ pub fn rasterize(ops: &[CanvasOp]) -> Option<Raster> {
                 if text.len() > MAX_PAINT_TEXT {
                     continue;
                 }
+                if *font_px == 0 || *font_px > MAX_FONT_PX {
+                    continue;
+                }
                 fill_text_into(&mut rgba, dirty, text, *x, *y, *color, *font_px, *mono);
             }
         }
@@ -523,17 +676,23 @@ pub fn rasterize(ops: &[CanvasOp]) -> Option<Raster> {
     })
 }
 
-fn fill_rect_into(rgba: &mut [u8], dirty: DirtyRect, x: i32, y: i32, w: i32, h: i32, color: u32) {
-    let x1 = x.max(dirty.x).max(0);
-    let y1 = y.max(dirty.y).max(0);
-    let x2 = (x + w).min(dirty.x + dirty.w).min(APPLET_W);
-    let y2 = (y + h).min(dirty.y + dirty.h).min(APPLET_H);
+fn fill_rect_into(rgba: &mut [u8], dirty: DirtyRect, x: i64, y: i64, w: i64, h: i64, color: u32) {
+    let x1 = x.max(i64::from(dirty.x)).max(0);
+    let y1 = y.max(i64::from(dirty.y)).max(0);
+    let x2 = x
+        .saturating_add(w)
+        .min(i64::from(dirty.x) + i64::from(dirty.w))
+        .min(i64::from(APPLET_W));
+    let y2 = y
+        .saturating_add(h)
+        .min(i64::from(dirty.y) + i64::from(dirty.h))
+        .min(i64::from(APPLET_H));
     if x2 <= x1 || y2 <= y1 {
         return;
     }
     for py in y1..y2 {
         for px in x1..x2 {
-            blend_pixel(rgba, dirty, px, py, color, 1.0);
+            blend_pixel(rgba, dirty, px as i32, py as i32, color, 1.0);
         }
     }
 }
@@ -548,8 +707,14 @@ fn fill_text_into(
     font_px: u16,
     mono: bool,
 ) {
+    if font_px == 0 || font_px > MAX_FONT_PX {
+        return;
+    }
+    if text_dirty(x, y, font_px, mono, text).is_none() {
+        return;
+    }
     let font = font_for(mono);
-    let scale = PxScale::from(font_px.max(1) as f32);
+    let scale = PxScale::from(font_px as f32);
     let scaled = font.as_scaled(scale);
     let mut pen = x as f32;
     let baseline = y as f32;
@@ -558,6 +723,18 @@ fn fill_text_into(
         let glyph = gid.with_scale_and_position(scale, point(pen, baseline));
         if let Some(outlined) = font.outline_glyph(glyph) {
             let bounds = outlined.px_bounds();
+            let gx0 = bounds.min.x.round() as i64;
+            let gy0 = bounds.min.y.round() as i64;
+            let gx1 = bounds.max.x.round() as i64;
+            let gy1 = bounds.max.y.round() as i64;
+            if gx1 < i64::from(dirty.x)
+                || gy1 < i64::from(dirty.y)
+                || gx0 >= i64::from(dirty.x) + i64::from(dirty.w)
+                || gy0 >= i64::from(dirty.y) + i64::from(dirty.h)
+            {
+                pen += scaled.h_advance(gid);
+                continue;
+            }
             outlined.draw(|gx, gy, cov| {
                 if cov <= 0.0 {
                     return;
@@ -676,11 +853,11 @@ mod tests {
     fn measure_text_is_not_width_seven() {
         reset();
         set_style("font", "12px monospace");
-        let w = measure_text("BoneBurier (external)  buried 0");
+        let w = measure_text("BoneBurier (external)  buried 0").unwrap();
         assert!(w > 7.0, "real advance width, got {w}");
         let same = measure_with(12, true, "BoneBurier (external)  buried 0");
         assert!((w - same).abs() < 0.01);
-        let short = measure_text("x");
+        let short = measure_text("x").unwrap();
         assert!(w > short);
         let sans = measure_with(12, false, "BoneBurier (external)  buried 0");
         assert!(
@@ -694,7 +871,7 @@ mod tests {
         reset();
         set_style("font", "12px monospace");
         let text = "BoneBurier (external)  buried 0";
-        let width = measure_text(text);
+        let width = measure_text(text).unwrap();
         set_style("fillStyle", "rgba(0, 0, 0, 0.6)");
         fill_rect(6.0, 6.0, width + 12.0, 24.0);
         set_style("fillStyle", "#ffb15b");
@@ -794,5 +971,82 @@ mod tests {
         assert!((half[1] - 3.0).abs() < 0.01);
         assert!((half[2] - 200.0).abs() < 0.01);
         assert!((half[3] - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn extremes_do_not_panic_and_negative_dims_clip() {
+        let max = vec![CanvasOp::FillRect {
+            x: i32::MAX,
+            y: 0,
+            w: 1,
+            h: 1,
+            color: pack_rgba(255, 0, 0, 255),
+        }];
+        assert!(rasterize(&max).is_none());
+        let min_dim = vec![CanvasOp::FillRect {
+            x: 10,
+            y: 10,
+            w: i32::MIN,
+            h: i32::MIN,
+            color: pack_rgba(0, 255, 0, 255),
+        }];
+        let _ = rasterize(&min_dim);
+        let neg = vec![CanvasOp::FillRect {
+            x: 20,
+            y: 20,
+            w: -10,
+            h: -10,
+            color: pack_rgba(0, 0, 255, 255),
+        }];
+        let raster = rasterize(&neg).unwrap();
+        assert_eq!(raster.x, 10);
+        assert_eq!(raster.y, 10);
+        let off_text = vec![CanvasOp::FillText {
+            text: "hi".into(),
+            x: i32::MAX,
+            y: i32::MIN,
+            color: pack_rgba(255, 255, 255, 255),
+            font_px: 12,
+            mono: true,
+        }];
+        assert!(rasterize(&off_text).is_none());
+        reset();
+        fill_rect(f64::NAN, 0.0, 10.0, 10.0);
+        fill_rect(0.0, f64::INFINITY, 10.0, 10.0);
+        fill_text("x", f64::NEG_INFINITY, 10.0);
+        let taken = take();
+        assert!(taken.ops.is_empty());
+        reset();
+        let err = measure_text(&"x".repeat(MAX_PAINT_TEXT + 1)).unwrap_err();
+        assert!(err.contains("measureText"));
+        onpaint_done(0, None);
+        let composed = compose_paint(None);
+        assert!(composed.canvas.is_empty());
+        assert!(composed.lines.iter().any(|l| l.contains("canvas:")));
+        reset();
+        onpaint_done(0, None);
+        fill_rect(6.0, 6.0, 10.0, 10.0);
+        let recovered = compose_paint(None);
+        assert_eq!(recovered.canvas.len(), 1);
+    }
+
+    #[test]
+    fn compose_keeps_user_onpaint_title() {
+        reset();
+        onpaint_done(0, None);
+        fill_rect(6.0, 6.0, 8.0, 8.0);
+        let user = crate::shim::ScriptPaint {
+            title: Some("onPaint".into()),
+            accent: Some("#ff5555".into()),
+            lines: vec!["Paint.end was not called".into()],
+            buttons: Vec::new(),
+            generation: 0,
+            canvas: Vec::new(),
+        };
+        let composed = compose_paint(Some(user));
+        assert_eq!(composed.title.as_deref(), Some("onPaint"));
+        assert_eq!(composed.accent.as_deref(), Some("#ff5555"));
+        assert_eq!(composed.lines[0], "Paint.end was not called");
+        assert_eq!(composed.canvas.len(), 1);
     }
 }

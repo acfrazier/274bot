@@ -4300,6 +4300,12 @@ impl CanvasOpReader<'_> {
                     ));
                 }
                 let font_px = unsafe { self.tab.get::<u16>(VT_CANVAS_FONT_PX, None) }.unwrap_or(10);
+                if !crate::canvas::font_px_allowed(font_px) {
+                    return Err(format!(
+                        "canvas font_px {font_px} exceeds cap {}",
+                        crate::canvas::MAX_FONT_PX
+                    ));
+                }
                 let mono = unsafe { self.tab.get::<bool>(VT_CANVAS_MONO, None) }.unwrap_or(false);
                 Ok(crate::canvas::CanvasOp::FillText {
                     text: text.to_string(),

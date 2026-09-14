@@ -150,41 +150,20 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
 globalThis.__rs2b0t_call_on_paint = (bot) => {
     bot = bot || globalThis.__rs_bot;
     const h = globalThis.__rs2b0t_host;
+    const fn = globalThis.rustyscript.functions;
     if (!bot || typeof bot.onPaint !== 'function') {
-        h.paint = { title: 'onPaint', accent: '#ff5555', lines: ['no onPaint on bot'] };
+        fn.__rs2b0t_canvas_begin();
+        fn.__rs2b0t_canvas_onpaint_done(1);
         return;
     }
     const ctx = globalThis.__rs2b0t_make_paint_ctx();
     try {
         bot.onPaint(ctx);
+        fn.__rs2b0t_canvas_onpaint_done(0);
     } catch (e) {
         const msg = String((e && e.message) || e);
-        h.paint = { title: 'onPaint', accent: '#ff5555', lines: [msg] };
         h.lastError = msg;
-        return;
-    }
-    const taken = globalThis.rustyscript.functions.__rs2b0t_canvas_take();
-    const ops = (!taken || taken.overflow) ? [] : (taken.ops || []);
-    const isBanner = (p) => {
-        if (!p) return false;
-        if (p.title === 'onPaint' && p.accent === '#ff5555') return true;
-        const lines = p.lines || [];
-        return p.title === 'onPaint' && lines.some((l) => String(l).indexOf('Paint.end') >= 0 || String(l).indexOf('no onPaint') >= 0);
-    };
-    const hasStructured = (p) => {
-        if (!p || isBanner(p)) return false;
-        return !!(p.title || (p.lines && p.lines.length) || (p.buttons && p.buttons.length));
-    };
-    if (ops.length) {
-        if (hasStructured(h.paint)) {
-            h.paint.canvas = ops;
-        } else {
-            h.paint = { title: null, lines: [], buttons: [], canvas: ops };
-        }
-    } else if (hasStructured(h.paint)) {
-        h.paint.canvas = [];
-    } else {
-        h.paint = { title: 'onPaint', lines: ['onPaint ran but Paint.end was not called'] };
+        fn.__rs2b0t_canvas_onpaint_done(2, msg);
     }
 };
 "#;

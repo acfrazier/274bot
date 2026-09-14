@@ -1,0 +1,4 @@
+Tracked unchanged copy of rs2b0t 96410ec5 docs/script-template/src/ExampleBot.ts
+(commit 96410ec5c779f3d8fe537268cae1a21c0174d16c). SHA-256:
+8e8e27cd9c2e57cd6478132e4bfaf910678664898db44915acc08ffc501c0973
+Do not edit this fixture; pin is the byte hash. Not a catalog rewrite.
