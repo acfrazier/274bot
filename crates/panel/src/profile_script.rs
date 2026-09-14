@@ -1,7 +1,7 @@
 //! Per-profile script assignment, bulk Start/Stop, live settings, reload
 //! and catalog refresh. Session is the integration owner.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
@@ -13,9 +13,12 @@ pub struct ReloadWarning {
     pub identity_key: String,
     pub source: script::ScriptSource,
     pub lookup: String,
+    pub fingerprint: String,
+    pub epoch: u64,
     pub running: Vec<String>,
     pub paused: Vec<String>,
     pub paused_during_prep: Vec<String>,
+    pub affected_generations: Vec<(String, u64)>,
 }
 
 impl Default for ReloadWarning {
@@ -24,11 +27,33 @@ impl Default for ReloadWarning {
             identity_key: String::new(),
             source: script::ScriptSource::Catalog,
             lookup: String::new(),
+            fingerprint: String::new(),
+            epoch: 0,
             running: Vec::new(),
             paused: Vec::new(),
             paused_during_prep: Vec::new(),
+            affected_generations: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingReloadKind {
+    Manual,
+    Catalog {
+        root: PathBuf,
+        added: Vec<String>,
+        removed: Vec<String>,
+        failed: Vec<(String, String)>,
+        set_fingerprint: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingReload {
+    pub warning: ReloadWarning,
+    pub prepared: Vec<script::PreparedCard>,
+    pub kind: PendingReloadKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +63,7 @@ pub enum ReloadOutcome {
     Applied {
         restarted: usize,
         stopped_paused: usize,
+        failed: usize,
     },
     Failed(String),
 }
@@ -374,8 +400,7 @@ impl Session {
             }
         }
         self.reload_generation = self.reload_generation.wrapping_add(1);
-        self.reload_warning = None;
-        self.catalog_refresh_confirm = false;
+        self.clear_pending_reload();
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_script_report.as_deref() == Some(report.as_str()) {
             return;
@@ -386,20 +411,36 @@ impl Session {
         }
     }
 
-    /// Product Reload click: preview first, confirm only after a warning.
+    fn clear_pending_reload(&mut self) {
+        self.reload_warning = None;
+        self.pending_reload = None;
+        self.catalog_refresh_confirm = false;
+    }
+
+    fn install_pending(&mut self, pending: PendingReload) {
+        self.reload_warning = Some(pending.warning.clone());
+        self.catalog_refresh_confirm = matches!(pending.kind, PendingReloadKind::Catalog { .. });
+        self.pending_reload = Some(pending);
+    }
+
+    /// Product Reload click: preview first, confirm only a bound warning.
     pub fn script_reload_clicked(&mut self) -> ReloadOutcome {
-        if self.reload_warning.is_some() {
-            self.script_reload(true)
-        } else {
-            self.script_reload(false)
-        }
+        self.script_reload(self.manual_pending_binds_current())
     }
 
     pub fn script_reload(&mut self, commit: bool) -> ReloadOutcome {
-        let Some(name) = self.focused_name() else {
-            return ReloadOutcome::Failed("no focused profile".into());
+        let Some((source, lookup)) = self.current_reload_target() else {
+            return ReloadOutcome::Failed("no script to reload".into());
         };
-        let (source, lookup) = match self
+        if commit && self.manual_pending_binds(source, &lookup) {
+            return self.commit_manual_pending();
+        }
+        self.preview_manual_reload(source, lookup)
+    }
+
+    fn current_reload_target(&self) -> Option<(script::ScriptSource, String)> {
+        let name = self.focused_name()?;
+        match self
             .pending_browse
             .get(&name)
             .cloned()
@@ -407,17 +448,51 @@ impl Session {
             .or_else(|| {
                 self.profile_assignment(&name)
                     .and_then(|a| sel_from_assignment(&a))
-            }) {
-            Some(script::ScriptSel::Loaded(source, lookup)) => (source, lookup),
-            Some(script::ScriptSel::Compiled(_)) => {
-                return ReloadOutcome::Failed("compiled scripts have no file to reload".into());
-            }
-            None => return ReloadOutcome::Failed("no script to reload".into()),
+            })? {
+            script::ScriptSel::Loaded(source, lookup) => Some((source, lookup)),
+            script::ScriptSel::Compiled(_) => None,
+        }
+    }
+
+    fn manual_pending_binds_current(&self) -> bool {
+        self.current_reload_target()
+            .is_some_and(|(source, lookup)| self.manual_pending_binds(source, &lookup))
+    }
+
+    fn manual_pending_binds(&self, source: script::ScriptSource, lookup: &str) -> bool {
+        let Some(pending) = self.pending_reload.as_ref() else {
+            return false;
         };
+        if !matches!(pending.kind, PendingReloadKind::Manual) {
+            return false;
+        }
+        let w = &pending.warning;
+        if w.epoch != self.reload_generation || w.source != source {
+            return false;
+        }
+        if !lookups_match(source, &w.lookup, lookup) {
+            return false;
+        }
+        let Ok(fingerprint) = self.js.disk_fingerprint(source, lookup) else {
+            return false;
+        };
+        w.fingerprint == fingerprint
+    }
+
+    fn preview_manual_reload(
+        &mut self,
+        source: script::ScriptSource,
+        lookup: String,
+    ) -> ReloadOutcome {
         match self.js.raw_source_changed(source, &lookup) {
             Ok(false) => {
                 self.error = Some(script::NOTHING_CHANGED_RELOAD.into());
-                self.reload_warning = None;
+                if matches!(
+                    self.pending_reload.as_ref().map(|p| &p.kind),
+                    Some(PendingReloadKind::Manual)
+                ) {
+                    self.clear_pending_reload();
+                }
                 return ReloadOutcome::NothingChanged;
             }
             Ok(true) => {}
@@ -431,31 +506,15 @@ impl Session {
             .get(source, &lookup)
             .map(|c| c.identity_key())
             .unwrap_or_default();
-        let (running, paused) = self.slots_with_identity(&key);
-        let baseline_running = if commit {
-            self.reload_warning
-                .as_ref()
-                .map(|w| w.running.clone())
-                .unwrap_or_else(|| running.clone())
-        } else {
-            running.clone()
-        };
-        if !commit {
-            let warning = ReloadWarning {
-                identity_key: key.clone(),
-                source,
-                lookup: lookup.clone(),
-                running,
-                paused,
-                paused_during_prep: Vec::new(),
-            };
-            self.reload_warning = Some(warning.clone());
-            if !warning.running.is_empty() || !warning.paused.is_empty() {
-                self.error = Some(reload_warning_text(&warning));
-                return ReloadOutcome::NeedsConfirm;
+        let fingerprint = match self.js.disk_fingerprint(source, &lookup) {
+            Ok(fp) => fp,
+            Err(e) => {
+                self.error = Some(format!("reload: {e}"));
+                return ReloadOutcome::Failed(e);
             }
-        }
-        let prep_gen = self.reload_generation;
+        };
+        let (running, paused) = self.slots_with_identity(&key);
+        let epoch = self.reload_generation;
         let prepared = match self.js.prepare_card(source, &lookup) {
             Ok(p) => p,
             Err(e) => {
@@ -463,57 +522,228 @@ impl Session {
                 return ReloadOutcome::Failed(e);
             }
         };
-        if self.reload_generation != prep_gen {
+        if self.reload_generation != epoch {
             return ReloadOutcome::Failed("reload cancelled".into());
         }
         let (running_now, paused_now) = self.slots_with_identity(&key);
-        let already_warned_pause = self
-            .reload_warning
-            .as_ref()
-            .is_some_and(|w| !w.paused_during_prep.is_empty());
         let paused_during: Vec<String> = paused_now
             .iter()
-            .filter(|n| baseline_running.iter().any(|r| r == *n))
+            .filter(|n| running.iter().any(|r| r == *n))
             .cloned()
             .collect();
-        if !paused_during.is_empty() && !already_warned_pause {
-            let warning = ReloadWarning {
-                identity_key: key.clone(),
-                source,
-                lookup: lookup.clone(),
-                running: running_now.clone(),
-                paused: paused_now.clone(),
-                paused_during_prep: paused_during,
-            };
-            self.reload_warning = Some(warning.clone());
+        let warning = ReloadWarning {
+            identity_key: key,
+            source,
+            lookup,
+            fingerprint,
+            epoch,
+            running: running_now,
+            paused: paused_now,
+            paused_during_prep: paused_during,
+            affected_generations: self.generations_for(
+                &running
+                    .iter()
+                    .chain(paused.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        let needs_warn = !warning.running.is_empty()
+            || !warning.paused.is_empty()
+            || !warning.paused_during_prep.is_empty();
+        if needs_warn {
             self.error = Some(reload_warning_text(&warning));
+            self.install_pending(PendingReload {
+                warning,
+                prepared: vec![prepared],
+                kind: PendingReloadKind::Manual,
+            });
             return ReloadOutcome::NeedsConfirm;
         }
-        if let Err(e) = self.js.commit_prepared(prepared.clone()) {
-            self.error = Some(format!("reload: {e}"));
-            return ReloadOutcome::Failed(e);
+        self.apply_prepared_reload(vec![prepared], warning)
+    }
+
+    fn commit_manual_pending(&mut self) -> ReloadOutcome {
+        let Some(mut pending) = self.pending_reload.take() else {
+            return ReloadOutcome::Failed("no pending reload".into());
+        };
+        if pending.warning.epoch != self.reload_generation {
+            self.clear_pending_reload();
+            return ReloadOutcome::Failed("reload cancelled".into());
         }
+        if let Some(paused_during) = self.newly_paused_during(&pending.warning) {
+            pending.warning.paused_during_prep = paused_during;
+            let (running_now, paused_now) = self.slots_with_identity(&pending.warning.identity_key);
+            pending.warning.running = running_now;
+            pending.warning.paused = paused_now;
+            self.error = Some(reload_warning_text(&pending.warning));
+            self.install_pending(pending);
+            return ReloadOutcome::NeedsConfirm;
+        }
+        self.apply_prepared_reload(pending.prepared, pending.warning)
+    }
+
+    fn newly_paused_during(&self, warning: &ReloadWarning) -> Option<Vec<String>> {
+        let mut found = Vec::new();
+        for name in &warning.running {
+            let paused_now = self
+                .play
+                .as_ref()
+                .is_some_and(|p| p.script_state(name) == script::RunState::Paused);
+            if paused_now && !warning.paused_during_prep.iter().any(|n| n == name) {
+                found.push(name.clone());
+            }
+        }
+        if found.is_empty() {
+            None
+        } else {
+            Some(found)
+        }
+    }
+
+    fn apply_prepared_reload(
+        &mut self,
+        prepared: Vec<script::PreparedCard>,
+        warning: ReloadWarning,
+    ) -> ReloadOutcome {
+        for item in &prepared {
+            if let Err(e) = self.js.commit_prepared(item.clone()) {
+                self.error = Some(format!("reload: {e}"));
+                self.install_pending(PendingReload {
+                    warning,
+                    prepared,
+                    kind: PendingReloadKind::Manual,
+                });
+                return ReloadOutcome::Failed(e);
+            }
+        }
+        let (restarted, stopped_paused, failed, errors) =
+            self.replace_prepared_slots(&prepared, &warning);
+        self.clear_pending_reload();
+        if failed > 0 {
+            self.error = Some(format_reload_failures(restarted, stopped_paused, &errors));
+        } else {
+            self.error = None;
+        }
+        ReloadOutcome::Applied {
+            restarted,
+            stopped_paused,
+            failed,
+        }
+    }
+
+    fn script_start_prepared(
+        &mut self,
+        profile: &str,
+        prepared: &script::PreparedCard,
+    ) -> Result<(), String> {
+        if script_active_name(self, profile) {
+            return Ok(());
+        }
+        if self.play.is_none() {
+            return Err("no play".into());
+        }
+        let card = &prepared.card;
+        let bag = self.merged_profile_bag(
+            profile,
+            card.source,
+            &card.name,
+            &card.path,
+            &card.settings_schema,
+        );
+        let bag = if bag.is_empty() { None } else { Some(bag) };
+        {
+            let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
+            play.script_start_load(
+                profile,
+                card.js.clone(),
+                card.shape,
+                bag,
+                prepared.siblings.clone(),
+            )?;
+            play.script_attach_identity(profile, card.identity_key());
+        }
+        self.persist_successful_assignment(profile, card.assignment());
+        Ok(())
+    }
+
+    fn replace_prepared_slots(
+        &mut self,
+        prepared: &[script::PreparedCard],
+        warning: &ReloadWarning,
+    ) -> (usize, usize, usize, Vec<String>) {
         let mut restarted = 0usize;
         let mut stopped_paused = 0usize;
-        let targets: Vec<String> = running_now
-            .into_iter()
-            .chain(paused_now.into_iter())
+        let mut failed = 0usize;
+        let mut errors = Vec::new();
+        let prepared_by_key: Vec<(String, &script::PreparedCard)> = prepared
+            .iter()
+            .map(|p| (p.card.identity_key(), p))
             .collect();
+        let mut targets: Vec<String> = warning
+            .running
+            .iter()
+            .chain(warning.paused.iter())
+            .cloned()
+            .collect();
+        targets.sort();
+        targets.dedup();
         for slot_name in targets {
-            let Some(play) = self.play.as_ref() else {
+            if self.reload_generation != warning.epoch {
+                errors.push("reload cancelled".into());
+                failed += 1;
                 break;
-            };
-            if play.script_source_identity(&slot_name).as_deref() != Some(key.as_str()) {
-                continue;
             }
+            let Some(play) = self.play.as_ref() else {
+                errors.push(format!("{slot_name}: no play"));
+                failed += 1;
+                continue;
+            };
+            let live_key = play.script_source_identity(&slot_name);
+            let prepared_card = live_key
+                .as_ref()
+                .and_then(|key| {
+                    prepared_by_key
+                        .iter()
+                        .find(|(k, _)| k == key)
+                        .map(|(_, p)| *p)
+                })
+                .or_else(|| {
+                    prepared_by_key
+                        .iter()
+                        .find(|(k, _)| k == &warning.identity_key)
+                        .map(|(_, p)| *p)
+                });
+            let Some(prepared_card) = prepared_card else {
+                continue;
+            };
+            if let Some(warned_gen) = warning
+                .affected_generations
+                .iter()
+                .find(|(n, _)| n == &slot_name)
+                .map(|(_, g)| *g)
+            {
+                if let Some(now_gen) = play.script_runtime_generation(&slot_name) {
+                    if now_gen != warned_gen {
+                        continue;
+                    }
+                }
+            }
+            let assignment_matches = self
+                .profile_assignment(&slot_name)
+                .is_some_and(|a| a.key() == prepared_card.card.identity_key());
             let state = play.script_state(&slot_name);
             match state {
                 script::RunState::Running => {
                     play.script_stop(&slot_name);
-                    match self.script_start_profile(&slot_name) {
+                    if !assignment_matches {
+                        continue;
+                    }
+                    match self.script_start_prepared(&slot_name, prepared_card) {
                         Ok(()) => restarted += 1,
                         Err(e) => {
-                            self.error = Some(format!("reload {slot_name}: {e}"));
+                            failed += 1;
+                            errors.push(format!("{slot_name}: {e}"));
                         }
                     }
                 }
@@ -521,15 +751,23 @@ impl Session {
                     play.script_stop(&slot_name);
                     stopped_paused += 1;
                 }
-                _ => {}
+                _ => {
+                    if warning.running.iter().any(|n| n == &slot_name) {
+                        if !assignment_matches {
+                            continue;
+                        }
+                        match self.script_start_prepared(&slot_name, prepared_card) {
+                            Ok(()) => restarted += 1,
+                            Err(e) => {
+                                failed += 1;
+                                errors.push(format!("{slot_name}: {e}"));
+                            }
+                        }
+                    }
+                }
             }
         }
-        self.reload_warning = None;
-        self.error = None;
-        ReloadOutcome::Applied {
-            restarted,
-            stopped_paused,
-        }
+        (restarted, stopped_paused, failed, errors)
     }
 
     fn slots_with_identity(&self, key: &str) -> (Vec<String>, Vec<String>) {
@@ -538,13 +776,7 @@ impl Session {
         let Some(play) = self.play.as_ref() else {
             return (running, paused);
         };
-        let mut names: Vec<String> = self.wall.members.clone();
-        for name in self.slots.keys() {
-            if !names.iter().any(|n| n == name) {
-                names.push(name.clone());
-            }
-        }
-        for name in names {
+        for name in self.slot_names() {
             if play.script_source_identity(&name).as_deref() != Some(key) {
                 continue;
             }
@@ -555,6 +787,26 @@ impl Session {
             }
         }
         (running, paused)
+    }
+
+    fn slot_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.wall.members.clone();
+        for name in self.slots.keys() {
+            if !names.iter().any(|n| n == name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
+    fn generations_for(&self, names: &[String]) -> Vec<(String, u64)> {
+        let Some(play) = self.play.as_ref() else {
+            return Vec::new();
+        };
+        names
+            .iter()
+            .filter_map(|n| play.script_runtime_generation(n).map(|g| (n.clone(), g)))
+            .collect()
     }
 
     /// Re-read the configured catalog. Does not rewrite the persisted path.
@@ -574,9 +826,17 @@ impl Session {
     }
 
     pub(crate) fn refresh_catalog_at(&mut self, root: &Path) {
-        let confirm = self.catalog_refresh_confirm;
-        self.catalog_refresh_confirm = false;
-        let mut diff = match self.js.diff_catalog(root) {
+        if self.catalog_pending_binds(root) {
+            match self.commit_catalog_pending() {
+                ReloadOutcome::NeedsConfirm => return,
+                ReloadOutcome::Failed(e) => {
+                    self.error = Some(format!("Refresh catalog: {e}"));
+                    return;
+                }
+                ReloadOutcome::Applied { .. } | ReloadOutcome::NothingChanged => return,
+            }
+        }
+        let diff = match self.js.diff_catalog(root) {
             Ok(d) => d,
             Err(e) => {
                 self.error = Some(format!("Refresh catalog: {e}"));
@@ -612,58 +872,160 @@ impl Session {
             running.extend(r);
             paused.extend(p);
         }
-        if !confirm && (!running.is_empty() || !paused.is_empty()) {
-            let warning = ReloadWarning {
-                identity_key: prepared_ok
-                    .first()
-                    .map(|p| p.card.identity_key())
-                    .unwrap_or_default(),
-                source: script::ScriptSource::Catalog,
-                lookup: changed.first().cloned().unwrap_or_default(),
-                running,
-                paused,
-                paused_during_prep: Vec::new(),
-            };
-            self.reload_warning = Some(warning.clone());
-            self.catalog_refresh_confirm = true;
+        let set_fingerprint = catalog_set_fingerprint(&added, &changed, &removed, &prepared_ok);
+        let epoch = self.reload_generation;
+        let warning = ReloadWarning {
+            identity_key: prepared_ok
+                .first()
+                .map(|p| p.card.identity_key())
+                .unwrap_or_default(),
+            source: script::ScriptSource::Catalog,
+            lookup: changed.first().cloned().unwrap_or_default(),
+            fingerprint: set_fingerprint.clone(),
+            epoch,
+            running: running.clone(),
+            paused: paused.clone(),
+            paused_during_prep: Vec::new(),
+            affected_generations: self.generations_for(
+                &running
+                    .iter()
+                    .chain(paused.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        if !running.is_empty() || !paused.is_empty() {
             self.error = Some(reload_warning_text(&warning));
+            self.install_pending(PendingReload {
+                warning,
+                prepared: prepared_ok,
+                kind: PendingReloadKind::Catalog {
+                    root: root.to_path_buf(),
+                    added,
+                    removed,
+                    failed: prepare_failed,
+                    set_fingerprint,
+                },
+            });
             return;
         }
-        let mut reload_keys = Vec::new();
-        for prepared in prepared_ok {
-            let key = prepared.card.identity_key();
-            let name = prepared.card.name.clone();
-            if let Err(e) = self.js.commit_prepared(prepared) {
+        self.apply_catalog_prepared(root, diff, prepared_ok, prepare_failed, warning);
+    }
+
+    fn catalog_pending_binds(&self, root: &Path) -> bool {
+        let Some(pending) = self.pending_reload.as_ref() else {
+            return false;
+        };
+        let PendingReloadKind::Catalog {
+            root: pending_root,
+            added,
+            removed,
+            set_fingerprint,
+            ..
+        } = &pending.kind
+        else {
+            return false;
+        };
+        if pending.warning.epoch != self.reload_generation || pending_root != root {
+            return false;
+        }
+        let Ok(diff) = self.js.diff_catalog(root) else {
+            return false;
+        };
+        let mut fps = Vec::new();
+        for prepared in &pending.prepared {
+            match self
+                .js
+                .disk_fingerprint(script::ScriptSource::Catalog, &prepared.card.name)
+            {
+                Ok(fp) => fps.push((prepared.card.name.clone(), fp)),
+                Err(_) => return false,
+            }
+        }
+        let current =
+            catalog_set_fingerprint_from_diff(&diff.added, &diff.changed, &diff.removed, &fps);
+        current == *set_fingerprint && diff.added == *added && diff.removed == *removed
+    }
+
+    fn commit_catalog_pending(&mut self) -> ReloadOutcome {
+        let Some(mut pending) = self.pending_reload.take() else {
+            return ReloadOutcome::Failed("no pending catalog refresh".into());
+        };
+        let PendingReloadKind::Catalog { root, .. } = pending.kind.clone() else {
+            self.pending_reload = Some(pending);
+            return ReloadOutcome::Failed("pending reload is not catalog".into());
+        };
+        if pending.warning.epoch != self.reload_generation {
+            self.clear_pending_reload();
+            return ReloadOutcome::Failed("reload cancelled".into());
+        }
+        if let Some(paused_during) = self.newly_paused_during(&pending.warning) {
+            pending.warning.paused_during_prep = paused_during;
+            let mut running = Vec::new();
+            let mut paused = Vec::new();
+            for prepared in &pending.prepared {
+                let (r, p) = self.slots_with_identity(&prepared.card.identity_key());
+                running.extend(r);
+                paused.extend(p);
+            }
+            pending.warning.running = running;
+            pending.warning.paused = paused;
+            self.error = Some(reload_warning_text(&pending.warning));
+            self.install_pending(pending);
+            return ReloadOutcome::NeedsConfirm;
+        }
+        let diff = match self.js.diff_catalog(&root) {
+            Ok(d) => d,
+            Err(e) => return ReloadOutcome::Failed(e),
+        };
+        let prepared = pending.prepared;
+        let failed = match pending.kind {
+            PendingReloadKind::Catalog { failed, .. } => failed,
+            PendingReloadKind::Manual => Vec::new(),
+        };
+        self.apply_catalog_prepared(&root, diff, prepared, failed, pending.warning);
+        ReloadOutcome::Applied {
+            restarted: 0,
+            stopped_paused: 0,
+            failed: 0,
+        }
+    }
+
+    fn apply_catalog_prepared(
+        &mut self,
+        root: &Path,
+        mut diff: script::CatalogDiff,
+        prepared: Vec<script::PreparedCard>,
+        prepare_failed: Vec<(String, String)>,
+        warning: ReloadWarning,
+    ) {
+        let removed = diff.removed.clone();
+        let mut changed_ok = 0usize;
+        for item in &prepared {
+            let name = item.card.name.clone();
+            if let Err(e) = self.js.commit_prepared(item.clone()) {
                 self.error = Some(format!("catalog {name}: {e}"));
                 continue;
             }
-            reload_keys.push(key);
+            changed_ok += 1;
         }
         diff.changed.clear();
         let mut report = self.js.apply_catalog_diff(diff);
-        report.changed = reload_keys.len();
+        report.changed = changed_ok;
         report.failed.extend(prepare_failed);
         for name in &removed {
             self.mark_removed_catalog_assignments(name);
         }
-        for key in reload_keys {
-            let (running, paused) = self.slots_with_identity(&key);
-            if let Some(play) = self.play.as_ref() {
-                for n in &paused {
-                    play.script_stop(n);
-                }
-                for n in &running {
-                    play.script_stop(n);
-                }
-            }
-            for n in running {
-                let _ = self.script_start_profile(&n);
-            }
+        let (_restarted, _stopped_paused, failed, errors) =
+            self.replace_prepared_slots(&prepared, &warning);
+        let mut summary = report.summary();
+        if failed > 0 {
+            summary = format!("{summary}, start failed {}: {}", failed, errors.join("; "));
         }
-        let summary = report.summary();
         self.catalog_refresh_report = Some(summary.clone());
         self.error = Some(format!("Refresh catalog: {summary}"));
-        self.reload_warning = None;
+        self.clear_pending_reload();
+        let _ = root;
     }
 
     fn mark_removed_catalog_assignments(&mut self, card_name: &str) {
@@ -683,6 +1045,57 @@ impl Session {
             }
         }
     }
+}
+
+fn lookups_match(source: script::ScriptSource, a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    if source == script::ScriptSource::File {
+        script::paths_match(a, Path::new(b)) || script::paths_match(b, Path::new(a))
+    } else {
+        false
+    }
+}
+
+fn catalog_set_fingerprint(
+    added: &[String],
+    changed: &[String],
+    removed: &[String],
+    prepared: &[script::PreparedCard],
+) -> String {
+    let fps: Vec<(String, String)> = prepared
+        .iter()
+        .map(|p| (p.card.name.clone(), p.fingerprint.clone()))
+        .collect();
+    catalog_set_fingerprint_from_diff(added, changed, removed, &fps)
+}
+
+fn catalog_set_fingerprint_from_diff(
+    added: &[String],
+    changed: &[String],
+    removed: &[String],
+    fps: &[(String, String)],
+) -> String {
+    let mut fps = fps.to_vec();
+    fps.sort();
+    let mut parts = vec![
+        format!("a:{}", added.join(",")),
+        format!("c:{}", changed.join(",")),
+        format!("r:{}", removed.join(",")),
+    ];
+    for (name, fp) in fps {
+        parts.push(format!("{name}={fp}"));
+    }
+    parts.join("|")
+}
+
+fn format_reload_failures(restarted: usize, stopped_paused: usize, errors: &[String]) -> String {
+    format!(
+        "reload: restarted {restarted}, stopped paused {stopped_paused}, failed {}: {}",
+        errors.len(),
+        errors.join("; ")
+    )
 }
 
 fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
@@ -1312,6 +1725,326 @@ mod tests {
             "{:?} {:?}",
             s.error,
             s.reload_warning.as_ref().map(|w| &w.running)
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    fn focus_profile(s: &mut Session, name: &str) {
+        s.focus.lock().unwrap().focused = Some(name.into());
+        s.restore_script_heading(name);
+    }
+
+    #[test]
+    fn reload_confirm_does_not_authorize_switched_selection() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path_a = write_bot(&dir, "a.ts", BOT_TS);
+        let path_b = write_bot(&dir, "b.ts", BOT_TS);
+        s.load_js(&path_a);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        focus_profile(&mut s, "bob");
+        s.load_js(&path_b);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        s.play.as_ref().unwrap().script_pause("bob");
+        let old_b =
+            s.js.get(script::ScriptSource::File, &path_b.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        fs::write(&path_a, format!("{BOT_TS}// a changed\n")).unwrap();
+        fs::write(&path_b, format!("{BOT_TS}// b changed\n")).unwrap();
+        focus_profile(&mut s, "alice");
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        assert!(
+            s.reload_warning
+                .as_ref()
+                .is_some_and(|w| w.running.iter().any(|n| n == "alice")),
+            "{:?}",
+            s.reload_warning.as_ref().map(|w| &w.running)
+        );
+        focus_profile(&mut s, "bob");
+        let second = s.script_reload_clicked();
+        assert_eq!(
+            second,
+            ReloadOutcome::NeedsConfirm,
+            "A's warning must not confirm B"
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Paused,
+            "B must not be replaced without its own warning"
+        );
+        let now_b =
+            s.js.get(script::ScriptSource::File, &path_b.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        assert_eq!(old_b, now_b, "B registration stays until B is confirmed");
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn reload_warn_survives_focus_only() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path_a = write_bot(&dir, "keep-a.ts", BOT_TS);
+        let path_b = write_bot(&dir, "keep-b.ts", BOT_TS);
+        s.load_js(&path_a);
+        s.script_start_selected();
+        focus_profile(&mut s, "bob");
+        s.load_js(&path_b);
+        fs::write(&path_a, format!("{BOT_TS}// changed\n")).unwrap();
+        focus_profile(&mut s, "alice");
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        let warned = s.reload_warning.as_ref().unwrap().lookup.clone();
+        focus_profile(&mut s, "bob");
+        assert!(
+            s.reload_warning.is_some(),
+            "focus alone must not cancel a bound warning"
+        );
+        assert_eq!(s.reload_warning.as_ref().unwrap().lookup, warned);
+        focus_profile(&mut s, "alice");
+        let out = s.script_reload_clicked();
+        match out {
+            ReloadOutcome::Applied { restarted, .. } => assert_eq!(restarted, 1),
+            other => panic!("focus-only must leave A's confirm valid, got {other:?}"),
+        }
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn catalog_confirm_gates_newly_paused() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let root = dir.join("catalog-pause");
+        fake_catalog(&root, &[("PauseBot", BOT_TS)]);
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "PauseBot")
+            .unwrap();
+        s.persist_successful_assignment(
+            "alice",
+            ScriptAssignment {
+                source_kind: "catalog".into(),
+                identity: "PauseBot".into(),
+                display_name: "PauseBot".into(),
+                unavailable: None,
+            },
+        );
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "PauseBot".into(),
+        ));
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let old_js =
+            s.js.get(script::ScriptSource::Catalog, "PauseBot")
+                .unwrap()
+                .js
+                .clone();
+        fs::write(
+            root.join("src/bot/scripts/PauseBot/PauseBot.ts"),
+            format!("{BOT_TS}// changed\n"),
+        )
+        .unwrap();
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_pause("alice");
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Paused,
+            "newly paused catalog bot needs its own warning"
+        );
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("paused during prepare")
+                || s.reload_warning
+                    .as_ref()
+                    .is_some_and(|w| !w.paused_during_prep.is_empty()),
+            "{:?} {:?}",
+            s.error,
+            s.reload_warning.as_ref().map(|w| &w.paused_during_prep)
+        );
+        let now_js =
+            s.js.get(script::ScriptSource::Catalog, "PauseBot")
+                .unwrap()
+                .js
+                .clone();
+        assert_eq!(old_js, now_js);
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_toplevel_throw_fails_before_replacement() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "throw.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let old =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .clone();
+        fs::write(
+            &path,
+            "throw new Error('prep boom');\nexport default class T extends LoopingBot { override loop() {} }\n",
+        )
+        .unwrap();
+        let out = s.script_reload_clicked();
+        match out {
+            ReloadOutcome::Failed(e) => assert!(
+                e.contains("prep boom") || e.contains("load:") || e.contains("prepare"),
+                "{e}"
+            ),
+            other => panic!("top-level throw must fail before replacement, got {other:?}"),
+        }
+        let now =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap();
+        assert_eq!(now.origin, old.origin);
+        assert_eq!(now.js, old.js);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_missing_named_export_fails_before_replacement() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let sib = write_bot(&dir, "helper.ts", "export function helper() {}\n");
+        let src = "import { missingFn } from './helper.js';\nexport default class T extends LoopingBot { override loop() { missingFn(); } }\n";
+        let good = src.replace("missingFn", "helper");
+        let path = write_bot(&dir, "named.ts", &good);
+        let _ = sib;
+        s.load_js(&path);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let old =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .clone();
+        fs::write(&path, src).unwrap();
+        let out = s.script_reload_clicked();
+        match out {
+            ReloadOutcome::Failed(e) => assert!(
+                e.contains("missingFn") || e.contains("load:") || e.contains("prepare"),
+                "{e}"
+            ),
+            other => panic!("missing named export must fail before replacement, got {other:?}"),
+        }
+        let now =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap();
+        assert_eq!(now.origin, old.origin);
+        assert_eq!(now.js, old.js);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let root = dir.join("catalog-stale");
+        fake_catalog(&root, &[("StaleBot", BOT_TS)]);
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "StaleBot")
+            .unwrap();
+        s.persist_successful_assignment(
+            "alice",
+            ScriptAssignment {
+                source_kind: "catalog".into(),
+                identity: "StaleBot".into(),
+                display_name: "StaleBot".into(),
+                unavailable: None,
+            },
+        );
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "StaleBot".into(),
+        ));
+        s.script_start_selected();
+        let old_js =
+            s.js.get(script::ScriptSource::Catalog, "StaleBot")
+                .unwrap()
+                .js
+                .clone();
+        let bot = root.join("src/bot/scripts/StaleBot/StaleBot.ts");
+        fs::write(&bot, format!("{BOT_TS}// first\n")).unwrap();
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        fs::write(&bot, format!("{BOT_TS}// second\n")).unwrap();
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running,
+            "content change after warn must not authorize the previous prepared set"
+        );
+        let now = s.js.get(script::ScriptSource::Catalog, "StaleBot").unwrap();
+        assert_eq!(now.js, old_js);
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_reports_restart_failure_without_aborting_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        focus_profile(&mut s, "bob");
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::File,
+            path.to_string_lossy().into_owned(),
+        ));
+        s.set_pending_browse(
+            "bob",
+            script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                path.to_string_lossy().into_owned(),
+            ),
+        );
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
+        focus_profile(&mut s, "alice");
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        s.play.as_mut().unwrap().stop_slot("bob");
+        let out = s.script_reload_clicked();
+        match out {
+            ReloadOutcome::Applied {
+                restarted, failed, ..
+            } => {
+                assert_eq!(restarted, 1, "alice should restart");
+                assert_eq!(failed, 1, "bob's missing slot is a reported start failure");
+            }
+            other => panic!("expected Applied with mixed restart, got {other:?}"),
+        }
+        assert!(
+            s.error.as_deref().unwrap_or("").contains("bob"),
+            "restart failure must stay visible: {:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
         );
         s.play.as_ref().unwrap().script_stop("alice");
     }

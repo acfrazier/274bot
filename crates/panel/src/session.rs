@@ -953,6 +953,8 @@ pub struct Session {
     pub pending_browse: HashMap<String, script::ScriptSel>,
     pub last_bulk_script_report: Option<String>,
     pub reload_warning: Option<crate::profile_script::ReloadWarning>,
+    /// Bound prepare/warn record for Reload or catalog Refresh confirm.
+    pub pending_reload: Option<crate::profile_script::PendingReload>,
     /// Next catalog Refresh confirms a previously shown running/paused warning.
     pub catalog_refresh_confirm: bool,
     pub catalog_refresh_report: Option<String>,
@@ -1195,6 +1197,7 @@ impl Session {
             pending_browse: HashMap::new(),
             last_bulk_script_report: None,
             reload_warning: None,
+            pending_reload: None,
             catalog_refresh_confirm: false,
             catalog_refresh_report: None,
             reload_generation: 0,
