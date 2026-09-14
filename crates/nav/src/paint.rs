@@ -207,19 +207,20 @@ pub fn trail_tones(tiles: &[WorldTile], run_on: bool) -> Vec<(WorldTile, TrailTo
 /// Trim a client-trail to the tiles from `here` onward (the occupied
 /// tile stays, so the path does not flicker as the player steps). If
 /// `here` is the dest, return empty so dest does not persist under the
-/// player. If `here` is not on the list (pushed off the BFS), the full
-/// list is kept. The trail is every tryMove BFS tile — not the entity
-/// walk buffer (max 9).
+/// player. If `here` is not on the list (arrived then stepped off, a
+/// cancel, teleport), return empty so a later revisit cannot resurrect
+/// the last click. `here == None` keeps the list: one stationary /
+/// unknown tick during startup must not drop a pending trail. The trail
+/// is every tryMove BFS tile — not the entity walk buffer (max 9).
 pub fn remaining_trail(tiles: &[WorldTile], here: Option<WorldTile>) -> Vec<WorldTile> {
-    if let Some(h) = here {
-        if let Some(i) = tiles.iter().position(|t| t.x == h.x && t.z == h.z) {
-            if i + 1 == tiles.len() {
-                return Vec::new();
-            }
-            return tiles[i..].to_vec();
-        }
+    let Some(h) = here else {
+        return tiles.to_vec();
+    };
+    match tiles.iter().position(|t| t.x == h.x && t.z == h.z) {
+        Some(i) if i + 1 == tiles.len() => Vec::new(),
+        Some(i) => tiles[i..].to_vec(),
+        None => Vec::new(),
     }
-    tiles.to_vec()
 }
 
 /// A loc-backed transport hop a consumer may hull: the interact loc id and
@@ -762,8 +763,17 @@ mod tests {
             remaining_trail(&tiles, Some(tile(20, 0, 0))).is_empty(),
             "arrived dest must not persist under the player"
         );
-        // Off the path: keep the full click, do not invent a trim.
-        assert_eq!(remaining_trail(&tiles, Some(tile(99, 0, 0))).len(), 21);
+        // Off the path: retire. Keeping the whole click here is what
+        // resurrected the cyan/yellow trail after arrival then a step west.
+        assert!(
+            remaining_trail(&tiles, Some(tile(99, 0, 0))).is_empty(),
+            "off-path must not resurrect the last click"
+        );
+        assert_eq!(
+            remaining_trail(&tiles, None).len(),
+            21,
+            "unknown here (startup / network wait) must not drop the trail"
+        );
     }
 
     #[test]
