@@ -1398,6 +1398,14 @@ fn hold_script_terminal_shot(
             }
             return hold_terminal_shot(live, Some(label), &owned);
         }
+        (Some(shots), Some(label), _, _) => {
+            // `ui_frame` snapshots the status before `live_script_tick`. A
+            // native-core failure may re-arm a previously Written shot above,
+            // so the caller's fallback can describe the old capture. Re-read
+            // the ledger after the request to hold for the new capture.
+            owned = shots.lock().unwrap().status(label);
+            &owned
+        }
         _ => fallback,
     };
     let result = hold_terminal_shot(live, terminal_shot, status);
@@ -1441,6 +1449,17 @@ fn hold_terminal_shot(
     // landed after `pump_shots` ran, so the write needs another frame.
     live.drain_started.get_or_insert_with(Instant::now);
     Ok(true)
+}
+
+fn script_failure_scenario(live_name: &str, evidence: Option<&scenario::Evidence>) -> String {
+    evidence
+        .map(|evidence| evidence.scenario.clone())
+        .unwrap_or_else(|| {
+            live_name
+                .strip_prefix("script_")
+                .unwrap_or(live_name)
+                .to_string()
+        })
 }
 
 /// Headed script watch: mirror the shared `ScenarioRunner` each frame.
@@ -1542,7 +1561,7 @@ fn live_script_tick(
             })
     };
     let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
-    let failure_name = live.name.clone();
+    let failure_name = script_failure_scenario(&live.name, evidence.as_ref());
     let failure_evidence = evidence.clone();
     let failure_line = |message: &str| {
         serde_json::json!({
@@ -5650,9 +5669,10 @@ mod tests {
         add_shifted_key_event, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
         boot_for, capture_key_ch, capture_keys, catalog_core_gate, chooser_should_open_popup,
         clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled,
-        game_window_flags, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
-        loading_text, log_follow_bottom, manual_shot_label, parse_args, parse_live_args,
-        progress_channel, random_status_text, runner_config, shifted_imgui_key,
+        enqueue_current_terminal_shot, game_window_flags, hold_script_terminal_shot,
+        live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick, loading_text,
+        log_follow_bottom, manual_shot_label, parse_args, parse_live_args, progress_channel,
+        random_status_text, runner_config, script_failure_scenario, shifted_imgui_key,
         shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
         ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
@@ -7646,6 +7666,90 @@ mod tests {
             Ok(false)
         );
         assert!(live.drain_started.is_none());
+    }
+
+    #[test]
+    fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let client = script_client();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert!(snapshot.ingame() && snapshot.scene_state() == 2);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        let label = "thiever";
+        shots.lock().unwrap().mark_written(label);
+        let mut live = LiveScript {
+            name: "script_thiever".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: None,
+        };
+
+        enqueue_current_terminal_shot(&session, &shots, label);
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Requested,
+            "a prior Written capture must be re-armed"
+        );
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            Ok(true),
+            "the stale pre-tick Written status must not exit before the new shot"
+        );
+        assert!(live.drain_started.is_some());
+
+        shots.lock().unwrap().mark_written(label);
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Requested,
+                Some(&shots),
+            ),
+            Ok(false),
+            "exit is released only after the current capture is written"
+        );
+    }
+
+    #[test]
+    fn native_failure_receipt_uses_inner_scenario_identity() {
+        let evidence = scenario::Evidence {
+            scenario: "thiever".into(),
+            outcome: "PASS",
+            predicate: "stat(16)>=0".into(),
+            ticks: 1,
+            elapsed_ms: 2,
+            message: None,
+            tile: None,
+            inv: Vec::new(),
+            stat: None,
+            chat: Vec::new(),
+            scene: 2,
+        };
+        assert_eq!(
+            script_failure_scenario("script_thiever", Some(&evidence)),
+            "thiever"
+        );
+        assert_eq!(script_failure_scenario("script_thiever", None), "thiever");
     }
 
     #[test]
