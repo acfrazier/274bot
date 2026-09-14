@@ -107,6 +107,20 @@ pub struct JsCard {
     pub unloadable: Option<String>,
 }
 
+impl JsCard {
+    pub fn identity_id(&self) -> String {
+        crate::identity::card_identity_id(self.source, &self.path, &self.name)
+    }
+
+    pub fn identity_key(&self) -> String {
+        crate::identity::card_identity_key(self.source, &self.path, &self.name)
+    }
+
+    pub fn assignment(&self) -> vault::ScriptAssignment {
+        crate::identity::card_assignment(self.source, &self.path, &self.name)
+    }
+}
+
 /// Default persisted library path (`~/.274bot/js-scripts.json`).
 pub fn default_js_store() -> PathBuf {
     crate::bot_file("js-scripts.json")
@@ -145,6 +159,9 @@ pub struct JsLibrary {
     store: PathBuf,
     cache: JsCache,
     cards: Vec<JsCard>,
+    /// Combined raw entry+sibling hashes keyed by identity, used to skip
+    /// no-op reloads without transpiling.
+    fingerprints: HashMap<String, String>,
 }
 
 impl JsLibrary {
@@ -159,6 +176,7 @@ impl JsLibrary {
             store,
             cache: JsCache::new(cache_root),
             cards: Vec::new(),
+            fingerprints: HashMap::new(),
         }
     }
 
@@ -215,6 +233,9 @@ impl JsLibrary {
                 settings_schema,
                 unloadable,
             });
+            if let Some(last) = self.cards.last().cloned() {
+                self.remember_fingerprint(&last);
+            }
         }
         Ok(())
     }
@@ -272,12 +293,16 @@ impl JsLibrary {
         let new_cards: Vec<JsCard> = self
             .cards
             .iter()
-            .filter(|c| !(c.source == card.source && c.name == card.name))
+            .filter(|c| {
+                !(c.source == ScriptSource::File
+                    && crate::identity::paths_match(&card.path.to_string_lossy(), &c.path))
+            })
             .cloned()
             .chain(std::iter::once(card.clone()))
             .collect();
         self.persist_file_cards(&new_cards)?;
         self.cards = new_cards;
+        self.remember_fingerprint(&card);
         Ok(card)
     }
 
@@ -370,6 +395,9 @@ impl JsLibrary {
                 unloadable,
             });
             n += 1;
+            if let Some(last) = self.cards.last().cloned() {
+                self.remember_fingerprint(&last);
+            }
         }
         let _ = persist_rs2b0t_root_at(root, path_file);
         Ok(n)
@@ -419,14 +447,28 @@ impl JsLibrary {
         card.kind = shape_to_kind(shape);
         card.sha256 = cached.sha256;
         card.unloadable = unloadable;
+        let snap = card.clone();
+        self.remember_fingerprint(&snap);
         Ok(())
     }
 
     /// The card registered under `(source, name)`, if any.
+    /// File cards match stored path first, then display stem (legacy).
     pub fn get(&self, source: ScriptSource, name: &str) -> Option<&JsCard> {
-        self.cards
-            .iter()
-            .find(|c| c.source == source && c.name == name)
+        if source == ScriptSource::File {
+            self.cards
+                .iter()
+                .find(|c| c.source == source && crate::identity::paths_match(name, &c.path))
+                .or_else(|| {
+                    self.cards
+                        .iter()
+                        .find(|c| c.source == source && c.name == name)
+                })
+        } else {
+            self.cards
+                .iter()
+                .find(|c| c.source == source && c.name == name)
+        }
     }
 
     /// First card with `name`. Prefer [`JsLibrary::get`] when `(source, name)`
@@ -464,6 +506,309 @@ impl JsLibrary {
     /// The SHA cache backing this library (Start sibling resolve).
     pub fn cache(&self) -> &JsCache {
         &self.cache
+    }
+
+    fn remember_fingerprint(&mut self, card: &JsCard) {
+        let fp = raw_content_fingerprint(&card.path, &card.origin);
+        self.fingerprints.insert(card.identity_key(), fp);
+    }
+
+    pub fn stored_fingerprint(&self, key: &str) -> Option<&str> {
+        self.fingerprints.get(key).map(String::as_str)
+    }
+
+    /// Hash raw entry + supported sibling bytes. No transpile.
+    pub fn disk_fingerprint(&self, source: ScriptSource, name: &str) -> Result<String, String> {
+        let card = self
+            .get(source, name)
+            .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
+        let origin = match std::fs::read_to_string(&card.path) {
+            Ok(text) => text,
+            Err(e) => {
+                return Err(format!("missing {}: {e}", card.path.display()));
+            }
+        };
+        Ok(raw_content_fingerprint(&card.path, &origin))
+    }
+
+    /// Compare stored fingerprint to current disk bytes. Unchanged means
+    /// skip transpile/reload.
+    pub fn raw_source_changed(&self, source: ScriptSource, name: &str) -> Result<bool, String> {
+        let key = self
+            .get(source, name)
+            .map(|c| c.identity_key())
+            .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
+        let now = self.disk_fingerprint(source, name)?;
+        Ok(self.fingerprints.get(&key).map(String::as_str) != Some(now.as_str()))
+    }
+
+    /// Transpile/validate a candidate without replacing the live card.
+    /// Old isolates keep the previous registration until [`JsLibrary::commit_prepared`].
+    pub fn prepare_card(&self, source: ScriptSource, name: &str) -> Result<PreparedCard, String> {
+        let card = self
+            .get(source, name)
+            .ok_or_else(|| format!("no card ({source:?}, {name})"))?
+            .clone();
+        let origin = std::fs::read_to_string(&card.path)
+            .map_err(|e| format!("prepare {}: {e}", card.path.display()))?;
+        let shape = detect_shape(&origin);
+        if shape == LoadShape::Reject {
+            return Err(format!("not a bot shape: {name}"));
+        }
+        let cached = self.cache.get_or_transpile(
+            &card.path,
+            origin.as_bytes(),
+            CacheMeta {
+                kind: shape_to_kind(shape),
+                source,
+                shape: Some(shape_label(shape).into()),
+            },
+        )?;
+        let unloadable = catalog_unloadable(
+            &card.name,
+            source,
+            &cached.sha256,
+            &card.path,
+            first_unloadable_for_card(&origin, &card.path),
+        );
+        if let Some(reason) = &unloadable {
+            return Err(format!("unloadable import: {reason}"));
+        }
+        let siblings = resolve_sibling_modules(
+            &card.path,
+            &origin,
+            &self.cache,
+            CacheMeta {
+                kind: shape_to_kind(shape),
+                source,
+                shape: Some(shape_label(shape).into()),
+            },
+        )?;
+        let fingerprint = raw_content_fingerprint(&card.path, &origin);
+        let mut prepared = card;
+        prepared.origin = origin;
+        prepared.shape = shape;
+        prepared.js = cached.js;
+        prepared.kind = shape_to_kind(shape);
+        prepared.sha256 = cached.sha256;
+        prepared.unloadable = unloadable;
+        prepared.settings_schema =
+            crate::rs2b0t_registry::settings_schema_from_source(&prepared.origin);
+        Ok(PreparedCard {
+            card: prepared,
+            siblings,
+            fingerprint,
+        })
+    }
+
+    pub fn commit_prepared(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
+        let key = prepared.card.identity_key();
+        if let Some(idx) = self.cards.iter().position(|c| c.identity_key() == key) {
+            self.cards[idx] = prepared.card.clone();
+        } else {
+            self.cards.push(prepared.card.clone());
+        }
+        self.fingerprints.insert(key, prepared.fingerprint.clone());
+        if prepared.card.source == ScriptSource::File {
+            self.persist_file_cards(&self.cards)?;
+        }
+        Ok(prepared.card)
+    }
+
+    /// Diff `$RS2B0T` against registered catalog cards without clearing them.
+    /// Does not rewrite the persisted catalog path.
+    pub fn diff_catalog(&self, root: &Path) -> Result<CatalogDiff, String> {
+        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let index_ts = std::fs::read_to_string(&index)
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let registry_cards = parse_registry_with_sources(&index_ts, &HashMap::new())
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let mut sources = HashMap::new();
+        let mut failed = Vec::new();
+        for reg in &registry_cards {
+            let Some(path) = script_file_path(root, &reg.rel_path) else {
+                failed.push((reg.name.clone(), format!("missing {}", reg.rel_path)));
+                continue;
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    sources.insert(reg.rel_path.clone(), text);
+                }
+                Err(e) => failed.push((reg.name.clone(), e.to_string())),
+            }
+        }
+        let sibling_rels: Vec<String> = sources
+            .iter()
+            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
+            .collect();
+        for sib in sibling_rels {
+            if sources.contains_key(&sib) {
+                continue;
+            }
+            let Some(path) = script_file_path(root, &sib) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sources.insert(sib, text);
+            }
+        }
+        let cards = parse_registry_with_sources(&index_ts, &sources)
+            .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
+        let mut incoming: HashMap<String, (crate::rs2b0t_registry::RegistryCard, PathBuf, String)> =
+            HashMap::new();
+        for card in cards {
+            if is_reserved(&card.name) {
+                continue;
+            }
+            let Some(path) = script_file_path(root, &card.rel_path) else {
+                failed.push((card.name, format!("missing {}", card.rel_path)));
+                continue;
+            };
+            let Ok(origin) = std::fs::read_to_string(&path) else {
+                failed.push((card.name, format!("unreadable {}", path.display())));
+                continue;
+            };
+            if detect_shape(&origin) == LoadShape::Reject {
+                continue;
+            }
+            incoming.insert(card.name.clone(), (card, path, origin));
+        }
+        let existing: HashSet<String> = self
+            .cards
+            .iter()
+            .filter(|c| c.source == ScriptSource::Catalog)
+            .map(|c| c.name.clone())
+            .collect();
+        let mut added = Vec::new();
+        let mut changed = Vec::new();
+        let mut removed = Vec::new();
+        for name in incoming.keys() {
+            if existing.contains(name) {
+                let Some((_, path, origin)) = incoming.get(name) else {
+                    continue;
+                };
+                let now = raw_content_fingerprint(path, origin);
+                let key = crate::identity::card_identity_key(ScriptSource::Catalog, path, name);
+                if self.fingerprints.get(&key).map(String::as_str) != Some(now.as_str()) {
+                    changed.push(name.clone());
+                }
+            } else {
+                added.push(name.clone());
+            }
+        }
+        for name in &existing {
+            if !incoming.contains_key(name) {
+                removed.push(name.clone());
+            }
+        }
+        added.sort();
+        changed.sort();
+        removed.sort();
+        Ok(CatalogDiff {
+            added,
+            changed,
+            removed,
+            failed,
+            incoming,
+        })
+    }
+
+    /// Apply an already-computed catalog diff. Changed cards are updated in
+    /// place; removed catalog cards are dropped from the library (running
+    /// isolates keep their frozen source). One failed card does not block others.
+    pub fn apply_catalog_diff(&mut self, diff: CatalogDiff) -> CatalogApplyReport {
+        let mut added = 0usize;
+        let mut changed = 0usize;
+        let mut removed = 0usize;
+        let failed = diff.failed.clone();
+        for name in &diff.added {
+            let Some((card, path, origin)) = diff.incoming.get(name) else {
+                continue;
+            };
+            let shape = detect_shape(origin);
+            if shape == LoadShape::Reject {
+                continue;
+            }
+            let sha256 = JsCache::origin_sha(origin.as_bytes());
+            let unloadable = catalog_unloadable(
+                &card.name,
+                ScriptSource::Catalog,
+                &sha256,
+                path,
+                first_unloadable_for_card(origin, path),
+            );
+            self.cards
+                .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
+            let js_card = JsCard {
+                name: card.name.clone(),
+                path: path.clone(),
+                shape,
+                origin: origin.clone(),
+                js: String::new(),
+                kind: card.kind,
+                source: ScriptSource::Catalog,
+                sha256,
+                description: card.description.clone(),
+                category: card.category.clone(),
+                tags: card.tags.clone(),
+                settings_schema: card.settings_schema.clone(),
+                unloadable,
+            };
+            self.remember_fingerprint(&js_card);
+            self.cards.push(js_card);
+            added += 1;
+        }
+        for name in &diff.changed {
+            let Some((card, path, origin)) = diff.incoming.get(name) else {
+                continue;
+            };
+            let shape = detect_shape(origin);
+            if shape == LoadShape::Reject {
+                continue;
+            }
+            let sha256 = JsCache::origin_sha(origin.as_bytes());
+            let unloadable = catalog_unloadable(
+                &card.name,
+                ScriptSource::Catalog,
+                &sha256,
+                path,
+                first_unloadable_for_card(origin, path),
+            );
+            if let Some(existing) = self
+                .cards
+                .iter_mut()
+                .find(|c| c.source == ScriptSource::Catalog && c.name == *name)
+            {
+                existing.path = path.clone();
+                existing.shape = shape;
+                existing.origin = origin.clone();
+                existing.js.clear();
+                existing.kind = card.kind;
+                existing.sha256 = sha256;
+                existing.description = card.description.clone();
+                existing.category = card.category.clone();
+                existing.tags = card.tags.clone();
+                existing.settings_schema = card.settings_schema.clone();
+                existing.unloadable = unloadable;
+                let snap = existing.clone();
+                self.remember_fingerprint(&snap);
+                changed += 1;
+            }
+        }
+        for name in &diff.removed {
+            let key =
+                crate::identity::card_identity_key(ScriptSource::Catalog, Path::new(""), name);
+            self.fingerprints.remove(&key);
+            self.cards
+                .retain(|c| !(c.source == ScriptSource::Catalog && c.name == *name));
+            removed += 1;
+        }
+        CatalogApplyReport {
+            added,
+            changed,
+            removed,
+            failed,
+        }
     }
 
     /// True when this card already holds transpiled JS (isolate-ready).
@@ -788,6 +1133,44 @@ pub fn resolve_sibling_modules(
     Ok(order_siblings_deps_first(nodes))
 }
 
+/// Raw entry + supported sibling hashes, no transpile.
+pub fn collect_raw_sibling_hashes(card_path: &Path, origin: &str) -> Vec<(String, String)> {
+    let Some(card_dir) = card_path.parent() else {
+        return Vec::new();
+    };
+    let mut pending: Vec<String> = scan_same_folder_js_imports(origin)
+        .into_iter()
+        .chain(scan_scripts_sibling_js_imports(origin))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    while let Some(import_rel) = pending.pop() {
+        if !seen.insert(import_rel.clone()) {
+            continue;
+        }
+        let Some(path) = resolve_sibling_path(card_dir, &import_rel) else {
+            continue;
+        };
+        if same_path(&path, card_path) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let origin_text = String::from_utf8_lossy(&bytes).into_owned();
+        pending.extend(scan_same_folder_js_imports(&origin_text));
+        pending.extend(scan_scripts_sibling_js_imports(&origin_text));
+        out.push((import_rel, crate::identity::raw_sha(&bytes)));
+    }
+    out
+}
+
+pub fn raw_content_fingerprint(card_path: &Path, origin: &str) -> String {
+    let entry = crate::identity::raw_sha(origin.as_bytes());
+    let siblings = collect_raw_sibling_hashes(card_path, origin);
+    crate::identity::combine_fingerprints(&entry, &siblings)
+}
+
 /// rustyscript evaluates side modules in vec order. An importer whose
 /// `./dep.js` is later in the list gets "module … is not loaded".
 fn order_siblings_deps_first(
@@ -924,6 +1307,62 @@ impl ScriptSel {
             ScriptSel::Compiled(id) => id.0.to_string(),
             ScriptSel::Loaded(_, name) => name.clone(),
         }
+    }
+}
+
+/// Candidate prepared while old library cards and isolates stay intact.
+#[derive(Debug, Clone)]
+pub struct PreparedCard {
+    pub card: JsCard,
+    pub siblings: Vec<(String, String)>,
+    pub fingerprint: String,
+}
+
+/// Catalog refresh diff. `incoming` is the parsed replacement set.
+pub struct CatalogDiff {
+    pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+    pub failed: Vec<(String, String)>,
+    incoming: HashMap<String, (crate::rs2b0t_registry::RegistryCard, PathBuf, String)>,
+}
+
+impl CatalogDiff {
+    pub fn is_noop(&self) -> bool {
+        self.added.is_empty()
+            && self.changed.is_empty()
+            && self.removed.is_empty()
+            && self.failed.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogApplyReport {
+    pub added: usize,
+    pub changed: usize,
+    pub removed: usize,
+    pub failed: Vec<(String, String)>,
+}
+
+impl CatalogApplyReport {
+    pub fn summary(&self) -> String {
+        if self.added == 0 && self.changed == 0 && self.removed == 0 && self.failed.is_empty() {
+            return crate::identity::NOTHING_CHANGED_CATALOG.to_string();
+        }
+        let mut parts = Vec::new();
+        if self.added > 0 {
+            parts.push(format!("added {}", self.added));
+        }
+        if self.changed > 0 {
+            parts.push(format!("changed {}", self.changed));
+        }
+        if self.removed > 0 {
+            parts.push(format!("removed {}", self.removed));
+        }
+        if !self.failed.is_empty() {
+            parts.push(format!("failed {}", self.failed.len()));
+        }
+        parts.join(", ")
     }
 }
 

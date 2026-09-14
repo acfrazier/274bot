@@ -244,6 +244,11 @@ pub struct SlotScript {
     load_identity: Option<SlotLoadIdentity>,
     #[cfg(feature = "load")]
     watchdog: ProgressWatchdog,
+    /// Stable source identity key for this execution (`catalog:Name` / file path).
+    source_identity: Option<String>,
+    /// Bumped on each successful Start and watchdog isolate replacement.
+    runtime_generation: u64,
+    last_settings_fp: Option<String>,
 }
 
 impl Default for SlotScript {
@@ -282,6 +287,9 @@ impl SlotScript {
             load_identity: None,
             #[cfg(feature = "load")]
             watchdog: ProgressWatchdog::new(),
+            source_identity: None,
+            runtime_generation: 0,
+            last_settings_fp: None,
         }
     }
 
@@ -315,6 +323,8 @@ impl SlotScript {
                 self.bank_op_result_seq = 0;
                 self.bank_op_result = false;
                 self.state = RunState::Running;
+                self.runtime_generation = self.runtime_generation.wrapping_add(1);
+                self.last_settings_fp = None;
                 Ok(())
             }
         }
@@ -410,6 +420,8 @@ impl SlotScript {
                 self.last_snapshot = None;
                 self.last_world_id = None;
                 self.state = RunState::Running;
+                self.runtime_generation = self.runtime_generation.wrapping_add(1);
+                self.last_settings_fp = None;
                 Ok(())
             }
         }
@@ -495,6 +507,8 @@ impl SlotScript {
             self.load_identity = None;
             self.watchdog.cancel_clear();
         }
+        self.source_identity = None;
+        self.last_settings_fp = None;
     }
 
     /// Recompute the gate from client presence. With an instance, the slot
@@ -641,12 +655,56 @@ impl SlotScript {
     /// Post the merged operator settings bag into a Load isolate.
     #[cfg(feature = "load")]
     pub fn post_settings_bag(&mut self, bag: &serde_json::Map<String, serde_json::Value>) {
+        let fp = settings_fp(bag);
+        if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
+            return;
+        }
         if let Some(isolate) = &self.load {
             isolate.post_settings_bag(bag);
         }
         if let Some(identity) = &mut self.load_identity {
             identity.settings_bag = Some(Arc::new(bag.clone()));
         }
+        self.last_settings_fp = Some(fp);
+    }
+
+    /// Deliver settings only when identity and runtime generation match.
+    /// Returns false when the edit is stale or the bag is unchanged.
+    #[cfg(feature = "load")]
+    pub fn post_settings_bag_fenced(
+        &mut self,
+        bag: &serde_json::Map<String, serde_json::Value>,
+        identity: &str,
+        generation: u64,
+    ) -> bool {
+        if self.source_identity.as_deref() != Some(identity) {
+            return false;
+        }
+        if self.runtime_generation != generation {
+            return false;
+        }
+        match self.state {
+            RunState::Running | RunState::Paused => {}
+            _ => return false,
+        }
+        let fp = settings_fp(bag);
+        if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
+            return false;
+        }
+        self.post_settings_bag(bag);
+        true
+    }
+
+    pub fn attach_source_identity(&mut self, key: impl Into<String>) {
+        self.source_identity = Some(key.into());
+    }
+
+    pub fn source_identity(&self) -> Option<&str> {
+        self.source_identity.as_deref()
+    }
+
+    pub fn runtime_generation(&self) -> u64 {
+        self.runtime_generation
     }
 
     #[cfg(feature = "load")]
@@ -883,6 +941,8 @@ impl SlotScript {
         self.last_error = None;
         self.ticks = 0;
         self.state = RunState::Running;
+        self.runtime_generation = self.runtime_generation.wrapping_add(1);
+        self.last_settings_fp = None;
         self.watchdog.on_restart_applied(now);
         Ok(())
     }
@@ -1099,6 +1159,10 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         }
     }
     "(no message)".to_string()
+}
+
+fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
+    serde_json::to_string(bag).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1407,5 +1471,26 @@ export default class T extends LoopingBot {
         slot.reset_session_work();
         assert!(slot.pending_bank_op().is_none());
         assert_eq!(slot.bank_op_result(), (before.0.wrapping_add(1), false));
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.attach_source_identity("catalog:ChickenKiller");
+        let gen = slot.runtime_generation();
+        let mut bag = serde_json::Map::new();
+        bag.insert("x".into(), serde_json::json!(1));
+        assert!(slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
+        assert!(
+            !slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen),
+            "unchanged bag is not reposted"
+        );
+        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:Other", gen));
+        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen.wrapping_add(1)));
+        slot.stop();
+        assert!(slot.source_identity().is_none());
+        assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
     }
 }

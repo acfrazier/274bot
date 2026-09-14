@@ -4785,6 +4785,38 @@ impl Play {
         self.wake(name);
     }
 
+    pub fn script_attach_identity(&self, name: &str, identity: impl Into<String>) {
+        if let Some(slot) = script_slot(&self.scripts, name) {
+            slot.lock().unwrap().attach_source_identity(identity);
+        }
+    }
+
+    pub fn script_runtime_generation(&self, name: &str) -> Option<u64> {
+        script_slot(&self.scripts, name).map(|slot| slot.lock().unwrap().runtime_generation())
+    }
+
+    pub fn script_source_identity(&self, name: &str) -> Option<String> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().unwrap().source_identity().map(str::to_string))
+    }
+
+    pub fn script_post_settings_fenced(
+        &self,
+        name: &str,
+        bag: &serde_json::Map<String, serde_json::Value>,
+        identity: &str,
+        generation: u64,
+    ) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        let accepted = slot
+            .lock()
+            .unwrap()
+            .post_settings_bag_fenced(bag, identity, generation);
+        accepted
+    }
+
     /// One-shot script-local paint button for `name`. No-op when there is
     /// no slot, the slot is not Running, `id` is empty, `generation` does
     /// not match the last forwarded frame, or that frame does not advertise
@@ -6493,6 +6525,7 @@ mod tests {
                 random_events: true,
                 lamp_skill: "strength".into(),
                 lamp_auto: true,
+                ..ProfileSettings::default()
             },
         };
         let loud = Profile {
@@ -6507,6 +6540,7 @@ mod tests {
                 random_events: true,
                 lamp_skill: "strength".into(),
                 lamp_auto: true,
+                ..ProfileSettings::default()
             },
         };
         assert!(bot_client_config(&opt, &quiet).lowmem);
@@ -7464,6 +7498,7 @@ mod tests {
                 random_events: true,
                 lamp_skill: "strength".into(),
                 lamp_auto: true,
+                ..ProfileSettings::default()
             },
         }
     }

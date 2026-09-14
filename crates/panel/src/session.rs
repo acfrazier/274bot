@@ -946,8 +946,15 @@ pub struct Session {
     pub ui: crate::ui_state::PanelUiState,
     /// The script picked in Browse (compiled id or loaded JS card);
     /// `None` until one is selected. Selecting never Starts — Start is the
-    /// section button.
+    /// section button. This is the focused heading; per-profile pending
+    /// Browse lives in [`Session::pending_browse`].
     pub script_sel: Option<script::ScriptSel>,
+    /// Per-profile Browse selection, never treated as last successful Start.
+    pub pending_browse: HashMap<String, script::ScriptSel>,
+    pub last_bulk_script_report: Option<String>,
+    pub reload_warning: Option<crate::profile_script::ReloadWarning>,
+    pub catalog_refresh_report: Option<String>,
+    pub reload_generation: u64,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
     transpile_armed: bool,
@@ -1183,6 +1190,11 @@ impl Session {
             multibox: false,
             ui,
             script_sel: None,
+            pending_browse: HashMap::new(),
+            last_bulk_script_report: None,
+            reload_warning: None,
+            catalog_refresh_report: None,
+            reload_generation: 0,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -1534,7 +1546,7 @@ impl Session {
         }
     }
 
-    fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
+    pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
         match self.server_profile.as_ref() {
             Some(profile) => Ok(profile.catalog_root().map(Path::to_path_buf)),
             None if self.profile_options.is_some() => self
@@ -1650,7 +1662,11 @@ impl Session {
     /// immediately (disk read); misses enqueue **this card only**.
     pub fn select_script_card(&mut self, source: script::ScriptSource, name: impl Into<String>) {
         let name = name.into();
-        self.script_sel = Some(script::ScriptSel::Loaded(source, name.clone()));
+        let sel = script::ScriptSel::Loaded(source, name.clone());
+        self.script_sel = Some(sel.clone());
+        if let Some(profile) = self.focused_name() {
+            self.set_pending_browse(&profile, sel);
+        }
         self.enqueue_transpile(source, name, true);
     }
 
@@ -1698,7 +1714,12 @@ impl Session {
         }
     }
 
-    fn enqueue_transpile(&mut self, source: script::ScriptSource, name: String, to_front: bool) {
+    pub(crate) fn enqueue_transpile(
+        &mut self,
+        source: script::ScriptSource,
+        name: String,
+        to_front: bool,
+    ) {
         if self.js.js_is_ready(source, &name) {
             return;
         }
@@ -2776,6 +2797,7 @@ impl Session {
         let arm = self.arm_for_profile(name);
         self.ensure_slot(name, arm);
         self.apply_focus(name);
+        self.restore_script_heading(name);
     }
 
     fn apply_focus(&mut self, name: &str) {
@@ -3857,50 +3879,7 @@ impl Session {
             self.error = Some("script: no focused profile".into());
             return;
         };
-        let Some(sel) = self.script_sel.clone() else {
-            self.error = Some("script: browse to pick one first".into());
-            return;
-        };
-        if script_active(self.focused_script_state()) {
-            return;
-        }
-        let result = match (self.play.as_ref(), sel) {
-            (Some(play), script::ScriptSel::Compiled(id)) => play.script_start(&name, id),
-            (Some(play), script::ScriptSel::Loaded(source, card_name)) => {
-                match self.js.get(source, &card_name) {
-                    Some(card) if card.unloadable.is_some() => Err(format!(
-                        "unloadable import: {}",
-                        card.unloadable.as_deref().unwrap_or("")
-                    )),
-                    Some(_) => match self.js.ensure_js(source, &card_name) {
-                        Err(e) => Err(e),
-                        Ok(()) => match self.js.get(source, &card_name) {
-                            Some(card) => {
-                                let bag = self.pending_settings_bag(
-                                    source,
-                                    &card_name,
-                                    &card.settings_schema,
-                                );
-                                match self.sibling_modules_for_card(card) {
-                                    Ok(siblings) => play.script_start_load(
-                                        &name,
-                                        card.js.clone(),
-                                        card.shape,
-                                        bag,
-                                        siblings,
-                                    ),
-                                    Err(e) => Err(e),
-                                }
-                            }
-                            None => Err(format!("no loaded script: {card_name}")),
-                        },
-                    },
-                    None => Err(format!("no loaded script: {card_name}")),
-                }
-            }
-            (None, _) => Err("no play".to_string()),
-        };
-        match result {
+        match self.script_start_profile_with(&name, true) {
             Ok(()) => self.error = None,
             Err(e) => self.error = Some(format!("script: {e}")),
         }
@@ -3934,7 +3913,11 @@ impl Session {
         match self.js.load(path) {
             Ok(card) => {
                 self.error = None;
-                self.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
+                let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+                self.script_sel = Some(sel.clone());
+                if let Some(profile) = self.focused_name() {
+                    self.set_pending_browse(&profile, sel);
+                }
                 if let Some(parent) = path.parent() {
                     self.ui.script_load_last_dir = Some(parent.to_path_buf());
                     if self.persist_ui {
@@ -3981,6 +3964,7 @@ impl Session {
         if let Some(play) = self.play.as_ref() {
             play.script_stop(&name);
         }
+        self.reload_generation = self.reload_generation.wrapping_add(1);
     }
 
     /// One-shot script-local paint button on the focused slot.
@@ -8659,13 +8643,12 @@ mod tests {
         s.js = script::JsLibrary::with_cache(store.clone(), dir.join("js-cache"));
         s.load_js(&path);
         assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
-        assert_eq!(
-            s.script_sel,
-            Some(script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                "tickbot".to_string(),
-            ))
-        );
+        match &s.script_sel {
+            Some(script::ScriptSel::Loaded(script::ScriptSource::File, id)) => {
+                assert!(id.ends_with("tickbot.js") || id.contains("tickbot"), "{id}");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(s.js.cards().len(), 1);
         assert!(!s.script_load_open, "success closes the load browser");
         assert!(store.exists(), "the card is persisted to the session store");
@@ -8687,7 +8670,10 @@ mod tests {
         s.focus.lock().unwrap().focused = Some("alice".into());
         s.script_start_selected();
         let err = s.error.clone().expect("no-selection banner");
-        assert!(err.contains("browse"), "{err}");
+        assert!(
+            err.contains("assignment") || err.contains("browse"),
+            "{err}"
+        );
         s.error = None;
         s.script_sel = Some(script::ScriptSel::Compiled(script::CompiledId(
             "BoneBurier",

@@ -17,6 +17,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use pbkdf2::pbkdf2_hmac;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -48,7 +49,35 @@ pub enum RasterMode {
     Cpu,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Last successfully started script for a profile. Identity is source kind
+/// plus canonical catalog/file/compiled id — never a display-name fallback.
+/// A missing source stays present with [`ScriptAssignment::unavailable`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScriptAssignment {
+    /// `catalog`, `file`, `builtin`, or `compiled`.
+    pub source_kind: String,
+    /// Canonical identity: register name, stored file path, or compiled id.
+    pub identity: String,
+    /// Picker label only. Never used to look up or substitute a card.
+    #[serde(default)]
+    pub display_name: String,
+    /// Present when the stored identity cannot currently be resolved.
+    #[serde(default)]
+    pub unavailable: Option<String>,
+}
+
+impl ScriptAssignment {
+    pub fn key(&self) -> String {
+        assignment_key(&self.source_kind, &self.identity)
+    }
+}
+
+/// Stable persistence key for a script identity.
+pub fn assignment_key(source_kind: &str, identity: &str) -> String {
+    format!("{source_kind}:{identity}")
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSettings {
     pub lowmem: bool,
     #[serde(default)]
@@ -70,6 +99,12 @@ pub struct ProfileSettings {
     /// Lamp auto-use: claim the reward without a confirmation click.
     #[serde(default = "default_lamp_auto")]
     pub lamp_auto: bool,
+    /// Last successfully started assignment. Absence is a legacy unassigned profile.
+    #[serde(default)]
+    pub script_assignment: Option<ScriptAssignment>,
+    /// Per-profile parameter overrides keyed by [`assignment_key`].
+    #[serde(default)]
+    pub script_settings: BTreeMap<String, Map<String, Value>>,
 }
 
 fn default_random_events() -> bool {
@@ -94,12 +129,14 @@ impl Default for ProfileSettings {
             random_events: true,
             lamp_skill: "strength".into(),
             lamp_auto: true,
+            script_assignment: None,
+            script_settings: BTreeMap::new(),
         }
     }
 }
 
 /// A stored login profile, keyed by username.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub username: String,
     pub password: String,
@@ -395,12 +432,7 @@ mod tests {
             uid: 42,
             settings: ProfileSettings {
                 lowmem: false,
-                auto_login: false,
-                tutorial_skipped: None,
-                raster: super::RasterMode::Gpu,
-                random_events: true,
-                lamp_skill: "strength".into(),
-                lamp_auto: true,
+                ..ProfileSettings::default()
             },
         }
     }
@@ -416,12 +448,7 @@ mod tests {
             uid: 1,
             settings: ProfileSettings {
                 lowmem: true,
-                auto_login: false,
-                tutorial_skipped: None,
-                raster: super::RasterMode::Gpu,
-                random_events: true,
-                lamp_skill: "strength".into(),
-                lamp_auto: true,
+                ..ProfileSettings::default()
             },
         })
         .unwrap();
@@ -651,5 +678,44 @@ mod tests {
         let v = Vault::unlock(&path, "bot").unwrap();
         assert!(v.get("alice").is_none(), "removal persists across unlock");
         assert!(v.get("bob").is_some());
+    }
+
+    #[test]
+    fn legacy_profile_json_has_no_assignment_or_settings() {
+        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        assert!(missing.script_assignment.is_none());
+        assert!(missing.script_settings.is_empty());
+    }
+
+    #[test]
+    fn assignment_roundtrip_keeps_missing_source_identity() {
+        let mut settings = ProfileSettings::default();
+        settings.script_assignment = Some(super::ScriptAssignment {
+            source_kind: "file".into(),
+            identity: "/tmp/gone/bot.ts".into(),
+            display_name: "bot".into(),
+            unavailable: Some("missing file: /tmp/gone/bot.ts".into()),
+        });
+        let mut overrides = serde_json::Map::new();
+        overrides.insert("buryBones".into(), serde_json::json!(false));
+        settings
+            .script_settings
+            .insert("file:/tmp/gone/bot.ts".into(), overrides);
+        let raw = serde_json::to_string(&settings).unwrap();
+        let back: ProfileSettings = serde_json::from_str(&raw).unwrap();
+        let asg = back.script_assignment.unwrap();
+        assert_eq!(asg.source_kind, "file");
+        assert_eq!(asg.identity, "/tmp/gone/bot.ts");
+        assert_eq!(asg.display_name, "bot");
+        assert_eq!(
+            asg.unavailable.as_deref(),
+            Some("missing file: /tmp/gone/bot.ts")
+        );
+        assert_eq!(
+            back.script_settings
+                .get("file:/tmp/gone/bot.ts")
+                .and_then(|m| m.get("buryBones")),
+            Some(&serde_json::json!(false))
+        );
     }
 }
