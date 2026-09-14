@@ -479,6 +479,10 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';",
     },
     Reexport {
+        names: &["Quests"],
+        line: "export { Quests } from '../../api/ui/questlog/Quests.js';",
+    },
+    Reexport {
         names: &["Traversal"],
         line: "export { Traversal } from '../../api/walking/Traversal.js';",
     },

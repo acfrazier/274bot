@@ -83,7 +83,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 
 fn spawn() -> LoadIsolate {
     let src = r#"
-import { Quests } from '../../api/ui/questlog/Quests.js';
+import { Quests } from '@rs2b0t/api';
 export default class T extends LoopingBot {
     loop() {
         let unavailable = false;
