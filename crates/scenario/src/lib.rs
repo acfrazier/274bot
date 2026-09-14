@@ -25,7 +25,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use api::interact::{
-    cheat, logout, op_loc, tele_args, Driver, Interactions, SendReason, SendResult, MAXME_SETSTATS,
+    cheat, logout, op_loc, tele_args, ActionSpec, Driver, Interactions, OpTarget, SendReason,
+    SendResult, MAXME_SETSTATS,
 };
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
@@ -480,6 +481,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
         "firemaker" => Some(firemaker_scenario()),
         "firemaker_oak" => Some(firemaker_oak_scenario()),
+        "climbing_boots" => Some(climbing_boots_scenario()),
+        "climbing_boots_teleport" => Some(climbing_boots_teleport_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         "nature_crafter_air" => Some(nature_crafter_air_scenario()),
         "mule_crafter_air" => Some(mule_crafter_air_scenario()),
@@ -599,6 +602,8 @@ pub fn names() -> Vec<&'static str> {
         "leather_crafter_hard_body",
         "firemaker",
         "firemaker_oak",
+        "climbing_boots",
+        "climbing_boots_teleport",
         "script_trade",
         "nature_crafter_air",
         "mule_crafter_air",
@@ -13181,6 +13186,377 @@ fn shop_buyout_variant(
     }
 }
 
+/// ClimbingBoots option cells. `useTeleport` and `runeStock` are typed on
+/// purpose: the frozen script's defaults are true/50, and the walking cell
+/// must be the explicit false branch, the teleport cell the explicit true
+/// branch with the smallest non-zero rune stock.
+const CLIMBING_BOOTS_WALK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "useTeleport",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "runeStock",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+const CLIMBING_BOOTS_TELEPORT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "useTeleport",
+        value: ScriptInjectValue::Bool(true),
+    },
+    ScriptSettingInject {
+        id: "runeStock",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+const CLIMBING_BOOTS_ID: i32 = 3105;
+const CLIMBING_BOOTS_PAIR_COINS: i32 = 12;
+const CLIMBING_BOOTS_TELE_MAGIC: i32 = 37;
+/// `readyToBuy` wants coins === 12 * tripQty with no unrelated inventory.
+/// tripQty is 28 minus the carried rune stacks, so the walk cell carries
+/// 28 pairs and the teleport cell 25 pairs beside Law 1/Air 3/Water 1.
+const CLIMBING_BOOTS_WALK_PACK_COINS: i32 = 28 * CLIMBING_BOOTS_PAIR_COINS;
+const CLIMBING_BOOTS_TELE_PACK_COINS: i32 = 25 * CLIMBING_BOOTS_PAIR_COINS;
+/// Bank stock for the later withdrawals the full cycle claims: two further
+/// trips of coins, and — teleport cell only — the exact Law 1/Air 3/Water 1
+/// restock, because `runeStock=1` consumes the whole carried stack per cast.
+const CLIMBING_BOOTS_BANK_TRIPS: i32 = 2;
+const CLIMBING_BOOTS_RUNES: &[(&str, i32)] = &[("lawrune", 1), ("airrune", 3), ("waterrune", 1)];
+/// The Water rune id for the bank-seed acknowledgement (Law 563 and Air 556
+/// already have crate constants).
+const WATER_RUNE_ID: i32 = 555;
+/// Tenzing's hut: the door tile the pack stands on and the inside tile the
+/// frozen script targets. Route/prep targets only, never PASS predicates.
+const TENZING_DOOR: WorldTile = WorldTile {
+    x: 2823,
+    z: 3555,
+    level: 0,
+};
+const TENZING_INSIDE: WorldTile = WorldTile {
+    x: 2820,
+    z: 3556,
+    level: 0,
+};
+const TENZING_NAME: &str = "Tenzing";
+
+/// The bank-side op slot whose label is the bulk deposit (`Deposit All`),
+/// 1-based, matched the way the host's own deposit path does (case and
+/// separator insensitive). This is the ordinary bank window the player uses.
+fn bank_deposit_all_op(actions: &[Option<String>]) -> Option<i32> {
+    actions
+        .iter()
+        .position(|action| {
+            action.as_deref().is_some_and(|label| {
+                let normalised: String = label
+                    .to_ascii_lowercase()
+                    .chars()
+                    .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+                    .collect();
+                normalised.contains("deposit") && normalised.contains("all")
+            })
+        })
+        .map(|slot| slot as i32 + 1)
+}
+
+fn climbing_boots_scenario() -> Scenario {
+    climbing_boots_variant(
+        "climbing_boots",
+        CLIMBING_BOOTS_WALK_INJECT,
+        CLIMBING_BOOTS_WALK_PACK_COINS,
+        false,
+    )
+}
+
+fn climbing_boots_teleport_scenario() -> Scenario {
+    climbing_boots_variant(
+        "climbing_boots_teleport",
+        CLIMBING_BOOTS_TELEPORT_INJECT,
+        CLIMBING_BOOTS_TELE_PACK_COINS,
+        true,
+    )
+}
+
+/// Clean pack at Tenzing's hut: Death Plateau completed through the authentic
+/// `setvar death_equiproom 80` with a native `getvar` readback, a relog so
+/// the journal repaints, then the exact carried trip money (plus the rune
+/// stack for the teleport cell) and a bank stock for later withdrawals.
+///
+/// The `getvar death_equiproom` readback, the `Death Plateau` journal row and
+/// the framed `Tenzing` NPC are the fixture's fail-closed prerequisite: they
+/// read the *running pack's* own varp/NPC/journal content, so a pack that does
+/// not provide them times this cell out before Start instead of seeding a
+/// shortcut. There is no revision switch in this runner and none is invented
+/// here; the guard is the authenticated content those steps resolve.
+///
+/// The pack itself carries zero boots. The bank stock is a real booth session
+/// (the ordinary window, the inventory's bulk deposit op, a real close) — not
+/// `givebank` and not a bank-side cheat — and it is not a purchase claim.
+/// Start is the real frozen script; nothing intervenes after it, and the
+/// purchase, return, deposit and further stages are watched separately.
+fn climbing_boots_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    pack_coins: i32,
+    use_teleport: bool,
+) -> Scenario {
+    let door = Proof::ArrivedNear {
+        x: TENZING_DOOR.x,
+        z: TENZING_DOOR.z,
+        level: TENZING_DOOR.level,
+        radius: 4,
+    };
+    let tenzing = Proof::NpcNameNear {
+        name: TENZING_NAME,
+        x: TENZING_INSIDE.x,
+        z: TENZING_INSIDE.z,
+        level: TENZING_INSIDE.level,
+        radius: 12,
+    };
+    let bank = FALADOR_WEST_BANK;
+    let returned = Proof::ArrivedNear {
+        x: bank.x,
+        z: bank.z,
+        level: bank.level,
+        radius: 8,
+    };
+    let mut steps: Vec<Step> = Vec::new();
+    steps.push(Step {
+        name: "complete Death Plateau by the authentic setvar and read it back",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "setvar death_equiproom 80");
+                cheat(c, "getvar death_equiproom");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat {
+                needle: "get death_equiproom: 80",
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.extend(script_live_seed_steps());
+    steps.push(bank_fletcher_watch(
+        "acknowledge Death Plateau complete before Start",
+        Proof::QuestDone {
+            name: "Death Plateau",
+        },
+    ));
+    let booth = FALADOR_WEST_BOOTH;
+    let bank_coins = CLIMBING_BOOTS_BANK_TRIPS * pack_coins;
+    steps.push(Step {
+        name: "seed the bank-bound stack and stand at the Falador West booth",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("give coins {bank_coins}"));
+                if use_teleport {
+                    for (alias, count) in CLIMBING_BOOTS_RUNES {
+                        cheat(c, &format!("give {alias} {count}"));
+                    }
+                }
+                cheat(c, &tele_args(booth.level, booth.x, booth.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: booth.x,
+                z: booth.z,
+                level: booth.level,
+                radius: 4,
+            },
+            budget_ticks: 200,
+        },
+    });
+    // The bank seed is a real session, not a bank-side cheat: the ordinary
+    // booth window, the inventory's bulk deposit op, and a real close. The
+    // deposited rows are the same stackables the script later withdraws.
+    steps.push(open_seed_booth(
+        "open the real Falador West bank for the seed deposit",
+        booth,
+        Proof::BankItemId {
+            id: COINS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(Step {
+        name: "deposit the seeded coins and runes through the bank window",
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snapshot| {
+                let mut ix = Interactions::new(snapshot, c);
+                let mut wrote = false;
+                for item in snapshot.bank_side() {
+                    if let Some(op) = bank_deposit_all_op(&item.actions) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+                wrote
+            }),
+        },
+        wait: Wait {
+            arm: Proof::BankItemId {
+                id: COINS_ID,
+                count: bank_coins,
+            },
+            budget_ticks: 200,
+        },
+    });
+    if use_teleport {
+        // `runeStock=1` spends the whole carried stack on the first cast, so
+        // the seed bank itself must be acknowledged to hold the exact restock
+        // the full cycle withdraws (`CLIMBING_BOOTS_RUNES`) before the session
+        // closes and Start inherits it. Coins alone would let a rune-less bank
+        // seed pass.
+        steps.push(bank_fletcher_watch(
+            "acknowledge the banked teleport restock: Law rune",
+            Proof::BankItemId {
+                id: LAW_RUNE_ID,
+                count: 1,
+            },
+        ));
+        steps.push(bank_fletcher_watch(
+            "acknowledge the banked teleport restock: Air runes",
+            Proof::BankItemId {
+                id: AIR_RUNE_ID,
+                count: 3,
+            },
+        ));
+        steps.push(bank_fletcher_watch(
+            "acknowledge the banked teleport restock: Water rune",
+            Proof::BankItemId {
+                id: WATER_RUNE_ID,
+                count: 1,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(Step {
+        name: "seed the exact trip stack and stand at Tenzing's hut",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                if use_teleport {
+                    cheat(c, &format!("setstat magic {CLIMBING_BOOTS_TELE_MAGIC}"));
+                    for (alias, count) in CLIMBING_BOOTS_RUNES {
+                        cheat(c, &format!("give {alias} {count}"));
+                    }
+                }
+                cheat(c, &format!("give coins {pack_coins}"));
+                cheat(
+                    c,
+                    &tele_args(TENZING_DOOR.level, TENZING_DOOR.x, TENZING_DOOR.z),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: door,
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm no seeded boots in the pack before Start",
+        Proof::ItemIdAtMost {
+            id: CLIMBING_BOOTS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "confirm the real Tenzing NPC is framed at the hut before Start",
+        tenzing,
+    ));
+    steps.push(start_catalog_step());
+    let mut watches: Vec<(&'static str, Proof)> = vec![
+        (
+            "watch the real purchase gain a pair of boots",
+            Proof::ItemId {
+                id: CLIMBING_BOOTS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the purchase spend 12 coins a pair",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: pack_coins - CLIMBING_BOOTS_PAIR_COINS * 2,
+            },
+        ),
+        ("watch the return to the Falador West bank", returned),
+        (
+            "watch Falador West bank hold the deposited boots",
+            Proof::BankItemId {
+                id: CLIMBING_BOOTS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the bank close after restocking for a further trip",
+            Proof::BankClosed,
+        ),
+        (
+            "watch a further pair for the full cycle",
+            Proof::ItemId {
+                id: CLIMBING_BOOTS_ID,
+                count: 2,
+            },
+        ),
+    ];
+    if use_teleport {
+        watches.insert(
+            0,
+            (
+                "watch the real Falador cast land at the bank",
+                Proof::ArrivedNear {
+                    x: FALADOR_TELE_LAND.x,
+                    z: FALADOR_TELE_LAND.z,
+                    level: FALADOR_TELE_LAND.level,
+                    radius: 8,
+                },
+            ),
+        );
+    }
+    for (step_name, arm) in watches {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    let proof = if use_teleport {
+        Proof::StatXpGain {
+            id: MAGIC_STAT,
+            min: 1,
+        }
+    } else {
+        Proof::ItemId {
+            id: CLIMBING_BOOTS_ID,
+            count: 2,
+        }
+    };
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("ClimbingBoots"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 fn smithing_bot_scenario() -> Scenario {
     smithing_bot_variant(
         "smithing_bot",
@@ -14915,6 +15291,8 @@ mod tests {
                 "leather_crafter_hard_body",
                 "firemaker",
                 "firemaker_oak",
+                "climbing_boots",
+                "climbing_boots_teleport",
                 "script_trade",
                 "nature_crafter_air",
                 "mule_crafter_air",

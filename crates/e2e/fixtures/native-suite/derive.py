@@ -184,10 +184,11 @@ MAPPING = [
          options=["named food startup", "banked cake/chocolate-cake branch"]),
     case("MuleCrafter", "mule_crafter_air", runner=PAIR, reference=["mulecrafter-test"],
          options=["two actual actors", "role-specific partner names", "trade/crafter fixture", "mode/material options"]),
-    case("ClimbingBoots", "climbing_boots", unavailable=(
-        "missing_adapter",
-        "enabled but unqualified: useTeleport/runeStock, Tenzing/Falador/teleport/shop dialogue fixture and custom "
-        "interaction paint are needed before any PASS claim")),
+    case("ClimbingBoots", "climbing_boots", variants=["climbing_boots_teleport"],
+         options=["useTeleport false walk cell / true teleport cell",
+                  "runeStock 1 explicit fixture value (product default 50)"],
+         unsupported=[("Death Plateau completion/Tenzing NPC/dialogue prerequisite", "fixture prerequisite"),
+                      ("custom Sherpa paint interaction", "not claimed by the native witness")]),
     case("ShopBuyout", "shop_buyout", variants=["shop_buyout_aubury"], options=["shop selection/Aubury branch"],
          unsupported=[("stock/coin prerequisite", "fixture prerequisite"),
                       ("actual buy/XP/inventory witness", "verify before any PASS claim")]),
