@@ -40,7 +40,7 @@ reason and are recorded `unavailable`; nothing is substituted or silently droppe
 
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
 launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
-`--lowmem` (the default), `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
+`--lowmem` (the default) or `--highmem`, `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
 `--exec-external PATH`, `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable).
 
 The child command line is the *resolved* executable, the profile flags and the case's live
@@ -63,10 +63,13 @@ source.
 
 Only flags the executables actually accept are emitted: `catalog_watch`, `pair_watch` and
 `panel-play` parse flags with `host_play::parse_profile_args` and then reject anything but
-`--live`/`--smoke`/`--prod`. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
+`--live`/`--smoke`/`--prod`. The suite's typed memory selection is consumed by the native
+adapters and emitted on every core, pair and external child command; it defaults to
+`--lowmem`, with `--highmem` as the explicit alternative. Conflicting `--lowmem` and
+`--highmem` selections fail closed, and raw `--child-arg --lowmem`/`--child-arg --highmem`
+cannot rebind the typed selection. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
 child's environment (and an inherited `BOT_MAINLAND` is removed when `--mainland` is not
-set). `--highmem` is refused because the panel takes the memory mode from the vault profile
-and exposes no flag (pending adapter work). A nonempty *inherited native deadline control*
+set). A nonempty *inherited native deadline control*
 is refused too: `BUDGET_S` (the panel's runner-deadline override and post-PASS soak window)
 would move the child's inner deadline behind the case budget the run recorded, so `run`,
 `--resume` and `dry-run` all refuse it by name before any launch instead of clearing it —
@@ -119,8 +122,8 @@ match exactly before any spawn:
   `--unpack` / `CLIENT_UNPACK_DIR` must be identifiable as a cache pack or the run refuses.
   `catalog_watch` isolates script stores on its own thread; those are not the operator
   vault. `LOGIN_RSAN`/`LOGIN_RSAE` refuse the run (credentials are not recorded).
-* settings (level, `--only`, changed paths, extra child args, child env names, canonical
-  cwd) and the ordered selection;
+* settings (level, `--only`, changed paths, memory mode, extra child args, child env names,
+  canonical cwd) and the ordered selection; changing lowmem/highmem therefore refuses resume;
 * the external loader smoke's raw source, when — and only when — the selection launches
   that case: the typed `--external-ts` file or the producer's tracked default fixture, bound
   by path *and* by content SHA-256 (its size and the digest the producer's harmless
@@ -316,7 +319,7 @@ with `derive.py` against a read-only frozen reference checkout) and is embedded 
 time, so a run never depends on a local campaign path. It carries the frozen reference
 commit/tree/archive hash, the reference case statuses, budgets and coverage as evidence,
 the native adapter map (witness identity, live name, variants, declared gaps) and the
-desired run options with their pending adapter work. Reference `vetted`/`provenAt` are
+desired run options with their adapter coverage metadata. Reference `vetted`/`provenAt` are
 historical upstream evidence, never a native PASS.
 
 ## Not claimed
@@ -331,7 +334,7 @@ qualification. Their live baseline still requires visible dormant Rocks before S
 and actual script-caused activation afterwards. A runnable case is not a qualification.
 
 This entrypoint does not make Pass 3 complete by itself. Requested extra captures,
-per-run memory selection, the remaining pair adapters and LIVE qualification
+the remaining pair adapters and LIVE qualification
 remain separate work. The external loader adapter is implemented and covered offline, but
 it has not been executed against the game from this checkout: the row stays `unvetted`,
 and neither an offline green case nor a reference row's upstream status is a native PASS.
