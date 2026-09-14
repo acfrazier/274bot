@@ -15,6 +15,7 @@ use dear_imgui_rs::{
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
     TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
+use winit::keyboard::Key as WinitKey;
 
 use crate::chrome::{
     button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
@@ -1938,6 +1939,41 @@ const CAPTURE_PUNCT: [(Key, u8, u8); 11] = [
     (Key::Period, b'.', b'>'),
     (Key::Slash, b'/', b'?'),
 ];
+
+/// Recover the physical ImGui key for shifted printable characters. Winit's
+/// logical key is the produced character (`:` rather than `;`), while the
+/// capture path derives the final `ch` from the ImGui key and Shift state.
+/// The winit backend already queues `event.text` for text widgets; this adds
+/// only the missing key lifecycle event.
+pub(crate) fn shifted_imgui_key(key: &WinitKey) -> Option<Key> {
+    let WinitKey::Character(character) = key else {
+        return None;
+    };
+    match character.as_str() {
+        ")" => Some(Key::Key0),
+        "!" => Some(Key::Key1),
+        "@" => Some(Key::Key2),
+        "#" => Some(Key::Key3),
+        "$" => Some(Key::Key4),
+        "%" => Some(Key::Key5),
+        "^" => Some(Key::Key6),
+        "&" => Some(Key::Key7),
+        "*" => Some(Key::Key8),
+        "(" => Some(Key::Key9),
+        "~" => Some(Key::GraveAccent),
+        "_" => Some(Key::Minus),
+        "+" => Some(Key::Equal),
+        "{" => Some(Key::LeftBracket),
+        "}" => Some(Key::RightBracket),
+        "|" => Some(Key::Backslash),
+        ":" => Some(Key::Semicolon),
+        "\"" => Some(Key::Apostrophe),
+        "<" => Some(Key::Comma),
+        ">" => Some(Key::Period),
+        "?" => Some(Key::Slash),
+        _ => None,
+    }
+}
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
 /// maps DOM `KeyboardEvent.key` (`:` is 58, `~` is 126).
@@ -5074,6 +5110,7 @@ mod tests {
     use dear_imgui_rs::{ConfigFlags, Id, Key, WindowFlags};
     use host_play::profile::ProfileEnvironment;
     use host_play::SharedClientTemplate;
+    use winit::keyboard::Key as WinitKey;
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
@@ -5081,10 +5118,10 @@ mod tests {
         debug_caption, drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
         live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
         manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-        runner_config, smoke_settled, smoke_should_fire, startup_progress, Boot, CoreGate,
-        LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
-        ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W,
-        LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+        runner_config, shifted_imgui_key, smoke_settled, smoke_should_fire, startup_progress, Boot,
+        CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
+        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -5775,6 +5812,23 @@ mod tests {
         assert_eq!(capture_key_ch(Key::GraveAccent, false), Some(b'`' as i32));
         assert_eq!(capture_key_ch(Key::Comma, false), Some(b',' as i32));
         assert_eq!(capture_key_ch(Key::Minus, true), Some(b'_' as i32));
+    }
+
+    #[test]
+    fn shifted_logical_characters_recover_key_lifecycle() {
+        assert_eq!(
+            shifted_imgui_key(&WinitKey::Character(":".into())),
+            Some(Key::Semicolon)
+        );
+        assert_eq!(
+            shifted_imgui_key(&WinitKey::Character("!".into())),
+            Some(Key::Key1)
+        );
+        assert_eq!(
+            shifted_imgui_key(&WinitKey::Character("?".into())),
+            Some(Key::Slash)
+        );
+        assert_eq!(shifted_imgui_key(&WinitKey::Character("a".into())), None);
     }
 
     #[test]

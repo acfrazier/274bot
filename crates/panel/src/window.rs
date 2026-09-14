@@ -1082,6 +1082,19 @@ where
                     &window.window,
                     &full_event,
                 );
+                if let WindowEvent::KeyboardInput { event, .. } = &event {
+                    // The backend queues event.text for text widgets, but
+                    // shifted punctuation has no ImGui key identity there.
+                    // Add only the missing key lifecycle event: text must not
+                    // be queued a second time.
+                    if let Some(key) = crate::app::shifted_imgui_key(&event.logical_key) {
+                        window
+                            .imgui
+                            .context
+                            .io_mut()
+                            .add_key_event(key, event.state == winit::event::ElementState::Pressed);
+                    }
+                }
 
                 match event {
                     WindowEvent::Resized(physical_size) => {
