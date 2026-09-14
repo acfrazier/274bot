@@ -15,7 +15,7 @@ use dear_imgui_rs::{
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
     TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
-use winit::keyboard::Key as WinitKey;
+use winit::keyboard::{Key as WinitKey, KeyLocation};
 
 use crate::chrome::{
     button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
@@ -1973,6 +1973,17 @@ pub(crate) fn shifted_imgui_key(key: &WinitKey) -> Option<Key> {
         "?" => Some(Key::Slash),
         _ => None,
     }
+}
+
+/// Apply the adapter only where dear-imgui-winit does not already own the
+/// physical key. Its backend maps numpad `+`/`*` to keypad keys; translating
+/// those same logical characters to `Equal`/`Key8` would double-deliver them
+/// to game capture.
+pub(crate) fn shifted_imgui_key_at_location(key: &WinitKey, location: KeyLocation) -> Option<Key> {
+    if location == KeyLocation::Numpad {
+        return None;
+    }
+    shifted_imgui_key(key)
 }
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
@@ -5110,7 +5121,7 @@ mod tests {
     use dear_imgui_rs::{ConfigFlags, Id, Key, WindowFlags};
     use host_play::profile::ProfileEnvironment;
     use host_play::SharedClientTemplate;
-    use winit::keyboard::Key as WinitKey;
+    use winit::keyboard::{Key as WinitKey, KeyLocation};
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
@@ -5118,10 +5129,11 @@ mod tests {
         debug_caption, drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
         live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
         manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-        runner_config, shifted_imgui_key, smoke_settled, smoke_should_fire, startup_progress, Boot,
-        CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+        runner_config, shifted_imgui_key, shifted_imgui_key_at_location, smoke_settled,
+        smoke_should_fire, startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript,
+        LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus,
+        StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+        SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -5829,6 +5841,33 @@ mod tests {
             Some(Key::Slash)
         );
         assert_eq!(shifted_imgui_key(&WinitKey::Character("a".into())), None);
+    }
+
+    #[test]
+    fn shifted_event_capture_preserves_two_colons_and_release_pairing() {
+        let press_key =
+            shifted_imgui_key_at_location(&WinitKey::Character(":".into()), KeyLocation::Standard)
+                .expect("shifted colon needs a physical ImGui key");
+        let release_key =
+            shifted_imgui_key_at_location(&WinitKey::Character(":".into()), KeyLocation::Standard)
+                .expect("shifted colon release needs the same physical ImGui key");
+
+        assert_eq!(press_key, release_key);
+        assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
+        assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
+        assert_eq!(capture_key_ch(release_key, false), Some(b';' as i32));
+    }
+
+    #[test]
+    fn shifted_event_adapter_leaves_numpad_punctuation_to_backend() {
+        assert_eq!(
+            shifted_imgui_key_at_location(&WinitKey::Character("+".into()), KeyLocation::Numpad,),
+            None
+        );
+        assert_eq!(
+            shifted_imgui_key_at_location(&WinitKey::Character("*".into()), KeyLocation::Numpad,),
+            None
+        );
     }
 
     #[test]
