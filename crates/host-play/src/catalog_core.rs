@@ -6699,6 +6699,7 @@ pub struct FiremakerCycle {
     pub wrong_log: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct FiremakerSpec {
     pub log: i32,
     pub wrong: i32,
@@ -6766,10 +6767,12 @@ impl FiremakerCycle {
                 && !now.bank_loaded
                 && now.bank_generation > deposited.bank_generation;
         }
-        if let Some(lit) = &self.lit {
+        if let (Some(_lit), Some(restocked)) = (&self.lit, &self.restocked) {
             self.further |= self.returned
                 && !now.bank_open
-                && now.skill_xp("firemaking") > lit.skill_xp("firemaking")
+                && now.tick > restocked.tick
+                && now.item_id(log) < restocked.item_id(log)
+                && now.skill_xp("firemaking") > restocked.skill_xp("firemaking")
                 && fire_in_varrock_east_plot(now);
         }
     }
