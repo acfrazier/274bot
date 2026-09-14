@@ -6290,15 +6290,18 @@ impl ClimbingBootsCycle {
         // (Law, Air and Water, no staff assumed) and the landing. Only after
         // the purchase, on a frame that still carries the earned pack, so a
         // pre-purchase Falador-shaped cast cannot satisfy the teleport cell.
+        // Compare with the purchase snapshot: Start-relative deltas could
+        // count an earlier cast when the earned pack later walks through here.
         // Recorded for either cell, so a walking cell that cast fails closed.
         if self.cast.is_none()
-            && self.bought.is_some()
             && self.earned_boots >= 1
             && now.item_id(CLIMBING_BOOTS_ID) >= self.earned_boots
-            && now.skill_xp("magic") > baseline.skill_xp("magic")
-            && now.item_id(LAW_RUNE_ID) < baseline.item_id(LAW_RUNE_ID)
-            && now.item_id(AIR_RUNE_ID) < baseline.item_id(AIR_RUNE_ID)
-            && now.item_id(WATER_RUNE_ID) < baseline.item_id(WATER_RUNE_ID)
+            && self.bought.as_ref().is_some_and(|bought| {
+                now.skill_xp("magic") > bought.skill_xp("magic")
+                    && now.item_id(LAW_RUNE_ID) < bought.item_id(LAW_RUNE_ID)
+                    && now.item_id(AIR_RUNE_ID) < bought.item_id(AIR_RUNE_ID)
+                    && now.item_id(WATER_RUNE_ID) < bought.item_id(WATER_RUNE_ID)
+            })
             && near(now.tile, landing, 8)
         {
             self.cast = Some(now.clone());

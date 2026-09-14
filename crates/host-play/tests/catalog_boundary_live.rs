@@ -9312,8 +9312,22 @@ mod tests {
         // Accepted teleport baseline: a pre-purchase Falador-shaped cast plus
         // a later walk-home must not qualify. The unordered helper used to
         // emit that cast first and still PASS.
-        let mut pre_purchase_cast = vec![climbing_boots_cast(&tele_baseline)];
-        pre_purchase_cast.extend(climbing_boots_frames(&tele_baseline, &tenzing, 25, false));
+        let early_cast = climbing_boots_cast(&tele_baseline);
+        let mut pre_purchase_cast = vec![early_cast.clone()];
+        let mut later_walk = climbing_boots_frames(&tele_baseline, &tenzing, 25, false);
+        // Preserve the consumed resources and XP from the early cast through
+        // the purchase and walk. Walking through the landing area later is
+        // not another cast, even when carrying the purchased pack.
+        for frame in &mut later_walk {
+            frame.xp.insert("magic".into(), early_cast.skill_xp("magic"));
+            for id in [LAW_RUNE_ID, AIR_RUNE_ID, WATER_RUNE_ID] {
+                frame.item_ids.insert(id, early_cast.item_id(id));
+            }
+        }
+        let mut walking_through_landing = later_walk[2].clone();
+        walking_through_landing.tile = Some(FALADOR_TELE_LAND);
+        later_walk.insert(3, walking_through_landing);
+        pre_purchase_cast.extend(later_walk);
         let pre_cast = witness(teleport, &tele_baseline, pre_purchase_cast.iter());
         assert!(
             pre_cast.climbing_boots_cycle.cast.is_none(),
