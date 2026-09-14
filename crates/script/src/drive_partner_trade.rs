@@ -490,8 +490,8 @@ fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) ->
             Some(have) if !have.eq_ignore_ascii_case(seen) => {
                 return start_decline(rt, "stale-phase");
             }
-            None => return start_decline(rt, "stale-phase"),
-            Some(_) => {}
+            None if probe.active() => return start_decline(rt, "stale-phase"),
+            Some(_) | None => {}
         }
     }
     if probe.active() {
@@ -500,18 +500,22 @@ fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) ->
         rt.inactive_since = Some(rt.now());
     }
     if rt.phase == Phase::WaitClose {
-        if let Some(after_tick) = rt.settle_after_tick {
-            if probe.tick >= after_tick {
-                return settle_close(rt, projection);
-            }
-            return rt.wait();
-        }
         if probe.offer_open && !probe.confirm_open {
             return start_decline(rt, "stale-phase");
         }
         if probe.active() || !stable_closed(rt) {
+            rt.settle_after_tick = None;
             if rt.bound_reached() {
                 return start_decline(rt, "no-progress");
+            }
+            return rt.wait();
+        }
+        if let Some(after_tick) = rt.settle_after_tick {
+            if rt.bound_reached() {
+                return start_decline(rt, "no-progress");
+            }
+            if probe.tick >= after_tick {
+                return settle_close(rt, projection);
             }
             return rt.wait();
         }
@@ -890,6 +894,8 @@ fn finish_declined(rt: &mut ExchangeRuntime, reason: &str) -> Value {
     let reason = reason.to_string();
     rt.phase = Phase::Idle;
     rt.deadline = None;
+    rt.inactive_since = None;
+    rt.settle_after_tick = None;
     json!({
         "kind": "declined",
         "token": token,
@@ -906,6 +912,7 @@ mod tests {
     fn frozen_deadlines_match_the_drive_contract() {
         assert_eq!(TRADE_OFFER_WAIT_MS, 5_000);
         assert_eq!(TRADE_CONFIRM_WAIT_MS, 8_000);
+        assert_eq!(TRADE_CLOSE_DEBOUNCE_MS, 600);
     }
 
     #[test]
