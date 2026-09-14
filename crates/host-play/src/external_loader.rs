@@ -88,10 +88,12 @@ pub fn materialize_owned_source(frozen: &Path) -> Result<PathBuf, String> {
             "external loader source sha {sha} does not match frozen {FROZEN_SHA256}"
         ));
     }
-    let dest = std::env::temp_dir().join(format!(
-        "274bot-external-{}-ExampleBot.ts",
-        std::process::id()
-    ));
+    // Native File cards take their display name from the file stem; defineBot metadata is
+    // not evaluated at Load. Keep the fixture name stable inside the process-owned directory.
+    let dir = std::env::temp_dir().join(format!("274bot-external-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("external loader owned directory {}: {e}", dir.display()))?;
+    let dest = dir.join(format!("{SCRIPT_NAME}.ts"));
     std::fs::write(&dest, &bytes)
         .map_err(|e| format!("external loader owned copy {}: {e}", dest.display()))?;
     Ok(dest)
@@ -1008,6 +1010,44 @@ fn receipt_locked(state: &WatchState) -> Value {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn materialized_source_loads_with_the_native_fixture_identity() {
+        let source = default_frozen_source();
+        let original = std::fs::read(&source).unwrap();
+        let owned = materialize_owned_source(&source).unwrap();
+        let scratch =
+            std::env::temp_dir().join(format!("external-fixture-library-{}", std::process::id()));
+        let mut library =
+            script::JsLibrary::with_cache(scratch.join("registry.json"), scratch.join("cache"));
+        let card = library.load(&owned).unwrap();
+        assert_eq!(
+            card.name, SCRIPT_NAME,
+            "use the real File card, not assumed defineBot metadata"
+        );
+        assert_eq!(card.sha256, FROZEN_SHA256);
+        assert_eq!(card.source, script::ScriptSource::File);
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        let watch = ExternalWatch::default();
+        watch.configure("alice", owned.clone(), FROZEN_SHA256.into());
+        watch.note_scene(true, 2);
+        watch.note_inventory(Instant::now(), "alice", BONES_COUNT, 0);
+        watch.note_prereq_passed();
+        watch.note_load(
+            library.cards().len(),
+            &card.name,
+            &card.path,
+            &card.identity_key(),
+            &card.sha256,
+            true,
+            false,
+        );
+        assert!(watch.failure().is_none(), "{:?}", watch.failure());
+        assert_eq!(watch.dispatch_operation(), Some(Operation::Start));
+        std::fs::remove_file(&owned).unwrap();
+        std::fs::remove_dir(owned.parent().unwrap()).unwrap();
+        std::fs::remove_dir_all(scratch).unwrap();
+    }
 
     #[test]
     fn failed_execution_holds_terminal_capture_until_cleanup_finishes_or_times_out() {
