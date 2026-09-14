@@ -213,6 +213,9 @@ struct LiveScript {
     soak: bool,
     soak_until: Option<Instant>,
     announced_pass: bool,
+    /// Native-core failure has issued its one current terminal-shot request.
+    /// This prevents the write frame from re-arming the same label again.
+    native_failure_capture_requested: bool,
     /// Separate wall-clock ceiling when scenario PASS arrives before the
     /// full shared core qualifies. `None` for every ordinary panel run.
     core_deadline: Option<Instant>,
@@ -506,6 +509,7 @@ impl LiveBoot {
                     soak: budget.is_some(),
                     soak_until: budget.map(|d| Instant::now() + d),
                     announced_pass: false,
+                    native_failure_capture_requested: false,
                     core_deadline,
                 }));
             }
@@ -1362,6 +1366,25 @@ fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, la
     }
 }
 
+fn request_native_failure_capture(
+    live: &mut LiveScript,
+    session: &Session,
+    shots: Option<&Mutex<ShotState>>,
+    terminal_shot: Option<&str>,
+) {
+    if live.native_failure_capture_requested {
+        return;
+    }
+    // A prerequisite terminal shot may have consumed its drain while the
+    // shared core was still pending. The failure-state capture gets a fresh
+    // bounded window, without extending the gameplay deadline.
+    live.native_failure_capture_requested = true;
+    live.drain_started = None;
+    if let (Some(shots), Some(label)) = (shots, terminal_shot) {
+        enqueue_current_terminal_shot(session, shots, label);
+    }
+}
+
 fn hold_script_terminal_shot(
     live: &mut LiveScript,
     session: &Session,
@@ -1597,9 +1620,7 @@ fn live_script_tick(
         }
     };
     if let CoreGate::Failed(message) = &core_gate {
-        if let (Some(shots), Some(label)) = (shots, terminal_shot) {
-            enqueue_current_terminal_shot(session, shots, label);
-        }
+        request_native_failure_capture(live, session, shots, terminal_shot);
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
@@ -5669,10 +5690,10 @@ mod tests {
         add_shifted_key_event, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
         boot_for, capture_key_ch, capture_keys, catalog_core_gate, chooser_should_open_popup,
         clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled,
-        enqueue_current_terminal_shot, game_window_flags, hold_script_terminal_shot,
-        live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick, loading_text,
-        log_follow_bottom, manual_shot_label, parse_args, parse_live_args, progress_channel,
-        random_status_text, runner_config, script_failure_scenario, shifted_imgui_key,
+        game_window_flags, hold_script_terminal_shot, live_null_tick, live_script_tick,
+        live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom, manual_shot_label,
+        parse_args, parse_live_args, progress_channel, random_status_text,
+        request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
         shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
         ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
@@ -7384,6 +7405,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
@@ -7494,6 +7516,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         // No terminal shot armed: the FAIL returns immediately.
@@ -7551,6 +7574,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
@@ -7618,6 +7642,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
@@ -7655,6 +7680,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
@@ -7694,10 +7720,14 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
 
-        enqueue_current_terminal_shot(&session, &shots, label);
+        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+        request_native_failure_capture(&mut live, &session, Some(&shots), Some(label));
+        assert!(live.native_failure_capture_requested);
+        assert!(live.drain_started.is_none(), "re-arm resets the old drain");
         assert_eq!(
             shots.lock().unwrap().status(label),
             ShotStatus::Requested,
@@ -7717,6 +7747,12 @@ mod tests {
         assert!(live.drain_started.is_some());
 
         shots.lock().unwrap().mark_written(label);
+        request_native_failure_capture(&mut live, &session, Some(&shots), Some(label));
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Written,
+            "a later failure tick must not re-arm the current capture"
+        );
         assert_eq!(
             hold_script_terminal_shot(
                 &mut live,
@@ -7799,6 +7835,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: Some(Instant::now() - Duration::from_secs(1)),
         };
         assert_eq!(
@@ -8111,6 +8148,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         let error = super::hold_script_terminal_shot(
@@ -8276,6 +8314,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
@@ -8328,6 +8367,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            native_failure_capture_requested: false,
             core_deadline: None,
         };
         assert_eq!(
