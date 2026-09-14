@@ -243,8 +243,8 @@ impl JsLibrary {
     /// Register a JS bot from a filesystem path. Reads the origin, caches
     /// transpiled JS under `~/.274bot/js-cache`, and statically parses
     /// `export const SETTINGS` for the picker schema. V8 only runs on
-    /// Start. A second load with the same `(ScriptSource::File, name)`
-    /// replaces the previous card.
+    /// Start. Loading the same file path replaces its previous card;
+    /// different paths remain distinct even when their file stems match.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
         let origin =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
