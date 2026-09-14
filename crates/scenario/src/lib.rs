@@ -8708,11 +8708,11 @@ const ROCK_CRAB_SPOT: WorldTile = WorldTile {
     z: 3726,
     level: 0,
 };
-/// Default source-script reset tile: outside the wake radius but in the
-/// loaded rock-crab field, so dormant `Rocks` can be observed before Start.
+/// Default source-script reset tile: inside the native visibility window but
+/// outside the wake radius, so dormant `Rocks` can be observed before Start.
 const ROCK_CRAB_SAFE_STAND: WorldTile = WorldTile {
     x: 2712,
-    z: 3688,
+    z: 3707,
     level: 0,
 };
 const GREEN_DRAGON_FIELD: WorldTile = WorldTile {
@@ -19147,7 +19147,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(seed.contains(&Proof::ArrivedNear {
             x: 2712,
-            z: 3688,
+            z: 3707,
             level: 0,
             radius: 2,
         }));

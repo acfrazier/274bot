@@ -246,7 +246,9 @@ pub const BLUE_DRAGONHIDE_ID: i32 = 1751;
 pub const GLARIALS_AMULET_ID: i32 = 295;
 pub const ROPE_ID: i32 = 954;
 pub const ROCK_CRAB_SPOT: (i32, i32, i32) = (2704, 3726, 0);
-pub const ROCK_CRAB_SAFE_STAND: (i32, i32, i32) = (2712, 3688, 0);
+/// Inside the native visibility window while remaining outside dormant
+/// RockCrab wake range; the live witness observes Rocks before Start.
+pub const ROCK_CRAB_SAFE_STAND: (i32, i32, i32) = (2712, 3707, 0);
 pub const GREEN_DRAGON_FIELD: (i32, i32, i32) = (3096, 3814, 0);
 pub const FIRE_GIANT_ROOM: (i32, i32, i32) = (2575, 9893, 0);
 pub const WILDERNESS_MIN_Z: i32 = 3520;

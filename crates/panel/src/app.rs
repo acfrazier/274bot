@@ -849,7 +849,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
+    "usage: panel-play [--prod] [--smoke] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -869,6 +869,8 @@ pub struct PanelArgs {
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
     pub pair_core: bool,
+    /// Session-only headed live paint choice; absent preserves panel behavior.
+    pub nav_paints: Option<bool>,
 }
 
 pub fn parse_args(
@@ -877,13 +879,41 @@ pub fn parse_args(
 ) -> Result<PanelArgs, (i32, String)> {
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
-    let mode = parse_live_args(rest, env_live)?;
+    let (nav_paints, live_args) = parse_nav_paints(rest)?;
+    let mode = parse_live_args(live_args, env_live)?;
     Ok(PanelArgs {
         mode,
         profile,
         catalog_core: false,
         pair_core: false,
+        nav_paints,
     })
+}
+
+fn parse_nav_paints(args: Vec<String>) -> Result<(Option<bool>, Vec<String>), (i32, String)> {
+    let mut value = None;
+    let mut rest = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        if arg != "--nav-paints" {
+            rest.push(arg);
+            continue;
+        }
+        let Some(raw) = it.next() else {
+            return Err((2, "panel-play: --nav-paints needs on or off".into()));
+        };
+        value = Some(match raw.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => {
+                return Err((
+                    2,
+                    format!("panel-play: --nav-paints expects on or off, got {raw}"),
+                ))
+            }
+        });
+    }
+    Ok((value, rest))
 }
 
 impl RunMode {
@@ -4978,6 +5008,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
+    state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
     state
@@ -6389,6 +6420,30 @@ mod tests {
             parse_live_args([] as [&str; 0], Some("")),
             Ok(RunMode::Interactive)
         );
+    }
+
+    #[test]
+    fn parse_args_accepts_session_nav_paint_choice() {
+        let parsed =
+            parse_args(["--nav-paints", "on", "--live", "script_rock_crab"], None).unwrap();
+        assert_eq!(parsed.nav_paints, Some(true));
+        assert_eq!(parsed.mode, RunMode::Live("script_rock_crab".into()));
+
+        let parsed =
+            parse_args(["--nav-paints", "off", "--live", "script_rock_crab"], None).unwrap();
+        assert_eq!(parsed.nav_paints, Some(false));
+    }
+
+    #[test]
+    fn parse_args_rejects_malformed_session_nav_paint_choice() {
+        assert!(matches!(
+            parse_args(["--nav-paints", "maybe"], None),
+            Err((2, message)) if message == "panel-play: --nav-paints expects on or off, got maybe"
+        ));
+        assert!(matches!(
+            parse_args(["--nav-paints"], None),
+            Err((2, message)) if message == "panel-play: --nav-paints needs on or off"
+        ));
     }
 
     #[test]
