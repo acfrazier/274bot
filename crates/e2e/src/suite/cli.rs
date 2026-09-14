@@ -451,6 +451,9 @@ fn list(args: &Args) -> SuiteResult<()> {
 }
 
 fn dry_run(args: &Args) -> SuiteResult<()> {
+    // A configuration the run refuses is not planned as a runnable one: the suite does not
+    // hand a child an inner deadline it did not record (see `child::validate_deadline_env`).
+    child::validate_deadline_env()?;
     let manifest = load_manifest(args)?;
     let selection = select_cases(args, &manifest)?;
     let print_commands = !args.config.catalog.as_os_str().is_empty();
@@ -563,6 +566,10 @@ fn run(args: &Args) -> SuiteResult<i32> {
         .clone()
         .ok_or_else(|| "run requires --run-dir DIR".to_string())?;
     args.config.validate()?;
+    // Before binary resolution, the identity, the ledger and any resume check: an inherited
+    // native deadline control would move the child's inner deadline behind the recorded
+    // budget, so the run (and a resume) refuses it with no child launched.
+    child::validate_deadline_env()?;
 
     let repo = identity::repo_root();
     let client = repo.as_deref().and_then(identity::client_root);
@@ -893,16 +900,16 @@ fn run(args: &Args) -> SuiteResult<i32> {
     Ok(EXIT_OK)
 }
 
-/// A run whose process tree could not be reaped is a shared harness failure: the suite
-/// cannot claim the child's group is gone, so it stops instead of launching the next case.
-/// `reaped` is only true once the direct child has been waited *and* no process of its
-/// group survives, on every exit path — not only on a timeout.
+/// A run whose owned process tree could not be reaped is a shared harness failure: the
+/// suite cannot claim the tree is gone, so it stops instead of launching the next case.
+/// `reaped` is only true once the direct child has been waited *and* the owned tree holds
+/// no process *and* the pipes reached EOF, on every exit path — not only on a timeout.
 fn cleanup_failure(run: &child::ChildRun) -> Option<String> {
     if run.cleanup.reaped {
         return None;
     }
     Some(format!(
-        "the child's process group could not be reaped within the suite's bound: {}",
+        "the child's owned process tree could not be reaped within the suite's bound: {}",
         if run.cleanup.note.is_empty() {
             "no cleanup note"
         } else {

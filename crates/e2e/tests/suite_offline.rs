@@ -1,9 +1,12 @@
 //! Offline verification of the native suite entrypoint: the real `e2e-suite` binary
 //! driving real child processes.
 //!
-//! The suite's process ownership is unix-only (process groups and signals); on other
-//! platforms `run` fails closed, so there is nothing to exercise there.
-#![cfg(unix)]
+//! The tests are portable on purpose. The runner owns a child tree on unix (process groups
+//! and signals) and on Windows (job objects), so the real-process tests run on both and
+//! only genuinely platform-only actions are gated: the fixture's `escape-pipe` mode (a
+//! process can leave a unix process group, while a job grants no breakaway) and a symlinked
+//! vault. Assertions that name a signal (or an exit code only unix produces) are cfg-split
+//! rather than dropped.
 //!
 //! No engine, no client, no login and no gameplay: wherever a real run would launch a
 //! native panel executable, these tests hand the suite the disposable
@@ -16,7 +19,7 @@
 //! `pending_visual_review` until a human reads the capture back.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -28,7 +31,9 @@ use e2e::suite::ledger::{AttemptStatus, Ledger};
 const SUITE: &str = env!("CARGO_BIN_EXE_e2e-suite");
 const FIXTURE: &str = env!("CARGO_BIN_EXE_e2e-suite-fixture");
 
-/// `interrupt_flag` is process-wide, so the two tests that touch it are serialized.
+/// `interrupt_flag` is process-wide, so every test that drives `child::run` in this process
+/// holds the guard: an interrupt flag set by one test would otherwise be seen by another
+/// test's wait loop.
 static SIGNAL_GUARD: Mutex<()> = Mutex::new(());
 
 fn fixture_manifest() -> PathBuf {
@@ -77,7 +82,7 @@ fn catalog(tmp: &Path) -> PathBuf {
 }
 
 fn suite(tmp: &Path, run_dir: &Path, extra: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(SUITE);
+    let mut command = suite_command(tmp);
     command
         .arg("run")
         .arg("--manifest")
@@ -89,13 +94,21 @@ fn suite(tmp: &Path, run_dir: &Path, extra: &[&str], env: &[(&str, &str)]) -> Ou
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(run_dir)
-        .env("HOME", home(tmp))
         .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"));
     for (key, value) in env {
         command.env(key, value);
     }
     command.args(extra);
     command.output().expect("the suite binary runs")
+}
+
+/// The suite binary with the disposable profile home in the environment: `HOME`, and the
+/// `USERPROFILE` fallback the native resolver uses on Windows.
+fn suite_command(tmp: impl AsRef<Path>) -> Command {
+    let home = home(tmp.as_ref());
+    let mut command = Command::new(SUITE);
+    command.env("HOME", &home).env("USERPROFILE", &home);
+    command
 }
 
 fn launches(tmp: &Path) -> Vec<String> {
@@ -118,12 +131,65 @@ fn canonical(path: impl AsRef<Path>) -> String {
         .to_string()
 }
 
+/// A child that leaves a descendant behind, plus the file the descendant records its pid in.
+/// The mode decides what the descendant does: `descendant` gives it its own stdio,
+/// `descendant-pipe` lets it inherit the suite's pipes, `descendant-ignore-stop` also makes
+/// it ignore the graceful stop.
+fn descendant_spec(tmp: &Path, mode: &str) -> (ChildSpec, PathBuf) {
+    let pid_file = tmp.join("descendant.pid");
+    let spec = ChildSpec {
+        label: format!("fixture-{mode}"),
+        command: vec![FIXTURE.to_string(), "--mode".into(), mode.to_string()],
+        env: [(
+            "E2E_SUITE_DESCENDANT_PID".to_string(),
+            pid_file.display().to_string(),
+        )]
+        .into_iter()
+        .collect(),
+        cwd: None,
+    };
+    (spec, pid_file)
+}
+
+/// Whether a pid is still running. The probe belongs to the test, and is platform-native:
+/// signal 0 on unix, `OpenProcess`/`GetExitCodeProcess` on Windows.
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        ok != 0 && code == STILL_ACTIVE as u32
+    }
+}
+
+fn recorded_pid(pid_file: &Path) -> u32 {
+    std::fs::read_to_string(pid_file)
+        .expect("the descendant recorded its pid")
+        .trim()
+        .parse()
+        .expect("a pid")
+}
+
 /// `list`/`dry-run` must print the real command line and leave the run directory alone.
 #[test]
 fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
     let tmp = temp_dir("dry-run");
     let run_dir = tmp.join("run");
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["dry-run", "--manifest"])
         .arg(fixture_manifest())
         .args(["--level", "full", "--catalog"])
@@ -154,6 +220,13 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
 /// Without `--exec-*` the suite still launches a *resolved, hashed* executable: the
 /// artifact a build produced, never the manifest's `cargo run` template — which could
 /// rebuild different bytes under the same command after the identity was captured.
+///
+/// Unix-only: the template resolution in `identity.rs` looks for
+/// `target/{release,debug}/<name>` without the platform executable suffix, so on Windows a
+/// run needs `--exec-core`/`--exec-pair` until that resolution is extended (recorded as a
+/// limitation in `docs/compat/release-p3-process-portability.md`, outside this task's owned
+/// paths).
+#[cfg(unix)]
 #[test]
 fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     let tmp = temp_dir("resolved-exec");
@@ -179,7 +252,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     .unwrap();
 
     let run_dir = tmp.join("run");
-    let mut command = Command::new(SUITE);
+    let mut command = suite_command(&tmp);
     let out = command
         .args(["run", "--manifest"])
         .arg(&manifest)
@@ -235,7 +308,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     );
 
     // dry-run prints the same line the child receives, not the cargo template.
-    let dry = Command::new(SUITE)
+    let dry = suite_command(&tmp)
         .args(["dry-run", "--manifest"])
         .arg(&manifest)
         .args(["--only", "fixture_one", "--catalog"])
@@ -261,7 +334,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     let empty_target = tmp.join("empty-target");
     std::fs::create_dir_all(&empty_target).unwrap();
     let refused_run = tmp.join("refused-run");
-    let refused = Command::new(SUITE)
+    let refused = suite_command(&tmp)
         .arg("run")
         .arg("--manifest")
         .arg(&manifest)
@@ -525,7 +598,7 @@ fn a_pending_visual_result_is_retained_and_resume_refuses_changed_inputs() {
             .replace("offline-suite-fixture", "offline-suite-fixture-b"),
     )
     .unwrap();
-    let mut changed = Command::new(SUITE);
+    let mut changed = suite_command(&tmp);
     changed
         .arg("run")
         .arg("--manifest")
@@ -598,7 +671,7 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
     let empty = tmp.join("empty-catalog");
     std::fs::create_dir_all(&empty).unwrap();
     let run_dir = tmp.join("run");
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["run", "--manifest"])
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
@@ -622,7 +695,7 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
     // no explicit executable) is refused too.
     let tmp = temp_dir("unbindable-exec");
     let run_dir = tmp.join("run");
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["run", "--manifest"])
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
@@ -641,7 +714,7 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
     // inputs the child resolves, so it cannot invent a selection of its own.
     let tmp = temp_dir("unresolvable-profile");
     let run_dir = tmp.join("run");
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["run", "--manifest"])
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
@@ -662,8 +735,9 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
     assert!(!run_dir.exists(), "nothing was created");
 }
 
-/// The suite owns the process tree it launches: a child that ignores the graceful signal
-/// is force-killed and reaped inside the bounded cleanup.
+/// The suite owns the process tree it launches: a child that ignores the graceful stop is
+/// force-stopped and reaped inside the bounded cleanup, on unix (`SIGTERM`→`SIGKILL`) and on
+/// Windows (console `CTRL_BREAK`→job termination) alike.
 #[test]
 fn a_child_over_budget_is_killed_with_its_process_tree() {
     let _guard = SIGNAL_GUARD
@@ -676,7 +750,7 @@ fn a_child_over_budget_is_killed_with_its_process_tree() {
             FIXTURE.to_string(),
             "--mode".into(),
             "hang".into(),
-            "--ignore-sigterm".into(),
+            "--ignore-stop".into(),
         ],
         env: Default::default(),
         cwd: None,
@@ -689,7 +763,7 @@ fn a_child_over_budget_is_killed_with_its_process_tree() {
     assert!(!run.interrupted, "{run:?}");
     assert!(
         run.cleanup.escalated_to_sigkill,
-        "a child that ignores SIGTERM must be force-killed: {:?}",
+        "a child that ignores the graceful stop must be force-stopped: {:?}",
         run.cleanup
     );
     assert!(
@@ -699,11 +773,61 @@ fn a_child_over_budget_is_killed_with_its_process_tree() {
     );
     assert!(elapsed >= budget, "the budget was respected: {elapsed:?}");
     assert!(
-        elapsed < Duration::from_secs(20),
+        elapsed < Duration::from_secs(25),
         "cleanup stays bounded: {elapsed:?}"
     );
-    assert_eq!(run.exit_code, None, "{run:?}");
-    assert_eq!(run.signal, Some(9), "{run:?}");
+    // Unix reports the signal that ended the child; the owned tree is what matters, and on
+    // Windows the job termination code is the exit code with no signal to report.
+    #[cfg(unix)]
+    {
+        assert_eq!(run.exit_code, None, "{run:?}");
+        assert_eq!(run.signal, Some(9), "{run:?}");
+        assert!(run.cleanup.killed_signal.is_some(), "{:?}", run.cleanup);
+    }
+    #[cfg(windows)]
+    {
+        assert_eq!(run.signal, None, "{run:?}");
+        assert_eq!(run.exit_code, Some(1), "{run:?}");
+    }
+}
+
+/// A child that exits on its own is still owned: the direct child is waited, the tree it
+/// belonged to holds no process, and the run reports a normal exit instead of a
+/// termination.
+#[test]
+fn a_normal_exit_is_reaped_without_a_termination() {
+    let _guard = SIGNAL_GUARD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let tmp = temp_dir("normal-exit");
+    let spec = ChildSpec {
+        label: "fixture-normal".into(),
+        command: vec![FIXTURE.to_string(), "--mode".into(), "pass".into()],
+        env: Default::default(),
+        cwd: None,
+    };
+    let started = Instant::now();
+    let run = child::run(
+        &spec,
+        Duration::from_secs(30),
+        &tmp.join("child.log"),
+        false,
+    )
+    .unwrap();
+    assert!(!run.timed_out, "{run:?}");
+    assert!(!run.interrupted, "{run:?}");
+    assert_eq!(run.exit_code, Some(0), "{run:?}");
+    assert!(run.cleanup.reaped, "{:?}", run.cleanup);
+    assert!(!run.cleanup.escalated_to_sigkill, "{:?}", run.cleanup);
+    assert!(
+        run.cleanup.note.contains("child exited on its own"),
+        "{:?}",
+        run.cleanup
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "a normal exit must not wait for the budget"
+    );
 }
 
 /// An interrupt reaps the owned tree through the same cleanup path instead of leaking it.
@@ -732,9 +856,14 @@ fn an_interrupted_child_is_reaped_before_run_returns() {
     assert!(run.interrupted, "{run:?}");
     assert!(!run.timed_out, "{run:?}");
     assert!(run.cleanup.reaped, "{:?}", run.cleanup);
+    // Unix names the signal it asked the tree to stop with; Windows has no signal number
+    // and records the mechanism in the note instead.
+    #[cfg(unix)]
     assert!(run.cleanup.killed_signal.is_some(), "{:?}", run.cleanup);
+    #[cfg(windows)]
+    assert!(!run.cleanup.note.is_empty(), "{:?}", run.cleanup);
     assert!(
-        started.elapsed() < Duration::from_secs(20),
+        started.elapsed() < Duration::from_secs(25),
         "an interrupt must not wait for the budget"
     );
 }
@@ -743,6 +872,9 @@ fn an_interrupted_child_is_reaped_before_run_returns() {
 /// it would then have to abandon.
 #[test]
 fn a_log_that_cannot_be_opened_refuses_before_any_spawn() {
+    let _guard = SIGNAL_GUARD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let tmp = temp_dir("log-open");
     let blocker = tmp.join("not-a-directory");
     std::fs::write(&blocker, "regular file").unwrap();
@@ -772,22 +904,17 @@ fn a_log_that_cannot_be_opened_refuses_before_any_spawn() {
     );
 }
 
-/// A descendant that inherits the pipes cannot hang the suite: the drain is bounded and
-/// the leftover process group is force-killed to close the write ends.
+/// A descendant that inherits the pipes cannot hang the suite: the drain is bounded and the
+/// leftover tree is terminated to close the write ends.
 #[test]
 fn a_descendant_holding_the_pipes_cannot_hang_the_suite() {
     let _guard = SIGNAL_GUARD
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let tmp = temp_dir("pipe-hold");
-    let spec = ChildSpec {
-        label: "pipe-holder".into(),
-        // The direct child exits 0 immediately; the backgrounded `sleep` inherits stdout
-        // and stderr and would hold the pipes open indefinitely.
-        command: vec!["/bin/sh".into(), "-c".into(), "sleep 300 & exit 0".into()],
-        env: Default::default(),
-        cwd: None,
-    };
+    // The direct child exits 0 immediately; the descendant it leaves inherits the suite's
+    // stdout/stderr and would hold the pipes open indefinitely.
+    let (spec, _) = descendant_spec(&tmp, "descendant-pipe");
     let started = Instant::now();
     let run = child::run(
         &spec,
@@ -803,7 +930,7 @@ fn a_descendant_holding_the_pipes_cannot_hang_the_suite() {
         "the drain waits for the inherited pipes: {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(20),
+        elapsed < Duration::from_secs(30),
         "the drain is bounded, not an unbounded join: {elapsed:?}"
     );
     assert!(
@@ -811,25 +938,23 @@ fn a_descendant_holding_the_pipes_cannot_hang_the_suite() {
         "{:?}",
         run.cleanup
     );
+    assert!(
+        run.cleanup.reaped,
+        "the leftover tree is terminated and the pipes close: {:?}",
+        run.cleanup
+    );
 }
 
 /// A descendant the direct child left behind with its *own* stdio cannot be detected from
 /// the pipes: nothing looks wrong, the direct child exited, and the drain finishes. It is
-/// still the suite's process, so it is terminated and the group is gone when `run` returns.
+/// still the suite's process, so it is terminated and gone when `run` returns.
 #[test]
 fn a_detached_descendant_is_reaped_not_ignored() {
+    let _guard = SIGNAL_GUARD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let tmp = temp_dir("detached-descendant");
-    let pid_file = tmp.join("descendant.pid");
-    let script = format!(
-        "sleep 300 >/dev/null 2>&1 </dev/null & echo $! > {}; exit 0",
-        pid_file.display()
-    );
-    let spec = ChildSpec {
-        label: "detached-descendant".into(),
-        command: vec!["/bin/sh".into(), "-c".into(), script],
-        env: Default::default(),
-        cwd: None,
-    };
+    let (spec, pid_file) = descendant_spec(&tmp, "descendant");
     let started = Instant::now();
     let run = child::run(
         &spec,
@@ -847,50 +972,29 @@ fn a_detached_descendant_is_reaped_not_ignored() {
     );
     assert!(
         run.cleanup.note.contains("descendant"),
-        "the leftover group is reported: {:?}",
+        "the leftover tree is reported: {:?}",
         run.cleanup
     );
     assert!(
         elapsed < Duration::from_secs(30),
         "cleanup stays bounded: {elapsed:?}"
     );
-    let descendant: i32 = std::fs::read_to_string(&pid_file)
-        .expect("the descendant reported its pid")
-        .trim()
-        .parse()
-        .expect("a pid");
-    let alive = Command::new("kill")
-        .arg("-0")
-        .arg(descendant.to_string())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
+    let descendant = recorded_pid(&pid_file);
     assert!(
-        !alive,
+        !process_alive(descendant),
         "descendant {descendant} outlived the suite's ownership"
     );
 }
 
-/// A descendant that ignores the graceful signal is force-killed and verified inside the
-/// same bound, instead of the suite reporting a clean reap because only the direct child
-/// exited.
+/// A descendant that ignores the graceful stop is force-stopped and verified inside the same
+/// bound, instead of the suite reporting a clean reap because only the direct child exited.
 #[test]
-fn a_detached_descendant_that_ignores_the_graceful_signal_is_force_killed() {
-    let tmp = temp_dir("detached-sigkill");
-    let pid_file = tmp.join("descendant.pid");
-    // An ignored disposition is inherited across exec, so the backgrounded loop ignores
-    // SIGTERM and only a forced kill ends it.
-    let script = format!(
-        "trap '' TERM; (while true; do sleep 1; done) >/dev/null 2>&1 </dev/null & echo $! > {}; exit 0",
-        pid_file.display()
-    );
-    let spec = ChildSpec {
-        label: "detached-sigkill".into(),
-        command: vec!["/bin/sh".into(), "-c".into(), script],
-        env: Default::default(),
-        cwd: None,
-    };
+fn a_detached_descendant_that_ignores_the_graceful_stop_is_force_stopped() {
+    let _guard = SIGNAL_GUARD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let tmp = temp_dir("detached-forced");
+    let (spec, pid_file) = descendant_spec(&tmp, "descendant-ignore-stop");
     let started = Instant::now();
     let run = child::run(
         &spec,
@@ -903,7 +1007,7 @@ fn a_detached_descendant_that_ignores_the_graceful_signal_is_force_killed() {
     assert_eq!(run.exit_code, Some(0), "{run:?}");
     assert!(
         run.cleanup.escalated_to_sigkill,
-        "a descendant that ignores SIGTERM must be force-killed: {:?}",
+        "a descendant that ignores the graceful stop must be force-stopped: {:?}",
         run.cleanup
     );
     assert!(
@@ -915,19 +1019,11 @@ fn a_detached_descendant_that_ignores_the_graceful_signal_is_force_killed() {
         elapsed < Duration::from_secs(45),
         "cleanup stays bounded: {elapsed:?}"
     );
-    let descendant: i32 = std::fs::read_to_string(&pid_file)
-        .expect("the descendant reported its pid")
-        .trim()
-        .parse()
-        .expect("a pid");
-    let alive = Command::new("kill")
-        .arg("-0")
-        .arg(descendant.to_string())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
-    assert!(!alive, "descendant {descendant} survived the forced kill");
+    let descendant = recorded_pid(&pid_file);
+    assert!(
+        !process_alive(descendant),
+        "descendant {descendant} survived the forced stop"
+    );
 }
 
 /// The vault of the *selected profile* is bound, not a process-wide default: with
@@ -994,7 +1090,7 @@ fn the_profile_default_vault_is_bound_and_a_same_path_change_refuses_resume() {
 fn a_relative_profile_input_is_refused() {
     let tmp = temp_dir("relative-input");
     let run_dir = tmp.join("run");
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["run", "--manifest"])
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
@@ -1034,7 +1130,7 @@ fn dry_run_refuses_an_unresolvable_executable() {
             ),
     )
     .unwrap();
-    let out = Command::new(SUITE)
+    let out = suite_command(&tmp)
         .args(["dry-run", "--manifest"])
         .arg(&manifest)
         .args(["--only", "fixture_one", "--catalog"])
@@ -1054,6 +1150,8 @@ fn dry_run_refuses_an_unresolvable_executable() {
 }
 
 /// A linked vault whose target bytes change at the same path refuses resume before launch.
+/// Unix-only: creating a symlink on Windows needs a privilege the test does not assume.
+#[cfg(unix)]
 #[test]
 fn resume_refuses_a_linked_vault_whose_target_bytes_changed() {
     let tmp = temp_dir("symlink-vault");
@@ -1320,8 +1418,11 @@ fn headed_paints_default_on_and_changed_choice_refuses_resume() {
         .contains("--nav-paints\noff\n"));
 }
 
-/// If a pipe outlives even the killed owned group, stop with cleanup failure.
-/// The escaped fixture is deliberately outside that group and cleaned by this test.
+/// If a pipe outlives even the stopped owned tree, stop with cleanup failure.
+/// The escaped fixture is deliberately outside the suite's ownership and cleaned by this
+/// test. Unix-only: a process can leave a process group (`process_group(0)`), while a job
+/// grants no breakaway, so there is no honest Windows equivalent to gate.
+#[cfg(unix)]
 #[test]
 fn unclosed_output_pipe_is_cleanup_failure_and_stops_the_next_case() {
     let tmp = temp_dir("escaped-pipe");
@@ -1370,4 +1471,110 @@ fn unclosed_output_pipe_is_cleanup_failure_and_stops_the_next_case() {
         ledger.attempt("fixture_two").is_none(),
         "cleanup failure must stop the suite"
     );
+}
+
+/// An inherited native deadline control is refused before any launch, and the message names
+/// it: the suite hands a child the case budget and the scenario's own inner deadline, so an
+/// inherited `BUDGET_S` must not silently move them.
+#[test]
+fn an_inherited_native_deadline_override_is_refused_before_any_launch_or_resume() {
+    let tmp = temp_dir("deadline-env");
+    let run_dir = tmp.join("run");
+
+    // A run that inherits the override refuses, names it, and launches nothing.
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one"],
+        &[("BUDGET_S", "900")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_USAGE),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("BUDGET_S"), "{stderr}");
+    assert!(stderr.contains("Unset BUDGET_S"), "{stderr}");
+    assert!(
+        !run_dir.exists(),
+        "a refused deadline override creates no run directory"
+    );
+    assert_eq!(
+        launches(&tmp).len(),
+        0,
+        "nothing may be launched while an inner deadline override is inherited"
+    );
+
+    // The same request without the override is accepted: the refusal is about the
+    // environment, not about the configuration.
+    let out = suite(&tmp, &run_dir, &["--only", "fixture_one"], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    // An empty value is not an override (the native reader treats it as unset), so a resume
+    // carries the recorded result instead of refusing.
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one", "--resume"],
+        &[("BUDGET_S", "")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1, "resume must not relaunch");
+
+    // A resume that inherits a nonempty override refuses before any launch as well.
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one", "--resume"],
+        &[("BUDGET_S", "900")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_USAGE),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(
+        text(&out.stderr).contains("BUDGET_S"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1, "a refused resume launches nothing");
+}
+
+/// `dry-run` refuses the same inheritance instead of printing a plan the run would reject.
+#[test]
+fn dry_run_refuses_an_inherited_native_deadline_override() {
+    let tmp = temp_dir("deadline-env-dry");
+    let out = suite_command(&tmp)
+        .args(["dry-run", "--manifest"])
+        .arg(fixture_manifest())
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--exec-core"])
+        .arg(FIXTURE)
+        .env("BUDGET_S", "900")
+        .output()
+        .expect("the suite binary runs");
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("BUDGET_S"), "{stderr}");
+    assert_eq!(launches(&tmp).len(), 0, "dry-run launches nothing");
 }

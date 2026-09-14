@@ -13,12 +13,22 @@
 //! cannot hang the suite. A tree that cannot be reaped inside the bound is reported as a
 //! harness failure instead of being ignored.
 //!
-//! Platform: bounded process-group ownership uses unix process groups and signals. On
-//! other platforms [`run`] fails closed instead of launching a child it cannot own, so the
-//! unix implementation below is unreachable there and is allowed to be dead code rather
-//! than duplicated into a second, weaker ownership path.
+//! Platform: the wait/terminate/drain body below is shared and the ownership facility is
+//! the only platform-specific part. Unix owns the child's process group with signals;
+//! Windows owns it with a job object (`KILL_ON_JOB_CLOSE`, assigned before the suspended
+//! child can run, so no descendant can exist outside the job). An unknown platform still
+//! fails closed in [`run`] instead of launching a child it cannot own, so the shared body
+//! is allowed to be dead code there rather than a second, weaker ownership path.
+//!
+//! Deadline environment: the suite refuses a nonempty inherited native deadline control
+//! (see [`DEADLINE_ENV`]) before any launch. It hands a child the case budget and the
+//! scenario's own inner deadline, and an inherited override would move the child's inner
+//! deadline and its post-PASS window away from what the run recorded.
 
-#![cfg_attr(not(unix), allow(dead_code, unused_imports, unused_variables))]
+#![cfg_attr(
+    not(any(unix, windows)),
+    allow(dead_code, unused_imports, unused_variables)
+)]
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -48,7 +58,7 @@ pub const MAX_LINE_BYTES: usize = 64 * 1024;
 /// Deadline for draining the child's pipes after the direct child has exited. A
 /// descendant can inherit the pipe write ends, so this is a bound, not a join.
 pub const PIPE_DRAIN: Duration = Duration::from_secs(5);
-/// Additional drain bound granted after the leftover process group is force-killed.
+/// Additional drain bound granted after the leftover owned tree is force-stopped.
 pub const PIPE_DRAIN_AFTER_KILL: Duration = Duration::from_secs(2);
 /// Poll interval for the wait loop.
 const POLL: Duration = Duration::from_millis(50);
@@ -57,6 +67,48 @@ const POLL: Duration = Duration::from_millis(50);
 /// `--mainland` sets. `catalog_watch`/`pair_watch` expose no such flag, so the suite asks
 /// for it in the child's environment.
 pub const MAINLAND_ENV: &str = "BOT_MAINLAND";
+
+/// Native deadline controls the suite refuses to inherit.
+///
+/// The bounded list is the *actually consumed* controls of the executables the suite
+/// launches: `BUDGET_S` (`scenario::budget_s_from_env`) replaces the `ScenarioRunner`
+/// deadline and keeps the panel window open after a proof PASS, so an inherited value
+/// would silently move the child's inner deadline and its post-PASS window away from the
+/// case budget the run recorded. Nothing speculative is listed: `BOT_MAINLAND`, `BOT_DEBUG`
+/// and `BOT_CPU` stay deliberate operator knobs, and the profile env (`NAV_*`,
+/// `ENGINE_DIR`, …) is bound through the identity instead.
+pub const DEADLINE_ENV: &[&str] = &["BUDGET_S"];
+
+/// The inherited native deadline controls that are actually set, in a stable order.
+pub fn inherited_deadline_env() -> Vec<String> {
+    DEADLINE_ENV
+        .iter()
+        .filter(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+/// Refuse to run while an inherited native deadline control would change the child's inner
+/// deadline behind the recorded budget.
+///
+/// Called before binary resolution, the identity, the ledger and any resume check, so a run
+/// and a resume refuse alike with no child launched. The suite refuses instead of clearing
+/// the variable, so the enforced policy is always the recorded budget and no identity field
+/// has to record a policy an operator could still change.
+pub fn validate_deadline_env() -> SuiteResult<()> {
+    let inherited = inherited_deadline_env();
+    if inherited.is_empty() {
+        return Ok(());
+    }
+    let names = inherited.join(", ");
+    Err(format!(
+        "${names} is set in the suite's environment: the suite enforces the case budget and \
+         the scenario's own inner deadline, and an inherited native deadline override would \
+         silently change the child's inner deadline and its window after a proof PASS. Unset \
+         {names} for this run (the panel reads it from its own environment, never from the \
+         run's recorded budget)"
+    ))
+}
 
 /// Set by the signal handler; checked by the wait loop so an interactive Ctrl-C still
 /// reaps the child tree before the suite exits.
@@ -82,9 +134,35 @@ pub fn install_signal_handler() {
     }
 }
 
-/// On non-unix platforms the suite installs no signal handler and [`run`] fails closed:
-/// without a console-control handler an interrupt would leave the child running.
-#[cfg(not(unix))]
+/// Install the console-control flag on Windows. `CTRL_C`/`CTRL_BREAK` store the interrupt
+/// flag and are reported handled, so the wait loop reaps the owned tree and the run exits
+/// 130 instead of the suite dying mid-case with the child still running. The other events
+/// keep the system's own handling: the suite does not claim it can reap a tree inside the
+/// few seconds the system allows there.
+#[cfg(windows)]
+pub fn install_signal_handler() {
+    use windows_sys::Win32::Foundation::{FALSE, TRUE};
+    use windows_sys::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
+    };
+
+    unsafe extern "system" fn handle(ctrltype: u32) -> i32 {
+        match ctrltype {
+            CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+                INTERRUPT.store(true, Ordering::SeqCst);
+                TRUE
+            }
+            _ => FALSE,
+        }
+    }
+    unsafe {
+        SetConsoleCtrlHandler(Some(handle), TRUE);
+    }
+}
+
+/// An unknown platform installs no handler; [`run`] refuses to launch there, so there is no
+/// child an interrupt could leave behind.
+#[cfg(not(any(unix, windows)))]
 pub fn install_signal_handler() {}
 
 /// The explicit native profile/input configuration for a run.
@@ -464,7 +542,7 @@ pub struct ChildRun {
 }
 
 /// Launch one child, own its process tree, and return its bounded result.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn run(
     spec: &ChildSpec,
     budget: Duration,
@@ -499,13 +577,19 @@ pub fn run(
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }
-    own_process_group(&mut command);
+    // The ownership facility exists *before* the spawn: on Windows the child is created
+    // suspended and assigned to the job it will live in, so no descendant can be created
+    // outside the tree the suite owns.
+    let ownership = Ownership::new()?;
+    ownership.prepare(&mut command);
 
     let started = Instant::now();
     let child = command
         .spawn()
         .map_err(|error| format!("{}: cannot launch {}: {error}", spec.label, spec.command[0]))?;
-    let mut owned = OwnedChild::new(child, spec.label.clone());
+    // The guard owns the tree from here: an adopt failure below returns through its Drop,
+    // which terminates and reaps whatever was started.
+    let mut owned = OwnedChild::new(child, spec.label.clone(), ownership)?;
 
     let mut readers = Vec::new();
     if let Some(stdout) = owned.child.stdout.take() {
@@ -561,15 +645,15 @@ pub fn run(
     let status = owned.status.or(status);
 
     // Bounded drain of the output pipes. A descendant that inherited stdout/stderr keeps
-    // the pipe open after the direct child exits, so this waits a bound, then the group is
-    // terminated below to close the write ends. An unbounded join is never taken.
+    // the pipe open after the direct child exits, so this waits a bound, then the owned tree
+    // is terminated below to close the write ends. An unbounded join is never taken.
     let drained = drain_readers(&shared, readers.len(), PIPE_DRAIN);
 
     // Ownership is the *tree*, not the direct child. A direct child that exited is not a
-    // process group that exited: a descendant can hold the pipes, or be detached with its
-    // own stdio so that nothing looks wrong from here. Either way it is still ours to
-    // reap, and the cleanup stays bounded (`SIGTERM`, a grace, `SIGKILL`, a bounded wait).
-    let case_reaped = status.is_some() && !process_group_alive(pid);
+    // tree that exited: a descendant can hold the pipes, or be detached with its own stdio
+    // so that nothing looks wrong from here. Either way it is still ours to reap, and the
+    // cleanup stays bounded (graceful stop, a grace, forced stop, a bounded wait).
+    let case_reaped = status.is_some() && !owned.ownership.alive(pid);
     if !drained || !case_reaped {
         let mut parts: Vec<String> = Vec::new();
         if !drained {
@@ -580,17 +664,17 @@ pub fn run(
         } else {
             parts.push("the direct child exited but a descendant was still running".to_string());
         }
-        let group = owned.terminate();
-        if group.reaped {
-            if group.escalated_to_sigkill {
-                parts.push("the leftover process group needed a forced kill".to_string());
+        let leftover = owned.terminate();
+        if leftover.reaped {
+            if leftover.escalated_to_sigkill {
+                parts.push("the leftover tree needed the forced stop".to_string());
             } else {
-                parts.push("the leftover process group was terminated".to_string());
+                parts.push("the leftover tree was terminated".to_string());
             }
         } else {
             parts.push(format!(
-                "the leftover process group could not be reaped within the bound ({})",
-                group.note
+                "the leftover tree could not be reaped within the bound ({})",
+                leftover.note
             ));
         }
         // A pipe that was still open gets a further bounded drain now that the write ends
@@ -605,11 +689,13 @@ pub fn run(
         } else {
             format!("{}; {note}", cleanup.note)
         };
-        cleanup.killed_signal = cleanup.killed_signal.or(Some(termination_signal()));
-        cleanup.escalated_to_sigkill |= group.escalated_to_sigkill;
-        cleanup.reaped = group.reaped && status.is_some() && fully_drained;
+        cleanup.killed_signal = cleanup
+            .killed_signal
+            .or_else(|| owned.ownership.graceful_signal());
+        cleanup.escalated_to_sigkill |= leftover.escalated_to_sigkill;
+        cleanup.reaped = leftover.reaped && status.is_some() && fully_drained;
     } else {
-        // The direct child was waited and no process of its group survives.
+        // The direct child was waited and the owned tree holds no process.
         cleanup.reaped = true;
     }
     drop(owned);
@@ -641,9 +727,10 @@ pub fn run(
     })
 }
 
-/// Non-unix platforms have no process-group signals here, so the suite refuses to launch
-/// a child rather than claim ownership it cannot enforce.
-#[cfg(not(unix))]
+/// A platform with neither process groups nor job objects cannot be given bounded tree
+/// ownership, so the suite refuses to launch a child there rather than claim ownership it
+/// cannot enforce.
+#[cfg(not(any(unix, windows)))]
 pub fn run(
     spec: &ChildSpec,
     _budget: Duration,
@@ -651,8 +738,9 @@ pub fn run(
     _verbose: bool,
 ) -> SuiteResult<ChildRun> {
     Err(format!(
-        "{}: owned child execution needs unix process groups and signals; this platform is \
-         fail-closed (no bounded process-tree ownership), so the suite refuses to launch",
+        "{}: owned child execution needs unix process groups or Windows job objects; this \
+         platform is fail-closed (no bounded process-tree ownership), so the suite refuses to \
+         launch",
         spec.label
     ))
 }
@@ -687,18 +775,33 @@ struct OwnedChild {
     /// The direct child's exit status once it has been reaped (the bounded cleanup keeps
     /// it, so a forced kill still reports its signal).
     status: Option<ExitStatus>,
+    /// The OS facility that owns the whole tree (see [`Ownership`]).
+    ownership: Ownership,
 }
 
 impl OwnedChild {
-    fn new(child: Child, label: String) -> Self {
+    /// Attach the launched child to the ownership facility.
+    ///
+    /// On Windows the child is still suspended here, so the job is assigned before a single
+    /// instruction of it runs. A failure returns through `Drop`, which terminates and reaps
+    /// what was started: no error path leaves a child behind.
+    fn new(child: Child, label: String, ownership: Ownership) -> SuiteResult<Self> {
         let pid = child.id();
-        OwnedChild {
+        let mut owned = OwnedChild {
             child,
             pid,
             label,
             reaped: false,
             status: None,
-        }
+            ownership,
+        };
+        owned.ownership.adopt(&mut owned.child).map_err(|error| {
+            format!(
+                "{}: cannot own the launched child tree: {error}",
+                owned.label
+            )
+        })?;
+        Ok(owned)
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
@@ -709,31 +812,31 @@ impl OwnedChild {
         self.reaped = true;
     }
 
-    /// Terminate and reap the whole group, bounded: `SIGTERM`, a grace, `SIGKILL`, then a
-    /// bounded wait for the group to disappear. `reaped` is true only when the direct child
-    /// has been waited *and* no process of its group survives: a direct child that exited
-    /// while a descendant lived on is not a reaped tree.
+    /// Terminate and reap the whole tree, bounded: the graceful stop, a grace, the forced
+    /// stop, then a bounded wait for the tree to disappear. `reaped` is true only when the
+    /// direct child has been waited *and* no process of the owned tree survives: a direct
+    /// child that exited while a descendant lived on is not a reaped tree.
     fn terminate(&mut self) -> CleanupSummary {
         let mut summary = CleanupSummary {
-            killed_signal: Some(termination_signal()),
+            killed_signal: self.ownership.graceful_signal(),
             escalated_to_sigkill: false,
             reaped: false,
             note: String::new(),
         };
-        if !signal_tree(self.pid, termination_signal()) {
-            summary.note = "the process group was already gone when the suite terminated it".into();
+        if !self.ownership.request_graceful(self.pid) {
+            summary.note = self.ownership.graceful_missing_note();
         }
-        if !self.wait_group(CLEANUP_GRACE) {
+        if !self.wait_tree(CLEANUP_GRACE) {
             summary.escalated_to_sigkill = true;
-            if signal_tree(self.pid, force_signal()) {
+            if self.ownership.request_forced(self.pid) {
                 summary.note = format!(
-                    "{} did not exit within {:?}; forced kill",
+                    "{} did not exit within {:?}; forced stop",
                     self.label, CLEANUP_GRACE
                 );
             } else if summary.note.is_empty() {
-                summary.note = format!("{}: forced kill found no process group", self.label);
+                summary.note = format!("{}: forced stop found no process tree", self.label);
             }
-            summary.reaped = self.wait_group(CLEANUP_KILL_WAIT);
+            summary.reaped = self.wait_tree(CLEANUP_KILL_WAIT);
         } else {
             summary.reaped = true;
         }
@@ -751,11 +854,11 @@ impl OwnedChild {
         summary
     }
 
-    /// Poll, bounded, until the direct child has been waited *and* its process group holds
-    /// no process. Returns whether the group is fully reaped. The direct child is reaped
-    /// first: an unreaped leader keeps the group observable, so a zombie would otherwise
+    /// Poll, bounded, until the direct child has been waited *and* the owned tree holds no
+    /// process. Returns whether the tree is fully reaped. The direct child is reaped first:
+    /// an unreaped leader keeps the tree observable, so an unreaped exit would otherwise
     /// look like a live tree.
-    fn wait_group(&mut self, bound: Duration) -> bool {
+    fn wait_tree(&mut self, bound: Duration) -> bool {
         let deadline = Instant::now() + bound;
         loop {
             if !self.reaped {
@@ -764,30 +867,32 @@ impl OwnedChild {
                     self.status = Some(status);
                 }
             }
-            if self.reaped && !self.group_alive() {
+            if self.reaped && !self.tree_alive() {
                 return true;
             }
             if Instant::now() >= deadline {
-                return self.reaped && !self.group_alive();
+                return self.reaped && !self.tree_alive();
             }
             std::thread::sleep(POLL);
         }
     }
 
-    fn group_alive(&self) -> bool {
-        process_group_alive(self.pid)
+    fn tree_alive(&self) -> bool {
+        self.ownership.alive(self.pid)
     }
 }
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        if self.reaped && !self.group_alive() {
+        if self.reaped && !self.tree_alive() {
             return;
         }
         // Any other exit path — an early `?`, a panic, a cleanup that ran out of bound —
-        // still owns the tree: force-kill the group and wait, bounded, for the direct
-        // child *and* every other member of the group to be gone.
-        let _ = signal_tree(self.pid, force_signal());
+        // still owns the tree: force-stop the whole tree and wait, bounded, for the direct
+        // child *and* every other member of it to be gone. The direct child is killed as
+        // well, which covers the window where the ownership facility was never attached.
+        let _ = self.ownership.request_forced(self.pid);
+        let _ = self.child.kill();
         let deadline = Instant::now() + CLEANUP_KILL_WAIT;
         loop {
             if !self.reaped {
@@ -796,7 +901,7 @@ impl Drop for OwnedChild {
                     self.status = Some(status);
                 }
             }
-            if self.reaped && !self.group_alive() {
+            if self.reaped && !self.tree_alive() {
                 return;
             }
             if Instant::now() >= deadline {
@@ -804,6 +909,55 @@ impl Drop for OwnedChild {
             }
             std::thread::sleep(POLL);
         }
+    }
+}
+
+/// The OS facility that owns a child's process tree.
+///
+/// Unix owns a process group with signals; Windows owns a job object. Everything else in
+/// this module — the deadline-aware wait loop, the forced escalation, the bounded pipe
+/// drain, the receipt of "direct child reaped, tree gone, pipes closed" as three separate
+/// facts — is shared, so there is exactly one runner body and one set of bounds.
+#[cfg(unix)]
+struct Ownership;
+
+#[cfg(unix)]
+impl Ownership {
+    /// Unix needs no state: the group id *is* the child's pid.
+    fn new() -> SuiteResult<Self> {
+        Ok(Ownership)
+    }
+
+    /// Put the child in its own process group before it runs, so the suite can signal the
+    /// whole tree and never itself.
+    fn prepare(&self, command: &mut Command) {
+        own_process_group(command);
+    }
+
+    /// Nothing to attach after the spawn: the group exists because of the spawn itself.
+    fn adopt(&self, _child: &mut Child) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn request_graceful(&self, pid: u32) -> bool {
+        signal_tree(pid, termination_signal())
+    }
+
+    fn request_forced(&self, pid: u32) -> bool {
+        signal_tree(pid, force_signal())
+    }
+
+    /// Whether any process of the owned group is alive.
+    fn alive(&self, pid: u32) -> bool {
+        process_group_alive(pid)
+    }
+
+    fn graceful_signal(&self) -> Option<i32> {
+        Some(termination_signal())
+    }
+
+    fn graceful_missing_note(&self) -> String {
+        "the process group was already gone when the suite terminated it".into()
     }
 }
 
@@ -839,34 +993,196 @@ fn process_group_alive(pid: u32) -> bool {
     unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 }
 }
 
-/// Non-unix platforms have no process groups or signals, so the suite cannot own a tree:
-/// [`run`] refuses to launch there. These fail-closed stand-ins exist so the module still
-/// compiles on those platforms instead of failing to build; no launch path reaches them.
-#[cfg(not(unix))]
-fn termination_signal() -> i32 {
-    0
+/// A Windows job object handle. Closing it is also the last-resort kill: the job is created
+/// with `KILL_ON_JOB_CLOSE`, so the handle going away — including through a panic — ends
+/// every process still in it.
+#[cfg(windows)]
+struct Job(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl std::fmt::Debug for Job {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Job")
+    }
 }
 
-#[cfg(not(unix))]
-fn force_signal() -> i32 {
-    0
+#[cfg(windows)]
+impl Drop for Job {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+        }
+    }
 }
 
-#[cfg(not(unix))]
-fn signal_tree(_pid: u32, _signal: i32) -> bool {
-    false
+#[cfg(windows)]
+#[derive(Debug)]
+struct Ownership {
+    job: Job,
 }
 
-#[cfg(not(unix))]
-fn process_group_alive(_pid: u32) -> bool {
-    // Nothing is ever launched on this platform, so no group can be alive.
-    false
+#[cfg(windows)]
+impl Ownership {
+    fn new() -> SuiteResult<Self> {
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(format!(
+                "cannot create the job object that owns the child tree: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let ownership = Ownership { job: Job(job) };
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = unsafe {
+            SetInformationJobObject(
+                ownership.job.0,
+                JobObjectExtendedLimitInformation,
+                &limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as *const core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(format!(
+                "cannot set kill-on-close on the job object that owns the child tree: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(ownership)
+    }
+
+    /// Create the child suspended and in its own console process group: it can then be
+    /// assigned to the job before it runs a single instruction. `CREATE_NEW_PROCESS_GROUP`
+    /// also keeps the operator's Ctrl-C off the child (as a unix child in its own group),
+    /// so an interrupt reaches the suite, which reaps the tree.
+    fn prepare(&self, command: &mut Command) {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED};
+        command.creation_flags(CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP);
+    }
+
+    /// Assign the suspended child to the job and resume it: from here on no descendant can
+    /// be created outside the tree the suite owns.
+    fn adopt(&self, child: &mut Child) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let process = child.as_raw_handle() as HANDLE;
+        if unsafe { AssignProcessToJobObject(self.job.0, process) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        resume_main_thread(child.id())
+    }
+
+    /// Ctrl-Break to the child's own console process group (`CREATE_NEW_PROCESS_GROUP` made
+    /// its pid the group id). This fails when the suite has no console; the escalation then
+    /// ends the tree inside the same bound.
+    fn request_graceful(&self, pid: u32) -> bool {
+        use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
+        if pid == 0 {
+            return false;
+        }
+        unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) != 0 }
+    }
+
+    /// The forced stop is the job, not a pid: every process still in it is terminated,
+    /// including one that ignored the console event and one the suite never saw.
+    fn request_forced(&self, _pid: u32) -> bool {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        unsafe { TerminateJobObject(self.job.0, 1) != 0 }
+    }
+
+    /// Whether the job holds any process. The job is the owner, so this is the tree, not the
+    /// direct child. A query that fails cannot prove the tree is gone and counts as alive.
+    fn alive(&self, _pid: u32) -> bool {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut returned = 0u32;
+        let ok = unsafe {
+            QueryInformationJobObject(
+                self.job.0,
+                JobObjectBasicAccountingInformation,
+                &mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+                    as *mut core::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                &mut returned,
+            )
+        };
+        ok == 0 || accounting.ActiveProcesses > 0
+    }
+
+    /// Windows has no termination signal to report; the cleanup note names the mechanism.
+    fn graceful_signal(&self) -> Option<i32> {
+        None
+    }
+
+    fn graceful_missing_note(&self) -> String {
+        "no console was available to deliver a graceful stop; the suite terminated the job".into()
+    }
+}
+
+/// Resume the main thread of a `CREATE_SUSPENDED` child with documented APIs.
+///
+/// A suspended process cannot create a thread, so the thread owned by `pid` is the one the
+/// spawn suspended; there is no window in which a second thread could be missed.
+#[cfg(windows)]
+fn resume_main_thread(pid: u32) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    let mut resumed = 0usize;
+    let mut ok = unsafe { Thread32First(snapshot, &mut entry) };
+    while ok != 0 {
+        if entry.th32OwnerProcessID == pid {
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !thread.is_null() {
+                let previous = unsafe { ResumeThread(thread) };
+                unsafe { CloseHandle(thread) };
+                if previous != u32::MAX {
+                    resumed += 1;
+                }
+            }
+        }
+        ok = unsafe { Thread32Next(snapshot, &mut entry) };
+    }
+    unsafe { CloseHandle(snapshot) };
+    if resumed == 0 {
+        return Err(std::io::Error::other(
+            "the suspended child had no thread to resume",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
 fn classify_exit(status: ExitStatus) -> (Option<i32>, Option<i32>) {
     use std::os::unix::process::ExitStatusExt;
     (status.code(), status.signal())
+}
+
+/// Windows has no termination signals: the code the child or the job termination produced
+/// is all there is, and `signal` stays empty.
+#[cfg(windows)]
+fn classify_exit(status: ExitStatus) -> (Option<i32>, Option<i32>) {
+    (status.code(), None)
 }
 
 fn spawn_reader<R: Read + Send + 'static>(
@@ -1356,5 +1672,18 @@ mod tests {
         assert!(!supported_arg("--minutes"));
         assert!(!typed_env_key("HEADED"));
         assert!(!typed_env_key("E2E_MINUTES"));
+    }
+
+    /// The refused inherited deadline controls are the *actually consumed* ones: the list is
+    /// pinned so a later edit cannot grow it into a speculative blanket environment
+    /// sanitization (or quietly drop the control that review found). The refusal itself,
+    /// including its message, is exercised end to end in `tests/suite_offline.rs`, where the
+    /// child's environment is controlled exactly.
+    #[test]
+    fn the_refused_deadline_environment_is_the_bounded_native_list() {
+        assert_eq!(super::DEADLINE_ENV, ["BUDGET_S"]);
+        assert!(super::inherited_deadline_env()
+            .iter()
+            .all(|name| super::DEADLINE_ENV.contains(&name.as_str())));
     }
 }

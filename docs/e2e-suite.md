@@ -61,7 +61,14 @@ Only flags the executables actually accept are emitted: `catalog_watch`, `pair_w
 `--live`/`--smoke`/`--prod`. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
 child's environment (and an inherited `BOT_MAINLAND` is removed when `--mainland` is not
 set). `--highmem` is refused because the panel takes the memory mode from the vault profile
-and exposes no flag (pending adapter work). Input paths must be absolute: a child resolves
+and exposes no flag (pending adapter work). A nonempty *inherited native deadline control*
+is refused too: `BUDGET_S` (the panel's runner-deadline override and post-PASS soak window)
+would move the child's inner deadline behind the case budget the run recorded, so `run`,
+`--resume` and `dry-run` all refuse it by name before any launch instead of clearing it —
+the enforced policy is always the manifest's budget plus the scenario's own deadline. The
+refused list is exactly the controls the launched executables consume (`BUDGET_S`); every
+other session knob (`BOT_MAINLAND`, `BOT_DEBUG`, `BOT_CPU`) stays untouched.
+Input paths must be absolute: a child resolves
 a relative path against its own working directory, which the suite cannot reproduce when it
 binds the identity, so a relative `--catalog`/`--engine`/`--cache`/`--vault`/`--exec-core`/
 `--exec-pair`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
@@ -159,24 +166,42 @@ error, `130` when interrupted.
 
 ## Process ownership
 
-Every launched child runs in its own process group and is wrapped in an RAII guard, so
-success, an early error return and a panic all reap the tree. Ownership is the *tree*, not
-the direct child: a direct child that exited is not a process group that exited, so after
-the run the group is checked independently of the pipes and of the direct child's exit. A
-descendant that inherited stdout/stderr, or one detached with its own stdio that nothing
-here can see, is terminated with a bounded escalation (`SIGTERM`, a 10 s grace, `SIGKILL`,
-then a bounded wait that requires the whole group to be gone) and `reaped` is only true
-once the direct child has been waited *and* no process of the group survives. A tree that
-cannot be reaped inside the bound is recorded `cleanup_failed` on every exit path — not
-only on a timeout — and stops the run instead of launching the next case.
+Every launched child runs in a process group (unix) or a Windows job object and is wrapped
+in an RAII guard, so success, an early error return and a panic all reap the tree. Ownership
+is the *tree*, not the direct child: a direct child that exited is not a tree that exited,
+so after the run the tree is checked independently of the pipes and of the direct child's
+exit. A descendant that inherited stdout/stderr, or one detached with its own stdio that
+nothing here can see, is terminated with a bounded escalation and `reaped` is only true once
+the direct child has been waited, the tree holds no process, and the pipes reached EOF. A
+tree that cannot be reaped inside the bound is recorded `cleanup_failed` on every exit path
+— not only on a timeout — and stops the run instead of launching the next case.
+
+* **unix**: the child is started in its own process group; the graceful stop is `SIGTERM`,
+  the forced stop `SIGKILL`, and "still alive" is `killpg(pid, 0)`.
+* **Windows**: the child is created suspended and in its own console process group, assigned
+  to a job object (created with `KILL_ON_JOB_CLOSE`) and only then resumed, so no descendant
+  can exist outside the job. The graceful stop is `CTRL_BREAK` to the child's console group,
+  the forced stop is `TerminateJobObject`, and "still alive" is the job's active-process
+  count (a failed query counts as alive). Closing the job handle — including through a panic
+  — is the last-resort kill. `killed_signal` is `None` there (Windows has no termination
+  signal); the cleanup note names the mechanism.
+* **other platforms**: the suite refuses to launch a child it cannot own.
+
+Interrupts are handled on both platforms by a real handler that only stores a flag
+(`SIGINT`/`SIGTERM` on unix, a `SetConsoleCtrlHandler` for `CTRL_C`/`CTRL_BREAK` on Windows),
+so the wait loop reaps the owned tree and the run exits 130 instead of leaving a child
+running.
 
 The log file is opened *before* the spawn, the wait loop is deadline-aware (never an
 unbounded `wait`), and the pipes are drained with a deadline rather than joined: an
 abandoned drain is reported in the ledger instead of hanging the suite. Output is read in
 bounded chunks; a line past 64 KiB is emitted wrapped (and marked) rather than buffered
-without limit. Bounded process-group ownership is a unix facility: the suite compiles on
-other platforms and `run` fails closed there, refusing to launch a child it cannot own
-(rather than claiming ownership it cannot enforce).
+without limit.
+
+Windows runs currently need `--exec-core`/`--exec-pair`: the manifest cargo-template
+resolution looks for `target/{release,debug}/<name>` without the platform executable suffix.
+The runner itself is native on Windows (see
+`docs/compat/release-p3-process-portability.md`).
 
 
 ## Verification without a game
@@ -198,13 +223,22 @@ stopping the run, resume carrying the result without relaunching it, resume refu
 changed settings/manifest request *and* a changed input at the same path (vault content,
 script source, the profile's *default* vault at its resolved path) before any launch,
 refusing an unbindable catalog, an unresolvable executable, an unresolvable profile and a
-relative input path, budget expiry with forced-kill process-tree cleanup, interrupt
-cleanup, a log that cannot be opened refusing before any spawn, a descendant holding the
-pipes not hanging the suite, and detached descendants — including one that ignores
-`SIGTERM` — being force-killed and verified gone. The fixture prints the panel's real line
+relative input path, refusing an inherited `BUDGET_S` before a run, a resume and a
+`dry-run`, budget expiry with forced-stop process-tree cleanup, a normal exit that is
+reaped without a termination, interrupt cleanup, a log that cannot be opened refusing
+before any spawn, a descendant holding the pipes not hanging the suite, and detached
+descendants — including one that ignores the graceful stop — being force-stopped and
+verified gone.
+
+The tests are portable: the real-process coverage runs on unix *and* Windows, the fixture
+gates only the platform-specific actions (unix `SIGTERM` ignore vs Windows console-control
+ignore), and the two genuinely platform-only cases are gated with their reason (the
+`escape-pipe` fixture leaves a unix process group — a job grants no breakaway — and a
+symlinked vault needs a Windows privilege). The fixture prints the panel's real line
 contract and writes the scenario's declared terminal shot, and the tests resolve their
-profile against a disposable `$HOME`. `LIVE=1` harness tests under `crates/e2e/tests/`
-remain separate and are not part of a suite run.
+profile against a disposable `$HOME`/`USERPROFILE`. Native Windows verification of this
+suite is a separate, still-pending run on a Windows host: `LIVE=1` harness tests under
+`crates/e2e/tests/` remain separate and are not part of a suite run.
 
 ## Manifest
 
