@@ -953,6 +953,8 @@ pub struct Session {
     pub pending_browse: HashMap<String, script::ScriptSel>,
     pub last_bulk_script_report: Option<String>,
     pub reload_warning: Option<crate::profile_script::ReloadWarning>,
+    /// Next catalog Refresh confirms a previously shown running/paused warning.
+    pub catalog_refresh_confirm: bool,
     pub catalog_refresh_report: Option<String>,
     pub reload_generation: u64,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
@@ -1193,6 +1195,7 @@ impl Session {
             pending_browse: HashMap::new(),
             last_bulk_script_report: None,
             reload_warning: None,
+            catalog_refresh_confirm: false,
             catalog_refresh_report: None,
             reload_generation: 0,
             transpile_queue: VecDeque::new(),

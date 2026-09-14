@@ -2599,7 +2599,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
     {
         if ui.button_with_size("Reload", [sw, 0.0]) {
-            let _ = session.script_reload(true);
+            let _ = session.script_reload_clicked();
         }
         ui.set_item_tooltip("hash source and supported siblings; unchanged skips transpile");
     }

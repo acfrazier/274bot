@@ -713,12 +713,14 @@ impl JsLibrary {
         })
     }
 
-    /// Apply an already-computed catalog diff. Changed cards are updated in
-    /// place; removed catalog cards are dropped from the library (running
-    /// isolates keep their frozen source). One failed card does not block others.
+    /// Apply an already-computed catalog diff. Added cards register as
+    /// unstarted; removed catalog cards are dropped from the library (running
+    /// isolates keep their frozen source). Changed cards are **not** mutated
+    /// here — the caller must [`JsLibrary::commit_prepared`] only after a
+    /// successful prepare so a failed card keeps its old registration.
+    /// One failed card does not block others.
     pub fn apply_catalog_diff(&mut self, diff: CatalogDiff) -> CatalogApplyReport {
         let mut added = 0usize;
-        let mut changed = 0usize;
         let mut removed = 0usize;
         let failed = diff.failed.clone();
         for name in &diff.added {
@@ -758,43 +760,6 @@ impl JsLibrary {
             self.cards.push(js_card);
             added += 1;
         }
-        for name in &diff.changed {
-            let Some((card, path, origin)) = diff.incoming.get(name) else {
-                continue;
-            };
-            let shape = detect_shape(origin);
-            if shape == LoadShape::Reject {
-                continue;
-            }
-            let sha256 = JsCache::origin_sha(origin.as_bytes());
-            let unloadable = catalog_unloadable(
-                &card.name,
-                ScriptSource::Catalog,
-                &sha256,
-                path,
-                first_unloadable_for_card(origin, path),
-            );
-            if let Some(existing) = self
-                .cards
-                .iter_mut()
-                .find(|c| c.source == ScriptSource::Catalog && c.name == *name)
-            {
-                existing.path = path.clone();
-                existing.shape = shape;
-                existing.origin = origin.clone();
-                existing.js.clear();
-                existing.kind = card.kind;
-                existing.sha256 = sha256;
-                existing.description = card.description.clone();
-                existing.category = card.category.clone();
-                existing.tags = card.tags.clone();
-                existing.settings_schema = card.settings_schema.clone();
-                existing.unloadable = unloadable;
-                let snap = existing.clone();
-                self.remember_fingerprint(&snap);
-                changed += 1;
-            }
-        }
         for name in &diff.removed {
             let key =
                 crate::identity::card_identity_key(ScriptSource::Catalog, Path::new(""), name);
@@ -805,7 +770,7 @@ impl JsLibrary {
         }
         CatalogApplyReport {
             added,
-            changed,
+            changed: 0,
             removed,
             failed,
         }

@@ -121,6 +121,14 @@ impl Session {
     }
 
     fn claim_legacy_for(&mut self, profile: &str, key: &str, card_name: &str) {
+        let already = self
+            .vault
+            .as_ref()
+            .and_then(|v| v.get(profile))
+            .is_some_and(|p| p.settings.script_settings.contains_key(key));
+        if already {
+            return;
+        }
         let legacy = self.script_settings.overrides(
             script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
                 .unwrap_or(script::ScriptSource::Catalog),
@@ -367,6 +375,7 @@ impl Session {
         }
         self.reload_generation = self.reload_generation.wrapping_add(1);
         self.reload_warning = None;
+        self.catalog_refresh_confirm = false;
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_script_report.as_deref() == Some(report.as_str()) {
             return;
@@ -374,6 +383,15 @@ impl Session {
         self.last_bulk_script_report = Some(report.clone());
         if stopped > 0 {
             self.error = None;
+        }
+    }
+
+    /// Product Reload click: preview first, confirm only after a warning.
+    pub fn script_reload_clicked(&mut self) -> ReloadOutcome {
+        if self.reload_warning.is_some() {
+            self.script_reload(true)
+        } else {
+            self.script_reload(false)
         }
     }
 
@@ -414,18 +432,28 @@ impl Session {
             .map(|c| c.identity_key())
             .unwrap_or_default();
         let (running, paused) = self.slots_with_identity(&key);
-        let warning = ReloadWarning {
-            identity_key: key.clone(),
-            source,
-            lookup: lookup.clone(),
-            running,
-            paused,
-            paused_during_prep: Vec::new(),
+        let baseline_running = if commit {
+            self.reload_warning
+                .as_ref()
+                .map(|w| w.running.clone())
+                .unwrap_or_else(|| running.clone())
+        } else {
+            running.clone()
         };
-        self.reload_warning = Some(warning.clone());
         if !commit {
-            self.error = Some(reload_warning_text(&warning));
-            return ReloadOutcome::NeedsConfirm;
+            let warning = ReloadWarning {
+                identity_key: key.clone(),
+                source,
+                lookup: lookup.clone(),
+                running,
+                paused,
+                paused_during_prep: Vec::new(),
+            };
+            self.reload_warning = Some(warning.clone());
+            if !warning.running.is_empty() || !warning.paused.is_empty() {
+                self.error = Some(reload_warning_text(&warning));
+                return ReloadOutcome::NeedsConfirm;
+            }
         }
         let prep_gen = self.reload_generation;
         let prepared = match self.js.prepare_card(source, &lookup) {
@@ -439,21 +467,27 @@ impl Session {
             return ReloadOutcome::Failed("reload cancelled".into());
         }
         let (running_now, paused_now) = self.slots_with_identity(&key);
+        let already_warned_pause = self
+            .reload_warning
+            .as_ref()
+            .is_some_and(|w| !w.paused_during_prep.is_empty());
         let paused_during: Vec<String> = paused_now
             .iter()
-            .filter(|n| warning.running.iter().any(|r| r == *n))
+            .filter(|n| baseline_running.iter().any(|r| r == *n))
             .cloned()
             .collect();
-        if !paused_during.is_empty() {
-            if let Some(w) = self.reload_warning.as_mut() {
-                w.paused_during_prep = paused_during.clone();
-                w.paused = paused_now.clone();
-                w.running = running_now.clone();
-            }
-            if !commit {
-                self.error = Some(reload_warning_text(self.reload_warning.as_ref().unwrap()));
-                return ReloadOutcome::NeedsConfirm;
-            }
+        if !paused_during.is_empty() && !already_warned_pause {
+            let warning = ReloadWarning {
+                identity_key: key.clone(),
+                source,
+                lookup: lookup.clone(),
+                running: running_now.clone(),
+                paused: paused_now.clone(),
+                paused_during_prep: paused_during,
+            };
+            self.reload_warning = Some(warning.clone());
+            self.error = Some(reload_warning_text(&warning));
+            return ReloadOutcome::NeedsConfirm;
         }
         if let Err(e) = self.js.commit_prepared(prepared.clone()) {
             self.error = Some(format!("reload: {e}"));
@@ -536,7 +570,13 @@ impl Session {
                 return;
             }
         };
-        let diff = match self.js.diff_catalog(&root) {
+        self.refresh_catalog_at(&root);
+    }
+
+    pub(crate) fn refresh_catalog_at(&mut self, root: &Path) {
+        let confirm = self.catalog_refresh_confirm;
+        self.catalog_refresh_confirm = false;
+        let mut diff = match self.js.diff_catalog(root) {
             Ok(d) => d,
             Err(e) => {
                 self.error = Some(format!("Refresh catalog: {e}"));
@@ -554,23 +594,55 @@ impl Session {
         for name in &added {
             self.enqueue_transpile(script::ScriptSource::Catalog, name.clone(), false);
         }
-        let mut reload_keys = Vec::new();
+        let mut prepared_ok = Vec::new();
+        let mut prepare_failed: Vec<(String, String)> = Vec::new();
         for name in &changed {
             match self.js.prepare_card(script::ScriptSource::Catalog, name) {
-                Ok(prepared) => {
-                    let key = prepared.card.identity_key();
-                    if let Err(e) = self.js.commit_prepared(prepared) {
-                        self.error = Some(format!("catalog {name}: {e}"));
-                        continue;
-                    }
-                    reload_keys.push(key);
-                }
+                Ok(prepared) => prepared_ok.push(prepared),
                 Err(e) => {
+                    prepare_failed.push((name.clone(), e.clone()));
                     self.error = Some(format!("catalog {name}: {e}"));
                 }
             }
         }
-        let report = self.js.apply_catalog_diff(diff);
+        let mut running = Vec::new();
+        let mut paused = Vec::new();
+        for prepared in &prepared_ok {
+            let (r, p) = self.slots_with_identity(&prepared.card.identity_key());
+            running.extend(r);
+            paused.extend(p);
+        }
+        if !confirm && (!running.is_empty() || !paused.is_empty()) {
+            let warning = ReloadWarning {
+                identity_key: prepared_ok
+                    .first()
+                    .map(|p| p.card.identity_key())
+                    .unwrap_or_default(),
+                source: script::ScriptSource::Catalog,
+                lookup: changed.first().cloned().unwrap_or_default(),
+                running,
+                paused,
+                paused_during_prep: Vec::new(),
+            };
+            self.reload_warning = Some(warning.clone());
+            self.catalog_refresh_confirm = true;
+            self.error = Some(reload_warning_text(&warning));
+            return;
+        }
+        let mut reload_keys = Vec::new();
+        for prepared in prepared_ok {
+            let key = prepared.card.identity_key();
+            let name = prepared.card.name.clone();
+            if let Err(e) = self.js.commit_prepared(prepared) {
+                self.error = Some(format!("catalog {name}: {e}"));
+                continue;
+            }
+            reload_keys.push(key);
+        }
+        diff.changed.clear();
+        let mut report = self.js.apply_catalog_diff(diff);
+        report.changed = reload_keys.len();
+        report.failed.extend(prepare_failed);
         for name in &removed {
             self.mark_removed_catalog_assignments(name);
         }
@@ -591,6 +663,7 @@ impl Session {
         let summary = report.summary();
         self.catalog_refresh_report = Some(summary.clone());
         self.error = Some(format!("Refresh catalog: {summary}"));
+        self.reload_warning = None;
     }
 
     fn mark_removed_catalog_assignments(&mut self, card_name: &str) {
@@ -862,5 +935,384 @@ mod tests {
         let asg = s.profile_assignment("alice").unwrap();
         assert_eq!(asg.identity, "GoneBot");
         assert!(asg.unavailable.unwrap().contains("catalog removed"));
+    }
+
+    const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+
+    fn empty_play() -> host_play::Play {
+        host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+    }
+
+    fn session_with_play(names: &[&str]) -> (Session, std::path::PathBuf) {
+        let (mut s, dir) = session_with_profiles(names);
+        s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+        let mut play = empty_play();
+        for name in names {
+            play.attach_arm(name, host_play::SlotArm::new(42, false));
+            s.wall.load(name);
+        }
+        s.play = Some(play);
+        if let Some(first) = names.first() {
+            s.focus.lock().unwrap().focused = Some((*first).into());
+        }
+        (s, dir)
+    }
+
+    fn write_bot(dir: &std::path::Path, file: &str, src: &str) -> std::path::PathBuf {
+        let path = dir.join(file);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, src).unwrap();
+        path
+    }
+
+    fn fake_catalog(root: &std::path::Path, bots: &[(&str, &str)]) {
+        let scripts = root.join("src/bot/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        let mut index =
+            String::from("import { ScriptRegistry } from '../runtime/ScriptRegistry.js';\n");
+        for (name, src) in bots {
+            let folder = name.replace(' ', "");
+            index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+            let d = scripts.join(&folder);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join(format!("{folder}.ts")), src).unwrap();
+        }
+        for (name, _) in bots {
+            let folder = name.replace(' ', "");
+            index.push_str(&format!(
+                "ScriptRegistry.register({{ name: '{name}', description: '{name}', category: 'Test', create: () => new {folder}() }});\n"
+            ));
+        }
+        fs::write(scripts.join("index.ts"), index).unwrap();
+    }
+
+    #[test]
+    fn claim_legacy_read_path_writes_vault_once() {
+        let (mut s, dir) = session_with_profiles(&["alice"]);
+        let vault_path = dir.join("v.vault");
+        let before = fs::read(&vault_path).unwrap();
+        let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+        let after_claim = fs::read(&vault_path).unwrap();
+        assert_ne!(
+            before, after_claim,
+            "first claim may persist the migrated key"
+        );
+        let _ = s.merged_profile_bag(
+            "alice",
+            script::ScriptSource::Catalog,
+            "Alcher",
+            Path::new(""),
+            &[],
+        );
+        let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+        let after_reads = fs::read(&vault_path).unwrap();
+        assert_eq!(
+            after_claim, after_reads,
+            "already-migrated read path must not rewrite the vault"
+        );
+    }
+
+    #[test]
+    fn external_ts_load_start_stop_persists_assignment_only_on_success() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "ext.ts", BOT_TS);
+        assert!(s.profile_assignment("alice").is_none());
+        s.load_js(&path);
+        assert_eq!(s.error, None, "{:?}", s.error);
+        assert!(s.heading_is_pending());
+        assert!(s.profile_assignment("alice").is_none());
+        s.enqueue_transpile(
+            script::ScriptSource::File,
+            path.to_string_lossy().into_owned(),
+            true,
+        );
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let play = s.play.as_ref().unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        let asg = s
+            .profile_assignment("alice")
+            .expect("success-only assignment");
+        assert!(asg.identity.contains("ext.ts"), "{}", asg.identity);
+        assert!(asg.unavailable.is_none());
+        play.script_stop("alice");
+        assert_eq!(play.script_state("alice"), script::RunState::Idle);
+        assert_eq!(
+            s.profile_assignment("alice").unwrap().identity,
+            asg.identity,
+            "stop keeps last successful assignment"
+        );
+    }
+
+    #[test]
+    fn reload_unchanged_reports_exact_string() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "same.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let out = s.script_reload_clicked();
+        assert_eq!(out, ReloadOutcome::NothingChanged);
+        assert_eq!(s.error.as_deref(), Some(script::NOTHING_CHANGED_RELOAD));
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_clicked_warns_before_replacing_running() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "run.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        let old_js =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
+        let first = s.script_reload_clicked();
+        assert_eq!(first, ReloadOutcome::NeedsConfirm);
+        assert!(
+            s.error.as_deref().unwrap_or("").contains("running"),
+            "{:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        let now_js =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        assert_eq!(old_js, now_js, "preview must not replace registration");
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_commit_gates_pause_during_prep() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "pause.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
+        assert_eq!(s.script_reload(false), ReloadOutcome::NeedsConfirm);
+        s.play.as_ref().unwrap().script_pause("alice");
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Paused
+        );
+        let old_js =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        let commit = s.script_reload(true);
+        assert_eq!(commit, ReloadOutcome::NeedsConfirm);
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("paused during prepare"),
+            "{:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Paused
+        );
+        let now_js =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        assert_eq!(old_js, now_js);
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn prepare_failure_preserves_old_instance() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "keep.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        let old =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .clone();
+        fs::write(&path, "const x = 1;\n").unwrap();
+        let out = s.script_reload(true);
+        match out {
+            ReloadOutcome::Failed(e) => assert!(
+                e.contains("shape") || e.contains("unloadable") || e.contains("prepare"),
+                "{e}"
+            ),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        let now =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap();
+        assert_eq!(now.origin, old.origin);
+        assert_eq!(now.js, old.js);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn live_settings_reach_running_and_paused() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let src = "export default class T extends LoopingBot { override loop() {} }\n";
+        let path = write_bot(&dir, "live.ts", src);
+        s.load_js(&path);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        assert!(s.set_profile_setting(
+            "alice",
+            script::ScriptSource::File,
+            "live",
+            &path,
+            "n",
+            Value::String("2".into()),
+        ));
+        let play = s.play.as_ref().unwrap();
+        let identity = play.script_source_identity("alice").unwrap();
+        let gen = play.script_runtime_generation("alice").unwrap();
+        let mut bag = serde_json::Map::new();
+        bag.insert("n".into(), Value::String("2".into()));
+        assert!(
+            !play.script_post_settings_fenced("alice", &bag, &identity, gen),
+            "unchanged bag after live Running delivery is not reposted"
+        );
+        play.script_pause("alice");
+        assert!(s.set_profile_setting(
+            "alice",
+            script::ScriptSource::File,
+            "live",
+            &path,
+            "n",
+            Value::String("3".into()),
+        ));
+        bag.insert("n".into(), Value::String("3".into()));
+        let play = s.play.as_ref().unwrap();
+        assert!(
+            !play.script_post_settings_fenced("alice", &bag, &identity, gen),
+            "unchanged bag after live Paused delivery is not reposted"
+        );
+        play.script_stop("alice");
+        assert!(!play.script_post_settings_fenced("alice", &bag, &identity, gen));
+    }
+
+    #[test]
+    fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let root = dir.join("catalog");
+        fake_catalog(&root, &[("GoodBot", BOT_TS), ("BadBot", BOT_TS)]);
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "GoodBot")
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "BadBot")
+            .unwrap();
+        let good_js =
+            s.js.get(script::ScriptSource::Catalog, "GoodBot")
+                .unwrap()
+                .js
+                .clone();
+        let bad =
+            s.js.get(script::ScriptSource::Catalog, "BadBot")
+                .unwrap()
+                .clone();
+        fs::write(
+            root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+            "export default class T extends LoopingBot { override loop() { return; } }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/bot/scripts/BadBot/BadBot.ts"),
+            "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { override loop() {} }\n",
+        )
+        .unwrap();
+        s.refresh_catalog_at(&root);
+        let good = s.js.get(script::ScriptSource::Catalog, "GoodBot").unwrap();
+        assert!(!good.js.is_empty(), "successful prepare must keep js");
+        assert_ne!(good.js, good_js, "changed good card commits prepared js");
+        let bad_now = s.js.get(script::ScriptSource::Catalog, "BadBot").unwrap();
+        assert_eq!(bad_now.origin, bad.origin);
+        assert_eq!(bad_now.js, bad.js);
+        assert!(
+            s.error.as_deref().unwrap_or("").contains("BadBot")
+                || s.catalog_refresh_report
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("failed"),
+            "independent failure is reported: {:?} {:?}",
+            s.error,
+            s.catalog_refresh_report
+        );
+    }
+
+    #[test]
+    fn catalog_refresh_warns_before_stopping_running() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let root = dir.join("catalog-run");
+        fake_catalog(&root, &[("RunBot", BOT_TS)]);
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "RunBot")
+            .unwrap();
+        s.persist_successful_assignment(
+            "alice",
+            ScriptAssignment {
+                source_kind: "catalog".into(),
+                identity: "RunBot".into(),
+                display_name: "RunBot".into(),
+                unavailable: None,
+            },
+        );
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "RunBot".into(),
+        ));
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        fs::write(
+            root.join("src/bot/scripts/RunBot/RunBot.ts"),
+            format!("{BOT_TS}// changed\n"),
+        )
+        .unwrap();
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running,
+            "catalog refresh must warn before stopping"
+        );
+        assert!(
+            s.reload_warning.is_some() || s.error.as_deref().unwrap_or("").contains("running"),
+            "{:?} {:?}",
+            s.error,
+            s.reload_warning.as_ref().map(|w| &w.running)
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
     }
 }
