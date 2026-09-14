@@ -493,6 +493,10 @@ impl ProfileSelection {
     pub fn asset_port(&self) -> u16 {
         self.asset_port
     }
+    /// Engine install selected by the read-only native profile resolver.
+    pub fn engine_dir(&self) -> &Path {
+        &self.engine_dir
+    }
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }

@@ -218,8 +218,16 @@ historical upstream evidence, never a native PASS.
 
 ## Not claimed
 
-This entrypoint does not make Pass 3 complete by itself. Still pending, and visible as
-such in the manifest's `defaults.options`: default-ON headed nav paints (no paint flag on
-`catalog_watch`/`pair_watch`), a requested-capture flag, per-run `--highmem`, the pair
-cells beyond the existing Air witness, the RockCrab stand fixture, and the BoneBurier
-external-loader smoke. No LIVE qualification has been run from this slice.
+Headed runs default to `--nav-paints on`; use `--nav-paints off` to disable diagnostic
+layers. The choice is recorded in resume identity and forwarded to both native watcher
+entrypoints. It changes session visuals without changing routing, teleport policy,
+deadlines or saved operator preferences.
+
+The RockCrab cases use the native stand `(2712,3707,0)` and are executable for fixture
+qualification. Their live baseline still requires visible dormant Rocks before Start
+and actual script-caused activation afterwards. A runnable case is not a qualification.
+
+This entrypoint does not make Pass 3 complete by itself. Requested extra captures,
+per-run memory selection, remaining pair/external adapters and LIVE qualification
+remain separate work. Existing scenario terminal captures are structurally validated
+and remain pending visual review.

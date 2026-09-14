@@ -100,6 +100,8 @@ pub struct NativeConfig {
     pub vault: Option<PathBuf>,
     pub lowmem: bool,
     pub mainland: bool,
+    /// Headed diagnostic layers; the suite defaults on without persisting panel settings.
+    pub nav_paints: bool,
     /// Direct native executables. When absent the manifest's cargo template is resolved to
     /// a built artifact and hashed (see [`NativeConfig::binary`]).
     pub exec_core: Option<PathBuf>,
@@ -147,6 +149,11 @@ impl NativeConfig {
 
     /// Validate the configuration before any launch. Explicit paths must exist.
     pub fn validate(&self) -> SuiteResult<()> {
+        if self.extra_args.iter().any(|arg| arg == "--nav-paints") {
+            return Err(
+                "use the suite --nav-paints option instead of --child-arg --nav-paints".into(),
+            );
+        }
         if self.profile.trim().is_empty() {
             return Err("--profile must name the native server profile".into());
         }
@@ -334,6 +341,10 @@ impl NativeConfig {
         // resolved artifact takes only the profile flags.
         let mut command = vec![binary.program.clone()];
         command.extend(self.profile_args());
+        command.extend([
+            "--nav-paints".into(),
+            if self.nav_paints { "on" } else { "off" }.into(),
+        ]);
         command.push("--live".into());
         command.push(live.to_string());
         command.extend(
@@ -584,8 +595,9 @@ pub fn run(
         }
         // A pipe that was still open gets a further bounded drain now that the write ends
         // are (or should be) closed.
-        if !drained {
-            let _ = drain_readers(&shared, readers.len(), PIPE_DRAIN_AFTER_KILL);
+        let fully_drained = drained || drain_readers(&shared, readers.len(), PIPE_DRAIN_AFTER_KILL);
+        if !fully_drained {
+            parts.push("output pipes did not close within the cleanup bound".to_string());
         }
         let note = format!("{}: {}", spec.label, parts.join("; "));
         cleanup.note = if cleanup.note.is_empty() {
@@ -595,7 +607,7 @@ pub fn run(
         };
         cleanup.killed_signal = cleanup.killed_signal.or(Some(termination_signal()));
         cleanup.escalated_to_sigkill |= group.escalated_to_sigkill;
-        cleanup.reaped = group.reaped && status.is_some();
+        cleanup.reaped = group.reaped && status.is_some() && fully_drained;
     } else {
         // The direct child was waited and no process of its group survives.
         cleanup.reaped = true;
@@ -1035,6 +1047,7 @@ mod tests {
             vault: None,
             lowmem: true,
             mainland: false,
+            nav_paints: true,
             exec_core: None,
             exec_pair: None,
             cwd: None,

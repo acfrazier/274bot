@@ -442,6 +442,10 @@ mod tests {
             manifest.provenance.reference_commit,
             "96410ec5c779f3d8fe537268cae1a21c0174d16c"
         );
+        assert_eq!(manifest.intended_scripts.len(), 44);
+        for script in ["Duel Arena Combat Trainer", "ClimbingBoots", "RockCrab"] {
+            assert!(manifest.intended_scripts.iter().any(|name| name == script));
+        }
         let runnable: Vec<&CaseEntry> = manifest.cases.iter().filter(|c| c.is_runnable()).collect();
         assert!(
             runnable.len() > 80,

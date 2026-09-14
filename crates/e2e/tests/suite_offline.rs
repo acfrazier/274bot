@@ -139,7 +139,7 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(
         stdout.contains(&format!(
-            "{} --profile local-289 --catalog {} --live script_thiever",
+            "{} --profile local-289 --catalog {} --nav-paints on --live script_thiever",
             canonical(FIXTURE),
             catalog(&tmp).display()
         )),
@@ -249,7 +249,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     assert!(dry.status.success(), "{}", text(&dry.stderr));
     assert!(
         stdout.contains(&format!(
-            "{} --profile local-289 --catalog {} --live script_thiever",
+            "{} --profile local-289 --catalog {} --nav-paints on --live script_thiever",
             resolved_canonical,
             catalog(&tmp).display()
         )),
@@ -1280,4 +1280,94 @@ fn extra_args_cannot_evade_profile_identity() {
         "{stderr}"
     );
     assert_eq!(launches(&tmp).len(), 1);
+}
+
+/// The actual child argv and retained identity carry the same typed paint choice.
+#[test]
+fn headed_paints_default_on_and_changed_choice_refuses_resume() {
+    let tmp = temp_dir("nav-paints");
+    let run_dir = tmp.join("run");
+    let report = tmp.join("argv.txt");
+    let report_arg = report.display().to_string();
+    let base = [
+        "--only",
+        "fixture_one",
+        "--child-arg",
+        "--report-args",
+        "--child-arg",
+        &report_arg,
+    ];
+    let out = suite(&tmp, &run_dir, &base, &[]);
+    assert_eq!(out.status.code(), Some(EXIT_OK), "{}", text(&out.stderr));
+    let argv = std::fs::read_to_string(&report).unwrap();
+    assert!(argv.contains("--nav-paints\non\n"), "{argv}");
+    assert_eq!(
+        Ledger::resume(&run_dir).unwrap().state.identity["settings"]["nav_paints"],
+        true
+    );
+    let mut changed = base.to_vec();
+    changed.extend(["--resume", "--nav-paints", "off"]);
+    let out = suite(&tmp, &run_dir, &changed, &[]);
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    assert!(text(&out.stderr).contains("refusing resume"));
+    assert_eq!(launches(&tmp).len(), 1);
+    let mut off = base.to_vec();
+    off.extend(["--nav-paints", "off"]);
+    let out = suite(&tmp, &tmp.join("off-run"), &off, &[]);
+    assert_eq!(out.status.code(), Some(EXIT_OK), "{}", text(&out.stderr));
+    assert!(std::fs::read_to_string(&report)
+        .unwrap()
+        .contains("--nav-paints\noff\n"));
+}
+
+/// If a pipe outlives even the killed owned group, stop with cleanup failure.
+/// The escaped fixture is deliberately outside that group and cleaned by this test.
+#[test]
+fn unclosed_output_pipe_is_cleanup_failure_and_stops_the_next_case() {
+    let tmp = temp_dir("escaped-pipe");
+    let run_dir = tmp.join("run");
+    let pid_file = tmp.join("escaped.pid");
+    let pid_path = pid_file.display().to_string();
+    let started = Instant::now();
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_one,fixture_two",
+            "--child-arg",
+            "--mode",
+            "--child-arg",
+            "escape-pipe",
+        ],
+        &[("E2E_SUITE_ESCAPED_PID", &pid_path)],
+    );
+    // Clean the known test process before assertions can panic.
+    let escaped_pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe {
+        libc::kill(escaped_pid, libc::SIGKILL);
+    }
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_FAILURE),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(started.elapsed() < Duration::from_secs(15));
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let attempt = ledger.attempt("fixture_one").unwrap();
+    assert_eq!(attempt.status, AttemptStatus::CleanupFailed);
+    assert!(
+        attempt.reason.contains("output pipes did not close"),
+        "{}",
+        attempt.reason
+    );
+    assert!(
+        ledger.attempt("fixture_two").is_none(),
+        "cleanup failure must stop the suite"
+    );
 }

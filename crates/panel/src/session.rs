@@ -7434,6 +7434,49 @@ mod tests {
     }
 
     #[test]
+    fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_prefs() {
+        let saved = crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        };
+        crate::ui_state::save(&saved);
+        for choice in [None, Some(true), Some(false)] {
+            let mut session = Session::new();
+            session.set_nav_paints_override(choice);
+            let mut scenario = scenario::get("nav_door").unwrap();
+            scenario.settings.nav.allow_teleports = true;
+            scenario.settings.nav.allow_wilderness = true;
+            let baseline = crate::nav_settings::from_scenario(&scenario.settings.nav);
+            let deadline = scenario.settings.deadline;
+            let terminal_shot = scenario.settings.terminal_shot;
+            session.live_prepare_script(scenario).unwrap();
+            session.pump_status();
+            let published = session.nav_publish.lock().unwrap().settings.clone();
+            assert_eq!(published, session.effective_nav());
+            assert!(published.allow_teleports && published.allow_wilderness);
+            assert_eq!(published.allow_bank_fetch, baseline.allow_bank_fetch);
+            assert_eq!(published.color_path, baseline.color_path);
+            match choice {
+                Some(on) => {
+                    assert_eq!(published.show_nav_path, on);
+                    assert_eq!(published.collision_fill, on);
+                    assert_eq!(published.client_trail, on);
+                }
+                None => assert_eq!(published, baseline),
+            }
+            let runner = session.scenario.lock().unwrap();
+            let runner = runner.as_ref().unwrap();
+            assert_eq!(
+                runner.deadline(),
+                scenario::budget_s_from_env().unwrap_or(deadline)
+            );
+            assert_eq!(runner.terminal_shot(), terminal_shot);
+            assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
+            assert_eq!(crate::ui_state::load().nav, saved.nav);
+        }
+    }
+
+    #[test]
     fn live_force_layers_does_not_write_panel_ui() {
         crate::ui_state::save(&crate::ui_state::PanelUiState {
             last_focus: None,

@@ -38,6 +38,7 @@ config (dry-run and run):
   --revision REV --host HOST --port PORT
   --engine DIR --cache DIR --catalog DIR   (catalog is required by run)
   --vault PATH --lowmem --mainland
+  --nav-paints on|off            headed diagnostic paints (default on)
   --exec-core PATH --exec-pair PATH        direct native executables
   --cwd DIR                     working directory for the children
   --child-arg ARG               extra argument appended to every child (repeatable)
@@ -94,6 +95,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
         vault: None,
         lowmem: true,
         mainland: false,
+        nav_paints: true,
         exec_core: None,
         exec_pair: None,
         cwd: None,
@@ -146,6 +148,13 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
             "--verbose" | "-v" => verbose = true,
             "--run-dir" => run_dir = Some(PathBuf::from(value("--run-dir")?)),
             "--resume" => resume = true,
+            "--nav-paints" => {
+                config.nav_paints = match value("--nav-paints")?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("--nav-paints expects on or off".into()),
+                };
+            }
             "--profile" => config.profile = value("--profile")?,
             "--revision" => config.revision = Some(value("--revision")?),
             "--host" => config.host = Some(value("--host")?),
@@ -302,33 +311,6 @@ fn effective_profile_options(
     host_play::parse_profile_args(argv).map_err(|error| format!("child argv: {error}"))
 }
 
-/// Same engine-dir precedence as `ProfileOptions::resolve_with_env`. host-play does not
-/// expose `ProfileSelection::engine_dir()`; that getter is the precise later dependency.
-fn resolved_engine_dir(
-    options: &host_play::ProfileOptions,
-    env: &host_play::profile::ProfileEnvironment,
-    selection: &host_play::ProfileSelection,
-) -> PathBuf {
-    let home = env.home.clone().unwrap_or_default();
-    let is_289 = selection.revision().as_i32() == 289;
-    let engine = options
-        .engine_dir
-        .clone()
-        .or_else(|| env.engine_dir.clone())
-        .unwrap_or_else(|| {
-            home.join(if is_289 {
-                "experiments/lostcity-289/engine"
-            } else {
-                "experiments/Server/engine"
-            })
-        });
-    if engine.is_absolute() {
-        engine
-    } else {
-        env.working_dir.clone().unwrap_or_default().join(engine)
-    }
-}
-
 fn settings_env_keys(config: &NativeConfig) -> Vec<String> {
     let mut keys = config.env_keys();
     for name in BOUND_PROFILE_ENV {
@@ -351,7 +333,7 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
     })?;
     let revision = selection.revision().as_i32() as u16;
     let unpack_overridden = options.unpack_dir.is_some() || env.unpack_dir.is_some();
-    let engine_dir = resolved_engine_dir(&options, &env, &selection);
+    let engine_dir = selection.engine_dir();
     let catalog_path = selection
         .catalog_root()
         .map(Path::to_path_buf)
@@ -375,7 +357,7 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
         port: options.port.or(config.port),
         selection: resolved.selection.clone(),
         resolved: resolved.clone(),
-        engine: Some(identity::bind_engine_pem(&engine_dir)),
+        engine: Some(identity::bind_engine_pem(engine_dir)),
         cache: identity::bind_cache(Path::new(&resolved.cache), revision),
         catalog: identity::InputDigest::catalog(&catalog_path),
         vault: identity::bind_input(Path::new(&resolved.vault)),
@@ -607,6 +589,7 @@ fn run(args: &Args) -> SuiteResult<i32> {
         changed_paths: selection.changed.clone(),
         changed_source: format!("{:?}", selection.changed_source).to_lowercase(),
         child_args: args.config.extra_args.clone(),
+        nav_paints: args.config.nav_paints,
         child_env_keys: settings_env_keys(&args.config),
         cwd: cwd.display().to_string(),
     };
