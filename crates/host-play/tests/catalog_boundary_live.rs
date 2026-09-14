@@ -21,6 +21,11 @@ use vault::{Profile, ProfileSettings};
 const SUPPORT_MATRIX: &str = include_str!("fixtures/catalog-support-matrix.json");
 const GNOME_WEST_MAGICS: (i32, i32, i32) = GNOME_SOUTH_BANK_MAGIC_STAND;
 const STEEL_PICKAXE_ID: i32 = RUNE_PICKAXE_ID;
+/// The frozen 96410ec5 reference catalog. `ClimbingBoots` was introduced there
+/// and is absent from the two historical catalogs the support matrix freezes
+/// (100ad/8e7), so this card's frozen-schema checks read 964 directly instead
+/// of asserting the card into an older ledger.
+const REFERENCE_COMMIT_964: &str = "96410ec5c779f3d8fe537268cae1a21c0174d16c";
 
 #[derive(Debug, Deserialize)]
 struct SupportMatrix {
@@ -6809,9 +6814,11 @@ mod tests {
             CoreCase::LeatherCrafterHardBody,
             CoreCase::Firemaker,
             CoreCase::FiremakerOak,
-            CoreCase::ClimbingBoots,
-            CoreCase::ClimbingBootsTeleport,
         ] {
+            // ClimbingBoots is deliberately absent from this loop: it asserts
+            // catalog support for 100ad/8e7, and the card only exists from the
+            // 964 reference (see
+            // climbing_boots_injects_match_the_frozen_reference_card_schema).
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
         }
@@ -9906,16 +9913,6 @@ mod tests {
                 "Firemaker",
                 "src/bot/scripts/Firemaker/Firemaker.ts",
             ),
-            (
-                "climbing_boots",
-                "ClimbingBoots",
-                "src/bot/scripts/ClimbingBoots/ClimbingBoots.ts",
-            ),
-            (
-                "climbing_boots_teleport",
-                "ClimbingBoots",
-                "src/bot/scripts/ClimbingBoots/ClimbingBoots.ts",
-            ),
         ] {
             let case = CoreCase::parse(name).expect("noncombat case registered");
             assert_eq!(case.card_name(), card);
@@ -9936,6 +9933,39 @@ mod tests {
                         "{name}: {card} at {commit} does not declare setting {id:?}"
                     );
                 }
+            }
+        }
+    }
+
+    /// `ClimbingBoots` was introduced in the 964 reference catalog and does not
+    /// exist in the two historical catalogs the support matrix freezes
+    /// (`rs2b0t-100adccc…` and `rs2b0t-8e7d965b…` have no
+    /// `src/bot/scripts/ClimbingBoots`). Its inject ids are therefore checked
+    /// against the 964 source only — never asserted into 100ad/8e7 — and the
+    /// two cells must inject the opposite `useTeleport` branch.
+    #[test]
+    fn climbing_boots_injects_match_the_frozen_reference_card_schema() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (name, use_teleport) in [("climbing_boots", false), ("climbing_boots_teleport", true)] {
+            let case = CoreCase::parse(name).expect("noncombat case registered");
+            assert_eq!(case.card_name(), "ClimbingBoots");
+            let scenario = scenario::get(name).expect("noncombat scenario registered");
+            assert_eq!(scenario.settings.start_script, Some("ClimbingBoots"));
+            let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
+                .unwrap_or_default();
+            assert_eq!(inject.get("useTeleport"), Some(&json!(use_teleport)));
+            assert_eq!(inject.get("runeStock"), Some(&json!(1.0)));
+            let path = repo
+                .join(format!(".superpowers/inputs/rs2b0t-{REFERENCE_COMMIT_964}"))
+                .join("src/bot/scripts/ClimbingBoots/ClimbingBoots.ts");
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
+            let declared = declared_source_settings(&source);
+            for id in inject.keys() {
+                assert!(
+                    declared.contains(id),
+                    "{name}: ClimbingBoots at {REFERENCE_COMMIT_964} does not declare setting {id:?}"
+                );
             }
         }
     }
