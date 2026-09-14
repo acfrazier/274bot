@@ -2349,6 +2349,21 @@ CATALOG_CORE: script_thiever {\"case\":\"thiever\",\"post_start_observations\":2
     }
 
     #[test]
+    fn native_core_failure_message_beats_prior_scenario_pass_evidence() {
+        let case = core_case("thiever");
+        let receipts = parse(
+            "FAIL: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"FAIL\",\"message\":\"catalog core did not qualify before the headed deadline: rock_crab core post-Start delta incomplete\",\"prerequisite\":{\"scenario\":\"thiever\",\"outcome\":\"PASS\"}}\n",
+        );
+        match validate(&case, &receipts, Some(1), &[]) {
+            Verdict::CaseFailure { reason } => {
+                assert!(reason.contains("rock_crab core post-Start delta incomplete"));
+                assert!(!reason.contains("outcome PASS"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn missing_or_wrong_witness_stops_the_run() {
         let case = core_case("thiever");
         let mut receipts = parse("PASS: live script_thiever {\"scenario\":\"thiever\"}\n");
