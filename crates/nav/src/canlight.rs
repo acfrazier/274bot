@@ -151,9 +151,10 @@ pub fn unpack_packed_coord(token: &str) -> Result<WorldTile, String> {
     })
 }
 
-/// Policy digest mixed into the sidecar header binding: policy id,
-/// algorithm id, revision, and the canonical `bank_zones.dbrow` bytes.
-/// Pack SHA is **not** included here; [`header_binding`] concatenates it.
+/// Policy digest mixed into the canlight identity: policy id, algorithm id,
+/// revision, and the canonical `bank_zones.dbrow` bytes. Pack SHA and mask
+/// bytes are **not** included here; [`identity_digest`] adds the baked mask
+/// and [`header_binding`] concatenates the pack identity.
 pub fn policy_digest(revision: u16, bank_zones_bytes: &[u8]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(POLICY_ID.as_bytes());
@@ -166,8 +167,25 @@ pub fn policy_digest(revision: u16, bank_zones_bytes: &[u8]) -> [u8; 32] {
     digest.finalize().into()
 }
 
-/// 32-byte sidecar header binding: pack digest then policy digest. Cheap to
-/// recompute at bundled load from identity-row hex; does not hash the mask.
+/// Identity of the actual baked canonical bitmap. The words are serialized
+/// explicitly as little-endian u64 values so the identity is independent of
+/// host endianness and cannot collide for equal policy inputs with different
+/// masks. Runtime validation uses this small digest from the identity row; it
+/// never hashes or copies the resident mask.
+pub fn identity_digest(revision: u16, bank_zones_bytes: &[u8], bits: &[u64]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"canlight-mask-identity-v1");
+    digest.update([0]);
+    digest.update(policy_digest(revision, bank_zones_bytes));
+    digest.update((bits.len() as u64).to_le_bytes());
+    for word in bits {
+        digest.update(word.to_le_bytes());
+    }
+    digest.finalize().into()
+}
+
+/// 32-byte sidecar header binding: pack digest then canlight identity digest.
+/// Cheap to recompute at bundled load from identity-row hex; does not hash the mask.
 pub fn header_binding(pack_digest: &[u8; 32], policy: &[u8; 32]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(pack_digest);
@@ -554,6 +572,55 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
         assert_eq!(header_binding(&pack, &a), header_binding(&[0x11u8; 32], &a));
         let other_pack = [0x22u8; 32];
         assert_ne!(header_binding(&pack, &a), header_binding(&other_pack, &a));
+    }
+
+    #[test]
+    fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities() {
+        let fix = FixtureDir::new("identity-mask");
+        let open = "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n";
+        let moved = "==== MAP ====\n0 0 0: h1 o6 u48\n==== LOC ====\n0 1 0: 77 0 0\n";
+        let locs = [LocType {
+            id: 77,
+            blockwalk: false,
+            active: true,
+            ..LocType::default()
+        }];
+        let zone = BankZone {
+            from: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+        };
+        let (open_collision, open_bits) = bake_square(&fix.0, "m50_50.jm2", open, &locs, &[zone]);
+        fs::write(fix.0.join("m50_50.jm2"), moved).unwrap();
+        let moved_collision = bake_from_maps(&fix.0, &defs(&locs), &HashSet::new()).unwrap();
+        let moved_flags = moved_collision.flags.as_ref().unwrap();
+        let moved_bits =
+            bake_canlight(&moved_collision, moved_flags, &fix.0, &defs(&locs), &[zone]).unwrap();
+        let open_pack = crate::pack::encode(
+            &open_collision,
+            &crate::transport::TransportGraph::default(),
+            &[],
+        );
+        let moved_pack = crate::pack::encode(
+            &moved_collision,
+            &crate::transport::TransportGraph::default(),
+            &[],
+        );
+        assert_eq!(
+            open_pack, moved_pack,
+            "nonblocking loc move keeps pack equal"
+        );
+        assert_ne!(open_bits, moved_bits, "active loc changes the baked mask");
+        let open_id = identity_digest(289, b"same-bank-zones", &open_bits);
+        let moved_id = identity_digest(289, b"same-bank-zones", &moved_bits);
+        assert_ne!(open_id, moved_id, "mask identity follows baked output");
     }
 
     #[test]
