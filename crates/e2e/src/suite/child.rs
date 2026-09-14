@@ -1488,10 +1488,39 @@ mod tests {
 
         let mut high = config.clone();
         high.lowmem = false;
-        assert!(
-            high.validate().is_err(),
-            "the test catalog path is intentionally absent"
-        );
+        let manifest = SuiteManifest::parse(
+            crate::suite::EMBEDDED_MANIFEST.as_bytes(),
+            "embedded fixture",
+        )
+        .unwrap();
+        let dir = test_dir("memory-mode");
+        high.exec_core = Some(fake_executable(&dir, "fixture-core"));
+        high.exec_pair = Some(fake_executable(&dir, "fixture-pair"));
+        high.catalog = PathBuf::from(manifest.defaults.exec.core.program.clone());
+        let binaries = high
+            .binaries(
+                [RunnerKind::Core, RunnerKind::Pair],
+                &manifest,
+                Some(Path::new("/repo")),
+            )
+            .unwrap();
+        for selected in ["thiever", "nature_crafter_air"] {
+            let runner = manifest.case(selected).unwrap().runner;
+            let command = high
+                .command(manifest.case(selected).unwrap(), &binaries)
+                .unwrap();
+            assert!(
+                command.iter().any(|arg| arg == "--highmem"),
+                "{runner:?}: {command:?}"
+            );
+        }
+
+        for raw in ["--lowmem", "--highmem"] {
+            let mut invalid = high.clone();
+            invalid.extra_args.push(raw.into());
+            let error = invalid.validate().unwrap_err();
+            assert!(error.contains("typed"), "{raw}: {error}");
+        }
     }
 
     #[test]
