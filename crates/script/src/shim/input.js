@@ -97,13 +97,23 @@ export const Input = proxy('Input', {
         }
         const s = snap();
         if (s.bank_open !== true || s.bank_loaded !== true) return false;
-        const row = (s.bank || []).find(
-            (r) =>
-                r &&
-                r.id === id &&
-                r.slot === itemSlot &&
-                r.component_id === component,
-        );
+        // Exact id/slot/component in bank withdraw rows or bank-side deposit rows.
+        // Do not fall back by name; Rust revalidates the same identity + session.
+        const row =
+            (s.bank || []).find(
+                (r) =>
+                    r &&
+                    r.id === id &&
+                    r.slot === itemSlot &&
+                    r.component_id === component,
+            ) ||
+            (s.bank_side || []).find(
+                (r) =>
+                    r &&
+                    r.id === id &&
+                    r.slot === itemSlot &&
+                    r.component_id === component,
+            );
         if (!row) return false;
         const ops = Array.isArray(row.ops) ? row.ops : [];
         const action = ops[operation - 1];

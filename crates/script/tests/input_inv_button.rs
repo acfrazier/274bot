@@ -260,3 +260,157 @@ fn inv_button_round_trips_through_flatbuffer() {
     let got = decode_interact_batch(&bytes).expect("inv-button batch decodes");
     assert_eq!(got, reqs);
 }
+
+const DEPOSIT_OPS: [&str; 4] = ["Deposit 1", "Deposit 5", "Deposit 10", "Deposit All"];
+
+fn side_row<'a>(id: i32, slot: i32, component_id: i32, ops: &'a [String]) -> ItemRowInput<'a> {
+    ItemRowInput {
+        name: Some("Leather gloves"),
+        count: 26,
+        id,
+        ops,
+        noted: false,
+        cert: -1,
+        component_id,
+        slot,
+    }
+}
+
+const SELECT_SIDE_1059: &str = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() {
+        const item = reader.bankSideItems().find((i) => i.id === 1059);
+        let op = -1;
+        if (item) {
+            for (let i = 0; i < item.ops.length; i++) {
+                const label = item.ops[i];
+                if (label && /deposit[\s-]*all/i.test(String(label))) {
+                    op = i + 1;
+                    break;
+                }
+            }
+        }
+        globalThis.__probe = item && op !== -1
+            ? Input.invButton(item.id, item.slot, item.comId, op)
+            : false;
+        globalThis.__side = item || null;
+    }
+}
+"#;
+
+#[test]
+fn inv_button_queues_bank_side_deposit_all_on_selected_product() {
+    let iso =
+        LoadIsolate::spawn(SELECT_SIDE_1059.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops: Vec<String> = DEPOSIT_OPS.iter().map(|s| (*s).to_string()).collect();
+    // Same product id can appear in bank (withdraw component) and bank_side
+    // (deposit component 2006); selection must keep the bank-side identity.
+    let bank = [side_row(1059, 0, 5382, &ops)];
+    let side = [side_row(1059, 3, 2006, &ops), side_row(1741, 0, 2006, &ops)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_side = &side;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+    let side_item = iso.probe("__side").unwrap();
+    assert_eq!(side_item["id"], 1059);
+    assert_eq!(side_item["slot"], 3);
+    assert_eq!(side_item["comId"], 2006);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::InvButton {
+            id: 1059,
+            slot: 3,
+            component: 2006,
+            operation: 4,
+            bank_generation: 1,
+        }],
+        "bank-side Deposit All must queue exact product id/slot/component 2006"
+    );
+    iso.join();
+}
+
+#[test]
+fn inv_button_bank_side_refuses_wrong_component_id_slot_op_and_closed() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() {
+        const item = reader.bankSideItems().find((i) => i.id === 1059);
+        globalThis.__ok = item
+            ? Input.invButton(item.id, item.slot, item.comId, 4)
+            : false;
+        globalThis.__wrongCom = item
+            ? Input.invButton(item.id, item.slot, 5382, 4)
+            : false;
+        globalThis.__forged = Input.invButton(9999, 3, 2006, 4);
+        globalThis.__wrongSlot = Input.invButton(1059, 0, 2006, 4);
+        globalThis.__invalidOp = item
+            ? Input.invButton(item.id, item.slot, item.comId, 9)
+            : false;
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let ops: Vec<String> = DEPOSIT_OPS.iter().map(|s| (*s).to_string()).collect();
+    let side = [side_row(1059, 3, 2006, &ops)];
+    let mut snap = base_snapshot();
+    snap.bank_side = &side;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    assert_eq!(iso.probe("__wrongCom").unwrap(), false);
+    assert_eq!(iso.probe("__forged").unwrap(), false);
+    assert_eq!(iso.probe("__wrongSlot").unwrap(), false);
+    assert_eq!(iso.probe("__invalidOp").unwrap(), false);
+    let reqs = iso.drain_interacts();
+    assert_eq!(
+        reqs,
+        vec![InteractReq::InvButton {
+            id: 1059,
+            slot: 3,
+            component: 2006,
+            operation: 4,
+            bank_generation: 1,
+        }],
+        "only the exact bank-side Deposit All must queue"
+    );
+    iso.join();
+
+    let closed =
+        LoadIsolate::spawn(SELECT_SIDE_1059.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut shut = base_snapshot();
+    shut.bank_open = false;
+    shut.bank_side = &side;
+    post_snapshot_input(&closed, &shut);
+    closed.on_game_tick(1);
+    assert_eq!(closed.probe("__probe").unwrap(), false);
+    assert!(
+        closed.drain_interacts().is_empty(),
+        "closed bank must not queue bank-side deposit"
+    );
+    closed.join();
+
+    let unloaded =
+        LoadIsolate::spawn(SELECT_SIDE_1059.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut not_ready = base_snapshot();
+    not_ready.bank_loaded = false;
+    not_ready.bank_side = &side;
+    post_snapshot_input(&unloaded, &not_ready);
+    unloaded.on_game_tick(1);
+    assert_eq!(unloaded.probe("__probe").unwrap(), false);
+    assert!(
+        unloaded.drain_interacts().is_empty(),
+        "unloaded bank must not queue bank-side deposit"
+    );
+    unloaded.join();
+}
