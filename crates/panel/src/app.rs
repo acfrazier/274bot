@@ -1941,10 +1941,10 @@ const CAPTURE_PUNCT: [(Key, u8, u8); 11] = [
 ];
 
 /// Recover the physical ImGui key for shifted printable characters. Winit's
-/// logical key is the produced character (`:` rather than `;`), while the
-/// capture path derives the final `ch` from the ImGui key and Shift state.
-/// The winit backend already queues `event.text` for text widgets; this adds
-/// only the missing key lifecycle event.
+/// logical key is the produced character (`:` rather than `;`). Game capture
+/// records that produced character at the native event; this mapping is only
+/// the ImGui key identity plus press-character ownership, not a later Shift
+/// sample. The winit backend already queues `event.text` for text widgets.
 pub(crate) fn shifted_imgui_key(key: &WinitKey) -> Option<Key> {
     let WinitKey::Character(character) = key else {
         return None;
@@ -1986,9 +1986,9 @@ pub(crate) fn shifted_imgui_key_at_location(key: &WinitKey, location: KeyLocatio
     shifted_imgui_key(key)
 }
 
-/// Queue the missing ImGui key lifecycle for a logical shifted character.
-/// The backend already queues text for widgets; this adds only the key event
-/// consumed by game capture.
+/// Queue the missing ImGui key lifecycle for a logical shifted character,
+/// and record the produced capture character at this native event.
+/// The backend already queues text for widgets; this must not add text.
 pub(crate) fn add_shifted_key_event(
     io: &mut Io,
     logical_key: &WinitKey,
@@ -1998,10 +1998,106 @@ pub(crate) fn add_shifted_key_event(
     if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
         io.add_key_event(key, down);
     }
+    note_native_capture_key(logical_key, location, down);
+}
+
+static NATIVE_CAPTURE: Mutex<Vec<(bool, i32)>> = Mutex::new(Vec::new());
+static NATIVE_PRESS_CH: Mutex<Vec<(Key, i32)>> = Mutex::new(Vec::new());
+
+fn physical_capture_key(logical_key: &WinitKey, location: KeyLocation) -> Option<Key> {
+    if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
+        return Some(key);
+    }
+    let WinitKey::Character(character) = logical_key else {
+        return None;
+    };
+    let mut chars = character.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    if location == KeyLocation::Numpad {
+        if ch.is_ascii_digit() {
+            return Some(CAPTURE_DIGITS[(ch as u8 - b'0') as usize].0);
+        }
+        return None;
+    }
+    if ch.is_ascii_alphabetic() {
+        let i = (ch.to_ascii_uppercase() as u8 - b'A') as usize;
+        return CAPTURE_LETTERS.get(i).copied();
+    }
+    for &(key, unshifted, shifted) in &CAPTURE_DIGITS {
+        if ch == unshifted as char || ch == shifted as char {
+            return Some(key);
+        }
+    }
+    for &(key, unshifted, shifted) in &CAPTURE_PUNCT {
+        if ch == unshifted as char || ch == shifted as char {
+            return Some(key);
+        }
+    }
+    None
+}
+
+fn produced_capture_ch(logical_key: &WinitKey, location: KeyLocation) -> Option<i32> {
+    let WinitKey::Character(character) = logical_key else {
+        return None;
+    };
+    let mut chars = character.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() || !ch.is_ascii() {
+        return None;
+    }
+    physical_capture_key(logical_key, location)?;
+    Some(ch as i32)
+}
+
+fn note_native_capture_key(logical_key: &WinitKey, location: KeyLocation, down: bool) {
+    let Some(produced) = produced_capture_ch(logical_key, location) else {
+        return;
+    };
+    let ch = match physical_capture_key(logical_key, location) {
+        Some(key) if down => {
+            let mut held = NATIVE_PRESS_CH.lock().expect("native press ch");
+            held.retain(|(k, _)| *k != key);
+            held.push((key, produced));
+            produced
+        }
+        Some(key) => {
+            let mut held = NATIVE_PRESS_CH.lock().expect("native press ch");
+            if let Some(index) = held.iter().position(|(k, _)| *k == key) {
+                held.remove(index).1
+            } else {
+                produced
+            }
+        }
+        None => produced,
+    };
+    NATIVE_CAPTURE
+        .lock()
+        .expect("native capture")
+        .push((down, ch));
+}
+
+fn take_native_capture() -> Vec<(bool, i32)> {
+    std::mem::take(&mut *NATIVE_CAPTURE.lock().expect("native capture"))
+}
+
+/// Drop unconsumed printable capture so capture-off / unhovered frames
+/// cannot replay later. Held press-character ownership is cleared only
+/// when events were actually discarded.
+fn discard_unconsumed_native_capture() {
+    let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
+    if queued.is_empty() {
+        return;
+    }
+    queued.clear();
+    NATIVE_PRESS_CH.lock().expect("native press ch").clear();
 }
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
 /// maps DOM `KeyboardEvent.key` (`:` is 58, `~` is 126).
+#[cfg_attr(not(test), allow(dead_code))]
 fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
     for &(k, ch) in CAPTURE_NAMED {
         if k == key {
@@ -2027,20 +2123,13 @@ fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
     None
 }
 
-/// Map hovered ImGui keys to GameShell `ch` values (arrows 1–4, ASCII).
+/// Map hovered keys to GameShell `ch` values (arrows 1–4, ASCII).
+/// Printable characters are the ones recorded at the native event so a
+/// later Shift sample cannot rewrite `:` into `;`. Named keys still come
+/// from this ImGui frame.
 fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
-    let shift = ui.is_key_down(Key::LeftShift) || ui.is_key_down(Key::RightShift);
-    let mut keys = Vec::new();
-    let all = CAPTURE_NAMED
-        .iter()
-        .map(|&(k, _)| k)
-        .chain(CAPTURE_LETTERS)
-        .chain(CAPTURE_DIGITS.iter().map(|&(k, _, _)| k))
-        .chain(CAPTURE_PUNCT.iter().map(|&(k, _, _)| k));
-    for key in all {
-        let Some(ch) = capture_key_ch(key, shift) else {
-            continue;
-        };
+    let mut keys = take_native_capture();
+    for &(key, ch) in CAPTURE_NAMED {
         if ui.is_key_pressed_with_repeat(key, false) {
             keys.push((true, ch));
         }
@@ -5125,6 +5214,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
+    discard_unconsumed_native_capture();
 }
 
 #[cfg(test)]
@@ -5887,6 +5977,7 @@ mod tests {
     #[test]
     fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
         let mut ctx = dear_imgui_rs::Context::create();
         let colon = WinitKey::Character(":".into());
         let mut captured = Vec::new();
@@ -5929,6 +6020,153 @@ mod tests {
                 vec![(false, b':' as i32)],
             ]
         );
+    }
+
+    /// Headed 870 failure: CUA typed `::give` faster than an ImGui frame.
+    /// Colon press/release and Shift release all arrive before sampling, so
+    /// reconstructing `ch` from later Shift / coalesced key state drops or
+    /// mutates the prefix. Capture must keep the produced character.
+    #[test]
+    fn native_colon_burst_survives_shift_release_before_imgui_frame() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let colon = WinitKey::Character(":".into());
+        let g = WinitKey::Character("g".into());
+        let i = WinitKey::Character("i".into());
+        let v = WinitKey::Character("v".into());
+        let e = WinitKey::Character("e".into());
+
+        ctx.io_mut().add_key_event(Key::LeftShift, true);
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
+        ctx.io_mut().add_key_event(Key::LeftShift, false);
+        for key in [&g, &i, &v, &e] {
+            add_shifted_key_event(ctx.io_mut(), key, KeyLocation::Standard, true);
+            add_shifted_key_event(ctx.io_mut(), key, KeyLocation::Standard, false);
+        }
+
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        let captured = capture_keys(frame);
+        ctx.render();
+
+        assert_eq!(
+            captured,
+            vec![
+                (true, b':' as i32),
+                (false, b':' as i32),
+                (true, b':' as i32),
+                (false, b':' as i32),
+                (true, b'g' as i32),
+                (false, b'g' as i32),
+                (true, b'i' as i32),
+                (false, b'i' as i32),
+                (true, b'v' as i32),
+                (false, b'v' as i32),
+                (true, b'e' as i32),
+                (false, b'e' as i32),
+            ]
+        );
+
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        assert!(
+            capture_keys(frame).is_empty(),
+            "a consumed burst must not replay on the next frame"
+        );
+        ctx.render();
+    }
+
+    #[test]
+    fn native_capture_release_keeps_press_character_after_shift_up() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let colon = WinitKey::Character(":".into());
+        let semicolon = WinitKey::Character(";".into());
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
+        add_shifted_key_event(ctx.io_mut(), &semicolon, KeyLocation::Standard, false);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        let captured = capture_keys(frame);
+        ctx.render();
+        assert_eq!(captured, vec![(true, b':' as i32), (false, b':' as i32)]);
+    }
+
+    #[test]
+    fn native_capture_discard_does_not_replay_after_capture_off() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let colon = WinitKey::Character(":".into());
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
+        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
+        super::discard_unconsumed_native_capture();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        assert!(
+            capture_keys(frame).is_empty(),
+            "capture-off must discard, not delay-replay"
+        );
+        ctx.render();
+    }
+
+    #[test]
+    fn native_capture_named_enter_still_comes_from_imgui_frame() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.io_mut().add_key_event(Key::Enter, true);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        assert_eq!(capture_keys(frame), vec![(true, 10)]);
+        ctx.render();
+        ctx.io_mut().add_key_event(Key::Enter, false);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        assert_eq!(capture_keys(frame), vec![(false, 10)]);
+        ctx.render();
+    }
+
+    #[test]
+    fn native_capture_leaves_numpad_punctuation_unqueued() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        super::discard_unconsumed_native_capture();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let plus = WinitKey::Character("+".into());
+        add_shifted_key_event(ctx.io_mut(), &plus, KeyLocation::Numpad, true);
+        add_shifted_key_event(ctx.io_mut(), &plus, KeyLocation::Numpad, false);
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let frame = ctx.frame();
+        assert!(
+            capture_keys(frame).is_empty(),
+            "numpad + stays with the backend, not game capture"
+        );
+        ctx.render();
     }
 
     #[test]
