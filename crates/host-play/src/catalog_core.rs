@@ -4422,10 +4422,9 @@ impl CombatCoreCycle {
                     self.dormant_indexes.insert(npc.index);
                     self.dormant_tiles.insert(npc.index, npc.tile);
                 }
-                // The target only counts when it stands on a witness the
-                // projection actually recorded as dormant: a crab that spawned
-                // elsewhere (or respawned on a reused slot away from its rock)
-                // is not this source's activation.
+                // Preserve the existing index OR tile identity match. An
+                // unrelated index and tile cannot count as activation; this
+                // predicate does not separately rule out reuse of an old slot.
                 if name == spec.target
                     && (self.dormant_indexes.contains(&npc.index)
                         || self.dormant_tiles.values().any(|tile| *tile == npc.tile))
