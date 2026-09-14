@@ -1653,8 +1653,12 @@ dependencies = [
  "client",
  "host",
  "host-play",
+ "libc",
  "nav",
  "scenario",
+ "serde",
+ "serde_json",
+ "sha2",
  "vault",
 ]
 
