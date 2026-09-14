@@ -13,6 +13,7 @@ use api::snapshot::WorldTile;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 /// Frozen `FIRE_START_TICKS`: wait this many game ticks for the attempt to start.
 pub const FIRE_START_TICKS: u64 = 14;
@@ -28,6 +29,7 @@ thread_local! {
     static RUNTIME: RefCell<FireRuntime> = const { RefCell::new(FireRuntime::new()) };
     static NATIVE_OBSERVATION: RefCell<NativeObservation> =
         const { RefCell::new(NativeObservation::new()) };
+    static LAST_TRACE: RefCell<Option<(u64, u64, Phase)>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -398,10 +400,12 @@ pub fn on_hold(held: bool) {
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
     NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
+    LAST_TRACE.with(|last| *last.borrow_mut() = None);
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    let result = match op {
         "begin" => begin(input),
         "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
         "next-tile" => next_tile(input),
@@ -412,7 +416,54 @@ pub fn dispatch(input: &Value) -> Value {
         "run-in-dir" | "run-in-dir-result" => run_in_dir(input),
         "no-light" => no_light(input),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
+    };
+    if matches!(op, "begin" | "next") {
+        trace_light(op, &result);
     }
+    result
+}
+
+/// Diagnostic observation only: never polls, changes a deadline, or sends an op.
+/// Repeated JS condition checks share one wait line per token/tick/phase.
+fn trace_light(op: &str, result: &Value) {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var("BOT_DEBUG").as_deref() == Ok("1")) {
+        return;
+    }
+    let kind = result.get("kind").and_then(Value::as_str).unwrap_or("");
+    if op == "next" && kind == "aborted" {
+        return;
+    }
+    NATIVE_OBSERVATION.with(|obs| {
+        let obs = obs.borrow();
+        RUNTIME.with(|rt| {
+            let rt = rt.borrow();
+            let key = (rt.token, obs.tick, rt.phase);
+            let duplicate_wait = LAST_TRACE.with(|last| {
+                let mut last = last.borrow_mut();
+                let duplicate = kind == "wait" && *last == Some(key);
+                *last = Some(key);
+                duplicate
+            });
+            if duplicate_wait {
+                return;
+            }
+            eprintln!(
+                "[fire-trace] op={op} token={} tick={} phase={:?} kind={kind} result={} reason={} logs={} xp={:?} observed_animating={} tile={:?} deadline={:?} frozen={}",
+                rt.token,
+                obs.tick,
+                rt.phase,
+                result.get("result").and_then(Value::as_str).unwrap_or("-"),
+                result.get("reason").and_then(Value::as_str).unwrap_or("-"),
+                named_count(&obs.inv, &rt.log_name),
+                obs.firemaking_xp,
+                obs.animating,
+                obs.here,
+                rt.deadline_tick,
+                rt.frozen(),
+            );
+        });
+    });
 }
 
 struct Probe<'a> {
