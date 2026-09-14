@@ -52,7 +52,7 @@
    "runner": "core",
    "live": "script_thiever",
    "scenario": "thiever",
-   "core_case": "Thiever",
+   "core_case": "thiever",
    "options": [],
    "covers": {
     "scripts": [
@@ -77,7 +77,7 @@
    "runner": "core",
    "live": "script_thiever",
    "scenario": "thiever",
-   "core_case": "Thiever",
+   "core_case": "thiever",
    "options": [],
    "covers": {
     "scripts": [

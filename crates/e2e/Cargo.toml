@@ -31,6 +31,7 @@ client = { workspace = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
 sha2 = "=0.10.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

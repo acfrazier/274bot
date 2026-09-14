@@ -260,6 +260,34 @@ fn select_cases(args: &Args, manifest: &SuiteManifest) -> SuiteResult<Selection>
     )
 }
 
+/// Content identity for an engine/cache path: a file is hashed, a directory is digested as
+/// a bounded tree (unresolved when it is past the bound).
+fn input_digest(path: &Path) -> identity::InputDigest {
+    if path.is_file() {
+        identity::InputDigest::file(path)
+    } else {
+        identity::InputDigest::tree(path)
+    }
+}
+
+/// The vault the panel itself would resolve: `--vault` when given (validated to exist),
+/// else the shared default path. An absence is a *defined* identity — the panel creates
+/// the file on first use — never an invented one.
+fn vault_digest(given: Option<&Path>) -> identity::InputDigest {
+    let path = match given {
+        Some(path) => path.to_path_buf(),
+        None => host_play::default_vault_path(),
+    };
+    if path.exists() {
+        identity::InputDigest::file(&path)
+    } else {
+        identity::InputDigest::absent(
+            &path,
+            "no vault file at the resolved path; the panel would create it",
+        )
+    }
+}
+
 fn list(args: &Args) -> SuiteResult<()> {
     let manifest = load_manifest(args)?;
     let selection = select_cases(args, &manifest)?;
@@ -419,14 +447,16 @@ fn run(args: &Args) -> SuiteResult<i32> {
     let repo = identity::repo_root();
     let client = repo.as_deref().and_then(identity::client_root);
 
-    // Binary identity for every runner kind this selection will launch.
+    // Binary identity for every runner kind this selection will launch, resolved and
+    // hashed *before* the ledger exists: an unresolved executable is a configuration
+    // error the run refuses, not an identity the suite records and later compares.
     let mut binaries: BTreeMap<String, BinaryIdentity> = BTreeMap::new();
     for case in selection.runnable(&manifest) {
         let kind = case.runner();
         if !binaries.contains_key(kind.as_str()) {
             binaries.insert(
                 kind.as_str().to_string(),
-                args.config.binary(kind, &manifest)?,
+                args.config.binary(kind, &manifest, repo.as_deref())?,
             );
         }
     }
@@ -444,10 +474,10 @@ fn run(args: &Args) -> SuiteResult<i32> {
         revision: args.config.revision.clone(),
         host: args.config.host.clone(),
         port: args.config.port,
-        engine: args.config.engine.as_ref().map(|p| p.display().to_string()),
-        cache: args.config.cache.as_ref().map(|p| p.display().to_string()),
-        catalog: args.config.catalog.display().to_string(),
-        vault: args.config.vault.as_ref().map(|p| p.display().to_string()),
+        engine: args.config.engine.as_ref().map(|path| input_digest(path)),
+        cache: args.config.cache.as_ref().map(|path| input_digest(path)),
+        catalog: identity::InputDigest::catalog(&args.config.catalog),
+        vault: vault_digest(args.config.vault.as_deref()),
         lowmem: args.config.lowmem,
         mainland: args.config.mainland,
         jobs: 1,
@@ -472,6 +502,17 @@ fn run(args: &Args) -> SuiteResult<i32> {
     } else {
         run_identity
     };
+
+    // Fail closed before the ledger exists: a run that could not bind an input could not
+    // detect that the input changed, and a resume of such a run proves nothing.
+    let unresolved = manifest_identity.unresolved();
+    if !unresolved.is_empty() {
+        return Err(format!(
+            "refusing to run: the suite cannot bind {}; resolve the input (a built executable, a \
+             catalog with src/bot/scripts, a readable repository) or pass it explicitly",
+            unresolved.join(", ")
+        ));
+    }
 
     let mut ledger = if args.resume {
         let ledger = Ledger::resume(&run_dir)?;
@@ -584,11 +625,10 @@ fn run(args: &Args) -> SuiteResult<i32> {
 
         let before = receipt::scan_captures(&shots_root);
         let run = child::run(&spec, budget, &log_path, args.verbose)?;
-        let observed = receipt::observed_captures(&before, &receipt::scan_captures(&shots_root));
-        let captures = match &case.capture {
-            Some(capture) => receipt::captures_for_label(&shots_root, &capture.label),
-            None => observed,
-        };
+        // Attribution is by *new* files only: a same-named capture written by an earlier
+        // case or an earlier run is not this case's evidence.
+        let after = receipt::scan_captures(&shots_root);
+        let captures = receipt::new_captures(&before, &after);
         let receipts = receipt::parse(&run.output_tail);
         let receipt_summary = Some(ReceiptSummary {
             scenario: receipts
@@ -647,10 +687,16 @@ fn run(args: &Args) -> SuiteResult<i32> {
                 Verdict::Passed => (AttemptStatus::Passed, String::new(), false),
                 Verdict::PendingVisualReview { captures: recorded } => (
                     AttemptStatus::PendingVisualReview,
-                    format!(
-                        "{} capture(s) recorded; a human readback is still required",
-                        recorded.len()
-                    ),
+                    if recorded.is_empty() {
+                        "functional receipts verified; the result stays pending visual review \
+                         (no capture is contracted for this case)"
+                            .to_string()
+                    } else {
+                        format!(
+                            "{} capture(s) recorded; a human readback is still required",
+                            recorded.len()
+                        )
+                    },
                     false,
                 ),
                 Verdict::CaseFailure { reason } => (AttemptStatus::Failed, reason, false),
