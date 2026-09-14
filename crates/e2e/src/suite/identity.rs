@@ -763,6 +763,100 @@ impl BinaryIdentity {
     }
 }
 
+/// The bound external loader source: the path the child resolves and the content identity of
+/// the file at that path.
+///
+/// The loader smoke is the one case whose input is a raw TypeScript file rather than a catalog
+/// tree, so a resume has to bind *that* path and *those* bytes. The producer materializes its
+/// own temporary copy for the load/reload legs, so the receipt's `script.path` is never
+/// equated with this path — only its `script.sha256` is compared against [`Self::sha256`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalSource {
+    /// The resolved input path (canonical, absolute), as the child resolves it.
+    pub path: String,
+    /// SHA-256 of the file at that path.
+    pub sha256: String,
+    pub bytes: u64,
+    /// Whether the child's own compile-time default fixture was bound (no `--external-ts`).
+    pub default_fixture: bool,
+    /// The producer's frozen fixture digest (`host_play::external_loader::FROZEN_SHA256`).
+    pub frozen_sha256: String,
+    /// Whether the bound bytes are the frozen fixture. The producer refuses to materialize any
+    /// other content, so a mismatch can only fail; recording it keeps that visible instead of
+    /// silently claiming the input is the frozen one.
+    pub frozen_match: bool,
+    /// What the producer's harmless whitespace reload of this input hashes to: the bound bytes
+    /// with one trailing newline (`apply_harmless_whitespace` writes exactly that to its owned
+    /// copy). A qualified receipt's changed-reload source hash *and* its reloaded raw-source
+    /// cache key must both equal it.
+    pub harmless_whitespace_sha256: String,
+}
+
+impl ExternalSource {
+    /// Resolve the external input the child will read: an explicit absolute `--external-ts`
+    /// path, or the producer's own tracked default fixture.
+    ///
+    /// A relative path is refused for the same reason every other launch path is: the child
+    /// resolves it against its own working directory, so the suite could not bind the file it
+    /// reads. This runs only when the selection actually launches the loader smoke.
+    pub fn resolve(explicit: Option<&Path>) -> SuiteResult<Self> {
+        let default_fixture = explicit.is_none();
+        let path = match explicit {
+            Some(path) => canonicalize_launch_path(path, "--external-ts")?,
+            None => canonicalize_launch_path(
+                &host_play::external_loader::default_frozen_source(),
+                "the external loader default fixture",
+            )?,
+        };
+        let size = std::fs::metadata(&path)
+            .map_err(|error| format!("external loader source {}: {error}", path.display()))?
+            .len();
+        if size > MAX_DIGEST_FILE_BYTES {
+            return Err(format!(
+                "external loader source {} is {size} bytes, past the suite's bounded digest of {} \
+                 bytes",
+                path.display(),
+                MAX_DIGEST_FILE_BYTES
+            ));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("external loader source {}: {error}", path.display()))?;
+        let digest = sha256(&bytes);
+        let mut whitespace = bytes.clone();
+        whitespace.push(b'\n');
+        Ok(ExternalSource {
+            frozen_match: digest == host_play::external_loader::FROZEN_SHA256,
+            frozen_sha256: host_play::external_loader::FROZEN_SHA256.to_string(),
+            path: path.display().to_string(),
+            sha256: digest,
+            bytes: size,
+            default_fixture,
+            harmless_whitespace_sha256: sha256(&whitespace),
+        })
+    }
+
+    /// One line for the ledger header and case identity: what was bound, and whether it is the
+    /// producer's frozen fixture.
+    pub fn summary(&self) -> String {
+        format!(
+            "{} (sha256 {}, {} bytes, {}{})",
+            self.path,
+            self.sha256,
+            self.bytes,
+            if self.default_fixture {
+                "default fixture"
+            } else {
+                "--external-ts"
+            },
+            if self.frozen_match {
+                ", frozen fixture"
+            } else {
+                ", not the frozen fixture"
+            }
+        )
+    }
+}
+
 /// The paths the *native* resolver selected for a configuration, recorded as the child
 /// itself resolves them.
 ///
@@ -845,6 +939,11 @@ pub struct RunIdentity {
     pub client: GitIdentity,
     pub binaries: BTreeMap<String, BinaryIdentity>,
     pub profile: ProfileIdentity,
+    /// The bound external loader source, when the selection launches the loader smoke. `None`
+    /// for an ordinary core/pair run: an external resource a selection does not launch is never
+    /// resolved, let alone required to resolve.
+    #[serde(default)]
+    pub external: Option<ExternalSource>,
     pub settings: SettingsIdentity,
     pub selection: Vec<String>,
 }
@@ -936,6 +1035,9 @@ impl RunIdentity {
         if self.profile != other.profile {
             note("profile/input configuration");
         }
+        if self.external != other.external {
+            note("external loader source");
+        }
         if self.settings != other.settings {
             note("settings");
         }
@@ -953,6 +1055,7 @@ pub struct IdentityInputs<'a> {
     pub client_root: Option<PathBuf>,
     pub binaries: BTreeMap<String, BinaryIdentity>,
     pub profile: ProfileIdentity,
+    pub external: Option<ExternalSource>,
     pub settings: SettingsIdentity,
     pub selection: &'a [String],
 }
@@ -978,6 +1081,7 @@ pub fn capture(inputs: &IdentityInputs<'_>) -> RunIdentity {
         client,
         binaries: inputs.binaries.clone(),
         profile: inputs.profile.clone(),
+        external: inputs.external.clone(),
         settings: inputs.settings.clone(),
         selection: inputs.selection.to_vec(),
     }
@@ -1123,6 +1227,109 @@ mod tests {
         let mut changed = base.clone();
         changed.settings.child_env_keys = vec!["BOT_DEBUG".into()];
         assert_eq!(changed.differences(&base), vec!["settings"]);
+    }
+
+    /// The loader smoke's input identity is its path *and* its bytes, and only a selection
+    /// that launches it resolves the file at all.
+    #[test]
+    fn external_source_binds_path_and_content_and_refuses_relative_inputs() {
+        let fixture = host_play::external_loader::default_frozen_source();
+        let default = ExternalSource::resolve(None).expect("the tracked fixture resolves");
+        assert!(default.default_fixture);
+        assert_eq!(default.sha256, host_play::external_loader::FROZEN_SHA256);
+        assert!(
+            default.frozen_match,
+            "the tracked fixture is the frozen one"
+        );
+        assert_eq!(
+            default.frozen_sha256,
+            host_play::external_loader::FROZEN_SHA256
+        );
+        assert_eq!(
+            std::fs::canonicalize(&fixture)
+                .unwrap()
+                .display()
+                .to_string(),
+            default.path
+        );
+        assert!(default.bytes > 0);
+        // The whitespace transform the producer applies to its owned copy, hashed by the suite:
+        // a real digest of the bound bytes plus one newline, not an assumed constant.
+        let bytes = std::fs::read(&fixture).unwrap();
+        let mut whitespace = bytes.clone();
+        whitespace.push(b'\n');
+        assert_eq!(
+            default.harmless_whitespace_sha256,
+            super::sha256(&whitespace)
+        );
+        assert_ne!(default.harmless_whitespace_sha256, default.sha256);
+
+        let error = ExternalSource::resolve(Some(Path::new("ExampleBot.ts"))).unwrap_err();
+        assert!(error.contains("relative"), "{error}");
+        let error = ExternalSource::resolve(Some(Path::new("/definitely/missing/ExampleBot.ts")))
+            .unwrap_err();
+        assert!(error.contains("--external-ts"), "{error}");
+
+        // A copy at another path with the same bytes is a different input identity.
+        let dir = std::env::temp_dir().join(format!("274bot-external-src-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let copy = dir.join("ExampleBot.ts");
+        std::fs::copy(&fixture, &copy).unwrap();
+        let explicit = ExternalSource::resolve(Some(&copy)).unwrap();
+        assert!(!explicit.default_fixture);
+        assert!(explicit.frozen_match);
+        assert_eq!(explicit.sha256, default.sha256);
+        assert_ne!(explicit.path, default.path);
+        assert_ne!(explicit, default, "the bound path is part of the identity");
+
+        // The same path with changed bytes is a different identity, and records that the
+        // producer's frozen contract no longer holds.
+        std::fs::write(&copy, "// not the bot\n").unwrap();
+        let changed = ExternalSource::resolve(Some(&copy)).unwrap();
+        assert!(!changed.frozen_match);
+        assert_ne!(changed.sha256, default.sha256);
+        assert_ne!(changed, explicit);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An ordinary core/pair identity carries no external component, and a resume refuses when
+    /// the bound external source (bytes or path) changes.
+    #[test]
+    fn an_external_source_difference_refuses_resume_and_is_absent_by_default() {
+        let base = identity();
+        assert!(
+            base.external.is_none(),
+            "a core/pair selection binds no external input"
+        );
+
+        let mut bound = base.clone();
+        bound.external = Some(ExternalSource {
+            path: "/tmp/ExampleBot.ts".into(),
+            sha256: "sha-one".into(),
+            bytes: 10,
+            default_fixture: true,
+            frozen_sha256: host_play::external_loader::FROZEN_SHA256.into(),
+            frozen_match: true,
+            harmless_whitespace_sha256: "sha-whitespace".into(),
+        });
+        assert_eq!(bound.differences(&base), vec!["external loader source"]);
+        assert_eq!(base.differences(&bound), vec!["external loader source"]);
+
+        let mut changed = bound.clone();
+        changed.external.as_mut().unwrap().sha256 = "sha-two".into();
+        assert_eq!(changed.differences(&bound), vec!["external loader source"]);
+
+        let mut path_changed = bound.clone();
+        path_changed.external.as_mut().unwrap().path = "/tmp/other.ts".into();
+        assert_eq!(
+            path_changed.differences(&bound),
+            vec!["external loader source"]
+        );
+
+        let mut unbound = bound.clone();
+        unbound.external = None;
+        assert_eq!(unbound.differences(&bound), vec!["external loader source"]);
     }
 
     #[test]

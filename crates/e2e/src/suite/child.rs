@@ -184,6 +184,12 @@ pub struct NativeConfig {
     /// a built artifact and hashed (see [`NativeConfig::binary`]).
     pub exec_core: Option<PathBuf>,
     pub exec_pair: Option<PathBuf>,
+    /// The dedicated external loader smoke's executable (`external_watch`).
+    pub exec_external: Option<PathBuf>,
+    /// The raw TypeScript input for the loader smoke. Absolute; absent means the child's own
+    /// tracked default fixture, which the run identity still binds (see
+    /// [`super::identity::ExternalSource`]).
+    pub external_ts: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
     /// Extra arguments appended after the case's own arguments (operator overrides such
     /// as a debug flag). Preserved verbatim in the ledger's requested operation.
@@ -232,6 +238,19 @@ impl NativeConfig {
                 "use the suite --nav-paints option instead of --child-arg --nav-paints".into(),
             );
         }
+        // A typed binding the run resolved and recorded must not be re-bound by a raw extra
+        // argument appended after it: the child takes the last `--live`/`--external-ts`, so an
+        // extra one would run something other than the selection the identity was captured for.
+        // Both are refused unconditionally — an `--external-ts` reached only through `--child-arg`
+        // is a source the run never bound.
+        for flag in ["--live", "--external-ts"] {
+            if self.extra_args.iter().any(|arg| arg == flag) {
+                return Err(format!(
+                    "use the suite's typed {flag} selection instead of --child-arg {flag}: a raw \
+                     argument would override the binding the run identity recorded"
+                ));
+            }
+        }
         if self.profile.trim().is_empty() {
             return Err("--profile must name the native server profile".into());
         }
@@ -246,6 +265,11 @@ impl NativeConfig {
             ("--vault", self.vault.as_ref()),
             ("--exec-core", self.exec_core.as_ref()),
             ("--exec-pair", self.exec_pair.as_ref()),
+            ("--exec-external", self.exec_external.as_ref()),
+            // Only the *shape* of the raw source is checked here: it is resolved (and hashed)
+            // when the selection actually launches the loader smoke, so a stale `--external-ts`
+            // cannot force an ordinary core/pair run to resolve an external resource.
+            ("--external-ts", self.external_ts.as_ref()),
             ("--cwd", self.cwd.as_ref()),
         ] {
             if let Some(path) = path {
@@ -296,6 +320,7 @@ impl NativeConfig {
         for (flag, path) in [
             ("--exec-core", self.exec_core.as_ref()),
             ("--exec-pair", self.exec_pair.as_ref()),
+            ("--exec-external", self.exec_external.as_ref()),
         ] {
             if let Some(path) = path {
                 if !path.is_file() {
@@ -345,6 +370,11 @@ impl NativeConfig {
                 self.exec_pair.as_ref(),
                 &manifest.defaults.exec.pair,
                 "--exec-pair",
+            ),
+            RunnerKind::External => (
+                self.exec_external.as_ref(),
+                &manifest.defaults.exec.external,
+                "--exec-external",
             ),
         };
         match direct {
@@ -398,6 +428,7 @@ impl NativeConfig {
         let flag = match runner {
             RunnerKind::Core => "--exec-core",
             RunnerKind::Pair => "--exec-pair",
+            RunnerKind::External => "--exec-external",
         };
         let binary = binaries.get(runner.as_str()).ok_or_else(|| {
             format!(
@@ -425,6 +456,14 @@ impl NativeConfig {
         ]);
         command.push("--live".into());
         command.push(live.to_string());
+        if runner == RunnerKind::External {
+            // The typed source override, bound before launch. Absent, the child reads its own
+            // compile-time fixture, which the run identity bound as well.
+            if let Some(source) = &self.external_ts {
+                command.push("--external-ts".into());
+                command.push(source.display().to_string());
+            }
+        }
         command.extend(
             case.reference_args
                 .iter()
@@ -1377,6 +1416,8 @@ mod tests {
             nav_paints: true,
             exec_core: None,
             exec_pair: None,
+            exec_external: None,
+            external_ts: None,
             cwd: None,
             extra_args: Vec::new(),
         }
@@ -1696,5 +1737,107 @@ mod tests {
         assert!(super::inherited_deadline_env()
             .iter()
             .all(|name| super::DEADLINE_ENV.contains(&name.as_str())));
+    }
+
+    /// The loader smoke's argv is the resolved external executable, the typed source override and
+    /// the case's own live name — and a raw `--child-arg` cannot re-bind either typed selection.
+    #[test]
+    fn the_external_argv_carries_the_typed_source_override_and_only_that() {
+        let source = if cfg!(windows) {
+            PathBuf::from(r"C:\ext\ExampleBot.ts")
+        } else {
+            PathBuf::from("/ext/ExampleBot.ts")
+        };
+        let mut config = config();
+        config.external_ts = Some(source.clone());
+        let mut binaries = BTreeMap::new();
+        binaries.insert(
+            "external".to_string(),
+            BinaryIdentity {
+                kind: "direct".into(),
+                program: "/bin/external_watch".into(),
+                args: Vec::new(),
+                sha256: Some("digest".into()),
+                size: Some(1),
+                note: None,
+            },
+        );
+        let command = config.command(&case("external_loader"), &binaries).unwrap();
+        assert_eq!(command[0], "/bin/external_watch");
+        assert_eq!(
+            command[command.len() - 4..],
+            [
+                "--live",
+                "script_external_loader",
+                "--external-ts",
+                source.to_str().unwrap()
+            ],
+            "{command:?}"
+        );
+
+        // Without the typed override the child reads its own tracked fixture, which the run
+        // identity bound: no flag is invented for it.
+        let mut default_config = config.clone();
+        default_config.external_ts = None;
+        let command = default_config
+            .command(&case("external_loader"), &binaries)
+            .unwrap();
+        assert_eq!(
+            command[command.len() - 2..],
+            ["--live", "script_external_loader"],
+            "{command:?}"
+        );
+
+        // A raw extra argument must not re-bind the typed source or the typed live name.
+        let mut evasive = config.clone();
+        evasive.extra_args = vec!["--external-ts".into(), "/other.ts".into()];
+        let error = evasive.validate().unwrap_err();
+        assert!(error.contains("--external-ts"), "{error}");
+        let mut relive = config.clone();
+        relive.extra_args = vec!["--live".into(), "script_thiever".into()];
+        let error = relive.validate().unwrap_err();
+        assert!(error.contains("--live"), "{error}");
+        assert!(
+            config.validate().is_err(),
+            "the fixture catalog path still fails closed for its own reason"
+        );
+    }
+
+    /// The external runner resolves its own executable identity: `--exec-external` when given,
+    /// otherwise the manifest's own `external_watch` template — never the core one.
+    #[test]
+    fn the_external_runner_resolves_its_own_executable() {
+        let dir = test_dir("external-binary");
+        let mut config = config();
+        config.exec_external = Some(fake_executable(&dir, "external-watch"));
+        let manifest = SuiteManifest::parse(
+            crate::suite::EMBEDDED_MANIFEST.as_bytes(),
+            "embedded fixture",
+        )
+        .unwrap();
+        let binaries = config
+            .binaries([RunnerKind::External], &manifest, Some(Path::new("/repo")))
+            .unwrap();
+        assert_eq!(binaries.len(), 1);
+        assert_eq!(
+            binaries["external"].program,
+            std::fs::canonicalize(config.exec_external.as_ref().unwrap())
+                .unwrap()
+                .display()
+                .to_string()
+        );
+        assert!(binaries["external"].resolved());
+        assert!(
+            !binaries.contains_key("core"),
+            "a loader-only selection resolves no catalog executable"
+        );
+
+        let error = config
+            .binaries([RunnerKind::External], &manifest, None)
+            .err();
+        assert!(
+            error.is_none(),
+            "the direct executable resolves without a workspace root: {error:?}"
+        );
     }
 }

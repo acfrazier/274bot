@@ -43,6 +43,18 @@
      "pair_watch",
      "--"
     ]
+   },
+   "external": {
+    "program": "cargo",
+    "args": [
+     "run",
+     "--quiet",
+     "-p",
+     "panel",
+     "--example",
+     "external_watch",
+     "--"
+    ]
    }
   },
   "options": {
@@ -60,6 +72,11 @@
     "desired": "when_requested",
     "supported": false,
     "pending": "no CLI flag requests a capture yet; terminal shots are produced only when the scenario's own settings ask for one. A case declaring `capture` below is validated strictly; the tracked cases declare none until that adapter work lands."
+   },
+   "external_ts": {
+    "desired": "typed absolute override",
+    "supported": true,
+    "note": "the dedicated loader smoke row binds its raw source by path and content: the tracked default fixture when `--external-ts ABS` is absent, the named absolute file when it is given. The field name in the receipt is the loaded card's origin cache key, which for a raw file is the raw source digest. A core/pair-only selection never resolves that resource."
    },
    "memory": {
     "desired": "profile_default_lowmem",
@@ -2209,6 +2226,49 @@
      "budget_min": 12
     }
    ]
+  },
+  {
+   "id": "external_loader",
+   "kind": "native",
+   "script": null,
+   "script_key": null,
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "external",
+   "live": "script_external_loader",
+   "scenario": "external_loader",
+   "core_case": null,
+   "pair_case": null,
+   "options": [
+    "raw TypeScript fixture (default: crates/host-play/fixtures/ExampleBot.ts)",
+    "typed --external-ts absolute override"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [],
+    "subsystems": [],
+    "paths": [
+     "crates/host-play/src/external_loader.rs",
+     "crates/host-play/fixtures/ExampleBot.ts",
+     "crates/panel/examples/external_watch.rs"
+    ]
+   },
+   "capture": {
+    "label": "external_loader terminal",
+    "required": true
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "external-script-test",
+     "status": "unvetted",
+     "manual": true,
+     "budget_min": 12
+    }
+   ],
+   "note": "dedicated EXTERNAL_LOADER loader smoke: register once, select without auto-start, observe the burials/Prayer/inventory gate inside the producer's own deadlines, Stop, reload identity and one 'external_loader terminal' capture. The prerequisite 'external_loader prereq' capture is a different shot and never satisfies it; visual approval stays a human readback. The catalog `bone_burier` core witness is unchanged and does not carry this contract."
   },
   {
    "id": "smelter_bot",

@@ -24,6 +24,12 @@
     "args": [
      "--live"
     ]
+   },
+   "external": {
+    "program": "panel-play",
+    "args": [
+     "--live"
+    ]
    }
   },
   "options": {}
@@ -88,6 +94,36 @@
      "crates/e2e/"
     ]
    },
+   "reference_cases": []
+  },
+  {
+   "id": "fixture_external",
+   "kind": "native",
+   "script": null,
+   "script_key": null,
+   "primary": false,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 1,
+   "runner": "external",
+   "live": "script_external_loader",
+   "scenario": "external_loader",
+   "core_case": null,
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [],
+    "subsystems": [],
+    "paths": [
+     "crates/e2e/"
+    ]
+   },
+   "capture": {
+    "label": "external_loader terminal",
+    "required": true
+   },
+   "variants": [],
    "reference_cases": []
   },
   {

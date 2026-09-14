@@ -65,6 +65,9 @@ pub struct Defaults {
 pub struct ExecTemplates {
     pub core: ExecTemplate,
     pub pair: ExecTemplate,
+    /// The dedicated external raw TypeScript loader smoke (`panel`'s `external_watch`
+    /// example). A distinct entry, never a relabelled `catalog_watch`.
+    pub external: ExecTemplate,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,6 +119,9 @@ pub enum CaseStatus {
 pub enum RunnerKind {
     Core,
     Pair,
+    /// The dedicated external raw TypeScript loader smoke (`external_watch`). It has no
+    /// `CoreCase`/`PairCase` witness identity and is not a scenario catalog row.
+    External,
 }
 
 impl RunnerKind {
@@ -123,6 +129,7 @@ impl RunnerKind {
         match self {
             RunnerKind::Core => "core",
             RunnerKind::Pair => "pair",
+            RunnerKind::External => "external",
         }
     }
 }
@@ -314,6 +321,7 @@ impl SuiteManifest {
         for (name, template) in [
             ("core", &self.defaults.exec.core),
             ("pair", &self.defaults.exec.pair),
+            ("external", &self.defaults.exec.external),
         ] {
             if template.program.trim().is_empty() {
                 return Err(format!("manifest {name} exec template has no program"));
@@ -336,7 +344,11 @@ impl SuiteManifest {
             }
             match case.kind {
                 CaseKind::Native => {
-                    if case.is_runnable() {
+                    if case.is_runnable() && case.runner() == RunnerKind::External {
+                        // The dedicated loader smoke has no scenario catalog row and no
+                        // CoreCase/PairCase witness: its own contract is validated here.
+                        validate_external_case(case)?;
+                    } else if case.is_runnable() {
                         let live = case.live.as_deref().unwrap_or_default();
                         if live.trim().is_empty() {
                             return Err(format!("{}: runnable case without a live name", case.id));
@@ -354,7 +366,7 @@ impl SuiteManifest {
                         // (`thiever`, not `Thiever`): the panel serializes the real enum.
                         let declared = match case.runner() {
                             RunnerKind::Pair => case.pair_case.as_deref(),
-                            RunnerKind::Core => case.core_case.as_deref(),
+                            _ => case.core_case.as_deref(),
                         };
                         let declared = declared.unwrap_or_default();
                         if declared.trim().is_empty() {
@@ -426,6 +438,62 @@ impl SuiteManifest {
     }
 }
 
+/// The dedicated external loader smoke's own row contract.
+///
+/// It is *not* a scenario catalog row and has no `CoreCase`/`PairCase` witness identity: it
+/// reuses the panel's `external_watch` proof name, the external loader's live scenario token
+/// and the producer's terminal-shot label. Nothing is inferred from the catalog tables, and a
+/// row that claims any of them refuses the manifest before a run.
+fn validate_external_case(case: &CaseEntry) -> SuiteResult<()> {
+    let live = case.live.as_deref().unwrap_or_default();
+    if live != host_play::external_loader::LIVE_NAME {
+        return Err(format!(
+            "{}: external case --live name {live:?} is not the panel's external proof name {:?}",
+            case.id,
+            host_play::external_loader::LIVE_NAME
+        ));
+    }
+    let scenario = case.scenario.as_deref().unwrap_or_default();
+    if scenario != host_play::external_loader::LIVE_SCENARIO {
+        return Err(format!(
+            "{}: external case scenario {scenario:?} is not the external loader's live scenario \
+             {:?}; this row is not a catalog scenario and must not claim one",
+            case.id,
+            host_play::external_loader::LIVE_SCENARIO
+        ));
+    }
+    if case.core_case.is_some() || case.pair_case.is_some() {
+        return Err(format!(
+            "{}: external case declares a CoreCase/PairCase witness identity; the external loader \
+             smoke has no host-enum witness and must not be presented as a catalog or pair case",
+            case.id
+        ));
+    }
+    let spec = case.capture.as_ref().ok_or_else(|| {
+        format!(
+            "{}: external case contracts no capture; the post-run terminal shot of the owned actor \
+             at scene 2 is mandatory and prerequisite captures cannot stand in for it",
+            case.id
+        )
+    })?;
+    if spec.label != host_play::external_loader::TERMINAL_SHOT {
+        return Err(format!(
+            "{}: external case contracts capture {:?}, expected the producer's terminal shot {:?} \
+             (the prerequisite shot is a different capture and never satisfies it)",
+            case.id,
+            spec.label,
+            host_play::external_loader::TERMINAL_SHOT
+        ));
+    }
+    if !spec.required {
+        return Err(format!(
+            "{}: the external terminal capture is mandatory; declare it required",
+            case.id
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,6 +562,13 @@ mod tests {
             match case.runner() {
                 RunnerKind::Core => assert!(case.core_case.is_some(), "{}", case.id),
                 RunnerKind::Pair => assert!(case.pair_case.is_some(), "{}", case.id),
+                // The loader smoke has no catalog witness identity at all; that is asserted
+                // positively by `external_row_is_honest_and_not_a_catalog_case`.
+                RunnerKind::External => assert!(
+                    case.core_case.is_none() && case.pair_case.is_none(),
+                    "{} declares a catalog witness identity on an external row",
+                    case.id
+                ),
             }
             for unsupported in &case.unsupported {
                 assert!(!unsupported.reason.trim().is_empty(), "{}", case.id);
@@ -542,6 +617,16 @@ mod tests {
         let manifest = embedded();
         let names = scenario::names();
         for case in manifest.cases.iter().filter(|c| c.is_runnable()) {
+            if case.runner() == RunnerKind::External {
+                // The loader smoke is not a scenario row and has no host-enum witness: its
+                // own contract is checked by `external_row_is_honest_and_not_a_catalog_case`.
+                assert!(case.scenario.as_deref() == Some("external_loader"));
+                assert!(
+                    !names.contains(&"external_loader"),
+                    "the loader smoke must not be a catalog scenario"
+                );
+                continue;
+            }
             let live = case.live.as_deref().unwrap();
             let scenario = case.scenario.as_deref().unwrap();
             assert!(
@@ -576,8 +661,144 @@ mod tests {
                         "{scenario} pair identity"
                     );
                 }
+                // External rows returned above: they have no host-enum witness identity to
+                // compare against.
+                RunnerKind::External => {
+                    unreachable!("external rows continue before the witness identity check")
+                }
             }
         }
+    }
+
+    /// The loader smoke is a native row for the external producer's own contract: the
+    /// producer's live name, live scenario and terminal-shot label, no catalog witness
+    /// identity, and no change to the intended inventory or the catalog `bone_burier` row.
+    #[test]
+    fn external_row_is_honest_and_not_a_catalog_case() {
+        let manifest = embedded();
+        let row = manifest
+            .case("external_loader")
+            .expect("external loader row");
+        assert_eq!(row.kind, CaseKind::Native);
+        assert_eq!(row.runner(), RunnerKind::External);
+        assert_eq!(
+            row.live.as_deref(),
+            Some(host_play::external_loader::LIVE_NAME)
+        );
+        assert_eq!(
+            row.scenario.as_deref(),
+            Some(host_play::external_loader::LIVE_SCENARIO)
+        );
+        assert!(row.core_case.is_none() && row.pair_case.is_none());
+        assert!(!row.primary, "BoneBurier keeps its primary catalog row");
+        assert_eq!(
+            row.capture
+                .as_ref()
+                .map(|capture| (capture.label.as_str(), capture.required)),
+            Some((host_play::external_loader::TERMINAL_SHOT, true)),
+            "the external terminal capture is contracted by the producer's own label"
+        );
+        assert_eq!(row.selection_status(), CaseStatus::Unvetted);
+        assert!(!row.manual);
+        assert!(row.is_runnable());
+        assert_eq!(
+            manifest.defaults.exec.external.program, "cargo",
+            "the external template is a distinct entry, not a relabelled core one"
+        );
+        assert!(manifest
+            .defaults
+            .exec
+            .external
+            .args
+            .iter()
+            .any(|arg| arg == "external_watch"));
+
+        // The catalog core case and the frozen reference row are unchanged.
+        let bone = manifest.case("bone_burier").expect("bone_burier row");
+        assert_eq!(bone.core_case.as_deref(), Some("bone_burier"));
+        assert!(
+            bone.reference_cases
+                .iter()
+                .any(|reference| reference.id == "external-script-test"),
+            "the frozen reference row stays recorded where it was"
+        );
+        assert_eq!(manifest.intended_scripts.len(), 44);
+        assert!(manifest
+            .intended_scripts
+            .iter()
+            .any(|name| name == "BoneBurier"));
+        // The external row is not a second primary row for any intended script.
+        let primaries = manifest
+            .cases
+            .iter()
+            .filter(|case| case.primary && case.kind == CaseKind::Native)
+            .count();
+        assert_eq!(
+            primaries, 44,
+            "one primary row per intended script, the loader smoke is not one"
+        );
+    }
+
+    /// An external row that claims a catalog identity, a catalog live name or another
+    /// capture label refuses the manifest instead of being launched as something else.
+    #[test]
+    fn external_rows_that_borrow_a_catalog_identity_or_capture_are_refused() {
+        fn embedded_value() -> serde_json::Value {
+            serde_json::from_str(super::super::EMBEDDED_MANIFEST).unwrap()
+        }
+        fn external_index(value: &serde_json::Value) -> usize {
+            value["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|case| case["id"] == "external_loader")
+                .expect("external row")
+        }
+        fn parse(value: &serde_json::Value) -> SuiteResult<SuiteManifest> {
+            SuiteManifest::parse(serde_json::to_string(value).unwrap().as_bytes(), "test")
+        }
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["core_case"] = serde_json::json!("bone_burier");
+        let error = parse(&value).unwrap_err();
+        assert!(
+            error.contains("CoreCase/PairCase witness identity"),
+            "{error}"
+        );
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["live"] = serde_json::json!("script_bone_burier");
+        let error = parse(&value).unwrap_err();
+        assert!(error.contains("external proof name"), "{error}");
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["scenario"] = serde_json::json!("bone_burier");
+        let error = parse(&value).unwrap_err();
+        assert!(error.contains("live scenario"), "{error}");
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["capture"]["label"] = serde_json::json!("external_loader prereq");
+        let error = parse(&value).unwrap_err();
+        assert!(
+            error.contains("expected the producer's terminal shot"),
+            "{error}"
+        );
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["capture"]["required"] = serde_json::json!(false);
+        let error = parse(&value).unwrap_err();
+        assert!(error.contains("mandatory"), "{error}");
+
+        let mut value = embedded_value();
+        let index = external_index(&value);
+        value["cases"][index]["capture"] = serde_json::Value::Null;
+        let error = parse(&value).unwrap_err();
+        assert!(error.contains("contracts no capture"), "{error}");
     }
 
     #[test]

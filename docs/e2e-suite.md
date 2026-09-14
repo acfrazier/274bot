@@ -2,7 +2,8 @@
 
 `e2e-suite` is the tracked entrypoint for running the native end-to-end cases in one
 ordered, resumable run. It drives the *existing* native executables — `panel`'s
-`catalog_watch` (single-actor core witnesses) and `pair_watch` (paired witnesses) — and
+`catalog_watch` (single-actor core witnesses), `pair_watch` (paired witnesses) and the
+dedicated `external_watch` example (the external raw TypeScript loader smoke) — and
 owns the run ledger, the receipts and the child processes. It contains no scenario engine,
 no JavaScript runtime and no gameplay assertion of its own; a green child is a recorded
 observation that a human still has to read back.
@@ -40,7 +41,7 @@ reason and are recorded `unavailable`; nothing is substituted or silently droppe
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
 launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
 `--lowmem` (the default), `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
-`--cwd DIR`, `--child-arg ARG` (repeatable).
+`--exec-external PATH`, `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable).
 
 The child command line is the *resolved* executable, the profile flags and the case's live
 name. `--exec-core`/`--exec-pair` and `--cwd` must be absolute; the suite canonicalizes the
@@ -54,7 +55,11 @@ executable — `cargo run` is not re-invoked after the identity was captured (it
 rebuild different bytes under the same command). `--exec-core`/`--exec-pair PATH` name a
 direct executable instead; either way a case whose executable cannot be resolved and
 hashed refuses the run (and `dry-run` refuses the plan) rather than printing a template it
-would never launch.
+would never launch. The external loader smoke resolves its own template
+(`cargo run -p panel --example external_watch`) through the same path, or
+`--exec-external PATH`, and only when the selection actually contains that case: a
+core/pair-only run never resolves, hashes or requires the loader executable or its raw
+source.
 
 Only flags the executables actually accept are emitted: `catalog_watch`, `pair_watch` and
 `panel-play` parse flags with `host_play::parse_profile_args` and then reject anything but
@@ -71,13 +76,17 @@ other session knob (`BOT_MAINLAND`, `BOT_DEBUG`, `BOT_CPU`) stays untouched.
 Input paths must be absolute: a child resolves
 a relative path against its own working directory, which the suite cannot reproduce when it
 binds the identity, so a relative `--catalog`/`--engine`/`--cache`/`--vault`/`--exec-core`/
-`--exec-pair`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
-`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`) is refused.
+`--exec-pair`/`--exec-external`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
+`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`) is refused. `--external-ts` is refused
+unless it is absolute, which is the rule the panel applies to its own raw-source flag.
 Every child also receives `274BOT_SMOKE_DIR` pointing at the run's `shots/` directory.
 Reference `args`/`env` from the frozen manifest are preserved as metadata and are never
 applied wholesale; a typed option is added only when a native adapter really consumes it.
 `--child-arg` is appended to the child argv; identity is captured from that *effective*
-argv, so a `--child-arg --vault PATH` is bound as the vault the child will parse.
+argv, so a `--child-arg --vault PATH` is bound as the vault the child will parse. A typed
+binding cannot be re-bound that way: `--child-arg --live …` or `--child-arg --external-ts …`
+is refused, because the case's live name and the loader smoke's raw source are the
+selection the suite bound and hashed.
 
 ## Run directory, identity and resume
 
@@ -111,7 +120,14 @@ match exactly before any spawn:
   `catalog_watch` isolates script stores on its own thread; those are not the operator
   vault. `LOGIN_RSAN`/`LOGIN_RSAE` refuse the run (credentials are not recorded).
 * settings (level, `--only`, changed paths, extra child args, child env names, canonical
-  cwd) and the ordered selection.
+  cwd) and the ordered selection;
+* the external loader smoke's raw source, when — and only when — the selection launches
+  that case: the typed `--external-ts` file or the producer's tracked default fixture, bound
+  by path *and* by content SHA-256 (its size and the digest the producer's harmless
+  whitespace reload would produce are recorded too). A same-path byte change, a different
+  `--external-ts`, a changed external executable or any changed typed option refuses the
+  resume before a child is launched, and the receipt's source hash is checked against the
+  *bound* bytes rather than the temporary path the producer copies them to.
 
 An input the suite cannot bind (no built executable, a catalog without a script tree, a
 profile the native resolver rejects, an unreadable repository) refuses the run before the
@@ -159,6 +175,46 @@ recorded in game at `scene_state == 2`; file magic and existence are not visual 
 | `timeout` / `cleanup_failed` | the case budget expired; `cleanup_failed` means the owned tree could not be reaped |
 | `interrupted` | the operator interrupted the run; the owned tree was terminated |
 | `unavailable` | selected but not executable, with the explicit reason |
+
+### The external loader smoke
+
+The loader smoke (`external_loader`, runner `external`) prints no scenario receipt. Its
+producer writes the external record twice — as the `EXTERNAL_LOADER:` witness and as the
+payload of the terminal line — and the suite requires the two to be the *same* JSON object
+under the producer's live name `script_external_loader`:
+
+    EXTERNAL_LOADER: script_external_loader {"stage":"qualified","script":{…},…}
+    PASS: live script_external_loader {"stage":"qualified","script":{…},…}
+
+A missing witness, a witness on a core/pair case, a `CATALOG_CORE`/`PAIRED_CORE` witness
+on this case, both PASS and FAIL, a PASS with a nonzero exit (or the reverse) or a
+payload that is not a JSON object is a shared failure. A qualified record is then checked
+field by field against the production constants and the bound source:
+
+* `script.name`/`script.version`, and `script.sha256` equal to the **bound** raw source
+  digest (the producer never overwrites the watch's configured source hash);
+* `compiled_sha` — the loaded raw File card's *cache key*, not a compiled-artifact hash —
+  equal to the reloaded key, and all hash fields real lowercase SHA-256 digests. The
+  producer's qualified record is written after the harmless whitespace reload, which
+  overwrites that key with the reloaded card's, so the suite pins it to the digest it
+  computed itself from the bound bytes plus the producer's one trailing newline; the
+  load-time key is not serialized separately, and `script.sha256` is what carries the
+  before identity;
+* the fixture's own prerequisite: `initial.bones` is exactly `BONES_COUNT`, the final bone
+  count is lower, Prayer xp is higher, and the distinct-burial count and raw burial counter
+  agree and reach `MIN_DISTINCT_BURIALS`;
+* registration once before and once after the reload, the in-game scene gate at
+  `scene_state == 2`, `auto_start == false`, a non-empty account, the producer's own
+  `START_DEADLINE`/`STOP_DEADLINE` values, a Stop inside its bound, and
+  `reload_unchanged == NOTHING_CHANGED` with changed post-reload identities.
+
+A failed record must carry the failed stage and a non-empty reason; the case failure keeps
+the stage, the requested and completed operation and the cleanup outcome, so a failed
+cleanup stays visible. The capture is mandatory and is not the prerequisite: the matched
+record must be the producer's `external_loader terminal` label, written by this case, with
+a sidecar naming the account the receipt qualified for. `external_loader prereq` is a
+different capture and never satisfies the contract; a complete capture is still
+`pending_visual_review`.
 
 The run exits `0` only when nothing was unsuccessful, nothing was left unreached and no
 shared stop happened; `1` for any unsuccessful execution, `2` for a usage or configuration
@@ -230,6 +286,19 @@ before any spawn, a descendant holding the pipes not hanging the suite, and deta
 descendants — including one that ignores the graceful stop — being force-stopped and
 verified gone.
 
+The external loader smoke has its own offline coverage. The disposable child drives the
+producer's real `ExternalWatch` state machine and prints its real record, so the tests
+exercise the adapter rather than a relabelled core receipt: a qualified record with its
+terminal capture is retained `pending_visual_review`, the bound source path/digest/whitespace
+digest land in the ledger and the child argv, and a core/pair-only selection never resolves
+the loader executable or its raw source. Refused as shared failures: a missing witness, a
+terminal line that disagrees with the witness, a record that does not confirm the capture
+request, a failed receipt, no capture, only the prerequisite capture, a torn capture, a
+capture of another actor, an arbitrary non-digest hash and a receipt whose source hash is
+not the bound input. Resume refuses a same-path byte change of the bound source, a
+different `--external-ts`, a relative `--external-ts` and a `--child-arg` re-binding of a
+typed selection — all before any child is spawned.
+
 The tests are portable: the real-process coverage runs on unix *and* Windows, the fixture
 gates only the platform-specific actions (unix `SIGTERM` ignore vs Windows console-control
 ignore), and the two genuinely platform-only cases are gated with their reason (the
@@ -262,6 +331,9 @@ qualification. Their live baseline still requires visible dormant Rocks before S
 and actual script-caused activation afterwards. A runnable case is not a qualification.
 
 This entrypoint does not make Pass 3 complete by itself. Requested extra captures,
-per-run memory selection, remaining pair/external adapters and LIVE qualification
-remain separate work. Existing scenario terminal captures are structurally validated
+per-run memory selection, the remaining pair adapters and LIVE qualification
+remain separate work. The external loader adapter is implemented and covered offline, but
+it has not been executed against the game from this checkout: the row stays `unvetted`,
+and neither an offline green case nor a reference row's upstream status is a native PASS.
+Existing scenario terminal captures are structurally validated
 and remain pending visual review.
