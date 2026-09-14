@@ -329,7 +329,7 @@ pub const FIRE_GIANT_WASH: (i32, i32, i32) = (2527, 3413, 0);
 pub const FIRE_GIANT_BANK: (i32, i32, i32) = (2616, 3332, 0);
 /// Frozen Varrock teleport land (the same tile FireGiant's Varrock escape uses).
 pub const VARROCK_TELE_LAND: (i32, i32, i32) = (3213, 3424, 0);
-/// Nearest RockCrab `DEFAULT_SPOTS` loc to the safe stand (2712,3688,0) — spot
+/// Nearest RockCrab `DEFAULT_SPOTS` loc to the safe stand (2712,3707,0) — spot
 /// 4 at (2710,3717,0). `onStart` picks that as `currentSpot()`, and PeriodicBank
 /// returns there.
 pub const ROCK_CRAB_BANK_RET: (i32, i32, i32) = (2710, 3717, 0);
@@ -2251,7 +2251,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Ardougne Guard (2661,3306,0), Magic 13, Hitpoints 40, trout 8, worn Staff of fire 1387, exact Mind rune 558x150 and Air rune 556x300, banking None"
         }
         CoreCase::RockCrab => {
-            "safe stand (2712,3688,0), dormant Rocks observed in the supported field, Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
+            "safe stand (2712,3707,0), dormant Rocks observed in the supported field, Attack/Strength/Hitpoints 40, lobster 8, scimitar 1331, bank Off"
         }
         CoreCase::AutoFighterRange => {
             "Ardougne Guard (2661,3306,0), Hitpoints 40, Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, Trout 8, bank None"
@@ -2266,7 +2266,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn shield 1540, super attack(3) 145 and super strength(3) 157 with no two-dose flask and no live boost, lobster 12"
         }
         CoreCase::RockCrabRange => {
-            "safe stand (2712,3688,0), dormant Rocks observed in the supported field, Hitpoints and Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, lobster 8, bank Off"
+            "safe stand (2712,3707,0), dormant Rocks observed in the supported field, Hitpoints and Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, lobster 8, bank Off"
         }
         CoreCase::FireGiant => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, empty 532"
@@ -2290,7 +2290,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, empty Guard-drop class 440/886/1446/565/562/561, bankStrategy Loot count"
         }
         CoreCase::RockCrabBank => {
-            "safe stand (2712,3688,0), dormant Rocks, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8, empty 1623/405, bankStrategy Loot count"
+            "safe stand (2712,3707,0), dormant Rocks, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8, empty 1623/405, bankStrategy Loot count"
         }
         CoreCase::GreenDragonBank => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn rune scimitar 1333 and shield 1540, lobster 12, empty 536/1753, escape Flee to bank"
