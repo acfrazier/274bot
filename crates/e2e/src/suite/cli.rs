@@ -37,7 +37,7 @@ config (dry-run and run):
   --profile NAME                native server profile (required by run)
   --revision REV --host HOST --port PORT
   --engine DIR --cache DIR --catalog DIR   (catalog is required by run)
-  --vault PATH --lowmem --mainland
+  --vault PATH --lowmem|--highmem --mainland
   --nav-paints on|off            headed diagnostic paints (default on)
   --exec-core PATH --exec-pair PATH        direct native executables
   --exec-external PATH          direct external_watch executable (loader smoke)
@@ -45,8 +45,7 @@ config (dry-run and run):
   --cwd DIR                     working directory for the children
   --child-arg ARG               extra argument appended to every child (repeatable)
 
-`--lowmem` is the default and matches the profile's own setting; `--highmem` is refused
-because the panel executables expose no memory flag. `--mainland` is passed to a child as
+`--lowmem` is the default; the selected mode is passed as a typed panel flag. `--mainland` is passed to a child as
 `BOT_MAINLAND=1`, never as a flag. `--external-ts` must be absolute (the panel refuses a
 relative raw source) and is bound by path and content when the loader smoke is selected;
 a core/pair-only selection never resolves it.
@@ -88,6 +87,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
     let mut verbose = false;
     let mut run_dir = None;
     let mut resume = false;
+    let mut memory_choice = None;
     let mut config = NativeConfig {
         profile: String::new(),
         revision: None,
@@ -180,8 +180,14 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
                 catalog_given = true;
             }
             "--vault" => config.vault = Some(PathBuf::from(value("--vault")?)),
-            "--lowmem" => config.lowmem = true,
-            "--highmem" => config.lowmem = false,
+            "--lowmem" | "--highmem" => {
+                let requested = arg == "--lowmem";
+                if memory_choice.is_some_and(|current| current != requested) {
+                    return Err("--lowmem and --highmem conflict".into());
+                }
+                memory_choice = Some(requested);
+                config.lowmem = requested;
+            }
             "--mainland" => config.mainland = true,
             "--exec-core" => config.exec_core = Some(PathBuf::from(value("--exec-core")?)),
             "--exec-pair" => config.exec_pair = Some(PathBuf::from(value("--exec-pair")?)),
@@ -1069,6 +1075,13 @@ mod tests {
         .unwrap();
         assert_eq!(args.only, vec!["thiever", "ardy"]);
         assert_eq!(args.config.port, None);
+        let error = parse_args(&[
+            "run".to_string(),
+            "--lowmem".to_string(),
+            "--highmem".to_string(),
+        ])
+        .unwrap_err();
+        assert!(error.contains("conflict"), "{error}");
     }
 
     /// A cleanup that could not reap the process tree is a shared failure on *every* exit

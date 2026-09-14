@@ -198,10 +198,8 @@ pub struct NativeConfig {
 
 impl NativeConfig {
     /// Flags handed to the native executable, in the shared `host_play::parse_profile_args`
-    /// shape. Only flags that parser consumes are emitted: `catalog_watch`/`pair_watch`
-    /// reject an unknown flag with exit 2, so a front-end flag such as `--lowmem` would
-    /// break every launch. Working directory, memory mode and mainland are not flags of
-    /// those executables (see [`NativeConfig::child_env`] and [`NativeConfig::validate`]).
+    /// shape. Memory mode is a panel front-end flag and is appended by `command`; it is not
+    /// included here because the profile resolver must see only profile options.
     pub fn profile_args(&self) -> Vec<String> {
         let mut args = Vec::new();
         args.push("--profile".into());
@@ -243,7 +241,7 @@ impl NativeConfig {
         // extra one would run something other than the selection the identity was captured for.
         // Both are refused unconditionally — an `--external-ts` reached only through `--child-arg`
         // is a source the run never bound.
-        for flag in ["--live", "--external-ts"] {
+        for flag in ["--live", "--external-ts", "--lowmem", "--highmem"] {
             if self.extra_args.iter().any(|arg| arg == flag) {
                 return Err(format!(
                     "use the suite's typed {flag} selection instead of --child-arg {flag}: a raw \
@@ -301,16 +299,7 @@ impl NativeConfig {
                 }
             }
         }
-        if !self.lowmem {
-            // `panel-play`/`catalog_watch`/`pair_watch` take no memory flag: the panel
-            // applies the memory mode from the selected vault profile's settings. Asking
-            // for highmem would silently run the profile's own mode, so refuse instead of
-            // recording a request the adapters cannot execute.
-            return Err("--highmem is not selectable by the current native adapters: the panel reads the \
-                        memory mode from the vault profile and exposes no flag (pending adapter work). \
-                        Leave `--lowmem` (the profile default) or select a highmem profile in the vault"
-                .into());
-        }
+
         if !self.catalog.is_dir() {
             return Err(format!(
                 "--catalog {} is not a directory (the native catalog clone root)",
@@ -451,6 +440,7 @@ impl NativeConfig {
         let mut command = vec![binary.program.clone()];
         command.extend(self.profile_args());
         command.extend([
+            if self.lowmem { "--lowmem" } else { "--highmem" }.into(),
             "--nav-paints".into(),
             if self.nav_paints { "on" } else { "off" }.into(),
         ]);
@@ -1469,9 +1459,8 @@ mod tests {
         );
     }
 
-    /// Mainland is not a flag of these executables; it travels as `BOT_MAINLAND=1`. The
-    /// memory mode is the profile's own setting, so `--highmem` is refused rather than
-    /// recorded as a request the adapters cannot execute.
+    /// Mainland is not a flag of these executables; it travels as `BOT_MAINLAND=1`. Memory
+    /// mode is a typed panel argument and is kept out of the profile resolver arguments.
     #[test]
     fn mainland_travels_as_environment_and_highmem_fails_closed() {
         let mut config = config();
@@ -1499,8 +1488,10 @@ mod tests {
 
         let mut high = config.clone();
         high.lowmem = false;
-        let error = high.validate().unwrap_err();
-        assert!(error.contains("--highmem"), "{error}");
+        assert!(
+            high.validate().is_err(),
+            "the test catalog path is intentionally absent"
+        );
     }
 
     #[test]
@@ -1583,7 +1574,7 @@ mod tests {
         let core = config.command(&case("thiever"), &binaries).unwrap();
         assert_eq!(core[0], core_canonical.display().to_string());
         assert_eq!(core[core.len() - 2..], ["--live", "script_thiever"]);
-        assert!(!core.iter().any(|arg| arg == "--lowmem"));
+        assert!(core.iter().any(|arg| arg == "--lowmem"));
 
         let pair = config
             .command(&case("nature_crafter_air"), &binaries)

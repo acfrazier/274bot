@@ -876,7 +876,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
+    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -902,12 +902,15 @@ pub struct PanelArgs {
     pub external_ts: Option<std::path::PathBuf>,
     /// Session-only headed live paint choice; absent preserves panel behavior.
     pub nav_paints: Option<bool>,
+    /// Session-only memory choice; absent preserves the vault profile and UI gate.
+    pub memory_override: Option<bool>,
 }
 
 pub fn parse_args(
     args: impl IntoIterator<Item = impl AsRef<str>>,
     env_live: Option<&str>,
 ) -> Result<PanelArgs, (i32, String)> {
+    let (memory_override, args) = parse_memory_override(args)?;
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
@@ -921,7 +924,32 @@ pub fn parse_args(
         external_core: false,
         external_ts,
         nav_paints,
+        memory_override,
     })
+}
+
+fn parse_memory_override(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Result<(Option<bool>, Vec<String>), (i32, String)> {
+    let mut value = None;
+    let mut rest = Vec::new();
+    for arg in args {
+        let arg = arg.as_ref();
+        let next = match arg {
+            "--lowmem" => Some(true),
+            "--highmem" => Some(false),
+            _ => None,
+        };
+        if let Some(next) = next {
+            if value.is_some_and(|current| current != next) {
+                return Err((2, "panel-play: --lowmem and --highmem conflict".into()));
+            }
+            value = Some(next);
+        } else {
+            rest.push(arg.to_string());
+        }
+    }
+    Ok((value, rest))
 }
 
 fn parse_nav_paints(args: Vec<String>) -> Result<(Option<bool>, Vec<String>), (i32, String)> {
@@ -5196,6 +5224,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
+    state.session.set_memory_override(args.memory_override);
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
@@ -6725,6 +6754,20 @@ mod tests {
         let parsed =
             parse_args(["--nav-paints", "off", "--live", "script_rock_crab"], None).unwrap();
         assert_eq!(parsed.nav_paints, Some(false));
+    }
+
+    #[test]
+    fn parse_args_accepts_session_memory_choice_and_rejects_conflicts() {
+        let parsed = parse_args(["--lowmem", "--live", "script_rock_crab"], None).unwrap();
+        assert_eq!(parsed.memory_override, Some(true));
+        let parsed = parse_args(["--highmem", "--live", "script_rock_crab"], None).unwrap();
+        assert_eq!(parsed.memory_override, Some(false));
+        let parsed = parse_args(["--live", "script_rock_crab"], None).unwrap();
+        assert_eq!(parsed.memory_override, None);
+        assert!(matches!(
+            parse_args(["--lowmem", "--highmem"], None),
+            Err((2, message)) if message.contains("conflict")
+        ));
     }
 
     #[test]
