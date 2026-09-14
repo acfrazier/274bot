@@ -79,10 +79,9 @@
     "note": "the dedicated loader smoke row binds its raw source by path and content: the tracked default fixture when `--external-ts ABS` is absent, the named absolute file when it is given. The field name in the receipt is the loaded card's origin cache key, which for a raw file is the raw source digest. A core/pair-only selection never resolves that resource."
    },
    "memory": {
-    "desired": "profile_default_lowmem",
-    "supported": false,
-    "note": "the suite passes no memory flag: `catalog_watch`/`pair_watch` apply the mode from the selected vault profile's settings (default lowmem), so `--lowmem` matches the profile default rather than selecting it",
-    "pending": "a per-run highmem request needs a panel memory flag or a vault profile-setting write; `--highmem` is refused instead of being recorded as an unexecuted request"
+    "desired": "per_run_lowmem_or_highmem",
+    "supported": true,
+    "note": "the suite passes exactly one typed --lowmem/--highmem panel flag to every core, pair, and external child; absent panel selection preserves the vault profile and UI gate"
    }
   }
  },

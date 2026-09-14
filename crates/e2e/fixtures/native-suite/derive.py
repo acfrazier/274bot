@@ -709,13 +709,10 @@ def main():
                              "core/pair-only selection never resolves that resource."),
                 ])),
                 ("memory", OrderedDict([
-                    ("desired", "profile_default_lowmem"),
-                    ("supported", False),
-                    ("note", "the suite passes no memory flag: `catalog_watch`/`pair_watch` apply the mode from "
-                             "the selected vault profile's settings (default lowmem), so `--lowmem` matches the "
-                             "profile default rather than selecting it"),
-                    ("pending", "a per-run highmem request needs a panel memory flag or a vault profile-setting "
-                                "write; `--highmem` is refused instead of being recorded as an unexecuted request"),
+                    ("desired", "per_run_lowmem_or_highmem"),
+                    ("supported", True),
+                    ("note", "the suite passes exactly one typed --lowmem/--highmem panel flag to every core, pair, "
+                             "and external child; absent panel selection preserves the vault profile and UI gate"),
                 ])),
             ])),
         ])),

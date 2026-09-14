@@ -907,6 +907,8 @@ pub struct Session {
     pub nav_live_force_layers: bool,
     /// Optional headed live paint override; never persisted with operator UI.
     nav_paints_override: Option<bool>,
+    /// Optional headed/live memory override; never persisted with operator UI.
+    memory_override: Option<bool>,
     /// Per-frame nav-paint mirror the slot threads publish from each
     /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
     /// from `ui.nav` + `nav_live_force_layers` every UI frame.
@@ -1252,6 +1254,7 @@ impl Session {
             nav_overlay: None,
             nav_live_force_layers: false,
             nav_paints_override: None,
+            memory_override: None,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
@@ -1339,6 +1342,11 @@ impl Session {
     /// Enable full-core proof only for the dedicated catalog_watch entry.
     pub fn set_catalog_core_enabled(&mut self, enabled: bool) {
         self.catalog_core_enabled = enabled;
+    }
+
+    /// Apply a session-only memory choice to every slot, including companions.
+    pub fn set_memory_override(&mut self, memory_override: Option<bool>) {
+        self.memory_override = memory_override;
     }
 
     /// Clone the Play-owned proof handle without exposing slot snapshots.
@@ -2600,6 +2608,7 @@ impl Session {
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
+        let memory_override = self.memory_override;
         let scatter_template = self.template.clone();
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
             let session_boundary = publish_frontend_slot(
@@ -2730,7 +2739,7 @@ impl Session {
             // skipped the sound load, so flipping the toggle
             // mid-session must re-run it live, not on the next
             // respawn. `set_lowmem` is idempotent — per-frame is cheap.
-            c.set_lowmem(!audio.music_on(name));
+            c.set_lowmem(memory_override.unwrap_or_else(|| !audio.music_on(name)));
             if c.ingame
                 && c.scene_state == 2
                 && seed_on_first_world(c.last_login_reconnect)
@@ -3500,7 +3509,7 @@ impl Session {
         // Raster/mem come from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
         let raster = profile.settings.raster;
-        let lowmem = profile.settings.lowmem;
+        let lowmem = self.memory_override.unwrap_or(profile.settings.lowmem);
         input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
         {
             let mut f = self.focus.lock().unwrap();
