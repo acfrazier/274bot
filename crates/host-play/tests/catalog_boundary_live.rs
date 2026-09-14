@@ -9180,9 +9180,10 @@ mod tests {
         }
     }
 
-    /// ClimbingBoots: the hut baseline is exact (zero boots, the ready-to-buy
-    /// trip money, no stray runes) and neither cell can qualify from a seed, a
-    /// bare boots gain, the wrong branch, or a partial cycle.
+    /// ClimbingBoots: the hut baseline is exact (zero carried and banked boots,
+    /// the ready-to-buy trip money, no stray runes) and neither cell can
+    /// qualify from a seed, a bare boots gain, the wrong branch, unordered
+    /// teleport evidence, a leftover bank, a 1-of-N deposit, or a partial cycle.
     #[test]
     fn climbing_boots_cells_require_the_real_purchase_and_the_selected_branch() {
         let walk = CoreCase::parse("climbing_boots").unwrap();
@@ -9214,6 +9215,12 @@ mod tests {
         let mut stray_runes = walk_baseline.clone();
         stray_runes.item_ids.insert(LAW_RUNE_ID, 1);
         assert!(validate_case_baseline(walk, &stray_runes).is_err());
+        let mut leftover_bank = walk_baseline.clone();
+        leftover_bank.bank_ids.insert(CLIMBING_BOOTS_ID, 5);
+        assert!(
+            validate_case_baseline(walk, &leftover_bank).is_err(),
+            "pre-existing banked boots 3105 must not pass as a clean Start"
+        );
 
         let tele_baseline = noncombat_obs(
             TENZING_HUT_DOOR,
@@ -9264,11 +9271,16 @@ mod tests {
             "a purchase alone must never qualify as the full cycle"
         );
 
-        // Walk cell: buy, walk to Falador West, deposit, restock, reopen, buy.
+        // Walk cell: buy (first pair then the peak pack), walk to Falador
+        // West, open an empty boot bank, deposit the earned quantity, restock,
+        // reopen, buy.
         let walk_frames = climbing_boots_frames(&walk_baseline, &tenzing, 28, false);
-        assert!(witness(walk, &walk_baseline, walk_frames.iter())
-            .qualify()
-            .is_ok());
+        let walk_ok = witness(walk, &walk_baseline, walk_frames.iter());
+        assert_eq!(walk_ok.climbing_boots_cycle.bought_pairs, 1);
+        assert_eq!(walk_ok.climbing_boots_cycle.earned_boots, 28);
+        assert_eq!(walk_ok.climbing_boots_cycle.boot_bank_empty, Some(true));
+        assert!(walk_ok.climbing_boots_cycle.cast.is_none());
+        assert!(walk_ok.qualify().is_ok());
         // A partial cycle (no departure/further) fails closed.
         assert!(witness(
             walk,
@@ -9277,38 +9289,78 @@ mod tests {
         )
         .qualify()
         .is_err());
-        // The teleport cell must show the real cast: the walking frames fail.
+        // The teleport cell must show the real post-purchase cast: walking frames fail.
         assert!(witness(teleport, &tele_baseline, walk_frames.iter())
             .qualify()
             .is_err());
         let tele_frames = climbing_boots_frames(&tele_baseline, &tenzing, 25, true);
-        assert!(witness(teleport, &tele_baseline, tele_frames.iter())
+        let tele_ok = witness(teleport, &tele_baseline, tele_frames.iter());
+        assert_eq!(tele_ok.climbing_boots_cycle.bought_pairs, 1);
+        assert_eq!(tele_ok.climbing_boots_cycle.earned_boots, 25);
+        assert!(tele_ok.climbing_boots_cycle.cast.is_some());
+        assert_eq!(
+            tele_ok
+                .climbing_boots_cycle
+                .cast
+                .as_ref()
+                .unwrap()
+                .item_id(CLIMBING_BOOTS_ID),
+            25
+        );
+        assert!(tele_ok.qualify().is_ok());
+
+        // Accepted teleport baseline: a pre-purchase Falador-shaped cast plus
+        // a later walk-home must not qualify. The unordered helper used to
+        // emit that cast first and still PASS.
+        let mut pre_purchase_cast = vec![climbing_boots_cast(&tele_baseline)];
+        pre_purchase_cast.extend(climbing_boots_frames(&tele_baseline, &tenzing, 25, false));
+        let pre_cast = witness(teleport, &tele_baseline, pre_purchase_cast.iter());
+        assert!(
+            pre_cast.climbing_boots_cycle.cast.is_none(),
+            "a pre-purchase landing must not latch the return cast"
+        );
+        assert!(pre_cast.qualify().is_err());
+
+        // 1-of-N deposit against the peak pack fails.
+        let mut partial_deposit = climbing_boots_frames(&walk_baseline, &tenzing, 28, false);
+        let deposit_at = partial_deposit.len() - 4;
+        partial_deposit[deposit_at]
+            .item_ids
+            .insert(CLIMBING_BOOTS_ID, 27);
+        partial_deposit[deposit_at]
+            .bank_ids
+            .insert(CLIMBING_BOOTS_ID, 1);
+        assert!(witness(walk, &walk_baseline, partial_deposit.iter())
             .qualify()
-            .is_ok());
-        // ...and the walking cell must not quietly run the teleport branch:
-        // a cast observed under the walking spec fails even with a full cycle.
-        let runed_walk = {
-            let mut baseline = walk_baseline.clone();
-            for (id, count) in [(LAW_RUNE_ID, 1), (AIR_RUNE_ID, 3), (WATER_RUNE_ID, 1)] {
-                baseline.item_ids.insert(id, count);
-            }
-            baseline
-        };
-        let mut walk_with_cast = vec![climbing_boots_cast(&runed_walk)];
-        walk_with_cast.extend(climbing_boots_frames(&runed_walk, &tenzing, 28, false));
-        let cast_walk = witness(walk, &runed_walk, walk_with_cast.iter());
-        assert!(cast_walk.climbing_boots_cycle.cast.is_some());
-        assert!(cast_walk.qualify().is_err());
+            .is_err());
+
+        // First loaded bank already holding leftover boots fails even if the
+        // earned pack is later added on top.
+        let mut leftover_deposit = climbing_boots_frames(&walk_baseline, &tenzing, 28, false);
+        let opened_at = leftover_deposit.len() - 5;
+        leftover_deposit[opened_at]
+            .bank_ids
+            .insert(CLIMBING_BOOTS_ID, 5);
+        leftover_deposit[opened_at + 1]
+            .bank_ids
+            .insert(CLIMBING_BOOTS_ID, 33);
+        leftover_deposit[opened_at + 1]
+            .item_ids
+            .insert(CLIMBING_BOOTS_ID, 0);
+        let leftover = witness(walk, &walk_baseline, leftover_deposit.iter());
+        assert_eq!(leftover.climbing_boots_cycle.boot_bank_empty, Some(false));
+        assert!(leftover.qualify().is_err());
     }
 
     /// The real cast frame the teleport cell must witness: magic XP, the
-    /// whole Law/Air/Water cost, and the Falador landing.
-    fn climbing_boots_cast(baseline: &Observation) -> Observation {
-        let mut cast = baseline.clone();
+    /// whole Law/Air/Water cost, and the Falador landing. Built from the
+    /// purchased pack so the carried boots survive the cast.
+    fn climbing_boots_cast(from: &Observation) -> Observation {
+        let mut cast = from.clone();
         cast.tile = Some(FALADOR_TELE_LAND);
-        cast.xp.insert("magic".into(), 50);
+        cast.xp.insert("magic".into(), from.skill_xp("magic") + 50);
         for id in [LAW_RUNE_ID, AIR_RUNE_ID, WATER_RUNE_ID] {
-            cast.item_ids.insert(id, baseline.item_id(id) - 1);
+            cast.item_ids.insert(id, from.item_id(id) - 1);
         }
         cast
     }
@@ -9324,9 +9376,10 @@ mod tests {
         bought
     }
 
-    /// One full-cycle frame sequence: the framed Tenzing gate, the purchase
-    /// with its dialogue, the return to Falador West, the deposit, the coin
-    /// restock, the reopen at the hut and the further purchase.
+    /// Chronological full-cycle frames matching the frozen script: framed
+    /// Tenzing, first-pair purchase, peak pack, optional post-purchase return
+    /// cast, bank return still carrying the pack, empty boot-bank open, full
+    /// deposit, coin restock, later departure, further purchase.
     fn climbing_boots_frames(
         baseline: &Observation,
         tenzing: &BoundedNpc,
@@ -9334,40 +9387,47 @@ mod tests {
         cast: bool,
     ) -> Vec<Observation> {
         let coins = baseline.item_id(COINS_ID);
-        let mut frames = Vec::new();
-        if cast {
-            frames.push(climbing_boots_cast(baseline));
-        }
         let mut framed = baseline.clone();
         framed.npc_facts = vec![tenzing.clone()];
-        let mut bought = climbing_boots_bought(baseline, pairs);
-        bought.npc_facts = vec![tenzing.clone()];
-        bought.chat = vec![(0, "Tenzing has given you some Climbing boots.".into())];
-        let mut returned = bought.clone();
+        let mut first = climbing_boots_bought(baseline, 1);
+        first.npc_facts = vec![tenzing.clone()];
+        first.chat = vec![(0, "Tenzing has given you some Climbing boots.".into())];
+        let mut pack = climbing_boots_bought(baseline, pairs);
+        pack.npc_facts = vec![tenzing.clone()];
+        pack.chat = first.chat.clone();
+        let mut frames = vec![framed, first, pack.clone()];
+        let mut carrying = pack;
+        if cast {
+            carrying = climbing_boots_cast(&carrying);
+            frames.push(carrying.clone());
+        }
+        let mut returned = carrying.clone();
         returned.tile = Some(FALADOR_WEST_BANK);
+        returned.bank_open = false;
+        returned.bank_loaded = false;
         returned.bank_generation = 1;
-        let mut deposited = returned.clone();
-        deposited.bank_open = true;
-        deposited.bank_loaded = true;
+        let mut opened = returned.clone();
+        opened.bank_open = true;
+        opened.bank_loaded = true;
+        opened.bank_ids.remove(&CLIMBING_BOOTS_ID);
+        let mut deposited = opened.clone();
         deposited.item_ids.insert(CLIMBING_BOOTS_ID, 0);
         deposited.bank_ids.insert(CLIMBING_BOOTS_ID, pairs);
         let mut restocked = deposited.clone();
         restocked.item_ids.insert(COINS_ID, coins);
-        restocked.bank_ids.insert(COINS_ID, 2 * coins - coins);
+        restocked.bank_ids.insert(COINS_ID, coins);
         let mut departed = restocked.clone();
         departed.bank_open = false;
         departed.bank_loaded = false;
         departed.bank_generation = 2;
         departed.tile = Some(TENZING_HUT_DOOR);
         let mut further = departed.clone();
-        further.item_ids.insert(CLIMBING_BOOTS_ID, pairs);
+        further.item_ids.insert(CLIMBING_BOOTS_ID, 1);
         further
             .item_ids
-            .insert(COINS_ID, coins - pairs * CLIMBING_BOOTS_PAIR_COINS);
+            .insert(COINS_ID, coins - CLIMBING_BOOTS_PAIR_COINS);
         further.tile = Some(TENZING_HUT_DOOR);
-        frames.extend([
-            framed, bought, returned, deposited, restocked, departed, further,
-        ]);
+        frames.extend([returned, opened, deposited, restocked, departed, further]);
         frames
     }
 

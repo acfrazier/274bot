@@ -13293,8 +13293,11 @@ fn climbing_boots_teleport_scenario() -> Scenario {
 /// The pack itself carries zero boots. The bank stock is a real booth session
 /// (the ordinary window, the inventory's bulk deposit op, a real close) — not
 /// `givebank` and not a bank-side cheat — and it is not a purchase claim.
-/// Start is the real frozen script; nothing intervenes after it, and the
-/// purchase, return, deposit and further stages are watched separately.
+/// The open seed session also acknowledges `BankItemIdAtMost` boots 3105 = 0
+/// before close, so leftover banked boots cannot hide behind a closed-bank
+/// Start snapshot. Start is the real frozen script; nothing intervenes after
+/// it, and the purchase, return, deposit and further stages are watched
+/// separately.
 fn climbing_boots_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -13436,6 +13439,13 @@ fn climbing_boots_variant(
             },
         ));
     }
+    steps.push(bank_fletcher_watch(
+        "acknowledge the seed bank holds no leftover climbing boots",
+        Proof::BankItemIdAtMost {
+            id: CLIMBING_BOOTS_ID,
+            count: 0,
+        },
+    ));
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(Step {
         name: "seed the exact trip stack and stand at Tenzing's hut",
