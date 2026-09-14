@@ -1337,6 +1337,31 @@ fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, l
     }
 }
 
+/// Re-arm a completed single-actor terminal capture for a later native-core
+/// decision, pairing that failure with the current scene instead of the old image.
+fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
+    let Some(actor) = session.focused_name() else {
+        return;
+    };
+    let json = {
+        let states = session.nav_states.lock().unwrap();
+        let Some((snapshot, _)) = states.get(&actor) else {
+            return;
+        };
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return;
+        }
+        actor_snapshot_json(&actor, snapshot).ok()
+    };
+    let Some(json) = json else {
+        return;
+    };
+    let mut shots = shots.lock().unwrap();
+    if matches!(shots.status(label), ShotStatus::Written) {
+        shots.enqueue(label.to_string(), json);
+    }
+}
+
 fn hold_script_terminal_shot(
     live: &mut LiveScript,
     session: &Session,
@@ -1517,6 +1542,17 @@ fn live_script_tick(
             })
     };
     let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
+    let failure_name = live.name.clone();
+    let failure_evidence = evidence.clone();
+    let failure_line = |message: &str| {
+        serde_json::json!({
+            "scenario": failure_name,
+            "outcome": "FAIL",
+            "message": message,
+            "prerequisite": failure_evidence,
+        })
+        .to_string()
+    };
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
         if let Some(core) = record_core() {
@@ -1542,13 +1578,16 @@ fn live_script_tick(
         }
     };
     if let CoreGate::Failed(message) = &core_gate {
+        if let (Some(shots), Some(label)) = (shots, terminal_shot) {
+            enqueue_current_terminal_shot(session, shots, label);
+        }
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
             Err(error) => eprintln!("[panel] {error}"),
             Ok(false) => {}
         }
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, live_line());
+        eprintln!("FAIL: live {} {}", live.name, failure_line(message));
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
