@@ -693,11 +693,12 @@ def main():
                              "Routing, teleport policy, deadlines and saved operator settings are unchanged."),
                 ])),
                 ("capture", OrderedDict([
-                    ("desired", "when_requested"),
-                    ("supported", False),
-                    ("pending", "no CLI flag requests a capture yet; terminal shots are produced only when the "
-                                "scenario's own settings ask for one. A case declaring `capture` below is validated "
-                                "strictly; the tracked cases declare none until that adapter work lands."),
+                    ("desired", "native_case_contract"),
+                    ("supported", True),
+                    ("note", "native terminal capture contracts are validated against newly written PNG/JSON pairs; "
+                             "paired cases require both actual actors and the external loader requires its terminal capture. "
+                             "Successful captures remain pending visual review until readback."),
+                    ("pending", "an operator CLI request for extra captures beyond each native case contract is not exposed"),
                 ])),
                 ("external_ts", OrderedDict([
                     ("desired", "typed absolute override"),

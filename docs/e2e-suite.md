@@ -61,10 +61,9 @@ would never launch. The external loader smoke resolves its own template
 core/pair-only run never resolves, hashes or requires the loader executable or its raw
 source.
 
-Only flags the executables actually accept are emitted: `catalog_watch`, `pair_watch` and
-`panel-play` parse flags with `host_play::parse_profile_args` and then reject anything but
-`--live`/`--smoke`/`--prod`. The suite's typed memory selection is consumed by the native
-adapters and emitted on every core, pair and external child command; it defaults to
+Only flags the executables actually accept are emitted. The native entrypoints share
+panel argument parsing for profile, memory, paints and supported execution modes.
+The suite's typed memory selection is consumed by the native adapters and emitted on every core, pair and external child command; it defaults to
 `--lowmem`, with `--highmem` as the explicit alternative. Conflicting `--lowmem` and
 `--highmem` selections fail closed, and raw `--child-arg --lowmem`/`--child-arg --highmem`
 cannot rebind the typed selection. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
@@ -333,10 +332,8 @@ The RockCrab cases use the native stand `(2712,3707,0)` and are executable for f
 qualification. Their live baseline still requires visible dormant Rocks before Start
 and actual script-caused activation afterwards. A runnable case is not a qualification.
 
-This entrypoint does not make Pass 3 complete by itself. Requested extra captures,
-the remaining pair adapters and LIVE qualification
-remain separate work. The external loader adapter is implemented and covered offline, but
-it has not been executed against the game from this checkout: the row stays `unvetted`,
-and neither an offline green case nor a reference row's upstream status is a native PASS.
-Existing scenario terminal captures are structurally validated
-and remain pending visual review.
+This entrypoint does not establish script qualification by itself. Requested extra captures,
+remaining adapters and platform-specific LIVE qualification require their own evidence.
+The external loader row stays `unvetted` in the manifest; neither an offline green case nor a
+reference row's upstream status is a native PASS. Native terminal captures are structurally
+validated, including both actors for paired cases, and remain pending visual review until readback.
