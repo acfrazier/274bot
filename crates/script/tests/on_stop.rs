@@ -106,7 +106,6 @@ fn wait_until(timeout: Duration, mut pred: impl FnMut() -> bool) -> bool {
 
 #[test]
 fn self_stop_hostile_onstop_without_later_tick_or_probe() {
-    let workers_before = LoadIsolate::teardown_deadline_workers();
     let iso = spawn_class(
         r#"
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
@@ -115,6 +114,12 @@ export default class T extends LoopingBot {
     onStop() { while (true) {} }
 }
 "#,
+    );
+    let proof = iso.teardown_proof();
+    assert_eq!(
+        proof.deadline_workers(),
+        0,
+        "no idle deadline fleet while Running"
     );
     iso.on_game_tick(1);
     let t0 = Instant::now();
@@ -154,30 +159,32 @@ export default class T extends LoopingBot {
     logs.extend(leftover);
     assert!(
         wait_until(Duration::from_secs(1), || {
-            LoadIsolate::teardown_deadline_workers() == workers_before
+            proof.finished() && proof.deadline_workers() == 0
         }),
-        "deadline worker must not remain after self-stop: {}",
-        LoadIsolate::teardown_deadline_workers()
+        "deadline worker must not remain after self-stop: workers={} finished={}",
+        proof.deadline_workers(),
+        proof.finished()
     );
+    assert!(proof.invoked(), "hostile self-stop entered onStop");
 }
 
 #[test]
 fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
-    let workers_before = LoadIsolate::teardown_deadline_workers();
-    let invokes_before = LoadIsolate::on_stop_invoke_count();
     let iso = spawn_class(
         "export default class T extends LoopingBot {
             loop() {}
             onStop() { this.log('stopped-ok'); }
         }",
     );
+    let proof = iso.teardown_proof();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     assert_eq!(
-        LoadIsolate::teardown_deadline_workers(),
-        workers_before,
+        proof.deadline_workers(),
+        0,
         "no idle deadline fleet while Running"
     );
+    assert!(!proof.finished(), "Running isolate has not consumed Stop");
     let t0 = Instant::now();
     drop(iso);
     assert!(
@@ -186,16 +193,17 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
         t0.elapsed()
     );
     assert!(
-        wait_until(Duration::from_secs(1), || {
-            LoadIsolate::teardown_deadline_workers() == workers_before
-        }),
-        "deadline workers must not remain after Drop: {}",
-        LoadIsolate::teardown_deadline_workers()
+        wait_until(Duration::from_secs(2), || proof.finished()),
+        "raw Drop must finish on the isolate thread before hook/resource checks"
+    );
+    assert!(
+        !proof.invoked(),
+        "raw Drop must not invoke onStop after the isolate consumed Stop"
     );
     assert_eq!(
-        LoadIsolate::on_stop_invoke_count(),
-        invokes_before,
-        "raw Drop must not invoke onStop"
+        proof.deadline_workers(),
+        0,
+        "deadline workers must not remain after Drop"
     );
     let iso = spawn_class(
         "export default class T extends LoopingBot { loop() { globalThis.__fresh = 1; } }",
@@ -203,6 +211,65 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__fresh").unwrap(), 1);
     iso.join();
+}
+
+#[test]
+fn delayed_hook_entry_keeps_deadline_interrupt() {
+    let iso = spawn_class(
+        "export default class T extends LoopingBot {
+            loop() {}
+            onStop() { while (true) {} }
+        }",
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    iso.delay_onstop_after_deadline_arm(Duration::from_millis(80));
+    let t0 = Instant::now();
+    let logs = iso.join();
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "join ceiling is 2s after delayed entry: {elapsed:?} logs={logs:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(750),
+        "deadline interrupt must survive delayed entry; unbounded hook would hit 2s: {elapsed:?} logs={logs:?}"
+    );
+}
+
+#[test]
+fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
+    let iso = spawn_class(
+        "export default class T extends LoopingBot {
+            loop() {}
+            onStop() { this.log('stopped-ok'); }
+        }",
+    );
+    let proof = iso.teardown_proof();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    iso.fail_onstop_deadline_spawn();
+    let t0 = Instant::now();
+    let logs = iso.join();
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "fail-closed teardown must not run an unbounded hook: {elapsed:?} logs={logs:?}"
+    );
+    assert!(
+        contains_line(&logs, "onStop skipped: no deadline owner"),
+        "native diagnostic when no deadline owner: {logs:?}"
+    );
+    assert!(
+        !contains_line(&logs, "stopped-ok"),
+        "getter/body/drain must not run without a deadline owner: {logs:?}"
+    );
+    assert!(
+        wait_until(Duration::from_secs(1), || proof.finished()),
+        "fail-closed isolate must still finish"
+    );
+    assert!(!proof.invoked(), "fail-closed must not invoke onStop");
+    assert_eq!(proof.deadline_workers(), 0);
 }
 
 #[test]

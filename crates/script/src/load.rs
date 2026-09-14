@@ -1355,7 +1355,7 @@ fn shape_label(shape: LoadShape) -> &'static str {
 mod isolate {
     use super::*;
     use rustyscript::{json_args, Runtime, RuntimeOptions};
-    use std::sync::atomic::{AtomicU64, AtomicUsize};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
     use std::thread::JoinHandle;
 
     static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -1434,6 +1434,11 @@ mod isolate {
         interrupt_issued: bool,
         /// Dropped at Done so a sleeping one-shot worker exits without terminate.
         cancel: Option<Sender<()>>,
+        /// Isolate-scoped test seam: sleep after the deadline owner is armed
+        /// and before getter/body, without a process-global switch.
+        hook_entry_delay: Option<Duration>,
+        /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
+        fail_deadline_spawn: bool,
     }
 
     impl TeardownState {
@@ -1443,17 +1448,72 @@ mod isolate {
                 deadline: None,
                 interrupt_issued: false,
                 cancel: None,
+                hook_entry_delay: None,
+                fail_deadline_spawn: false,
             }
         }
     }
 
-    static TEARDOWN_DEADLINE_WORKERS: AtomicUsize = AtomicUsize::new(0);
-    static ON_STOP_INVOKES: AtomicU64 = AtomicU64::new(0);
+    /// Per-isolate teardown evidence. Survives dropping the public handle so
+    /// raw Drop can wait for the isolate thread to consume Stop before
+    /// asserting no hook / no leftover deadline worker.
+    #[doc(hidden)]
+    #[derive(Clone)]
+    pub struct TeardownProof {
+        inner: std::sync::Arc<TeardownProofInner>,
+    }
 
-    struct DeadlineWorkerGuard;
+    struct TeardownProofInner {
+        invoked: AtomicBool,
+        finished: AtomicBool,
+        worker_live: AtomicUsize,
+    }
+
+    impl TeardownProof {
+        fn new() -> Self {
+            Self {
+                inner: std::sync::Arc::new(TeardownProofInner {
+                    invoked: AtomicBool::new(false),
+                    finished: AtomicBool::new(false),
+                    worker_live: AtomicUsize::new(0),
+                }),
+            }
+        }
+
+        pub fn invoked(&self) -> bool {
+            self.inner.invoked.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        pub fn finished(&self) -> bool {
+            self.inner
+                .finished
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        pub fn deadline_workers(&self) -> usize {
+            self.inner
+                .worker_live
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    struct DeadlineWorkerGuard {
+        proof: std::sync::Arc<TeardownProofInner>,
+    }
     impl Drop for DeadlineWorkerGuard {
         fn drop(&mut self) {
-            TEARDOWN_DEADLINE_WORKERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            self.proof
+                .worker_live
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    struct TickLoopFinish(std::sync::Arc<TeardownProofInner>);
+    impl Drop for TickLoopFinish {
+        fn drop(&mut self) {
+            self.0
+                .finished
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -1534,6 +1594,8 @@ mod isolate {
         /// Shared Stop/`onStop` phase. Join, Drop, and the isolate thread
         /// serialize tick-unwind vs hook vs Done under this mutex.
         teardown: std::sync::Arc<Mutex<TeardownState>>,
+        /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
+        proof: TeardownProof,
     }
 
     impl LoadIsolate {
@@ -1627,6 +1689,8 @@ mod isolate {
             let thread_generation = work_generation.clone();
             let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
             let thread_teardown = teardown.clone();
+            let proof = TeardownProof::new();
+            let thread_proof = proof.inner.clone();
             let paint_generation =
                 NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let handle = std::thread::Builder::new()
@@ -1643,6 +1707,7 @@ mod isolate {
                         setup_tx,
                         thread_generation,
                         thread_teardown,
+                        thread_proof,
                         #[cfg(feature = "memory-profile")]
                         thread_counters,
                     )
@@ -1674,6 +1739,7 @@ mod isolate {
                 terminate,
                 in_flight: Mutex::new(None),
                 teardown,
+                proof,
             })
         }
 
@@ -1890,17 +1956,23 @@ mod isolate {
             self.stopped.load(std::sync::atomic::Ordering::Acquire)
         }
 
-        /// Live one-shot onStop deadline workers. Zero while Running; at most
-        /// one per isolate during the protected teardown phase.
+        /// Per-isolate teardown evidence. Clone before `join`/`Drop`.
         #[doc(hidden)]
-        pub fn teardown_deadline_workers() -> usize {
-            TEARDOWN_DEADLINE_WORKERS.load(std::sync::atomic::Ordering::SeqCst)
+        pub fn teardown_proof(&self) -> TeardownProof {
+            self.proof.clone()
         }
 
-        /// Times isolate-thread teardown actually entered `onStop` invoke.
+        /// Isolate-scoped seam: delay after the deadline owner is armed and
+        /// before getter/body. Proves a late cancel cannot drop the one-shot.
         #[doc(hidden)]
-        pub fn on_stop_invoke_count() -> u64 {
-            ON_STOP_INVOKES.load(std::sync::atomic::Ordering::SeqCst)
+        pub fn delay_onstop_after_deadline_arm(&self, delay: Duration) {
+            self.teardown.lock().unwrap().hook_entry_delay = Some(delay);
+        }
+
+        /// Isolate-scoped seam: deadline-thread spawn fails for this isolate.
+        #[doc(hidden)]
+        pub fn fail_onstop_deadline_spawn(&self) {
+            self.teardown.lock().unwrap().fail_deadline_spawn = true;
         }
 
         /// Drain the interact requests the tick's shim queued
@@ -2143,6 +2215,7 @@ mod isolate {
         setup: Sender<Result<v8::IsolateHandle, String>>,
         work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         teardown: std::sync::Arc<Mutex<TeardownState>>,
+        proof: std::sync::Arc<TeardownProofInner>,
         #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
             crate::memory_profile::Counters,
         >,
@@ -2184,6 +2257,7 @@ mod isolate {
             out,
             work_generation,
             teardown,
+            proof,
             #[cfg(feature = "memory-profile")]
             counters,
         );
@@ -4304,12 +4378,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
     }
 
+    fn take_hook_entry_delay(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> Option<Duration> {
+        teardown.lock().unwrap().hook_entry_delay.take()
+    }
+
     /// One-shot worker spawned only at Hook entry. Sleeps until the
     /// Hook-entry deadline, then issues at most one terminate while still
     /// Hook, under the same mutex as finish. Cancelled by dropping `cancel`.
+    ///
+    /// The old tick interrupt is cleared under the Hook lock *before* spawn
+    /// so a deschedule cannot let this worker fire and then be cancelled.
     fn arm_hook_deadline(
         runtime: &mut Runtime,
         teardown: &std::sync::Arc<Mutex<TeardownState>>,
+        proof: &std::sync::Arc<TeardownProofInner>,
     ) -> Option<JoinHandle<()>> {
         let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
@@ -4318,15 +4400,25 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             if st.phase != TeardownPhase::Hook {
                 return None;
             }
+            runtime
+                .deno_runtime()
+                .v8_isolate()
+                .cancel_terminate_execution();
+            if st.fail_deadline_spawn {
+                return None;
+            }
             st.cancel = Some(cancel_tx);
             st.deadline.unwrap_or_else(|| Instant::now() + SLOW_TICK)
         };
         let wd_teardown = teardown.clone();
-        std::thread::Builder::new()
+        let wd_proof = proof.clone();
+        match std::thread::Builder::new()
             .name("js-onstop-deadline".into())
             .spawn(move || {
-                TEARDOWN_DEADLINE_WORKERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let _guard = DeadlineWorkerGuard;
+                wd_proof
+                    .worker_live
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _guard = DeadlineWorkerGuard { proof: wd_proof };
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 match cancel_rx.recv_timeout(remaining) {
                     Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
@@ -4337,59 +4429,92 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     st.interrupt_issued = true;
                     handle.terminate_execution();
                 }
-            })
-            .ok()
+            }) {
+            Ok(h) => {
+                if let Some(delay) = take_hook_entry_delay(teardown) {
+                    std::thread::sleep(delay);
+                }
+                Some(h)
+            }
+            Err(_) => {
+                teardown.lock().unwrap().cancel.take();
+                None
+            }
+        }
     }
 
-    /// Exactly-once isolate-thread teardown. The 50 ms deadline is the
-    /// Instant captured at Hook entry; a one-shot worker (not a parked
-    /// per-bot thread) issues at most one interrupt under the same mutex
-    /// as finish. Getter, body, and log-drain share that budget.
-    fn teardown_once(
+    fn complete_teardown_without_hook(
         runtime: &mut Runtime,
         out: &Sender<ThreadMsg>,
-        invoke_hook: bool,
         teardown: &std::sync::Arc<Mutex<TeardownState>>,
+        diagnostic: Option<&str>,
     ) {
-        if !enter_teardown_hook(teardown) {
-            return;
-        }
-        let worker = if invoke_hook {
-            arm_hook_deadline(runtime, teardown)
-        } else {
-            None
-        };
-        runtime
-            .deno_runtime()
-            .v8_isolate()
-            .cancel_terminate_execution();
-        if invoke_hook {
-            ON_STOP_INVOKES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let threw: Result<Option<String>, rustyscript::Error> =
-                runtime.call_function_immediate(None, "__rs2b0t_invoke_on_stop", json_args!());
-            match threw {
-                Ok(Some(msg)) => {
-                    let _ = out.send(ThreadMsg::Log(format!("onStop threw: {msg}")));
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    let _ = out.send(ThreadMsg::Log(format!("onStop threw: {e}")));
-                }
-            }
-            drain_bot_log(runtime, out);
-            let _ = runtime.deno_runtime().execute_script(
-                "<onStop-clear-interact>",
-                "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
-            );
+        if let Some(line) = diagnostic {
+            let _ = out.send(ThreadMsg::Log(line.to_string()));
         }
         finish_teardown_hook(teardown);
         runtime
             .deno_runtime()
             .v8_isolate()
             .cancel_terminate_execution();
-        if let Some(worker) = worker {
-            let _ = worker.join();
+        let _ = out.send(ThreadMsg::Stopped);
+    }
+
+    /// Exactly-once isolate-thread teardown. The 50 ms deadline is the
+    /// Instant captured at Hook entry; a one-shot worker (not a parked
+    /// per-bot thread) issues at most one interrupt under the same mutex
+    /// as finish. Getter, body, and log-drain share that budget.
+    ///
+    /// Fail closed: if no deadline owner can be created, skip user
+    /// getter/body/drain, emit a native diagnostic, and finish cleanup.
+    fn teardown_once(
+        runtime: &mut Runtime,
+        out: &Sender<ThreadMsg>,
+        invoke_hook: bool,
+        teardown: &std::sync::Arc<Mutex<TeardownState>>,
+        proof: &std::sync::Arc<TeardownProofInner>,
+    ) {
+        if !enter_teardown_hook(teardown) {
+            return;
         }
+        if !invoke_hook {
+            complete_teardown_without_hook(runtime, out, teardown, None);
+            return;
+        }
+        let Some(worker) = arm_hook_deadline(runtime, teardown, proof) else {
+            complete_teardown_without_hook(
+                runtime,
+                out,
+                teardown,
+                Some("onStop skipped: no deadline owner"),
+            );
+            return;
+        };
+        proof
+            .invoked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let threw: Result<Option<String>, rustyscript::Error> =
+            runtime.call_function_immediate(None, "__rs2b0t_invoke_on_stop", json_args!());
+        match threw {
+            Ok(Some(msg)) => {
+                let _ = out.send(ThreadMsg::Log(format!("onStop threw: {msg}")));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                let _ = out.send(ThreadMsg::Log(format!("onStop threw: {e}")));
+            }
+        }
+        drain_bot_log(runtime, out);
+        let _ = runtime.deno_runtime().execute_script(
+            "<onStop-clear-interact>",
+            "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
+        );
+        finish_teardown_hook(teardown);
+        runtime
+            .deno_runtime()
+            .v8_isolate()
+            .cancel_terminate_execution();
+        let _ = worker.join();
         let _ = out.send(ThreadMsg::Stopped);
     }
 
@@ -4414,10 +4539,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         out: Sender<ThreadMsg>,
         work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         teardown: std::sync::Arc<Mutex<TeardownState>>,
+        proof: std::sync::Arc<TeardownProofInner>,
         #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
             crate::memory_profile::Counters,
         >,
     ) {
+        let _finish = TickLoopFinish(proof.clone());
         #[cfg(feature = "memory-profile")]
         let mut last_heap_sample = None::<Instant>;
         let mut paused = false;
@@ -4578,7 +4705,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             let _ = out.send(ThreadMsg::Log(format!(
                                 "script requested stop on tick {n}; isolate stopping"
                             )));
-                            teardown_once(&mut runtime, &out, true, &teardown);
+                            teardown_once(&mut runtime, &out, true, &teardown, &proof);
                             break;
                         }
                         let _ = out.send(ThreadMsg::Completed {
@@ -4720,7 +4847,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let _ = out.send(ThreadMsg::Log(format!(
                             "script requested stop on tick {n}; isolate stopping"
                         )));
-                        teardown_once(&mut runtime, &out, true, &teardown);
+                        teardown_once(&mut runtime, &out, true, &teardown, &proof);
                         break;
                     }
                     if elapsed > SLOW_TICK {
@@ -4866,7 +4993,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     let _ = reply.send(value);
                 }
                 IsolateCmd::Stop { invoke_hook } => {
-                    teardown_once(&mut runtime, &out, invoke_hook, &teardown);
+                    teardown_once(&mut runtime, &out, invoke_hook, &teardown, &proof);
                     break;
                 }
             }
@@ -4927,4 +5054,4 @@ globalThis.__rs2b0t_tick_async = async (n) => {
 }
 
 #[cfg(feature = "load")]
-pub use isolate::LoadIsolate;
+pub use isolate::{LoadIsolate, TeardownProof};
