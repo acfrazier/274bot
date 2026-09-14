@@ -1966,15 +1966,21 @@ fn dispatch_script_interact(
                 operation,
                 bank_generation,
             } => {
-                // Selected bank identity, or the open trade offer/side row.
-                // Do not fall back to another same-name row or answer the
-                // later count dialog.
+                // Selected bank withdraw or bank-side deposit identity, or the
+                // open trade offer/side row. Exact id/slot/component only —
+                // no same-name fallback, no count-dialog answer.
                 if snapshot.bank_component_id() >= 0
+                    && snapshot.bank_loaded()
                     && snapshot.bank_session_generation() == bank_generation
                 {
-                    if let Some(item) = snapshot.bank().iter().find(|item| {
-                        item.def.id == id && item.slot == slot && item.component_id == component
-                    }) {
+                    if let Some(item) = snapshot
+                        .bank()
+                        .iter()
+                        .chain(snapshot.bank_side().iter())
+                        .find(|item| {
+                            item.def.id == id && item.slot == slot && item.component_id == component
+                        })
+                    {
                         wrote |= matches!(
                             ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
                             SendResult::Sent { .. }
@@ -2841,7 +2847,9 @@ fn with_script_snapshot_input<R>(
                 ops: &bank_side_ops_store[i],
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
-                component_id: -1,
+                // Real deposit component (e.g. 2006 / fixture 701). Input.invButton
+                // revalidates this id; posting -1 rejects every bank-side deposit.
+                component_id: it.component_id,
                 slot: it.slot,
             })
             .collect()
@@ -9913,6 +9921,226 @@ export default class T extends LoopingBot {
                 selected.slot,
                 selected.component_id
             )]
+        );
+        let _ = &mut c;
+    }
+
+    #[test]
+    fn dispatch_inv_button_sends_bank_side_deposit_all_on_exact_row() {
+        let mut c = bank_client();
+        c.handle_packet(
+            ServerProt::UPDATE_INV_FULL,
+            &mut Packet::new(vec![2, 89, 0]),
+        );
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let side = snap
+            .bank_side()
+            .iter()
+            .find(|item| item.def.id == 1)
+            .expect("bank-side bones id 1");
+        assert_eq!(side.component_id, 701);
+        assert_eq!(side.actions[0].as_deref(), Some("Deposit All"));
+        let gen = snap.bank_session_generation();
+        let rec = dispatch_inv_button(
+            &snap,
+            inv_button_req(side.def.id, side.slot, side.component_id, 1, gen),
+        );
+        assert_eq!(
+            rec.menus,
+            vec![(
+                0,
+                MiniMenuAction::INV_BUTTON1,
+                1,
+                side.slot,
+                side.component_id
+            )],
+            "bank-side Deposit All must dispatch exact component 701"
+        );
+        let _ = &mut c;
+    }
+
+    #[test]
+    fn dispatch_inv_button_bank_side_refuses_stale_wrong_closed_and_invalid_op() {
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let side = snap
+            .bank_side()
+            .iter()
+            .find(|item| item.def.id == 1)
+            .expect("bank-side id 1");
+        let gen = snap.bank_session_generation();
+        assert!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(1, side.slot, side.component_id, 9, gen)
+            )
+            .menus
+            .is_empty(),
+            "invalid bank-side op sends nothing"
+        );
+        assert!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(9999, side.slot, side.component_id, 1, gen)
+            )
+            .menus
+            .is_empty(),
+            "forged bank-side id sends nothing"
+        );
+        assert!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(1, side.slot, side.component_id, 1, gen.wrapping_add(1))
+            )
+            .menus
+            .is_empty(),
+            "stale bank generation sends nothing for bank-side"
+        );
+        assert!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(1, side.slot.wrapping_add(1), side.component_id, 1, gen)
+            )
+            .menus
+            .is_empty(),
+            "wrong bank-side slot is not a fallback"
+        );
+        assert!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(1, side.slot, side.component_id.wrapping_add(1), 1, gen)
+            )
+            .menus
+            .is_empty(),
+            "wrong bank-side component sends nothing"
+        );
+        c.main_modal_id = -1;
+        c.side_modal_id = -1;
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut closed = GameSnapshot::new();
+        closed.rebuild(&c);
+        assert!(closed.bank_component_id() < 0 || closed.bank_side().is_empty());
+        assert!(
+            dispatch_inv_button(
+                &closed,
+                inv_button_req(
+                    1,
+                    side.slot,
+                    side.component_id,
+                    1,
+                    closed.bank_session_generation()
+                )
+            )
+            .menus
+            .is_empty(),
+            "closed/unloaded bank sends nothing for bank-side"
+        );
+    }
+
+    #[test]
+    fn post_snapshot_bank_side_carries_real_component_id() {
+        let mut c = bank_client();
+        c.handle_packet(
+            ServerProt::UPDATE_INV_FULL,
+            &mut Packet::new(vec![2, 89, 0]),
+        );
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let side = snap
+            .bank_side()
+            .iter()
+            .find(|item| item.def.id == 1)
+            .expect("bank-side id 1");
+        assert_eq!(side.component_id, 701);
+        let bytes = script::isolate_fb::encode_snapshot(&script::isolate_fb::SnapshotInput {
+            tick: 1,
+            here: None,
+            ingame: true,
+            inv: &[],
+            inv_size: 28,
+            stats: &[],
+            booths: &[],
+            nearest_booth: None,
+            banks: &[],
+            bank: &[],
+            bank_side: &[script::isolate_fb::ItemRowInput {
+                name: Some("lobster"),
+                count: 1,
+                id: 1,
+                ops: &["Deposit All".to_string()],
+                noted: false,
+                cert: -1,
+                component_id: side.component_id,
+                slot: side.slot,
+            }],
+            bank_open: true,
+            bank_loaded: true,
+            bank_generation: 1,
+            count_dialog_open: false,
+            withdraw_x_result_seq: 0,
+            withdraw_x_result: false,
+            hold: false,
+            ours: false,
+            npcs: &[],
+            withdraw_load_result_seq: 0,
+            withdraw_load_result: false,
+            bank_op_result_seq: 0,
+            bank_op_result: false,
+            locs: &[],
+            players: &[],
+            ground: &[],
+            equipment: &[],
+            chat_open: false,
+            chat_continue: false,
+            chat_text: None,
+            chat_options: &[],
+            side_tab: 0,
+            varps: &[],
+            combat_styles: &[],
+            run_energy: 0,
+            run_enabled: false,
+            retaliate_enabled: false,
+            my_name: None,
+            in_combat: false,
+            animating: false,
+            main_modal_id: 3205,
+            chat_modal_id: -1,
+            make_products: &[],
+            side_tab_ifaces: &[],
+            spell_buttons: &[],
+            chat_lines: &[],
+            bank_note_on: -1,
+            bank_note_off: -1,
+            scene_state: 2,
+            weight: 0,
+            camera_yaw: 0,
+            camera_pitch: 0,
+            teleports_enabled: false,
+            self_slot: 0,
+            trade_offer_open: false,
+            trade_confirm_open: false,
+            trade_partner: None,
+            trade_mine: &[],
+            trade_theirs: &[],
+            trade_side: &[],
+            trade_accept_id: -1,
+            trade_decline_id: -1,
+            shop_open: false,
+            shop_stock: &[],
+            reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+            attacked_by_player: false,
+            widgets: &[],
+        });
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("posted snap");
+        let posted = view.bank_side();
+        assert_eq!(posted.len(), 1);
+        assert_eq!(posted[0].id(), 1);
+        assert_eq!(
+            posted[0].component_id(),
+            701,
+            "posted bank_side must keep deposit component for Input.invButton"
         );
         let _ = &mut c;
     }
