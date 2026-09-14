@@ -270,10 +270,10 @@ fn js_library_load_native_tick_file_adds_card() {
     assert_eq!(lib.cards()[0].name, "tickbot");
 }
 
-// (2) A second load whose name matches replaces path/source (no duplicate
-// picker entry), and the persisted store holds one `{name, path}` record.
+// (2) Same-stem files retain distinct path identities and persisted rows;
+// reloading one path updates only that card.
 #[test]
-fn js_library_same_name_replaces_path_and_source() {
+fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     let dir = scratch("same_name");
     let store = dir.join("js-scripts.json");
     let a = write_file(&dir, "t.js", NATIVE_TICK);
@@ -285,7 +285,7 @@ fn js_library_same_name_replaces_path_and_source() {
     );
     let mut lib = test_library(&dir);
 
-    lib.load(&a).unwrap();
+    let first = lib.load(&a).unwrap();
     assert_eq!(lib.cards().len(), 1);
     assert_eq!(lib.cards()[0].path, a);
 
@@ -293,13 +293,45 @@ fn js_library_same_name_replaces_path_and_source() {
     assert_eq!(card.name, "t"); // same stem keeps the picker name
     assert_eq!(card.path, b);
     assert_ne!(card.origin, NATIVE_TICK);
-    assert_eq!(lib.cards().len(), 1, "same name overwrites, never appends");
+    assert_ne!(first.identity_key(), card.identity_key());
+    assert_eq!(lib.cards().len(), 2, "different paths keep both cards");
+
+    let replacement = "export function tick(api) { globalThis.__rs_n = 101 }";
+    std::fs::write(&b, replacement).unwrap();
+    let updated = lib.load(&b).unwrap();
+    assert_eq!(updated.identity_key(), card.identity_key());
+    assert_eq!(updated.origin, replacement);
+    assert_eq!(
+        lib.cards().len(),
+        2,
+        "same path updates without duplication"
+    );
+    let retained = lib.cards().iter().find(|c| c.path == a).unwrap();
+    assert_eq!(retained.origin, NATIVE_TICK);
 
     let stored: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
-    assert_eq!(stored.as_array().unwrap().len(), 1);
-    assert_eq!(stored[0]["name"], "t");
-    assert_eq!(stored[0]["path"], b.to_string_lossy().to_string());
+    let rows = stored.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    for path in [&a, &b] {
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["path"] == path.to_string_lossy().as_ref())
+                .count(),
+            1
+        );
+    }
+    let mut restored = test_library(&dir);
+    restored.restore().unwrap();
+    assert_eq!(restored.cards().len(), 2);
+    assert!(restored
+        .cards()
+        .iter()
+        .any(|c| c.identity_key() == first.identity_key() && c.origin == NATIVE_TICK));
+    assert!(restored
+        .cards()
+        .iter()
+        .any(|c| c.identity_key() == updated.identity_key() && c.origin == replacement));
 }
 
 // (3) WalkTo is the only reserved picker id: it is host nav, never a JS
@@ -332,7 +364,14 @@ fn js_library_load_bone_burier_named_file_is_ok() {
     let card = lib.load(&native).expect("BoneBurier.js is not reserved");
     assert_eq!(card.name, "BoneBurier");
     assert_eq!(card.shape, LoadShape::NativeTick);
-    assert_eq!(lib.cards().len(), 1, "same name replaces the card");
+    assert_eq!(
+        lib.cards().len(),
+        2,
+        "different extensions are different paths"
+    );
+    let ts = lib.cards().iter().find(|c| c.path == path).unwrap();
+    assert_eq!(ts.shape, LoadShape::CompatClass);
+    assert_ne!(ts.identity_key(), card.identity_key());
 }
 
 // (4) Non-bot shapes and unreadable files are rejected at Load.
