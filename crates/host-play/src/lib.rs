@@ -1741,11 +1741,11 @@ fn dispatch_script_interact(
                 z,
                 level,
                 id,
-                name,
+                name: booth_name,
                 action,
             } => {
                 let target = api::snapshot::WorldTile { x, z, level };
-                wrote |= match (name, action) {
+                let accepted = match (booth_name, action) {
                     (Some(name), Some(action)) => matches!(
                         ix.open_named_booth_at(target, id, &name, &action),
                         SendResult::Sent { .. }
@@ -1755,6 +1755,13 @@ fn dispatch_script_interact(
                     }
                     _ => false,
                 };
+                if accepted {
+                    // The interaction supersedes any earlier scripted walk.
+                    // Cancel after validation/dispatch only: rejected or
+                    // malformed requests must not disturb an armed route.
+                    abort_script_walk(navs, name);
+                }
+                wrote |= accepted;
             }
             InteractReq::OpenStand {
                 x,
@@ -8187,6 +8194,139 @@ mod tests {
             c.out.pos, out_before,
             "missing targets fail closed: nothing is sent"
         );
+    }
+
+    #[test]
+    fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (navs, world) = empty_nav();
+        let route = Route {
+            legs: vec![],
+            dest: WorldTile {
+                x: 3204,
+                z: 3206,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let requested = Some((
+            WorldTile {
+                x: 3204,
+                z: 3206,
+                level: 0,
+            },
+            0,
+            false,
+        ));
+        navs.lock().unwrap().extend([
+            (
+                "alice".into(),
+                NavBot {
+                    route: Some(route.clone()),
+                    route_worker: Some(Arc::new(())),
+                    requested_route: requested,
+                    ..Default::default()
+                },
+            ),
+            (
+                "bob".into(),
+                NavBot {
+                    route: Some(route.clone()),
+                    route_worker: Some(Arc::new(())),
+                    requested_route: requested,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let open = || script::shim::InteractReq::OpenBooth {
+            x: 3205,
+            z: 3206,
+            level: 0,
+            id: 2213,
+            name: None,
+            action: None,
+        };
+        assert!(dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![open()],
+        ));
+        let all = navs.lock().unwrap();
+        let alice = &all["alice"];
+        assert!(alice.route.is_none());
+        assert!(alice.route_worker.is_none());
+        assert!(alice.pending_route.is_none());
+        assert!(alice.requested_route.is_none());
+        assert_eq!(all["bob"].route, Some(route));
+        assert!(all["bob"].route_worker.is_some());
+        assert_eq!(all["bob"].requested_route, requested);
+    }
+
+    #[test]
+    fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (navs, world) = empty_nav();
+        let route = Route {
+            legs: vec![],
+            dest: WorldTile {
+                x: 3204,
+                z: 3206,
+                level: 0,
+            },
+            ticks: 1.0,
+        };
+        let requested = Some((
+            WorldTile {
+                x: 3204,
+                z: 3206,
+                level: 0,
+            },
+            0,
+            false,
+        ));
+        navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                route: Some(route.clone()),
+                route_worker: Some(Arc::new(())),
+                requested_route: requested,
+                ..Default::default()
+            },
+        );
+
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::OpenBooth {
+                x: 3205,
+                z: 3206,
+                level: 0,
+                id: 9999,
+                name: None,
+                action: None,
+            }],
+        ));
+        let all = navs.lock().unwrap();
+        assert_eq!(all["alice"].route, Some(route));
+        assert!(all["alice"].route_worker.is_some());
+        assert_eq!(all["alice"].requested_route, requested);
     }
 
     #[test]
