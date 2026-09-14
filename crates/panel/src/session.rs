@@ -2608,7 +2608,6 @@ impl Session {
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
-        let memory_override = self.memory_override;
         let scatter_template = self.template.clone();
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
             let session_boundary = publish_frontend_slot(
@@ -2739,7 +2738,7 @@ impl Session {
             // skipped the sound load, so flipping the toggle
             // mid-session must re-run it live, not on the next
             // respawn. `set_lowmem` is idempotent — per-frame is cheap.
-            c.set_lowmem(memory_override.unwrap_or_else(|| !audio.music_on(name)));
+            c.set_lowmem(!audio.music_on(name));
             if c.ingame
                 && c.scene_state == 2
                 && seed_on_first_world(c.last_login_reconnect)
@@ -3473,6 +3472,18 @@ impl Session {
         Some(arm)
     }
 
+    /// Return the profile values used for a client spawn without mutating the
+    /// persisted vault profile.
+    fn profile_with_memory_override(
+        mut profile: Profile,
+        memory_override: Option<bool>,
+    ) -> Profile {
+        if let Some(lowmem) = memory_override {
+            profile.settings.lowmem = lowmem;
+        }
+        profile
+    }
+
     /// Register per-slot IO and spawn via [`Play::try_spawn_slot`] when a play
     /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
     /// filled so focus can attach. `arm` carries the spawn's login intent:
@@ -3506,10 +3517,13 @@ impl Session {
             self.walk_dest = None;
         }
         let input = SlotInput::new();
-        // Raster/mem come from the vault profile (the same source as
+        // Raster comes from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
         let raster = profile.settings.raster;
         let lowmem = self.memory_override.unwrap_or(profile.settings.lowmem);
+        // Apply the session-only choice to the disposable profile used for
+        // initial client construction. Never write this override to the vault.
+        let profile = Self::profile_with_memory_override(profile, self.memory_override);
         input.set_prefer_cpu(raster == vault::RasterMode::Cpu);
         {
             let mut f = self.focus.lock().unwrap();
@@ -4535,9 +4549,37 @@ mod tests {
     use nav::WorldState;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::Ordering;
+
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use vault::{Profile, ProfileSettings, Vault};
+
+    #[test]
+    fn memory_override_changes_spawn_profile_without_persisting_it() {
+        let profile = Profile {
+            uid: 274,
+            username: "alice".into(),
+            password: "pw".into(),
+            settings: ProfileSettings {
+                lowmem: true,
+                ..ProfileSettings::default()
+            },
+        };
+        let effective = Session::profile_with_memory_override(profile.clone(), Some(false));
+        assert!(
+            !effective.settings.lowmem,
+            "spawn must use explicit highmem"
+        );
+        assert!(
+            profile.settings.lowmem,
+            "the vault profile must remain unchanged"
+        );
+        assert!(
+            Session::profile_with_memory_override(profile, None)
+                .settings
+                .lowmem
+        );
+    }
 
     use crate::nav_settings::{effective, NavSettings};
     use script::IsolatedEnv;
