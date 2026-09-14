@@ -14476,7 +14476,7 @@ fn duel_arena_scenario() -> Scenario {
         steps,
         proof: Proof::Stat { id: 16, min: 0 },
         companions: vec![pair_companion(PairCompanionKind::DuelPeer)],
-        settings: pair_watch_settings("duel_arena", "DuelArena"),
+        settings: pair_watch_settings("duel_arena", "Duel Arena Combat Trainer"),
     }
 }
 
@@ -20325,7 +20325,7 @@ mod tests {
             ),
             (
                 "duel_arena",
-                "DuelArena",
+                "Duel Arena Combat Trainer",
                 WorldTile {
                     x: 3368,
                     z: 3274,
