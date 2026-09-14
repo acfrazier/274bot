@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[lib]
+name = "e2e"
+path = "src/lib.rs"
+
+# Tracked native suite entrypoint over the existing native executables.
+[[bin]]
+name = "e2e-suite"
+path = "src/bin/e2e-suite.rs"
+
+# Disposable child used by the suite's offline verification: it speaks the same
+# terminal-receipt/capture lines as the real panel entries without a client, engine or
+# gameplay. Never used by a real run.
+[[bin]]
+name = "e2e-suite-fixture"
+path = "src/bin/e2e-suite-fixture.rs"
+
 [dependencies]
 host = { path = "../host" }
 host-play = { path = "../host-play" }
@@ -12,3 +28,9 @@ api = { path = "../api" }
 nav = { path = "../nav" }
 scenario = { path = "../scenario" }
 client = { workspace = true }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

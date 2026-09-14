@@ -1,0 +1,107 @@
+{
+ "schema_version": 1,
+ "suite_id": "offline-suite-fixture",
+ "provenance": {
+  "reference_commit": "96410ec5c779f3d8fe537268cae1a21c0174d16c",
+  "reference_tree": "fixture (not a reference tree)",
+  "reference_archive_sha256": "fixture (offline verification only)",
+  "reference_upstream": "offline verification fixture; never used by a real run",
+  "derived_by": "hand-written fixture for crates/e2e/tests/suite_offline.rs",
+  "reference_statuses_are_evidence": true
+ },
+ "defaults": {
+  "budget_min": 1,
+  "jobs": 1,
+  "exec": {
+   "core": {
+    "program": "panel-play",
+    "args": [
+     "--live"
+    ]
+   },
+   "pair": {
+    "program": "panel-play",
+    "args": [
+     "--live"
+    ]
+   }
+  },
+  "options": {}
+ },
+ "smart": {
+  "shared_paths": [
+   "Cargo.toml"
+  ],
+  "subsystem_paths": {},
+  "ignored_paths": [
+   "crates/e2e/"
+  ],
+  "shared_reason": "fixture manifest: the offline tests never use smart selection"
+ },
+ "intended_scripts": [],
+ "cases": [
+  {
+   "id": "fixture_one",
+   "kind": "native",
+   "script": "FixtureOne",
+   "script_key": "FixtureOne",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 1,
+   "runner": "core",
+   "live": "script_thiever",
+   "scenario": "thiever",
+   "core_case": "Thiever",
+   "options": [],
+   "covers": {
+    "scripts": [
+     "FixtureOne"
+    ],
+    "subsystems": [],
+    "paths": [
+     "crates/e2e/"
+    ]
+   },
+   "reference_cases": []
+  },
+  {
+   "id": "fixture_two",
+   "kind": "native",
+   "script": "FixtureTwo",
+   "script_key": "FixtureTwo",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 1,
+   "runner": "core",
+   "live": "script_thiever",
+   "scenario": "thiever",
+   "core_case": "Thiever",
+   "options": [],
+   "covers": {
+    "scripts": [
+     "FixtureTwo"
+    ],
+    "subsystems": [],
+    "paths": [
+     "crates/e2e/"
+    ]
+   },
+   "reference_cases": []
+  },
+  {
+   "id": "fixture_reference",
+   "kind": "reference",
+   "script": "FixtureReference",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 1,
+   "harness": "fixture-harness",
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "fixture row: no native adapter in this offline suite"
+   }
+  }
+ ]
+}

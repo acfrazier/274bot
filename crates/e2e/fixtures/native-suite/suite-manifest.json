@@ -1,0 +1,6439 @@
+{
+ "schema_version": 1,
+ "suite_id": "native-suite-96410ec5",
+ "provenance": {
+  "reference_commit": "96410ec5c779f3d8fe537268cae1a21c0174d16c",
+  "reference_tree": "026b4f960a17c8c916cb5c87996b4b4c11b1d2e1",
+  "reference_archive_sha256": "e7d37273b80e3eaf6075dec9c52e10a67b8f1ade5d0b8fb5df9a64f4537f1b5d",
+  "reference_upstream": "https://github.com/rs2b2t/rs2b0t.git",
+  "inputs": [
+   "e2e/manifest.ts",
+   "e2e/manifestTypes.ts",
+   "e2e/manifestQuery.ts",
+   "e2e/runner.ts",
+   "docs/reference/e2e-manifest.md"
+  ],
+  "derived_by": "crates/e2e/fixtures/native-suite/derive.py",
+  "reference_statuses_are_evidence": true
+ },
+ "defaults": {
+  "budget_min": 12,
+  "jobs": 1,
+  "exec": {
+   "core": {
+    "program": "cargo",
+    "args": [
+     "run",
+     "--quiet",
+     "-p",
+     "panel",
+     "--example",
+     "catalog_watch",
+     "--"
+    ]
+   },
+   "pair": {
+    "program": "cargo",
+    "args": [
+     "run",
+     "--quiet",
+     "-p",
+     "panel",
+     "--example",
+     "pair_watch",
+     "--"
+    ]
+   }
+  },
+  "options": {
+   "headed": {
+    "desired": "always",
+    "supported": true,
+    "note": "`panel --live script_<name>` runs a visible window; the suite never asks for a headless client"
+   },
+   "nav_paints": {
+    "desired": "scenario_default",
+    "supported": false,
+    "pending": "the suite cannot override nav/collision/trail paint options: `catalog_watch` and `pair_watch` expose no paint flag, and the panel applies the scenario's own nav overlay. Default-ON operator paints remain pending adapter work."
+   },
+   "capture": {
+    "desired": "when_requested",
+    "supported": false,
+    "pending": "no CLI flag requests a capture yet; terminal shots are produced only when the scenario's own settings ask for one. A case declaring `capture` below is validated strictly; the tracked cases declare none until that adapter work lands."
+   },
+   "memory": {
+    "desired": "profile_default_lowmem",
+    "supported": false,
+    "note": "the suite passes no memory flag: `catalog_watch`/`pair_watch` apply the mode from the selected vault profile's settings (default lowmem), so `--lowmem` matches the profile default rather than selecting it",
+    "pending": "a per-run highmem request needs a panel memory flag or a vault profile-setting write; `--highmem` is refused instead of being recorded as an unexecuted request"
+   }
+  }
+ },
+ "smart": {
+  "shared_paths": [
+   "crates/host-play/",
+   "crates/api/",
+   "crates/host/",
+   "crates/vault/",
+   "crates/script/",
+   "crates/scenario/",
+   "vendor/fr-client-rust/",
+   "Cargo.toml",
+   "Cargo.lock"
+  ],
+  "subsystem_paths": {
+   "crates/nav/": "nav",
+   "crates/panel/": "panel",
+   "crates/tui/": "panel"
+  },
+  "ignored_paths": [
+   "crates/e2e/",
+   "docs/",
+   "target/"
+  ],
+  "shared_reason": "shared code changed (host-play/api/host/script/scenario adapter, runtime or api) \u2014 every runnable case is reachable"
+ },
+ "intended_scripts": [
+  "AIO Teleport",
+  "ChickenKiller",
+  "ChaosDruidKiller",
+  "MossGiant",
+  "GreenDragon",
+  "FireGiant",
+  "ArdyFighter",
+  "Thiever",
+  "AutoFighter",
+  "ArdyThiever",
+  "ArdyCakes",
+  "GnomeMagicChopper",
+  "CoalTrucks",
+  "RuneCrafter",
+  "NatureCrafter",
+  "CookBot",
+  "BankFletcher",
+  "DartFletcher",
+  "HerbloreSecondaries",
+  "HerbCleaner",
+  "PotionMaker",
+  "BoneBurier",
+  "SmelterBot",
+  "Superheater",
+  "Alcher",
+  "SmithingBot",
+  "FlaxPicker",
+  "FlaxSpinner",
+  "FlaxAIO",
+  "GemCutter",
+  "GnomeCourse",
+  "WildyAgility",
+  "MuleCrafter",
+  "ShopBuyout",
+  "DoorOpener",
+  "TannerBot",
+  "HillGiant",
+  "VialFiller",
+  "LeatherCrafter",
+  "Firemaker",
+  "FlaxRunner"
+ ],
+ "unavailable_by_operator_decision": [
+  "BankSorter"
+ ],
+ "cases": [
+  {
+   "id": "aio_teleport",
+   "kind": "native",
+   "script": "AIO Teleport",
+   "script_key": "AIOTeleport",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_aio_teleport",
+   "scenario": "aio_teleport",
+   "core_case": "AioTeleport",
+   "pair_case": null,
+   "options": [
+    "teleportName/progressive",
+    "lawBatchSize/minLawRunes/useStaffRunes"
+   ],
+   "unsupported": [
+    {
+     "option": "login/relogin observation",
+     "reason": "reference case asserts a relogin round trip; the native scenario covers the teleport legs only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AIOTeleport"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "aio_teleport_falador",
+    "aio_teleport_no_staff"
+   ],
+   "reference_cases": [
+    {
+     "id": "relogin-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "aio_teleport_falador",
+   "kind": "native",
+   "script": "AIO Teleport",
+   "script_key": "AIOTeleport",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_aio_teleport_falador",
+   "scenario": "aio_teleport_falador",
+   "core_case": "AioTeleportFalador",
+   "pair_case": null,
+   "options": [
+    "teleportName/progressive",
+    "lawBatchSize/minLawRunes/useStaffRunes"
+   ],
+   "unsupported": [
+    {
+     "option": "login/relogin observation",
+     "reason": "reference case asserts a relogin round trip; the native scenario covers the teleport legs only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AIOTeleport"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "aio_teleport_no_staff",
+   "kind": "native",
+   "script": "AIO Teleport",
+   "script_key": "AIOTeleport",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_aio_teleport_no_staff",
+   "scenario": "aio_teleport_no_staff",
+   "core_case": "AioTeleportNoStaff",
+   "pair_case": null,
+   "options": [
+    "teleportName/progressive",
+    "lawBatchSize/minLawRunes/useStaffRunes"
+   ],
+   "unsupported": [
+    {
+     "option": "login/relogin observation",
+     "reason": "reference case asserts a relogin round trip; the native scenario covers the teleport legs only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AIOTeleport"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "chicken_killer",
+   "kind": "native",
+   "script": "ChickenKiller",
+   "script_key": "ChickenKiller",
+   "primary": true,
+   "status": "documented",
+   "manual": true,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chicken_killer",
+   "scenario": "chicken_killer",
+   "core_case": "ChickenKiller",
+   "pair_case": null,
+   "options": [
+    "seed chicken/feather",
+    "food/bank state"
+   ],
+   "unsupported": [
+    {
+     "option": "hosted/manual prerequisite",
+     "reason": "reference case is documented/manual (hosted wall); native run is a script witness only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChickenKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "chicken_killer_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "hosted-proof-test",
+     "status": "documented",
+     "manual": true,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "chicken_killer_bank",
+   "kind": "native",
+   "script": "ChickenKiller",
+   "script_key": "ChickenKiller",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chicken_killer_bank",
+   "scenario": "chicken_killer_bank",
+   "core_case": "ChickenKillerBank",
+   "pair_case": null,
+   "options": [
+    "seed chicken/feather",
+    "food/bank state"
+   ],
+   "unsupported": [
+    {
+     "option": "hosted/manual prerequisite",
+     "reason": "reference case is documented/manual (hosted wall); native run is a script witness only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChickenKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "duel_arena",
+   "kind": "native",
+   "script": "Duel Arena Combat Trainer",
+   "script_key": "DuelArena",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_duel_arena",
+   "scenario": "duel_arena",
+   "core_case": null,
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "DuelArena"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [],
+   "unavailable": {
+    "code": "missing_adapter",
+    "reason": "pair Duel witness is retained as blocked: no headed live cell (pair_watch accepts nature_crafter_air|mule_crafter_air|flax_runner) and no in-combat observation has been recorded"
+   }
+  },
+  {
+   "id": "chaos_druid",
+   "kind": "native",
+   "script": "ChaosDruidKiller",
+   "script_key": "ChaosDruidKiller",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chaos_druid",
+   "scenario": "chaos_druid",
+   "core_case": "ChaosDruid",
+   "pair_case": null,
+   "options": [
+    "location/drop/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "selected herb/law/nature pickup",
+     "reason": "combat fixture for selected pickups is still open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChaosDruidKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "chaos_druid_tower",
+    "chaos_druid_yanille",
+    "chaos_druid_bank"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "chaos_druid_tower",
+   "kind": "native",
+   "script": "ChaosDruidKiller",
+   "script_key": "ChaosDruidKiller",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chaos_druid_tower",
+   "scenario": "chaos_druid_tower",
+   "core_case": "ChaosDruidTower",
+   "pair_case": null,
+   "options": [
+    "location/drop/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "selected herb/law/nature pickup",
+     "reason": "combat fixture for selected pickups is still open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChaosDruidKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "chaos_druid_yanille",
+   "kind": "native",
+   "script": "ChaosDruidKiller",
+   "script_key": "ChaosDruidKiller",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chaos_druid_yanille",
+   "scenario": "chaos_druid_yanille",
+   "core_case": "ChaosDruidYanille",
+   "pair_case": null,
+   "options": [
+    "location/drop/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "selected herb/law/nature pickup",
+     "reason": "combat fixture for selected pickups is still open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChaosDruidKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "chaos_druid_bank",
+   "kind": "native",
+   "script": "ChaosDruidKiller",
+   "script_key": "ChaosDruidKiller",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_chaos_druid_bank",
+   "scenario": "chaos_druid_bank",
+   "core_case": "ChaosDruidBank",
+   "pair_case": null,
+   "options": [
+    "location/drop/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "selected herb/law/nature pickup",
+     "reason": "combat fixture for selected pickups is still open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ChaosDruidKiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "rock_crab",
+   "kind": "native",
+   "script": "RockCrab",
+   "script_key": "RockCrab",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_rock_crab",
+   "scenario": "rock_crab",
+   "core_case": "RockCrab",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "RockCrab"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "rockcrab-dart-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ],
+   "unavailable": {
+    "code": "fixture_prerequisite",
+    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
+   }
+  },
+  {
+   "id": "rock_crab_range",
+   "kind": "native",
+   "script": "RockCrab",
+   "script_key": "RockCrab",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_rock_crab_range",
+   "scenario": "rock_crab_range",
+   "core_case": "RockCrabRange",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "RockCrab"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [],
+   "unavailable": {
+    "code": "fixture_prerequisite",
+    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
+   }
+  },
+  {
+   "id": "rock_crab_bank",
+   "kind": "native",
+   "script": "RockCrab",
+   "script_key": "RockCrab",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_rock_crab_bank",
+   "scenario": "rock_crab_bank",
+   "core_case": "RockCrabBank",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "RockCrab"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [],
+   "unavailable": {
+    "code": "fixture_prerequisite",
+    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
+   }
+  },
+  {
+   "id": "moss_giant",
+   "kind": "native",
+   "script": "MossGiant",
+   "script_key": "MossGiant",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_moss_giant",
+   "scenario": "moss_giant",
+   "core_case": "MossGiant",
+   "pair_case": null,
+   "options": [
+    "dart/location/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "fixture prerequisites",
+     "reason": "dart/location/bank fixture reconciliation remains open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "MossGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "moss_giant_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "mossgiant-dart-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "moss_giant_bank",
+   "kind": "native",
+   "script": "MossGiant",
+   "script_key": "MossGiant",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_moss_giant_bank",
+   "scenario": "moss_giant_bank",
+   "core_case": "MossGiantBank",
+   "pair_case": null,
+   "options": [
+    "dart/location/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "fixture prerequisites",
+     "reason": "dart/location/bank fixture reconciliation remains open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "MossGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "green_dragon",
+   "kind": "native",
+   "script": "GreenDragon",
+   "script_key": "GreenDragon",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_green_dragon",
+   "scenario": "green_dragon",
+   "core_case": "GreenDragon",
+   "pair_case": null,
+   "options": [
+    "combat style/special/potions",
+    "flee/teleport"
+   ],
+   "unsupported": [
+    {
+     "option": "actual Strength-XP/return evidence",
+     "reason": "reference asks for XP/return evidence; older failures are preserved, not re-proved here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GreenDragon"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "green_dragon_special",
+    "green_dragon_potions",
+    "green_dragon_bank",
+    "green_dragon_tele"
+   ],
+   "reference_cases": [
+    {
+     "id": "greendragon-pk-flee-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    },
+    {
+     "id": "greendragon-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "green_dragon_special",
+   "kind": "native",
+   "script": "GreenDragon",
+   "script_key": "GreenDragon",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_green_dragon_special",
+   "scenario": "green_dragon_special",
+   "core_case": "GreenDragonSpecial",
+   "pair_case": null,
+   "options": [
+    "combat style/special/potions",
+    "flee/teleport"
+   ],
+   "unsupported": [
+    {
+     "option": "actual Strength-XP/return evidence",
+     "reason": "reference asks for XP/return evidence; older failures are preserved, not re-proved here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GreenDragon"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "green_dragon_potions",
+   "kind": "native",
+   "script": "GreenDragon",
+   "script_key": "GreenDragon",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_green_dragon_potions",
+   "scenario": "green_dragon_potions",
+   "core_case": "GreenDragonPotions",
+   "pair_case": null,
+   "options": [
+    "combat style/special/potions",
+    "flee/teleport"
+   ],
+   "unsupported": [
+    {
+     "option": "actual Strength-XP/return evidence",
+     "reason": "reference asks for XP/return evidence; older failures are preserved, not re-proved here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GreenDragon"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "green_dragon_bank",
+   "kind": "native",
+   "script": "GreenDragon",
+   "script_key": "GreenDragon",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_green_dragon_bank",
+   "scenario": "green_dragon_bank",
+   "core_case": "GreenDragonBank",
+   "pair_case": null,
+   "options": [
+    "combat style/special/potions",
+    "flee/teleport"
+   ],
+   "unsupported": [
+    {
+     "option": "actual Strength-XP/return evidence",
+     "reason": "reference asks for XP/return evidence; older failures are preserved, not re-proved here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GreenDragon"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "green_dragon_tele",
+   "kind": "native",
+   "script": "GreenDragon",
+   "script_key": "GreenDragon",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_green_dragon_tele",
+   "scenario": "green_dragon_tele",
+   "core_case": "GreenDragonTele",
+   "pair_case": null,
+   "options": [
+    "combat style/special/potions",
+    "flee/teleport"
+   ],
+   "unsupported": [
+    {
+     "option": "actual Strength-XP/return evidence",
+     "reason": "reference asks for XP/return evidence; older failures are preserved, not re-proved here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GreenDragon"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "fire_giant",
+   "kind": "native",
+   "script": "FireGiant",
+   "script_key": "FireGiant",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_fire_giant",
+   "scenario": "fire_giant",
+   "core_case": "FireGiant",
+   "pair_case": null,
+   "options": [
+    "approach/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "reader.npcBox paint/readback",
+     "reason": "native paint/readback for the FireGiant witness needs reader.npcBox projection or a declared capture substitute; capture expectation is pending adapter work"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FireGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "fire_giant_approach",
+    "fire_giant_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "firegiant-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "fire_giant_approach",
+   "kind": "native",
+   "script": "FireGiant",
+   "script_key": "FireGiant",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_fire_giant_approach",
+   "scenario": "fire_giant_approach",
+   "core_case": "FireGiantApproach",
+   "pair_case": null,
+   "options": [
+    "approach/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "reader.npcBox paint/readback",
+     "reason": "native paint/readback for the FireGiant witness needs reader.npcBox projection or a declared capture substitute; capture expectation is pending adapter work"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FireGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "fire_giant_bank",
+   "kind": "native",
+   "script": "FireGiant",
+   "script_key": "FireGiant",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_fire_giant_bank",
+   "scenario": "fire_giant_bank",
+   "core_case": "FireGiantBank",
+   "pair_case": null,
+   "options": [
+    "approach/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "reader.npcBox paint/readback",
+     "reason": "native paint/readback for the FireGiant witness needs reader.npcBox projection or a declared capture substitute; capture expectation is pending adapter work"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FireGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "ardy_fighter",
+   "kind": "native",
+   "script": "ArdyFighter",
+   "script_key": "ArdyFighter",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 5,
+   "runner": "core",
+   "live": "script_ardy_fighter",
+   "scenario": "ardy_fighter",
+   "core_case": "ArdyFighter",
+   "pair_case": null,
+   "options": [
+    "restock/food",
+    "explicit combat style"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "ArdyFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "ardy_fighter_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "ardyfighter-restock-loop-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 5
+    }
+   ]
+  },
+  {
+   "id": "ardy_fighter_bank",
+   "kind": "native",
+   "script": "ArdyFighter",
+   "script_key": "ArdyFighter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 5,
+   "runner": "core",
+   "live": "script_ardy_fighter_bank",
+   "scenario": "ardy_fighter_bank",
+   "core_case": "ArdyFighterBank",
+   "pair_case": null,
+   "options": [
+    "restock/food",
+    "explicit combat style"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "ArdyFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "thiever",
+   "kind": "native",
+   "script": "Thiever",
+   "script_key": "ThievingBot",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_thiever",
+   "scenario": "thiever",
+   "core_case": "Thiever",
+   "pair_case": null,
+   "options": [
+    "target/food/bank"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "ThievingBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "auto_fighter",
+   "kind": "native",
+   "script": "AutoFighter",
+   "script_key": "AutoFighter",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 14,
+   "runner": "core",
+   "live": "script_auto_fighter",
+   "scenario": "auto_fighter",
+   "core_case": "AutoFighter",
+   "pair_case": null,
+   "options": [
+    "combat style/special",
+    "targets/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "panel CSV capture/readback",
+     "reason": "loot-csv-panel-live is a panel capture/readback case; the native panel capture adapter is separate adapter work and is not claimed here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AutoFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "auto_fighter_mage",
+    "auto_fighter_range",
+    "auto_fighter_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "autofighter-targets-loot-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 14
+    },
+    {
+     "id": "autofighter-special-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 10
+    }
+   ]
+  },
+  {
+   "id": "auto_fighter_mage",
+   "kind": "native",
+   "script": "AutoFighter",
+   "script_key": "AutoFighter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_auto_fighter_mage",
+   "scenario": "auto_fighter_mage",
+   "core_case": "AutoFighterMage",
+   "pair_case": null,
+   "options": [
+    "combat style/special",
+    "targets/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "panel CSV capture/readback",
+     "reason": "loot-csv-panel-live is a panel capture/readback case; the native panel capture adapter is separate adapter work and is not claimed here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AutoFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "auto_fighter_range",
+   "kind": "native",
+   "script": "AutoFighter",
+   "script_key": "AutoFighter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_auto_fighter_range",
+   "scenario": "auto_fighter_range",
+   "core_case": "AutoFighterRange",
+   "pair_case": null,
+   "options": [
+    "combat style/special",
+    "targets/loot"
+   ],
+   "unsupported": [
+    {
+     "option": "panel CSV capture/readback",
+     "reason": "loot-csv-panel-live is a panel capture/readback case; the native panel capture adapter is separate adapter work and is not claimed here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AutoFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "auto_fighter_bank",
+   "kind": "native",
+   "script": "AutoFighter",
+   "script_key": "AutoFighter",
+   "primary": false,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_auto_fighter_bank",
+   "scenario": "auto_fighter_bank",
+   "core_case": "AutoFighterBank",
+   "pair_case": null,
+   "options": [
+    "reward banking"
+   ],
+   "unsupported": [
+    {
+     "option": "panel CSV capture/readback",
+     "reason": "loot-csv-panel-live is a panel capture/readback case; the native panel capture adapter is separate adapter work and is not claimed here"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AutoFighter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "autofighter-bank-resume-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 12
+    },
+    {
+     "id": "common-reward-banking-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "ardy_thiever",
+   "kind": "native",
+   "script": "ArdyThiever",
+   "script_key": "ArdyThiever",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_ardy_thiever",
+   "scenario": "ardy_thiever",
+   "core_case": "ArdyThiever",
+   "pair_case": null,
+   "options": [
+    "target/knight/fight",
+    "bank"
+   ],
+   "unsupported": [
+    {
+     "option": "per-revision failure cells",
+     "reason": "retained; not re-proved"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ArdyThiever"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "ardy_thiever_fight",
+    "ardy_thiever_knight"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "ardy_thiever_fight",
+   "kind": "native",
+   "script": "ArdyThiever",
+   "script_key": "ArdyThiever",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_ardy_thiever_fight",
+   "scenario": "ardy_thiever_fight",
+   "core_case": "ArdyThieverFight",
+   "pair_case": null,
+   "options": [
+    "target/knight/fight",
+    "bank"
+   ],
+   "unsupported": [
+    {
+     "option": "per-revision failure cells",
+     "reason": "retained; not re-proved"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ArdyThiever"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "ardy_thiever_knight",
+   "kind": "native",
+   "script": "ArdyThiever",
+   "script_key": "ArdyThiever",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_ardy_thiever_knight",
+   "scenario": "ardy_thiever_knight",
+   "core_case": "ArdyThieverKnight",
+   "pair_case": null,
+   "options": [
+    "target/knight/fight",
+    "bank"
+   ],
+   "unsupported": [
+    {
+     "option": "per-revision failure cells",
+     "reason": "retained; not re-proved"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ArdyThiever"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "ardy_cakes",
+   "kind": "native",
+   "script": "ArdyCakes",
+   "script_key": "ArdyCakes",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_ardy_cakes",
+   "scenario": "ardy_cakes",
+   "core_case": "ArdyCakes",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "production/guard-response fixture",
+     "reason": "fixture prerequisite; the case stays visible rather than dimmed or excluded"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ArdyCakes"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "ardy_cakes_fight"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "ardy_cakes_fight",
+   "kind": "native",
+   "script": "ArdyCakes",
+   "script_key": "ArdyCakes",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_ardy_cakes_fight",
+   "scenario": "ardy_cakes_fight",
+   "core_case": "ArdyCakesFight",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "production/guard-response fixture",
+     "reason": "fixture prerequisite; the case stays visible rather than dimmed or excluded"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ArdyCakes"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "gnome_chop",
+   "kind": "native",
+   "script": "GnomeMagicChopper",
+   "script_key": "GnomeMagicChopper",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gnome_chop",
+   "scenario": "gnome_chop",
+   "core_case": "GnomeChop",
+   "pair_case": null,
+   "options": [
+    "tree/axe/fletch/burn"
+   ],
+   "unsupported": [
+    {
+     "option": "actual-tree start and required tools",
+     "reason": "verify actual tree start and tools before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GnomeMagicChopper"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "gnome_fletch_short",
+    "gnome_fletch_long"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "gnome_fletch_short",
+   "kind": "native",
+   "script": "GnomeMagicChopper",
+   "script_key": "GnomeMagicChopper",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gnome_fletch_short",
+   "scenario": "gnome_fletch_short",
+   "core_case": "GnomeFletchShort",
+   "pair_case": null,
+   "options": [
+    "tree/axe/fletch/burn"
+   ],
+   "unsupported": [
+    {
+     "option": "actual-tree start and required tools",
+     "reason": "verify actual tree start and tools before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GnomeMagicChopper"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "gnome_fletch_long",
+   "kind": "native",
+   "script": "GnomeMagicChopper",
+   "script_key": "GnomeMagicChopper",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gnome_fletch_long",
+   "scenario": "gnome_fletch_long",
+   "core_case": "GnomeFletchLong",
+   "pair_case": null,
+   "options": [
+    "tree/axe/fletch/burn"
+   ],
+   "unsupported": [
+    {
+     "option": "actual-tree start and required tools",
+     "reason": "verify actual tree start and tools before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GnomeMagicChopper"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "coal_trucks",
+   "kind": "native",
+   "script": "CoalTrucks",
+   "script_key": "CoalTrucks",
+   "primary": true,
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_coal_trucks",
+   "scenario": "coal_trucks",
+   "core_case": "CoalTrucks",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "combat level 55 / coal-truck route prerequisite",
+     "reason": "reference prerequisite; branch accounting open"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "CoalTrucks"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "coaltrucks-test",
+     "status": "documented",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "rune_crafter",
+   "kind": "native",
+   "script": "RuneCrafter",
+   "script_key": "RuneCrafter",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_rune_crafter",
+   "scenario": "rune_crafter",
+   "core_case": "RuneCrafter",
+   "pair_case": null,
+   "options": [
+    "rune type/altar/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "multibox identities",
+     "reason": "reference case is a multibox run; native case is a single-act actor witness"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "RuneCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "rune_crafter_earth"
+   ],
+   "reference_cases": [
+    {
+     "id": "runecrafter-multibox-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "rune_crafter_earth",
+   "kind": "native",
+   "script": "RuneCrafter",
+   "script_key": "RuneCrafter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_rune_crafter_earth",
+   "scenario": "rune_crafter_earth",
+   "core_case": "RuneCrafterEarth",
+   "pair_case": null,
+   "options": [
+    "rune type/altar/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "multibox identities",
+     "reason": "reference case is a multibox run; native case is a single-act actor witness"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "RuneCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "nature_crafter_air",
+   "kind": "native",
+   "script": "NatureCrafter",
+   "script_key": "NatureCrafter",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "pair",
+   "live": "script_nature_crafter_air",
+   "scenario": "nature_crafter_air",
+   "core_case": null,
+   "pair_case": "Air",
+   "options": [
+    "two actual actors",
+    "partner names/trade bootstrap"
+   ],
+   "unsupported": [
+    {
+     "option": "coin drop/take witness",
+     "reason": "adaptation carries its own declared support evidence, not upstream coin739 proof"
+    },
+    {
+     "option": "12-minute soak",
+     "reason": "the soak case is not claimed by the pair adaptation"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "NatureCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "nature-runner-coins-739-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 3
+    },
+    {
+     "id": "naturecrafter-soak-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ],
+   "budget_note": "outer budget is the max of the mapped reference budgets; the 3-minute coin case budget and the 12-minute soak budget stay recorded in reference_cases, and native inner deadlines are unchanged"
+  },
+  {
+   "id": "cook_bot",
+   "kind": "native",
+   "script": "CookBot",
+   "script_key": "CookBot",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_cook_bot",
+   "scenario": "cook_bot",
+   "core_case": "CookBot",
+   "pair_case": null,
+   "options": [
+    "fish",
+    "bank/return"
+   ],
+   "unsupported": [
+    {
+     "option": "exact food/XP/deposit/further-work prerequisite",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "CookBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "cook_bot_lobster"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "cook_bot_lobster",
+   "kind": "native",
+   "script": "CookBot",
+   "script_key": "CookBot",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_cook_bot_lobster",
+   "scenario": "cook_bot_lobster",
+   "core_case": "CookBotLobster",
+   "pair_case": null,
+   "options": [
+    "fish",
+    "bank/return"
+   ],
+   "unsupported": [
+    {
+     "option": "exact food/XP/deposit/further-work prerequisite",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "CookBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "bank_fletcher",
+   "kind": "native",
+   "script": "BankFletcher",
+   "script_key": "BankFletcher",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_bank_fletcher",
+   "scenario": "bank_fletcher",
+   "core_case": "BankFletcher",
+   "pair_case": null,
+   "options": [
+    "product/knife/string/headless branches"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "BankFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "bank_fletcher_shafts",
+    "bank_fletcher_headless",
+    "bank_fletcher_string",
+    "bank_fletcher_cut_string"
+   ],
+   "reference_cases": [
+    {
+     "id": "bankfletcher-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ]
+  },
+  {
+   "id": "bank_fletcher_shafts",
+   "kind": "native",
+   "script": "BankFletcher",
+   "script_key": "BankFletcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_bank_fletcher_shafts",
+   "scenario": "bank_fletcher_shafts",
+   "core_case": "BankFletcherShafts",
+   "pair_case": null,
+   "options": [
+    "product/knife/string/headless branches"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "BankFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "bank_fletcher_headless",
+   "kind": "native",
+   "script": "BankFletcher",
+   "script_key": "BankFletcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_bank_fletcher_headless",
+   "scenario": "bank_fletcher_headless",
+   "core_case": "BankFletcherHeadless",
+   "pair_case": null,
+   "options": [
+    "product/knife/string/headless branches"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "BankFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "bank_fletcher_string",
+   "kind": "native",
+   "script": "BankFletcher",
+   "script_key": "BankFletcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_bank_fletcher_string",
+   "scenario": "bank_fletcher_string",
+   "core_case": "BankFletcherString",
+   "pair_case": null,
+   "options": [
+    "product/knife/string/headless branches"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "BankFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "bank_fletcher_cut_string",
+   "kind": "native",
+   "script": "BankFletcher",
+   "script_key": "BankFletcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_bank_fletcher_cut_string",
+   "scenario": "bank_fletcher_cut_string",
+   "core_case": "BankFletcherCutString",
+   "pair_case": null,
+   "options": [
+    "product/knife/string/headless branches"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "BankFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "dart_fletcher",
+   "kind": "native",
+   "script": "DartFletcher",
+   "script_key": "DartFletcher",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_dart_fletcher",
+   "scenario": "dart_fletcher",
+   "core_case": "DartFletcher",
+   "pair_case": null,
+   "options": [
+    "bronze/iron",
+    "selected dart/material"
+   ],
+   "unsupported": [
+    {
+     "option": "seed exact bars/feathers",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "DartFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "dart_fletcher_iron"
+   ],
+   "reference_cases": [
+    {
+     "id": "dartfletcher-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "dart_fletcher_iron",
+   "kind": "native",
+   "script": "DartFletcher",
+   "script_key": "DartFletcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_dart_fletcher_iron",
+   "scenario": "dart_fletcher_iron",
+   "core_case": "DartFletcherIron",
+   "pair_case": null,
+   "options": [
+    "bronze/iron",
+    "selected dart/material"
+   ],
+   "unsupported": [
+    {
+     "option": "seed exact bars/feathers",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "DartFletcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "herblore_secondaries",
+   "kind": "native",
+   "script": "HerbloreSecondaries",
+   "script_key": "HerbloreSecondaries",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_herblore_secondaries",
+   "scenario": "herblore_secondaries",
+   "core_case": "HerbloreSecondaries",
+   "pair_case": null,
+   "options": [
+    "secondary/egg/newt branches"
+   ],
+   "unsupported": [
+    {
+     "option": "pre-Start bank readiness",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "exact XP/product witness",
+     "reason": "verify before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "HerbloreSecondaries"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "herblore_secondaries_newt"
+   ],
+   "reference_cases": [
+    {
+     "id": "herblore-secondaries-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "herblore_secondaries_newt",
+   "kind": "native",
+   "script": "HerbloreSecondaries",
+   "script_key": "HerbloreSecondaries",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_herblore_secondaries_newt",
+   "scenario": "herblore_secondaries_newt",
+   "core_case": "HerbloreSecondariesNewt",
+   "pair_case": null,
+   "options": [
+    "secondary/egg/newt branches"
+   ],
+   "unsupported": [
+    {
+     "option": "pre-Start bank readiness",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "exact XP/product witness",
+     "reason": "verify before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "HerbloreSecondaries"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "herb_cleaner",
+   "kind": "native",
+   "script": "HerbCleaner",
+   "script_key": "HerbCleaner",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_herb_cleaner",
+   "scenario": "herb_cleaner",
+   "core_case": "HerbCleaner",
+   "pair_case": null,
+   "options": [
+    "default/named herb filters",
+    "empty-bank stop"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "HerbCleaner"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "herb_cleaner_named"
+   ],
+   "reference_cases": [
+    {
+     "id": "herbcleaner-empty-bank-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ]
+  },
+  {
+   "id": "herb_cleaner_named",
+   "kind": "native",
+   "script": "HerbCleaner",
+   "script_key": "HerbCleaner",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_herb_cleaner_named",
+   "scenario": "herb_cleaner_named",
+   "core_case": "HerbCleanerNamed",
+   "pair_case": null,
+   "options": [
+    "default/named herb filters",
+    "empty-bank stop"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "HerbCleaner"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "potion_maker",
+   "kind": "native",
+   "script": "PotionMaker",
+   "script_key": "PotionMaker",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_potion_maker",
+   "scenario": "potion_maker",
+   "core_case": "PotionMaker",
+   "pair_case": null,
+   "options": [
+    "recipe/default/named"
+   ],
+   "unsupported": [
+    {
+     "option": "seed unfinished/finished products",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "PotionMaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "potion_maker_named"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "potion_maker_named",
+   "kind": "native",
+   "script": "PotionMaker",
+   "script_key": "PotionMaker",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_potion_maker_named",
+   "scenario": "potion_maker_named",
+   "core_case": "PotionMakerNamed",
+   "pair_case": null,
+   "options": [
+    "recipe/default/named"
+   ],
+   "unsupported": [
+    {
+     "option": "seed unfinished/finished products",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "PotionMaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "bone_burier",
+   "kind": "native",
+   "script": "BoneBurier",
+   "script_key": "BoneBurier",
+   "primary": true,
+   "status": "unvetted",
+   "manual": true,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_bone_burier",
+   "scenario": "bone_burier",
+   "core_case": "BoneBurier",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "external loader smoke contract",
+     "reason": "the reference loader smoke (register once, auto-select without auto-start, 10+ burials in 180000 ms, Stop within 10000 ms, no duplicate registration) is a separate contract; this native case is the catalog core witness only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "BoneBurier"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "external-script-test",
+     "status": "unvetted",
+     "manual": true,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "smelter_bot",
+   "kind": "native",
+   "script": "SmelterBot",
+   "script_key": "SmelterBot",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_smelter_bot",
+   "scenario": "smelter_bot",
+   "core_case": "SmelterBot",
+   "pair_case": null,
+   "options": [
+    "bar/ore",
+    "swarm interruption"
+   ],
+   "unsupported": [
+    {
+     "option": "seed exact ores and bank-return state",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "SmelterBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "smelter_bot_steel"
+   ],
+   "reference_cases": [
+    {
+     "id": "smelter-swarm-422-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "smelter_bot_steel",
+   "kind": "native",
+   "script": "SmelterBot",
+   "script_key": "SmelterBot",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_smelter_bot_steel",
+   "scenario": "smelter_bot_steel",
+   "core_case": "SmelterBotSteel",
+   "pair_case": null,
+   "options": [
+    "bar/ore",
+    "swarm interruption"
+   ],
+   "unsupported": [
+    {
+     "option": "seed exact ores and bank-return state",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "SmelterBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "superheater",
+   "kind": "native",
+   "script": "Superheater",
+   "script_key": "Superheater",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 10,
+   "runner": "core",
+   "live": "script_superheater",
+   "scenario": "superheater",
+   "core_case": "Superheater",
+   "pair_case": null,
+   "options": [
+    "bar selection"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "Superheater"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "superheater_steel",
+    "superheater_fire_battlestaff"
+   ],
+   "reference_cases": [
+    {
+     "id": "superheater-smelt-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 10
+    }
+   ]
+  },
+  {
+   "id": "superheater_steel",
+   "kind": "native",
+   "script": "Superheater",
+   "script_key": "Superheater",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "runner": "core",
+   "live": "script_superheater_steel",
+   "scenario": "superheater_steel",
+   "core_case": "SuperheaterSteel",
+   "pair_case": null,
+   "options": [
+    "bar selection"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "Superheater"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "superheater_fire_battlestaff",
+   "kind": "native",
+   "script": "Superheater",
+   "script_key": "Superheater",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "runner": "core",
+   "live": "script_superheater_fire_battlestaff",
+   "scenario": "superheater_fire_battlestaff",
+   "core_case": "SuperheaterFireBattlestaff",
+   "pair_case": null,
+   "options": [
+    "staff selection"
+   ],
+   "unsupported": [
+    {
+     "option": "Attack 30 fixture",
+     "reason": "the fire-battlestaff cell needs the Attack 30 fixture, not the historical Attack 1 seed"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Superheater"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "superheater-fire-battlestaff-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 10
+    }
+   ]
+  },
+  {
+   "id": "alcher_defaults",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_defaults",
+   "scenario": "alcher_defaults",
+   "core_case": "AlcherDefaults",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "alcher",
+    "alcher_custom",
+    "alcher_custom_alias",
+    "alcher_custom_name",
+    "alcher_ordered",
+    "alcher_large_batch"
+   ],
+   "reference_cases": [
+    {
+     "id": "alcher-nearest-bank-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 12
+    },
+    {
+     "id": "alcher-low-744-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 10
+    },
+    {
+     "id": "alcher-fire-battlestaff-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 8
+    },
+    {
+     "id": "alcher-swarm-drain-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ]
+  },
+  {
+   "id": "alcher",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher",
+   "scenario": "alcher",
+   "core_case": "Alcher",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "alcher_custom",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_custom",
+   "scenario": "alcher_custom",
+   "core_case": "AlcherCustom",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "alcher_custom_alias",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_custom_alias",
+   "scenario": "alcher_custom_alias",
+   "core_case": "AlcherCustomAlias",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "alcher_custom_name",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_custom_name",
+   "scenario": "alcher_custom_name",
+   "core_case": "AlcherCustomName",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "alcher_ordered",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_ordered",
+   "scenario": "alcher_ordered",
+   "core_case": "AlcherOrdered",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "alcher_large_batch",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_alcher_large_batch",
+   "scenario": "alcher_large_batch",
+   "core_case": "AlcherLargeBatch",
+   "pair_case": null,
+   "options": [
+    "spell=High default",
+    "spell=Low",
+    "item alias/name/ordered/batch",
+    "staff/swarm branches"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "smithing_bot",
+   "kind": "native",
+   "script": "SmithingBot",
+   "script_key": "SmithingBot",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 10,
+   "runner": "core",
+   "live": "script_smithing_bot",
+   "scenario": "smithing_bot",
+   "core_case": "SmithingBot",
+   "pair_case": null,
+   "options": [
+    "Adamantite/Runite (frozen 964 options)"
+   ],
+   "unsupported": [
+    {
+     "option": "persisted Adamant/Rune override migration",
+     "reason": "persisted old overrides must be migrated before selection; migration is pending"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "SmithingBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "smithing_bot_platebody"
+   ],
+   "reference_cases": [
+    {
+     "id": "smithingbot-bank-loop-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 10
+    }
+   ]
+  },
+  {
+   "id": "smithing_bot_platebody",
+   "kind": "native",
+   "script": "SmithingBot",
+   "script_key": "SmithingBot",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "runner": "core",
+   "live": "script_smithing_bot_platebody",
+   "scenario": "smithing_bot_platebody",
+   "core_case": "SmithingBotPlatebody",
+   "pair_case": null,
+   "options": [
+    "Adamantite/Runite (frozen 964 options)"
+   ],
+   "unsupported": [
+    {
+     "option": "persisted Adamant/Rune override migration",
+     "reason": "persisted old overrides must be migrated before selection; migration is pending"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "SmithingBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "flax_picker",
+   "kind": "native",
+   "script": "FlaxPicker",
+   "script_key": "FlaxPicker",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_flax_picker",
+   "scenario": "flax_picker",
+   "core_case": "FlaxPicker",
+   "pair_case": null,
+   "options": [
+    "location/quantity",
+    "bank-return"
+   ],
+   "unsupported": [
+    {
+     "option": "exact flax/XP witness",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxPicker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "flax_spinner",
+   "kind": "native",
+   "script": "FlaxSpinner",
+   "script_key": "FlaxSpinner",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_flax_spinner",
+   "scenario": "flax_spinner",
+   "core_case": "FlaxSpinner",
+   "pair_case": null,
+   "options": [
+    "partner/spin/return settings if native support is added"
+   ],
+   "unsupported": [
+    {
+     "option": "reference case",
+     "reason": "no reference case covers FlaxSpinner; nothing is treated as qualification"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxSpinner"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "flax_aio",
+   "kind": "native",
+   "script": "FlaxAIO",
+   "script_key": "FlaxAIO",
+   "primary": true,
+   "status": "broken",
+   "manual": false,
+   "budget_min": 18,
+   "runner": "core",
+   "live": "script_flax_aio",
+   "scenario": "flax_aio",
+   "core_case": "FlaxAio",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "spin cell",
+     "reason": "the spin cell is known broken and must not be silently promoted"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxAIO"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "flax_aio_pick",
+    "flax_aio_spin"
+   ],
+   "reference_cases": [
+    {
+     "id": "flaxaio-pick-spin-live",
+     "status": "broken",
+     "manual": false,
+     "budget_min": 18
+    }
+   ]
+  },
+  {
+   "id": "flax_aio_pick",
+   "kind": "native",
+   "script": "FlaxAIO",
+   "script_key": "FlaxAIO",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 18,
+   "runner": "core",
+   "live": "script_flax_aio_pick",
+   "scenario": "flax_aio_pick",
+   "core_case": "FlaxAioPick",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "spin cell",
+     "reason": "the spin cell is known broken and must not be silently promoted"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxAIO"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "flax_aio_spin",
+   "kind": "native",
+   "script": "FlaxAIO",
+   "script_key": "FlaxAIO",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 18,
+   "runner": "core",
+   "live": "script_flax_aio_spin",
+   "scenario": "flax_aio_spin",
+   "core_case": "FlaxAioSpin",
+   "pair_case": null,
+   "options": [],
+   "unsupported": [
+    {
+     "option": "spin cell",
+     "reason": "the spin cell is known broken and must not be silently promoted"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxAIO"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "gem_cutter",
+   "kind": "native",
+   "script": "GemCutter",
+   "script_key": "GemCutter",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gem_cutter",
+   "scenario": "gem_cutter",
+   "core_case": "GemCutter",
+   "pair_case": null,
+   "options": [
+    "gem/default/named"
+   ],
+   "unsupported": [
+    {
+     "option": "seed uncuts and exact XP/bank return",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GemCutter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "gem_cutter_named"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "gem_cutter_named",
+   "kind": "native",
+   "script": "GemCutter",
+   "script_key": "GemCutter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gem_cutter_named",
+   "scenario": "gem_cutter_named",
+   "core_case": "GemCutterNamed",
+   "pair_case": null,
+   "options": [
+    "gem/default/named"
+   ],
+   "unsupported": [
+    {
+     "option": "seed uncuts and exact XP/bank return",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "GemCutter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "gnome_course",
+   "kind": "native",
+   "script": "GnomeCourse",
+   "script_key": "AgilityBot",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gnome_course",
+   "scenario": "gnome_course",
+   "core_case": "GnomeCourse",
+   "pair_case": null,
+   "options": [
+    "course/radius"
+   ],
+   "unsupported": [
+    {
+     "option": "start tile/obstacle fixture",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AgilityBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "gnome_course_radius"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "gnome_course_radius",
+   "kind": "native",
+   "script": "GnomeCourse",
+   "script_key": "AgilityBot",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_gnome_course_radius",
+   "scenario": "gnome_course_radius",
+   "core_case": "GnomeCourseRadius",
+   "pair_case": null,
+   "options": [
+    "course/radius"
+   ],
+   "unsupported": [
+    {
+     "option": "start tile/obstacle fixture",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "AgilityBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "wildy_agility",
+   "kind": "native",
+   "script": "WildyAgility",
+   "script_key": "WildyAgility",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 6,
+   "runner": "core",
+   "live": "script_wildy_agility",
+   "scenario": "wildy_agility",
+   "core_case": "WildyAgility",
+   "pair_case": null,
+   "options": [
+    "named food startup",
+    "banked cake/chocolate-cake branch"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "WildyAgility"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "wildyagility-food-startup-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 6
+    }
+   ]
+  },
+  {
+   "id": "mule_crafter_air",
+   "kind": "native",
+   "script": "MuleCrafter",
+   "script_key": "MuleCrafter",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "pair",
+   "live": "script_mule_crafter_air",
+   "scenario": "mule_crafter_air",
+   "core_case": null,
+   "pair_case": "Mule",
+   "options": [
+    "two actual actors",
+    "role-specific partner names",
+    "trade/crafter fixture",
+    "mode/material options"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "MuleCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "mulecrafter-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "climbing_boots",
+   "kind": "native",
+   "script": "ClimbingBoots",
+   "script_key": "ClimbingBoots",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_climbing_boots",
+   "scenario": "climbing_boots",
+   "core_case": null,
+   "pair_case": null,
+   "options": [],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "ClimbingBoots"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [],
+   "unavailable": {
+    "code": "missing_adapter",
+    "reason": "enabled but unqualified: useTeleport/runeStock, Tenzing/Falador/teleport/shop dialogue fixture and custom interaction paint are needed before any PASS claim"
+   }
+  },
+  {
+   "id": "shop_buyout",
+   "kind": "native",
+   "script": "ShopBuyout",
+   "script_key": "ShopBuyout",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_shop_buyout",
+   "scenario": "shop_buyout",
+   "core_case": "ShopBuyout",
+   "pair_case": null,
+   "options": [
+    "shop selection/Aubury branch"
+   ],
+   "unsupported": [
+    {
+     "option": "stock/coin prerequisite",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "actual buy/XP/inventory witness",
+     "reason": "verify before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ShopBuyout"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "shop_buyout_aubury"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "shop_buyout_aubury",
+   "kind": "native",
+   "script": "ShopBuyout",
+   "script_key": "ShopBuyout",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_shop_buyout_aubury",
+   "scenario": "shop_buyout_aubury",
+   "core_case": "ShopBuyoutAubury",
+   "pair_case": null,
+   "options": [
+    "shop selection/Aubury branch"
+   ],
+   "unsupported": [
+    {
+     "option": "stock/coin prerequisite",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "actual buy/XP/inventory witness",
+     "reason": "verify before any PASS claim"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ShopBuyout"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "door_opener",
+   "kind": "native",
+   "script": "DoorOpener",
+   "script_key": "DoorOpener",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_door_opener",
+   "scenario": "door_opener",
+   "core_case": "DoorOpener",
+   "pair_case": null,
+   "options": [
+    "door/gate branch"
+   ],
+   "unsupported": [
+    {
+     "option": "world fixture",
+     "reason": "success is an actual open/route transition, not paint"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "DoorOpener"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "door_opener_gate"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "door_opener_gate",
+   "kind": "native",
+   "script": "DoorOpener",
+   "script_key": "DoorOpener",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_door_opener_gate",
+   "scenario": "door_opener_gate",
+   "core_case": "DoorOpenerGate",
+   "pair_case": null,
+   "options": [
+    "door/gate branch"
+   ],
+   "unsupported": [
+    {
+     "option": "world fixture",
+     "reason": "success is an actual open/route transition, not paint"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "DoorOpener"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "tanner_bot",
+   "kind": "native",
+   "script": "TannerBot",
+   "script_key": "TannerBot",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_tanner_bot",
+   "scenario": "tanner_bot",
+   "core_case": "TannerBot",
+   "pair_case": null,
+   "options": [
+    "leather/hard-leather branch"
+   ],
+   "unsupported": [
+    {
+     "option": "hides/coins/bank prerequisite",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "TannerBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "tanner_bot_hard"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "tanner_bot_hard",
+   "kind": "native",
+   "script": "TannerBot",
+   "script_key": "TannerBot",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_tanner_bot_hard",
+   "scenario": "tanner_bot_hard",
+   "core_case": "TannerBotHard",
+   "pair_case": null,
+   "options": [
+    "leather/hard-leather branch"
+   ],
+   "unsupported": [
+    {
+     "option": "hides/coins/bank prerequisite",
+     "reason": "fixture prerequisite"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "TannerBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "hill_giant",
+   "kind": "native",
+   "script": "HillGiant",
+   "script_key": "HillGiant",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_hill_giant",
+   "scenario": "hill_giant",
+   "core_case": "HillGiant",
+   "pair_case": null,
+   "options": [
+    "combat/drop/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "kill and return proof",
+     "reason": "the fixture must prove kill and return"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "HillGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "hill_giant_bank"
+   ],
+   "reference_cases": [
+    {
+     "id": "hillgiant-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "hill_giant_bank",
+   "kind": "native",
+   "script": "HillGiant",
+   "script_key": "HillGiant",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_hill_giant_bank",
+   "scenario": "hill_giant_bank",
+   "core_case": "HillGiantBank",
+   "pair_case": null,
+   "options": [
+    "combat/drop/bank"
+   ],
+   "unsupported": [
+    {
+     "option": "kill and return proof",
+     "reason": "the fixture must prove kill and return"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "HillGiant"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "hillgiant-bank-428-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "vial_filler",
+   "kind": "native",
+   "script": "VialFiller",
+   "script_key": "VialFiller",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_vial_filler",
+   "scenario": "vial_filler",
+   "core_case": "VialFiller",
+   "pair_case": null,
+   "options": [
+    "bank/source branch"
+   ],
+   "unsupported": [
+    {
+     "option": "seed empty vials/water",
+     "reason": "verify filled inventory/XP"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "VialFiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "vial_filler_east"
+   ],
+   "reference_cases": [
+    {
+     "id": "vialfiller-test",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 12
+    }
+   ]
+  },
+  {
+   "id": "vial_filler_east",
+   "kind": "native",
+   "script": "VialFiller",
+   "script_key": "VialFiller",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_vial_filler_east",
+   "scenario": "vial_filler_east",
+   "core_case": "VialFillerEast",
+   "pair_case": null,
+   "options": [
+    "bank/source branch"
+   ],
+   "unsupported": [
+    {
+     "option": "seed empty vials/water",
+     "reason": "verify filled inventory/XP"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "VialFiller"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "leather_crafter",
+   "kind": "native",
+   "script": "LeatherCrafter",
+   "script_key": "LeatherCrafter",
+   "primary": true,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_leather_crafter",
+   "scenario": "leather_crafter",
+   "core_case": "LeatherCrafter",
+   "pair_case": null,
+   "options": [
+    "leather/hard-body branch",
+    "nearest-bank constraint"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "LeatherCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "leather_crafter_hard_body"
+   ],
+   "reference_cases": [
+    {
+     "id": "leathercrafter-nearest-bank-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ]
+  },
+  {
+   "id": "leather_crafter_hard_body",
+   "kind": "native",
+   "script": "LeatherCrafter",
+   "script_key": "LeatherCrafter",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_leather_crafter_hard_body",
+   "scenario": "leather_crafter_hard_body",
+   "core_case": "LeatherCrafterHardBody",
+   "pair_case": null,
+   "options": [
+    "leather/hard-body branch",
+    "nearest-bank constraint"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "LeatherCrafter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "firemaker",
+   "kind": "native",
+   "script": "Firemaker",
+   "script_key": "Firemaker",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_firemaker",
+   "scenario": "firemaker",
+   "core_case": "Firemaker",
+   "pair_case": null,
+   "options": [
+    "log/fire-spot",
+    "oak branch"
+   ],
+   "unsupported": [
+    {
+     "option": "seed tinderbox/logs",
+     "reason": "verify fire placement and light progression"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Firemaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "firemaker_oak"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "firemaker_oak",
+   "kind": "native",
+   "script": "Firemaker",
+   "script_key": "Firemaker",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_firemaker_oak",
+   "scenario": "firemaker_oak",
+   "core_case": "FiremakerOak",
+   "pair_case": null,
+   "options": [
+    "log/fire-spot",
+    "oak branch"
+   ],
+   "unsupported": [
+    {
+     "option": "seed tinderbox/logs",
+     "reason": "verify fire placement and light progression"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Firemaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "flax_runner",
+   "kind": "native",
+   "script": "FlaxRunner",
+   "script_key": "FlaxRunner",
+   "primary": true,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "pair",
+   "live": "script_flax_runner",
+   "scenario": "flax_runner",
+   "core_case": null,
+   "pair_case": "Flax",
+   "options": [
+    "two actual actors",
+    "Runner/Spinner roles",
+    "partner",
+    "minFlaxCapacity"
+   ],
+   "unsupported": [
+    {
+     "option": "reference case",
+     "reason": "no frozen reference case covers FlaxRunner; the native pair witness is the adaptation and nothing is relabelled as a reference PASS"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "FlaxRunner"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": []
+  },
+  {
+   "id": "fisher-shilo-shopping-live",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 24,
+   "harness": "fisher-shilo-shopping-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "reference_args": [
+    "--scenario",
+    "all",
+    "--minutes",
+    "8"
+   ],
+   "note": "actual registry Fisher (GatheringBot): fresh full-pack and empty-pack Shilo fixtures; bank fish/junk before either shop, fund Obli vials plus Fernahei feathers, deposit vials before resumed Fishing XP. Evidence under out/e2e; no speed chang"
+  },
+  {
+   "id": "fisher-shilo-shopping-limited",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "unvetted",
+   "manual": true,
+   "budget_min": 12,
+   "harness": "fisher-shilo-shopping-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "reference_args": [
+    "--scenario",
+    "limited",
+    "--minutes",
+    "8"
+   ],
+   "note": "requires Obli runtime vial stock 0..24 and Fernahei feather stock >0; records actual stock at Shop.open, buys limited stock or skips a zero shelf once, then resumes fishing; does not fabricate or mutate shared shop stock"
+  },
+  {
+   "id": "aio-quest-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 120,
+   "harness": "aio-quest-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-4.md"
+  },
+  {
+   "id": "aio-full-queue-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": true,
+   "budget_min": 480,
+   "harness": "aio-full-queue-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "note": "every implemented quest on a level-70 account seeded with the mustHave items, a coin float, food and a rune kit"
+  },
+  {
+   "id": "aio-fresh-pack-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 10,
+   "harness": "aio-fresh-pack-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "reference_args": [
+    "--quest",
+    "doric",
+    "--junk",
+    "28",
+    "--minutes",
+    "8"
+   ],
+   "proven_at": "0f80d90b",
+   "note": "seeds 28 cow hides into the pack and proves the quest banks them before it provisions"
+  },
+  {
+   "id": "aio-skip-quest-432-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "aio-skip-quest-432-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "banksorter-live",
+   "kind": "reference",
+   "script": "BankSorter",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "banksorter-live.ts",
+   "covers": {
+    "scripts": [
+     "BankSorter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "operator_decision",
+    "reason": "UNAVAILABLE_BY_OPERATOR_DECISION: no native sorter; cases and history are retained, nothing is replaced or silently removed"
+   },
+   "proven_at": "d02c664c",
+   "note": "seeds a scrambled bank at Varrock West, sorts it cold, then tops it up and re-sorts; passes when both orders are contiguous by category and ranked by tier inside each one, the incremental pass takes one insert batch, and varp 304 comes back"
+  },
+  {
+   "id": "banksorter-quest-junk-live",
+   "kind": "reference",
+   "script": "BankSorter",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "banksorter-quest-junk-live.ts",
+   "covers": {
+    "scripts": [
+     "BankSorter"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "operator_decision",
+    "reason": "UNAVAILABLE_BY_OPERATOR_DECISION: no native sorter; cases and history are retained, nothing is replaced or silently removed"
+   }
+  },
+  {
+   "id": "resume-loop-concurrency-live",
+   "kind": "reference",
+   "script": "WalkToBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "harness": "resume-loop-concurrency-live.ts",
+   "covers": {
+    "scripts": [
+     "WalkToBot"
+    ],
+    "subsystems": [
+     "infra",
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "native navigation; it stays outside the foreign catalog rows"
+   },
+   "note": "pauses and resumes in the middle of a walk and proves one loop body comes back, not two (#580 regression)"
+  },
+  {
+   "id": "baxtorian-rope-369-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "baxtorian-rope-369-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "biohazard-234-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 30,
+   "harness": "biohazard-234-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b1c5e06",
+   "documented_in": "docs/reference/quest-harness-recipes.md",
+   "note": "clean account to journal complete in 14min at --tick 100, no parks"
+  },
+  {
+   "id": "brimhaven-agility-test",
+   "kind": "reference",
+   "script": "BrimhavenAgility",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "brimhaven-agility-test.ts",
+   "covers": {
+    "scripts": [
+     "BrimhavenAgility"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "brimhaven-mossgiants-live",
+   "kind": "reference",
+   "script": "BrimhavenMossGiants",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 18,
+   "harness": "brimhaven-mossgiants-live.ts",
+   "covers": {
+    "scripts": [
+     "BrimhavenMossGiants"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "proven_at": "d00d66de",
+   "note": "empty pack at the Ardougne pier bank; passes only after the bank phase, the Captain Barnaby hop and combat XP on the island. Seeds Agility 30: the field sits behind an Agility 10 ropeswing and a combat-only account reads the field as unreac"
+  },
+  {
+   "id": "brimhaven-swarm-597-live",
+   "kind": "reference",
+   "script": "BrimhavenAgility",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "brimhaven-swarm-597-live.ts",
+   "covers": {
+    "scripts": [
+     "BrimhavenAgility"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "brimhaven-steal-restock-live",
+   "kind": "reference",
+   "script": "BrimhavenAgility",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "brimhaven-steal-restock-live.ts",
+   "covers": {
+    "scripts": [
+     "BrimhavenAgility"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "chompy-bird-235-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "chompy-bird-235-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "51ea75ed",
+   "documented_in": "docs/reference/quest-harness-recipes-17.md",
+   "note": "uncheated --stage 0 --until 65 finished in 13 minutes at --tick 200; members-only, so it needs the :8890 world"
+  },
+  {
+   "id": "clue-guardian-eat-live",
+   "kind": "reference",
+   "script": "ClueSolver",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "clue-guardian-eat-live.ts",
+   "covers": {
+    "scripts": [
+     "ClueSolver"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "clue solver is not imported into the native runner"
+   }
+  },
+  {
+   "id": "clue-shantay-pass-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "clue-shantay-pass-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "clues",
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "clue-trails-live",
+   "kind": "reference",
+   "script": "ClueSolver",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "clue-trails-live.ts",
+   "covers": {
+    "scripts": [
+     "ClueSolver"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "clue solver is not imported into the native runner"
+   }
+  },
+  {
+   "id": "clock-tower-236-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 60,
+   "harness": "clock-tower-236-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "ae6a6bc5",
+   "note": "Clock Tower start to finish in 6 minutes at --tick 200; --stage counts placed cogs"
+  },
+  {
+   "id": "scorpion-catcher-258-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "scorpion-catcher-258-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "crandor-ship-367-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "crandor-ship-367-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "deathplateau-237-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "broken",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "deathplateau-237-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "note": "exits 0 whatever happens; asserts no verdict"
+  },
+  {
+   "id": "demon-slayer-goblins-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "demon-slayer-goblins-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "desert-camp-surface-live",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "desert-camp-surface-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   }
+  },
+  {
+   "id": "digsite-251-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 150,
+   "harness": "digsite-251-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "a0f40788",
+   "documented_in": "docs/reference/quest-harness-recipes-15.md",
+   "note": "uncheated --stage 0 --until 9 at --tick 150"
+  },
+  {
+   "id": "doric-level3-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "doric-level3-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "dragon-slayer-379-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "dragon-slayer-379-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "dragonslayer-solo-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "dragonslayer-solo-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "dwarf-cannon-254-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 60,
+   "harness": "dwarf-cannon-254-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "eadgar-ruse-241-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 180,
+   "harness": "eadgar-ruse-241-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-4.md"
+  },
+  {
+   "id": "entrana-gear-368-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "entrana-gear-368-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "ernest-chicken-229-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "ernest-chicken-229-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-4.md"
+  },
+  {
+   "id": "family-crest-210-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 75,
+   "harness": "family-crest-210-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-2.md"
+  },
+  {
+   "id": "fight-arena-233-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 20,
+   "harness": "fight-arena-233-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "d708e10e",
+   "documented_in": "docs/reference/quest-harness-recipes-2.md",
+   "note": "uncheated --stage 0 --until 14 finished in 7 minutes at --tick 150"
+  },
+  {
+   "id": "fight-arena-iron-374-live",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "fight-arena-iron-374-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   }
+  },
+  {
+   "id": "fishing-contest-244-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 15,
+   "harness": "fishing-contest-244-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b21aef5",
+   "documented_in": "docs/reference/quest-harness-recipes-2.md",
+   "note": "uncheated --stage 0 --until 5 finished in 6 minutes at --tick 150; --stage is %fishingcompo"
+  },
+  {
+   "id": "fremennik-trials-266-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 180,
+   "harness": "fremennik-trials-266-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "7a90d351",
+   "documented_in": "docs/reference/quest-harness-recipes-18.md",
+   "note": "Seven trials at 70 stats and --tick 200; --stage counts whole trials won. Koschei passes on a roll that lands on the last hitpoint, so a run can spend one death and a walk back from Lumbridge"
+  },
+  {
+   "id": "gatheringbot-cooker-pair-test",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "gatheringbot-cooker-pair-test.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "documented_in": "docs/how-to/gatheringbot-smoke.md"
+  },
+  {
+   "id": "marketmaker-pair-live",
+   "kind": "reference",
+   "script": "MarketMaker",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 17,
+   "harness": "marketmaker-pair-live.ts",
+   "covers": {
+    "scripts": [
+     "MarketMaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "market-maker planner is not imported into the native runner"
+   },
+   "reference_env": {
+    "BUDGET_S": "900"
+   },
+   "proven_at": "02ca7734",
+   "note": "two accounts at Seers bank: a sale paid by coins in the window, a mixed pile bought with no chat, a live re-price mid-trade, a pile over the trade cap bid at the cap, coins ignored and named, and a cooldown after walking out"
+  },
+  {
+   "id": "marketmaker-aliases-live",
+   "kind": "reference",
+   "script": "MarketMaker",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 14,
+   "harness": "marketmaker-aliases-live.ts",
+   "covers": {
+    "scripts": [
+     "MarketMaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "market-maker planner is not imported into the native runner"
+   },
+   "reference_env": {
+    "BUDGET_S": "900"
+   },
+   "proven_at": "f4e6d57c",
+   "note": "the names the content repeats: a list carrying only stock, a repeated name answered with its colours, and a colour and a key half each resolving to the one obj the customer named"
+  },
+  {
+   "id": "marketmaker-short-float-live",
+   "kind": "reference",
+   "script": "MarketMaker",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 6,
+   "harness": "marketmaker-short-float-live.ts",
+   "covers": {
+    "scripts": [
+     "MarketMaker"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "market-maker planner is not imported into the native runner"
+   },
+   "reference_env": {
+    "WATCH_S": "90"
+   },
+   "proven_at": "974e867e",
+   "note": "a bank holding less than the coin float: one trip and open for business, rather than banking and re-withdrawing the same stack every loop"
+  },
+  {
+   "id": "marketmaker-upkeep-live",
+   "kind": "reference",
+   "script": "MarketMaker",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 20,
+   "harness": "marketmaker-upkeep-live.ts",
+   "covers": {
+    "scripts": [
+     "MarketMaker"
+    ],
+    "subsystems": [
+     "panel"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "market-maker planner is not imported into the native runner"
+   },
+   "reference_env": {
+    "IDLE_MIN": "12"
+   },
+   "proven_at": "f8a624c9",
+   "note": "a shop left standing past the 10min wedge with no stall-guard restart, its own chat read back off its own client, and the order book filtered and edited without losing the scroll or the caret"
+  },
+  {
+   "id": "gatheringbot-mule-pair-test",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "gatheringbot-mule-pair-test.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "documented_in": "docs/how-to/gatheringbot-smoke.md"
+  },
+  {
+   "id": "gatheringbot-range-path-test",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "gatheringbot-range-path-test.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "documented_in": "docs/how-to/gatheringbot-smoke.md"
+  },
+  {
+   "id": "gatheringbot-test",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "gatheringbot-test.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "documented_in": "package.json verify:gatheringbot"
+  },
+  {
+   "id": "gertrudes-cat-245-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 60,
+   "harness": "gertrudes-cat-245-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-11.md"
+  },
+  {
+   "id": "grand-tree-247-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "grand-tree-247-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "gutanoth-ledges-364-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "gutanoth-ledges-364-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "hazeel-cult-248-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "hazeel-cult-248-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "a8fa0762",
+   "documented_in": "docs/reference/quest-harness-recipes-8.md",
+   "note": "clean account to journal complete in 4min at --tick 200, no parks; --stage is %hazeelcultquest"
+  },
+  {
+   "id": "heros-quest-items-249-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 60,
+   "harness": "heros-quest-items-249-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-19.md",
+   "note": "one account seeded at stage 13 \u2014 proves the eel chain, the feather and the hand-in"
+  },
+  {
+   "id": "heros-quest-pair-249-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": true,
+   "budget_min": 90,
+   "harness": "heros-quest-pair-249-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-19.md",
+   "note": "two accounts, one per gang; --stage grip proves the armband dance in 9min at --tick 300"
+  },
+  {
+   "id": "holy-grail-246-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "holy-grail-246-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b21aef5",
+   "note": "Holy Grail start to finish in 26 minutes at --tick 200; --stage takes the %grail values quest_grail.constant uses"
+  },
+  {
+   "id": "horror-deep-216-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "horror-deep-216-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-6.md"
+  },
+  {
+   "id": "hosted-wall-test",
+   "kind": "reference",
+   "script": null,
+   "status": "documented",
+   "manual": true,
+   "budget_min": 12,
+   "harness": "hosted-wall-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "multibox"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "manual in the reference manifest; reachable only through --only"
+   },
+   "documented_in": "docs/how-to/maintainer-infra.md"
+  },
+  {
+   "id": "imp-catcher-230-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "imp-catcher-230-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-3.md"
+  },
+  {
+   "id": "knights-sword-228-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 60,
+   "harness": "knights-sword-228-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "legends-quest-253-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 180,
+   "harness": "legends-quest-253-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "loadout-panel-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "loadout-panel-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "panel"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "loot-csv-panel-live",
+   "kind": "reference",
+   "script": "AutoFighter",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 4,
+   "harness": "loot-csv-panel-live.ts",
+   "covers": {
+    "scripts": [
+     "AutoFighter"
+    ],
+    "subsystems": [
+     "panel"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "proven_at": "e3ef8111",
+   "note": "drives the params modal: list chips, switch to CSV, copy, paste, and back to chips with the pasted list intact"
+  },
+  {
+   "id": "lostcity-spirit-eat-393-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "lostcity-spirit-eat-393-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "lostcity-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "lostcity-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "mage-bank-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "mage-bank-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "map-picker-basemap-live",
+   "kind": "reference",
+   "script": "WalkToBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "map-picker-basemap-live.ts",
+   "covers": {
+    "scripts": [
+     "WalkToBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "native navigation; it stays outside the foreign catalog rows"
+   },
+   "documented_in": "package.json verify:map-picker"
+  },
+  {
+   "id": "map-picker-showcase-live",
+   "kind": "reference",
+   "script": "WalkToBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "map-picker-showcase-live.ts",
+   "covers": {
+    "scripts": [
+     "WalkToBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "native navigation; it stays outside the foreign catalog rows"
+   }
+  },
+  {
+   "id": "map-picker-walkto-e2e-live",
+   "kind": "reference",
+   "script": "WalkToBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "map-picker-walkto-e2e-live.ts",
+   "covers": {
+    "scripts": [
+     "WalkToBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "native navigation; it stays outside the foreign catalog rows"
+   },
+   "documented_in": "package.json verify:map-picker-e2e"
+  },
+  {
+   "id": "maze-at-start-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "maze-at-start-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "maze-probe-live",
+   "kind": "reference",
+   "script": null,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 6,
+   "harness": "maze-probe-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "reference_args": [
+    "--spawn",
+    "se",
+    "--minutes",
+    "4"
+   ],
+   "proven_at": "f3e20a70",
+   "note": "teleports to one of the four maze corners and passes when the guardian solves the route out. `--spawn se` is the 28-step leg to the door at (2936,4560) that used to read as walled off; nw, ne and sw all pass too"
+  },
+  {
+   "id": "merlin-mordred-353-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "merlin-mordred-353-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "quests",
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "note": "import-fences.md names it as an ABI consumer, not as run instructions"
+  },
+  {
+   "id": "monks-friend-240-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 30,
+   "harness": "monks-friend-240-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b21aef5"
+  },
+  {
+   "id": "mortton-255-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 120,
+   "harness": "mortton-255-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "929f506d",
+   "documented_in": "docs/reference/quest-harness-recipes-3.md"
+  },
+  {
+   "id": "miner-fight-arena-bank-live",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "miner-fight-arena-bank-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   },
+   "proven_at": "4f99b5cf",
+   "note": "a full ore pack at the Fight Arena Mine has to reach the Yanille booth, and the run fails if the walk drifts to East Ardougne"
+  },
+  {
+   "id": "multibox-profile-transfer-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "multibox-profile-transfer-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "multibox"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "multibox-tab-renderer-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "multibox-tab-renderer-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "multibox"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "multibox-tabs-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "multibox-tabs-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "multibox"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "murder-mystery-256-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "murder-mystery-256-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-6.md",
+   "note": "Murder Mystery start to finish; --stage seeds the guilty sibling as well as the evidence"
+  },
+  {
+   "id": "naturespirit-239-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 120,
+   "harness": "naturespirit-239-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-14.md"
+  },
+  {
+   "id": "nav-path-paint-live",
+   "kind": "reference",
+   "script": null,
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav-path-paint-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "docs/how-to/compare-path-paint.md"
+  },
+  {
+   "id": "nav-script-routes-live",
+   "kind": "reference",
+   "script": null,
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav-script-routes-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "docs/how-to/script-travel-od.md"
+  },
+  {
+   "id": "nav-script-travel-live",
+   "kind": "reference",
+   "script": null,
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav-script-travel-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "docs/how-to/script-travel-od.md"
+  },
+  {
+   "id": "nav-stress-live",
+   "kind": "reference",
+   "script": null,
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav-stress-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "docs/how-to/compare-path-paint.md"
+  },
+  {
+   "id": "nav-two-route-smoke-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav-two-route-smoke-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "hardclue-nav-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": true,
+   "budget_min": 240,
+   "harness": "clues/hardclue-nav-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav",
+     "clues"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "manual in the reference manifest; reachable only through --only"
+   },
+   "reference_args": [
+    "--limit",
+    "8"
+   ],
+   "note": "web-walks to every hard clue destination with the transport quests complete and the gate kit carried; --limit 0 sweeps them all"
+  },
+  {
+   "id": "tirannwn-clue-gate-live",
+   "kind": "reference",
+   "script": "ClueSolver",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "harness": "clues/tirannwn-clue-gate-live.ts",
+   "covers": {
+    "scripts": [
+     "ClueSolver"
+    ],
+    "subsystems": [
+     "clues",
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "clue solver is not imported into the native runner"
+   },
+   "reference_args": [
+    "--tick",
+    "150"
+   ],
+   "note": "runs 3560/3562/3564 through ClueSolver with Regicide unfinished then seeded complete; asserts the gate shuts and opens, and reports the Isafdar nav gap without failing on it"
+  },
+  {
+   "id": "spirit-tree-walk-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 15,
+   "harness": "spirit-tree-walk-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "note": "every transport quest complete, then three legs the pack plans through a Spirit Tree"
+  },
+  {
+   "id": "observatory-252-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "observatory-252-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b21aef5",
+   "note": "Observatory Quest start to finish in 14 minutes at --tick 200, 70 stats; --stage is the raw %itgronigen"
+  },
+  {
+   "id": "route-walk-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav/route-walk-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "boat-stall-probe-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "nav/boat-stall-probe-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "piratestreasure-231-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "piratestreasure-231-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "plague-city-243-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "plague-city-243-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "3ab5d0a4",
+   "documented_in": "docs/reference/quest-harness-recipes-5.md",
+   "note": "clean account to journal complete in 23min at --tick 300, no parks"
+  },
+  {
+   "id": "upass-265-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 110,
+   "harness": "upass-265-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-16.md",
+   "note": "every leg 0 to 10 proven live from its own seeded stage; end to end stalls in the second cavern"
+  },
+  {
+   "id": "regicide-257-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "regicide-257-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "note": "seeds Underground Pass complete varp and bits; --stage is the %regicide_quest value, 0 to 15"
+  },
+  {
+   "id": "plague-pipe-366-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "plague-pipe-366-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "princeali-solo-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "princeali-solo-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "hostile-random-damage-live",
+   "kind": "reference",
+   "script": null,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "hostile-random-damage-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "random-events"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "proven_at": "417c30b6",
+   "note": "eight hostile families ignore spawns and zero hits, then escape and return after positive damage with no target information; includes a natural Swarm attack"
+  },
+  {
+   "id": "random-events-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "random-events-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "random-events"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "roguespurse-test",
+   "kind": "reference",
+   "script": "RoguesPurse",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "roguespurse-test.ts",
+   "covers": {
+    "scripts": [
+     "RoguesPurse"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-2.md"
+  },
+  {
+   "id": "romeo-juliet-rewrite-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "romeo-juliet-rewrite-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "scene-rebuild-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "scene-rebuild-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "sea-slug-259-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "sea-slug-259-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "8b21aef5",
+   "documented_in": "docs/reference/quest-harness-recipes-7.md",
+   "note": "Sea Slug start to finish in 5 minutes at --tick 200; --stage writes %seaslugquest straight"
+  },
+  {
+   "id": "shantay-pass-route-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "shantay-pass-route-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav",
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "sheep-herder-260-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "sheep-herder-260-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "shield-of-arrav-232-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "shield-of-arrav-232-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "0db0e3f6",
+   "documented_in": "docs/reference/quest-harness-recipes-7.md",
+   "note": "one gang side only \u2014 a lone account cannot redeem, so this never turns the journal green"
+  },
+  {
+   "id": "shield-of-arrav-pair-232-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": true,
+   "budget_min": 90,
+   "harness": "shield-of-arrav-pair-232-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "0db0e3f6",
+   "documented_in": "docs/reference/quest-harness-recipes-7.md",
+   "note": "two fresh accounts, one per gang, both journals complete in 6min at --tick 300"
+  },
+  {
+   "id": "shilo-solo-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "shilo-solo-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-2.md"
+  },
+  {
+   "id": "strangebox-bank-open-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 5,
+   "harness": "strangebox-bank-open-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "random-events"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "note": "Varrock West booth left open, then ::give macro_cube; passes when the solver closes the bank, Open is present, and the box is consumed (#756)"
+  },
+  {
+   "id": "strangebox-repro-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "strangebox-repro-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "random-events"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "strangebox-underscript-live",
+   "kind": "reference",
+   "script": "GatheringBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "strangebox-underscript-live.ts",
+   "covers": {
+    "scripts": [
+     "GatheringBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "gatherer/Fisher planner is not imported into the native runner"
+   }
+  },
+  {
+   "id": "tbwt-261-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 180,
+   "harness": "tbwt-261-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "documented_in": "docs/reference/quest-harness-recipes-9.md"
+  },
+  {
+   "id": "temple-of-ikov-250-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "temple-of-ikov-250-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "760bae8f",
+   "documented_in": "docs/reference/quest-harness-recipes-9.md",
+   "note": "members-only, :8890 \u2014 uncheated --until 100 finished in 39 minutes at --tick 200 on 20 lobsters, no parks and no deaths; the default kit is coins, food and the gear the bank already holds"
+  },
+  {
+   "id": "thievingbot-test",
+   "kind": "reference",
+   "script": "ThievingBot",
+   "status": "documented",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "thievingbot-test.ts",
+   "covers": {
+    "scripts": [
+     "ThievingBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   },
+   "documented_in": "package.json verify:thievingbot"
+  },
+  {
+   "id": "touristtrap-cart-recovery-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "touristtrap-cart-recovery-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "trapdoor-mines-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "trapdoor-mines-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "treegnome-263-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 120,
+   "harness": "treegnome-263-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "tribal-totem-262-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 45,
+   "harness": "tribal-totem-262-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "proven_at": "ea865e4d",
+   "note": "Tribal Totem start to finish in 5 minutes at --tick 200 on 70 stats; --stage is %totemquest and --combo skips the KURT lock"
+  },
+  {
+   "id": "trollstronghold-264-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 90,
+   "harness": "trollstronghold-264-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "vampire-slayer-live-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "vampire-slayer-live-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "varrock-sewer-web-370-live",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "varrock-sewer-web-370-live.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "world"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "walkmap-picker-443-live",
+   "kind": "reference",
+   "script": "WalkToBot",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "walkmap-picker-443-live.ts",
+   "covers": {
+    "scripts": [
+     "WalkToBot"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "native navigation; it stays outside the foreign catalog rows"
+   }
+  },
+  {
+   "id": "watchtower-solo-test",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "watchtower-solo-test.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "waterfall-exit-test",
+   "kind": "reference",
+   "script": null,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "harness": "waterfall-exit-test.ts",
+   "covers": {
+    "scripts": [],
+    "subsystems": [
+     "nav",
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "unmapped_reference",
+    "reason": "reference case covers an intended script but has no 1:1 native adapter declared in the approved mapping; the script runs natively as its primary case"
+   }
+  },
+  {
+   "id": "cooksassistant-758-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 10,
+   "harness": "cooksassistant-758-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "witchs-potion-rats-tail-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "witchs-potion-rats-tail-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   }
+  },
+  {
+   "id": "runemysteries-759-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "harness": "runemysteries-759-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "note": "seeds leftover air talismans plus the research package at stage 3; passes when AIOQuester talks to Aubury and never Sedridor (#759)"
+  },
+  {
+   "id": "witchs-house-226-live",
+   "kind": "reference",
+   "script": "AIOQuester",
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 35,
+   "harness": "witchs-house-226-live.ts",
+   "covers": {
+    "scripts": [
+     "AIOQuester"
+    ],
+    "subsystems": [
+     "quests"
+    ],
+    "paths": []
+   },
+   "unavailable": {
+    "code": "excluded_script",
+    "reason": "quests are not imported into the native runner; the reference case documents coverage and prerequisites only"
+   },
+   "reference_args": [
+    "--stage",
+    "5",
+    "--until",
+    "6",
+    "--at",
+    "2901,3466,0",
+    "--stocked",
+    "--minutes",
+    "30"
+   ]
+  }
+ ]
+}
