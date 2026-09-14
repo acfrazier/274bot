@@ -3494,22 +3494,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             .map_err(|e| format!("{e}"))
     }
 
-    fn deliver_pending_native_events(
+    fn deliver_native_events(
         runtime: &mut Runtime,
-        pending_events: &mut Vec<crate::events::NativeEvent>,
+        events: &[crate::events::NativeEvent],
         out: &Sender<ThreadMsg>,
-        host_hold: bool,
     ) {
-        if pending_events.is_empty() {
+        if events.is_empty() {
             return;
         }
-        let events = std::mem::take(pending_events);
-        if let Err(e) = dispatch_native_events(runtime, &events) {
+        if let Err(e) = dispatch_native_events(runtime, events) {
             let _ = out.send(ThreadMsg::Log(format!("native events: {e}")));
-        }
-        if host_hold {
-            let _ = runtime
-                .eval::<()>("if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []");
         }
     }
 
@@ -4180,7 +4174,6 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
         let mut host_hold = false;
         let mut event_producer = crate::events::NativeEventProducer::new();
-        let mut pending_events: Vec<crate::events::NativeEvent> = Vec::new();
         // One reusable encode buffer for this V8 isolate: interact batch
         // and paint frames share it (`reset` between messages).
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
@@ -4251,9 +4244,6 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 if let Some(diag) = observed.diagnostic {
                                     let _ = out.send(ThreadMsg::Log(diag));
                                 }
-                                if !observed.events.is_empty() {
-                                    pending_events.extend(observed.events);
-                                }
                             }
                         }
                         Err(e) => {
@@ -4283,12 +4273,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         continue;
                     }
                     let start = Instant::now();
-                    deliver_pending_native_events(
-                        &mut runtime,
-                        &mut pending_events,
-                        &out,
-                        host_hold,
-                    );
+                    let observed = event_producer.take_eligible();
+                    if let Some(diag) = observed.diagnostic {
+                        let _ = out.send(ThreadMsg::Log(diag));
+                    }
+                    deliver_native_events(&mut runtime, &observed.events, &out);
                     // Guardian hold: skip `loop()` AND skip resolving
                     // parked conds (time waits too) — the wait stays parked
                     // until the hold lifts. Still call `onPaint` so status
@@ -4316,6 +4305,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             }
                         }
                         clear_unconsumed_paint_click(&mut runtime);
+                        // Ownership boundary after callback eval + microtasks:
+                        // drop public actions and cancel a terminate armed by
+                        // a runaway listener so the next eligible tick recovers.
+                        runtime
+                            .deno_runtime()
+                            .v8_isolate()
+                            .cancel_terminate_execution();
+                        let _ = runtime.eval::<()>(
+                            "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
+                        );
                         let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                             &mut runtime,
                         )));
@@ -4515,7 +4514,6 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::trade::on_reset();
                     crate::drive_partner_trade::on_reset();
                     event_producer.reset();
-                    pending_events.clear();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     clear_unconsumed_paint_click(&mut runtime);
                 }
@@ -4538,13 +4536,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 }
                 IsolateCmd::Resume => {
                     paused = false;
-                    let resumed = event_producer.set_paused(false);
-                    if let Some(diag) = resumed.diagnostic {
-                        let _ = out.send(ThreadMsg::Log(diag));
-                    }
-                    if !resumed.events.is_empty() {
-                        pending_events.extend(resumed.events);
-                    }
+                    let _ = event_producer.set_paused(false);
                     crate::periodic_bank::on_resume();
                     crate::bank_open::on_resume();
                     crate::cake_stall::on_resume();

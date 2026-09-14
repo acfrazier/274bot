@@ -150,6 +150,11 @@ fn examplebot_source() -> String {
     script::transpile_ts(&src).expect("transpile ExampleBot")
 }
 
+fn probe_alive(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
+    iso.probe(expr)
+        .unwrap_or_else(|e| panic!("isolate unusable for {expr}: {e}"))
+}
+
 fn probe_i64(iso: &LoadIsolate, expr: &str) -> i64 {
     iso.probe(expr)
         .unwrap_or(serde_json::Value::Null)
@@ -509,9 +514,9 @@ fn rejected_async_callback_does_not_poison_siblings() {
 export default class T extends LoopingBot {
     onStart() {
         this.on('skill.xp', () => Promise.reject('nope'));
-        this.on('skill.xp', (e) => { globalThis.__xp = e.delta; });
+        this.on('skill.xp', (e) => { globalThis.__xp = e.xp; globalThis.__hits = (globalThis.__hits || 0) + 1; });
     }
-    loop() {}
+    loop() { globalThis.__alive = (globalThis.__alive || 0) + 1; }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -520,16 +525,48 @@ export default class T extends LoopingBot {
     snap.stats = &stats0;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let _ = iso.probe("1");
+    let _ = probe_alive(&iso, "1");
     let stats1 = [prayer(224)];
     snap.stats = &stats1;
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    let _ = iso.probe("1");
-    assert_eq!(probe_i64(&iso, "__xp||0"), 112);
+    let xp = probe_alive(&iso, "__xp");
+    assert_eq!(
+        xp.as_i64(),
+        Some(224),
+        "sibling must see the real xp, not a missing-probe fallback: {xp:?}"
+    );
+    assert_eq!(probe_alive(&iso, "__hits").as_i64(), Some(1));
     iso.on_game_tick(3);
-    let _ = iso.probe("1");
+    let alive = probe_alive(&iso, "__alive");
+    assert!(
+        alive.as_i64().unwrap_or(0) >= 1,
+        "runner must keep ticking after rejection: {alive:?}"
+    );
+    let last_err = probe_alive(&iso, "globalThis.__rs2b0t_host.lastError");
+    assert_eq!(
+        last_err,
+        serde_json::Value::Null,
+        "handled rejection must not leave lastError armed: {last_err:?}"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("nope")),
+        "rejection must surface on the tick log, got {logs:?}"
+    );
+    let stats2 = [prayer(336)];
+    snap.stats = &stats2;
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    let xp2 = probe_alive(&iso, "__xp");
+    assert_eq!(
+        xp2.as_i64(),
+        Some(336),
+        "later event still delivers: {xp2:?}"
+    );
+    assert_eq!(probe_alive(&iso, "__hits").as_i64(), Some(2));
     iso.join();
 }
 
@@ -603,5 +640,291 @@ fn reset_session_drops_pending_and_reseeds() {
     iso.on_game_tick(5);
     let _ = iso.probe("1");
     assert_eq!(probe_i64(&iso, "__buried||0"), 1);
+    iso.join();
+}
+
+#[test]
+fn multi_snapshot_without_tick_delivers_net() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    snap.inv = &[];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    snap.inv = &bones;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(
+        probe_i64(&iso, "__buried||0"),
+        0,
+        "intermediate bury must not backlog across snapshots"
+    );
+    iso.join();
+}
+
+#[test]
+fn logout_before_tick_does_not_replay_bury() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    snap.inv = &[];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    snap.ingame = false;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    snap.ingame = true;
+    snap.inv = &bones;
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(
+        probe_i64(&iso, "__buried||0"),
+        0,
+        "pre-logout bury must not replay after reseed"
+    );
+    iso.join();
+}
+
+#[test]
+fn sparse_offline_omit_ingame_does_not_fire() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let stats0 = [prayer(112)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    snap.stats = &stats0;
+    let (kf, fp) = encode_snapshot_delta(None, &snap, false);
+    iso.post_snapshot(kf);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    snap.ingame = false;
+    snap.tick = 2;
+    let (logout, fp2) = encode_snapshot_delta(Some(&fp), &snap, false);
+    iso.post_snapshot(logout);
+    snap.tick = 3;
+    let stats1 = [prayer(224)];
+    snap.stats = &stats1;
+    snap.inv = &[];
+    let (sparse, _) = encode_snapshot_delta(Some(&fp2), &snap, false);
+    iso.post_snapshot(sparse);
+    iso.on_game_tick(3);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    snap.ingame = true;
+    snap.tick = 4;
+    let (online, _) = encode_snapshot_delta(None, &snap, false);
+    iso.post_snapshot(online);
+    iso.on_game_tick(4);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    iso.join();
+}
+
+#[test]
+fn pause_reconnect_does_not_fabricate_history() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let stats0 = [prayer(112)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    snap.stats = &stats0;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    iso.pause();
+    snap.ingame = false;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    snap.ingame = true;
+    snap.inv = &[];
+    let stats1 = [prayer(224)];
+    snap.stats = &stats1;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.resume();
+    iso.on_game_tick(4);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(probe_i64(&iso, "__buried||0"), 0);
+    assert_eq!(probe_i64(&iso, "__xp||0"), 0);
+    iso.join();
+}
+
+#[test]
+fn pause_size0_then_ready_does_not_fabricate() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    iso.pause();
+    snap.inv_size = 0;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    snap.inv_size = 28;
+    snap.inv = &bones;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.resume();
+    iso.on_game_tick(4);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(
+        probe_i64(&iso, "__buried||0"),
+        0,
+        "size0→ready during pause must seed"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_invalid_then_valid_does_not_fabricate() {
+    let iso = spawn_listeners();
+    let bones = [bone(0)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    iso.pause();
+    let bad = [ItemRowInput {
+        name: Some("Bones"),
+        count: 1,
+        id: 526,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot: -1,
+    }];
+    snap.inv = &bad;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    snap.inv = &bones;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.resume();
+    iso.on_game_tick(4);
+    let _ = probe_alive(&iso, "1");
+    assert_eq!(
+        probe_i64(&iso, "__buried||0"),
+        0,
+        "invalid→valid during pause must seed"
+    );
+    iso.join();
+}
+
+#[test]
+fn hold_async_public_action_is_dropped() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('skill.xp', async () => {
+            globalThis.__xp = (globalThis.__xp || 0) + 1;
+            await Promise.resolve();
+            const b = Inventory.first('Bones');
+            if (b) b.interact('Bury');
+            globalThis.__after = true;
+        });
+    }
+    loop() { globalThis.__loop = (globalThis.__loop || 0) + 1; }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bones = [bone(0)];
+    let stats0 = [prayer(112)];
+    let mut snap = base_snapshot();
+    snap.inv = &bones;
+    snap.stats = &stats0;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = probe_alive(&iso, "1");
+    let stats1 = [prayer(224)];
+    snap.stats = &stats1;
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(probe_alive(&iso, "__xp").as_i64(), Some(1));
+    assert_eq!(probe_alive(&iso, "__after"), serde_json::Value::Bool(true));
+    let held = iso.drain_interacts();
+    assert!(
+        held.is_empty(),
+        "hold must drop async public action: {held:?}"
+    );
+    snap.hold = false;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = probe_alive(&iso, "1");
+    let after = iso.drain_interacts();
+    assert!(
+        after.is_empty(),
+        "lifted hold must not flush dropped callback action: {after:?}"
+    );
+    assert!(
+        probe_alive(&iso, "__loop").as_i64().unwrap_or(0) >= 1,
+        "non-hold tick must still run loop"
+    );
+    iso.join();
+}
+
+#[test]
+fn hold_runaway_callback_next_tick_recovers() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        this.on('skill.xp', () => { while (true) {} });
+    }
+    loop() { globalThis.__alive = (globalThis.__alive || 0) + 1; }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let stats0 = [prayer(112)];
+    let mut snap = base_snapshot();
+    snap.stats = &stats0;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let before = probe_alive(&iso, "__alive")
+        .as_i64()
+        .expect("tick 1 loop must run");
+    let stats1 = [prayer(224)];
+    snap.stats = &stats1;
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    snap.hold = false;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let n = probe_alive(&iso, "__alive")
+        .as_i64()
+        .expect("isolate must stay usable after hold-path interrupt");
+    assert!(
+        n > before,
+        "next eligible tick must recover after hold-path interrupt: before={before} after={n}"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("interrupted")),
+        "runaway under hold must use the existing interrupt, got {logs:?}"
+    );
     iso.join();
 }

@@ -1,8 +1,9 @@
 //! Isolate-thread producer for `skill.xp` and `inventory.changed`.
 //!
-//! Diffs posted FlatBuffer inv/stats after decode. JS only stores `this.on`
-//! callbacks. Callbacks are not executed here — `load` delivers the returned
-//! events from a generation/pause/budget-gated tick.
+//! Diffs posted FlatBuffer inv/stats after decode into bounded last/current
+//! tables. JS only stores `this.on` callbacks. `observe` never executes
+//! subscriptions; `take_eligible` is the only emit, called from a
+//! generation/pause/budget-gated tick.
 
 use crate::isolate_fb::{RowReader, SnapshotReader, StatReader};
 
@@ -69,17 +70,21 @@ pub struct ObserveResult {
     pub diagnostic: Option<String>,
 }
 
-/// Per-isolate last delivered baselines plus pause-held current tables.
+/// Per-isolate last delivered/seeded baselines plus latest observed tables.
+/// `last_*` commits only on seed or `take_eligible`; `current_*` tracks the
+/// newest posted family. Pause gates take, not absorb. `offline` sticks until
+/// a real `ingame=true` observation, so omitted-ingame sparse vectors cannot
+/// seed or emit.
 #[derive(Debug, Default)]
 pub struct NativeEventProducer {
     last_inv: Option<Vec<SlotState>>,
     last_inv_size: i32,
     last_xp: Option<Vec<XpState>>,
+    current_inv: Option<Vec<SlotState>>,
+    current_inv_size: i32,
+    current_xp: Option<Vec<XpState>>,
     paused: bool,
-    held_inv: Option<Vec<SlotState>>,
-    held_inv_size: Option<i32>,
-    held_xp: Option<Vec<XpState>>,
-    held_ingame_false: bool,
+    offline: bool,
 }
 
 impl NativeEventProducer {
@@ -91,188 +96,117 @@ impl NativeEventProducer {
         *self = Self::default();
     }
 
-    /// Pause freezes callback production. Snapshot decode may still absorb
-    /// current tables into a single held state (no backlog). Resume returns
-    /// the net eligible diff against the last delivered baseline.
+    /// Pause freezes `take_eligible` only. Snapshot decode still absorbs
+    /// into the single current table (no backlog). Resume does not emit;
+    /// the next gated take returns the net against last delivered/seeded.
     pub fn set_paused(&mut self, paused: bool) -> ObserveResult {
-        if self.paused == paused {
-            return ObserveResult::default();
-        }
         self.paused = paused;
-        if paused {
-            self.clear_held();
-            ObserveResult::default()
-        } else {
-            self.flush_held()
-        }
+        ObserveResult::default()
     }
 
+    /// Absorb posted tables into bounded current/last state. Never emits.
+    /// Invalidation (offline, inv_size 0, invalid slots) resets that family
+    /// immediately, including during Pause, so a later valid table seeds.
     pub fn observe(&mut self, snap: &SnapshotReader<'_>) -> ObserveResult {
-        if self.paused {
-            let diagnostic = self.absorb_held(snap);
-            return ObserveResult {
-                events: Vec::new(),
-                diagnostic,
-            };
-        }
-        self.observe_live(snap)
-    }
-
-    fn observe_live(&mut self, snap: &SnapshotReader<'_>) -> ObserveResult {
         if snap.has_ingame() && !snap.ingame() {
+            self.offline = true;
             self.reset_baselines();
             return ObserveResult::default();
         }
+        if self.offline {
+            if !(snap.has_ingame() && snap.ingame()) {
+                return ObserveResult::default();
+            }
+            self.offline = false;
+        }
 
-        let mut events = Vec::new();
         let mut diagnostic = None;
 
         if snap.has_stats() {
-            events.extend(self.apply_stats(&collect_xp(snap)));
+            let current = collect_xp(snap);
+            if self.last_xp.is_none() {
+                self.last_xp = Some(current.clone());
+            }
+            self.current_xp = Some(current);
         }
 
         if snap.has_inv_size() {
             let size = snap.inv_size();
             if size <= 0 {
-                self.last_inv_size = 0;
-                self.last_inv = None;
+                self.reset_inv_family();
             } else if size > MAX_INV_SIZE {
                 diagnostic = Some(format!(
                     "inventory events: inv_size {size} exceeds {MAX_INV_SIZE}; family reset"
                 ));
-                self.last_inv_size = 0;
-                self.last_inv = None;
+                self.reset_inv_family();
             } else {
-                if !snap.has_inv() && self.last_inv_size != size {
+                if !snap.has_inv() && self.current_inv_size != size {
                     // Scalar size change without rows: do not fabricate removals.
                     self.last_inv = None;
+                    self.current_inv = None;
                 }
+                self.current_inv_size = size;
                 self.last_inv_size = size;
             }
         }
 
         if snap.has_inv() {
-            match self.apply_inv(&snap.inv()) {
-                Ok(inv_events) => events.extend(inv_events),
-                Err(reason) => {
-                    diagnostic = Some(reason);
-                    self.last_inv = None;
-                }
-            }
-        }
-
-        ObserveResult { events, diagnostic }
-    }
-
-    fn apply_stats(&mut self, current: &[XpState]) -> Vec<NativeEvent> {
-        match self.last_xp.as_mut() {
-            None => {
-                self.last_xp = Some(current.to_vec());
-                Vec::new()
-            }
-            Some(last) => {
-                let events = diff_xp(last, current);
-                merge_xp(last, current);
-                events
-            }
-        }
-    }
-
-    fn apply_inv(&mut self, rows: &[RowReader<'_>]) -> Result<Vec<NativeEvent>, String> {
-        if self.last_inv_size <= 0 {
-            // Tutorial-locked / unknown size: leftover rows do not seed.
-            return Ok(Vec::new());
-        }
-        let current = expand_inv(rows, self.last_inv_size)?;
-        match self.last_inv.as_ref() {
-            None => {
-                self.last_inv = Some(current);
-                Ok(Vec::new())
-            }
-            Some(last) => {
-                let events = diff_inv(last, &current);
-                self.last_inv = Some(current);
-                Ok(events)
-            }
-        }
-    }
-
-    fn absorb_held(&mut self, snap: &SnapshotReader<'_>) -> Option<String> {
-        if snap.has_ingame() && !snap.ingame() {
-            self.held_ingame_false = true;
-            self.held_inv = None;
-            self.held_xp = None;
-            self.held_inv_size = Some(0);
-            return None;
-        }
-        if snap.has_ingame() && snap.ingame() {
-            self.held_ingame_false = false;
-        }
-        if snap.has_stats() {
-            self.held_xp = Some(collect_xp(snap));
-        }
-        let mut diagnostic = None;
-        if snap.has_inv_size() {
-            let size = snap.inv_size();
-            if size <= 0 || size > MAX_INV_SIZE {
-                if size > MAX_INV_SIZE {
-                    diagnostic = Some(format!(
-                        "inventory events: inv_size {size} exceeds {MAX_INV_SIZE}; family reset"
-                    ));
-                }
-                self.held_inv_size = Some(0);
-                self.held_inv = None;
+            let size = if self.current_inv_size > 0 {
+                self.current_inv_size
             } else {
-                if !snap.has_inv() {
-                    self.held_inv = None;
-                }
-                self.held_inv_size = Some(size);
-            }
-        }
-        if snap.has_inv() {
-            let size = self.held_inv_size.unwrap_or(self.last_inv_size);
+                self.last_inv_size
+            };
             if size > 0 {
                 match expand_inv(&snap.inv(), size) {
-                    Ok(slots) => self.held_inv = Some(slots),
+                    Ok(slots) => {
+                        if self.last_inv.is_none() {
+                            self.last_inv = Some(slots.clone());
+                        }
+                        self.current_inv = Some(slots);
+                    }
                     Err(reason) => {
-                        self.held_inv = None;
                         diagnostic = Some(reason);
+                        self.last_inv = None;
+                        self.current_inv = None;
                     }
                 }
             }
         }
-        diagnostic
+
+        ObserveResult {
+            events: Vec::new(),
+            diagnostic,
+        }
     }
 
-    fn flush_held(&mut self) -> ObserveResult {
-        if self.held_ingame_false {
-            self.reset_baselines();
-            self.clear_held();
+    /// Net eligible events since last seed/delivery. Empty while paused or
+    /// offline. Commits current into last so a later take is not a backlog.
+    pub fn take_eligible(&mut self) -> ObserveResult {
+        if self.paused || self.offline {
             return ObserveResult::default();
         }
         let mut events = Vec::new();
-        if let Some(held) = self.held_xp.take() {
-            events.extend(self.apply_stats(&held));
-        }
-        if let Some(size) = self.held_inv_size.take() {
-            if size <= 0 {
-                self.last_inv_size = 0;
-                self.last_inv = None;
-            } else if self.held_inv.is_none() && self.last_inv_size != size {
-                self.last_inv = None;
-                self.last_inv_size = size;
-            } else {
-                self.last_inv_size = size;
+        match (&self.last_xp, &self.current_xp) {
+            (Some(last), Some(cur)) if last != cur => {
+                events.extend(diff_xp(last, cur));
+                let mut last = last.clone();
+                merge_xp(&mut last, cur);
+                self.last_xp = Some(last);
             }
-        }
-        if let Some(held) = self.held_inv.take() {
-            match self.last_inv.as_ref() {
-                None => self.last_inv = Some(held),
-                Some(last) => {
-                    events.extend(diff_inv(last, &held));
-                    self.last_inv = Some(held);
-                }
+            (None, Some(cur)) => {
+                self.last_xp = Some(cur.clone());
             }
+            _ => {}
+        }
+        match (&self.last_inv, &self.current_inv) {
+            (Some(last), Some(cur)) if last != cur => {
+                events.extend(diff_inv(last, cur));
+                self.last_inv = Some(cur.clone());
+            }
+            (None, Some(cur)) => {
+                self.last_inv = Some(cur.clone());
+            }
+            _ => {}
         }
         ObserveResult {
             events,
@@ -284,13 +218,15 @@ impl NativeEventProducer {
         self.last_inv = None;
         self.last_inv_size = 0;
         self.last_xp = None;
+        self.reset_inv_family();
+        self.current_xp = None;
     }
 
-    fn clear_held(&mut self) {
-        self.held_inv = None;
-        self.held_inv_size = None;
-        self.held_xp = None;
-        self.held_ingame_false = false;
+    fn reset_inv_family(&mut self) {
+        self.last_inv = None;
+        self.last_inv_size = 0;
+        self.current_inv = None;
+        self.current_inv_size = 0;
     }
 }
 
@@ -487,9 +423,18 @@ mod tests {
         }
     }
 
-    fn observe(p: &mut NativeEventProducer, bytes: &[u8]) -> ObserveResult {
+    fn absorb(p: &mut NativeEventProducer, bytes: &[u8]) -> ObserveResult {
         let snap = SnapshotReader::from_bytes(bytes).expect("snapshot bytes");
         p.observe(&snap)
+    }
+
+    fn observe(p: &mut NativeEventProducer, bytes: &[u8]) -> ObserveResult {
+        let absorbed = absorb(p, bytes);
+        let mut out = p.take_eligible();
+        if out.diagnostic.is_none() {
+            out.diagnostic = absorbed.diagnostic;
+        }
+        out
     }
 
     fn bones_25() -> Vec<ItemRowInput<'static>> {
@@ -760,7 +705,8 @@ mod tests {
         snap.inv = &[];
         snap.tick = 2;
         assert!(observe(&mut p, &encode_snapshot(&snap)).events.is_empty());
-        let resumed = p.set_paused(false);
+        p.set_paused(false);
+        let resumed = p.take_eligible();
         assert_eq!(resumed.events.len(), 1);
         match &resumed.events[0] {
             NativeEvent::InventoryChanged {
@@ -877,5 +823,219 @@ mod tests {
             .events
             .iter()
             .all(|e| !matches!(e, NativeEvent::SkillXp { .. })));
+    }
+
+    #[test]
+    fn observe_does_not_emit() {
+        let bones = [bone(0)];
+        let mut snap = base();
+        snap.inv = &bones;
+        let mut p = NativeEventProducer::new();
+        let first = absorb(&mut p, &encode_snapshot(&snap));
+        assert!(first.events.is_empty());
+        snap.inv = &[];
+        snap.tick = 2;
+        let buried = absorb(&mut p, &encode_snapshot(&snap));
+        assert!(
+            buried.events.is_empty(),
+            "decode must not emit: {:?}",
+            buried.events
+        );
+        assert_eq!(p.take_eligible().events.len(), 1);
+    }
+
+    #[test]
+    fn multi_snapshot_without_take_is_net() {
+        let bones = [bone(0)];
+        let mut snap = base();
+        snap.inv = &bones;
+        let mut p = NativeEventProducer::new();
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.inv = &[];
+        snap.tick = 2;
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.inv = &bones;
+        snap.tick = 3;
+        absorb(&mut p, &encode_snapshot(&snap));
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "bury then refill before take is net zero"
+        );
+    }
+
+    #[test]
+    fn logout_before_take_does_not_replay_bury() {
+        let bones = [bone(0)];
+        let stats = [prayer(112)];
+        let mut snap = base();
+        snap.inv = &bones;
+        snap.stats = &stats;
+        let mut p = NativeEventProducer::new();
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.inv = &[];
+        snap.tick = 2;
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.ingame = false;
+        snap.tick = 3;
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.ingame = true;
+        snap.inv = &bones;
+        snap.tick = 4;
+        absorb(&mut p, &encode_snapshot(&snap));
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "reseed after logout must not replay pre-logout bury"
+        );
+        snap.inv = &[];
+        snap.tick = 5;
+        let out = observe(&mut p, &encode_snapshot(&snap));
+        assert_eq!(
+            out.events
+                .iter()
+                .filter(|e| matches!(e, NativeEvent::InventoryChanged { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn omitted_ingame_while_offline_does_not_seed() {
+        let bones = [bone(0)];
+        let stats0 = [prayer(112)];
+        let mut snap = base();
+        snap.inv = &bones;
+        snap.stats = &stats0;
+        let (kf, fp) = encode_snapshot_delta(None, &snap, false);
+        let mut p = NativeEventProducer::new();
+        absorb(&mut p, &kf);
+        p.take_eligible();
+        snap.ingame = false;
+        snap.tick = 2;
+        let (logout, fp2) = encode_snapshot_delta(Some(&fp), &snap, false);
+        absorb(&mut p, &logout);
+        snap.tick = 3;
+        let stats1 = [prayer(224)];
+        snap.stats = &stats1;
+        snap.inv = &[];
+        let (sparse, _) = encode_snapshot_delta(Some(&fp2), &snap, false);
+        let reader = SnapshotReader::from_bytes(&sparse).unwrap();
+        assert!(!reader.has_ingame(), "still-offline delta must omit ingame");
+        assert!(reader.has_stats());
+        absorb(&mut p, &sparse);
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "sparse offline must not seed or emit"
+        );
+        snap.ingame = true;
+        snap.tick = 4;
+        let (online, _) = encode_snapshot_delta(None, &snap, false);
+        absorb(&mut p, &online);
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "first online tables seed"
+        );
+        let later = [prayer(336)];
+        snap.stats = &later;
+        snap.tick = 5;
+        match &observe(&mut p, &encode_snapshot(&snap)).events[..] {
+            [NativeEvent::SkillXp { delta: 112, .. }] => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pause_reconnect_seeds_instead_of_flushing_history() {
+        let bones = [bone(0)];
+        let stats0 = [prayer(112)];
+        let mut snap = base();
+        snap.inv = &bones;
+        snap.stats = &stats0;
+        let mut p = NativeEventProducer::new();
+        observe(&mut p, &encode_snapshot(&snap));
+        p.set_paused(true);
+        snap.ingame = false;
+        snap.tick = 2;
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.ingame = true;
+        snap.inv = &[];
+        let stats1 = [prayer(224)];
+        snap.stats = &stats1;
+        snap.tick = 3;
+        absorb(&mut p, &encode_snapshot(&snap));
+        p.set_paused(false);
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "pause reconnect must seed, not diff against pre-logout last"
+        );
+    }
+
+    #[test]
+    fn pause_size0_then_ready_seeds() {
+        let bones = [bone(0)];
+        let mut snap = base();
+        snap.inv = &bones;
+        let mut p = NativeEventProducer::new();
+        observe(&mut p, &encode_snapshot(&snap));
+        p.set_paused(true);
+        snap.inv_size = 0;
+        snap.tick = 2;
+        absorb(&mut p, &encode_snapshot(&snap));
+        snap.inv_size = 28;
+        snap.inv = &bones;
+        snap.tick = 3;
+        absorb(&mut p, &encode_snapshot(&snap));
+        p.set_paused(false);
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "size0→ready during pause seeds"
+        );
+        snap.inv = &[];
+        snap.tick = 4;
+        assert_eq!(
+            observe(&mut p, &encode_snapshot(&snap))
+                .events
+                .iter()
+                .filter(|e| matches!(e, NativeEvent::InventoryChanged { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn pause_invalid_then_valid_seeds() {
+        let bones = [bone(0)];
+        let mut snap = base();
+        snap.inv = &bones;
+        let mut p = NativeEventProducer::new();
+        observe(&mut p, &encode_snapshot(&snap));
+        p.set_paused(true);
+        let bad = [ItemRowInput {
+            name: Some("Bones"),
+            count: 1,
+            id: 526,
+            ops: &[],
+            noted: false,
+            cert: -1,
+            component_id: -1,
+            slot: -1,
+        }];
+        snap.inv = &bad;
+        snap.tick = 2;
+        let inv = absorb(&mut p, &encode_snapshot(&snap));
+        assert!(
+            inv.diagnostic
+                .as_deref()
+                .is_some_and(|d| d.contains("invalid slot -1")),
+            "{:?}",
+            inv.diagnostic
+        );
+        snap.inv = &bones;
+        snap.tick = 3;
+        absorb(&mut p, &encode_snapshot(&snap));
+        p.set_paused(false);
+        assert!(
+            p.take_eligible().events.is_empty(),
+            "invalid→valid during pause seeds"
+        );
     }
 }
