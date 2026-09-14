@@ -680,6 +680,11 @@ pub fn validate(
             if let Some(reason) = witness_mismatch("PAIRED_CORE", pair, live, &expected_case) {
                 return shared("receipt", reason);
             }
+            if expected_case == "duel" {
+                if let Some(reason) = duel_witness_mismatch(pair) {
+                    return shared("receipt", reason);
+                }
+            }
             if receipts.core.is_some() {
                 return shared(
                     "receipt",
@@ -699,7 +704,13 @@ pub fn validate(
         }
     }
 
-    capture_verdict(case, captures)
+    let verdict = capture_verdict(case, captures);
+    if case.pair_case.as_deref() == Some("duel") {
+        if let Some(pair) = &receipts.pair {
+            return duel_pair_captures(case, pair, captures, verdict);
+        }
+    }
+    verdict
 }
 
 /// The `scenario` field of a receipt payload, when it is a string.
@@ -776,6 +787,216 @@ fn witness_mismatch(
             "{kind} witness for {expected_live} carries no case identity"
         )),
     }
+}
+
+/// Duel PASS must be a real native witness: two distinct reciprocal actors,
+/// post-Start observations, and a FirstCombat/ResetAndFurther claim that the
+/// serialized qualification fields and predicates actually support. A queued
+/// challenge, equipped weapon, script start or a forged claim string is not
+/// qualification. FirstCombat does not require reset/further combat.
+fn duel_witness_mismatch(pair: &TerminalReceipt) -> Option<String> {
+    let Some(Value::Object(map)) = &pair.payload else {
+        return Some("PAIRED_CORE Duel witness carries no JSON object".into());
+    };
+    let body = map.get("witness").and_then(Value::as_object).unwrap_or(map);
+    let Some(a) = body.get("a").and_then(Value::as_object) else {
+        return Some("PAIRED_CORE Duel witness is missing actor a".into());
+    };
+    let Some(b) = body.get("b").and_then(Value::as_object) else {
+        return Some("PAIRED_CORE Duel witness is missing actor b".into());
+    };
+    let Some(a_account) = slot_actor(a, "account").filter(|name| !name.is_empty()) else {
+        return Some("PAIRED_CORE Duel witness actors carry no account".into());
+    };
+    let Some(b_account) = slot_actor(b, "account").filter(|name| !name.is_empty()) else {
+        return Some("PAIRED_CORE Duel witness actors carry no account".into());
+    };
+    if actor_eq(a_account, b_account) {
+        return Some("PAIRED_CORE Duel witness actors are not distinct".into());
+    }
+    let a_expected = slot_actor(a, "expected_player").unwrap_or(a_account);
+    let b_expected = slot_actor(b, "expected_player").unwrap_or(b_account);
+    let Some(a_partner) = slot_actor(a, "partner") else {
+        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
+    };
+    let Some(b_partner) = slot_actor(b, "partner") else {
+        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
+    };
+    if !actor_eq(a_partner, b_expected) || !actor_eq(b_partner, a_expected) {
+        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
+    }
+    if slot_u64(a, "post_start") == 0 || slot_u64(b, "post_start") == 0 {
+        return Some("PAIRED_CORE Duel witness has no post-Start observations".into());
+    }
+    if slot_bool(a, "mixed_identity") || slot_bool(b, "mixed_identity") {
+        return Some("PAIRED_CORE Duel witness mixed identities".into());
+    }
+    if slot_bool(a, "saw_wrong_partner") || slot_bool(b, "saw_wrong_partner") {
+        return Some("PAIRED_CORE Duel witness observed the wrong opponent".into());
+    }
+    let claim = body.get("claim").and_then(Value::as_str);
+    let supported = body.get("supported").and_then(Value::as_str);
+    let full = body.get("full").and_then(Value::as_str);
+    let first_combat = slot_bool(a, "saw_offer")
+        && slot_bool(b, "saw_offer")
+        && slot_bool(a, "saw_confirm")
+        && slot_bool(b, "saw_confirm")
+        && slot_bool(a, "saw_pen")
+        && slot_bool(b, "saw_pen")
+        && slot_bool(a, "saw_combat")
+        && slot_bool(b, "saw_combat")
+        && (slot_i64(a, "melee_xp_from_script") > 0 || slot_i64(b, "melee_xp_from_script") > 0);
+    let reset_and_further = first_combat
+        && (slot_bool(a, "saw_win_or_lobby_return") || slot_bool(b, "saw_win_or_lobby_return"))
+        && (slot_bool(a, "further_combat") || slot_bool(b, "further_combat"));
+    match claim {
+        Some("first-combat") => {
+            if supported != Some("first-combat") || full.is_some() {
+                return Some(
+                    "PAIRED_CORE Duel first-combat claim is not backed by supported/full fields"
+                        .into(),
+                );
+            }
+            if !first_combat {
+                return Some(
+                    "PAIRED_CORE Duel first-combat claim is not backed by offer/confirm/pen/combat observations".into(),
+                );
+            }
+            None
+        }
+        Some("reset-and-further") => {
+            if full != Some("reset-and-further") || supported != Some("first-combat") {
+                return Some(
+                    "PAIRED_CORE Duel reset-and-further claim is not backed by supported/full fields"
+                        .into(),
+                );
+            }
+            if !reset_and_further {
+                return Some(
+                    "PAIRED_CORE Duel reset-and-further claim is not backed by reset and further combat".into(),
+                );
+            }
+            None
+        }
+        Some(other) => Some(format!(
+            "PAIRED_CORE Duel claim {other:?} is not first-combat or reset-and-further"
+        )),
+        None => Some(
+            "PAIRED_CORE Duel witness carries no first-combat or reset-and-further claim".into(),
+        ),
+    }
+}
+
+fn slot_actor<'a>(slot: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    slot.get(key).and_then(Value::as_str)
+}
+
+fn slot_bool(slot: &serde_json::Map<String, Value>, key: &str) -> bool {
+    slot.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn slot_u64(slot: &serde_json::Map<String, Value>, key: &str) -> u64 {
+    slot.get(key)
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            slot.get(key)
+                .and_then(Value::as_i64)
+                .map(|n| n.max(0) as u64)
+        })
+        .unwrap_or(0)
+}
+
+fn slot_i64(slot: &serde_json::Map<String, Value>, key: &str) -> i64 {
+    slot.get(key).and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn actor_eq(left: &str, right: &str) -> bool {
+    left == right
+        || client::util::JString::to_screen_name(left)
+            == client::util::JString::to_screen_name(right)
+}
+
+/// Duel PASS keeps both owned-actor terminal captures. One matching label, a
+/// missing sidecar actor, or a capture bound to the wrong actor is not enough.
+fn duel_pair_captures(
+    case: &CaseEntry,
+    pair: &TerminalReceipt,
+    _captures: &[CaptureRecord],
+    verdict: Verdict,
+) -> Verdict {
+    let Verdict::PendingVisualReview { captures: kept } = verdict else {
+        return verdict;
+    };
+    let Some(Value::Object(map)) = &pair.payload else {
+        return Verdict::SharedFailure {
+            kind: "receipt",
+            reason: "PAIRED_CORE Duel witness carries no JSON object".into(),
+        };
+    };
+    let body = map.get("witness").and_then(Value::as_object).unwrap_or(map);
+    let Some(a) = body
+        .get("a")
+        .and_then(Value::as_object)
+        .and_then(|slot| slot_actor(slot, "account"))
+    else {
+        return Verdict::SharedFailure {
+            kind: "receipt",
+            reason: "PAIRED_CORE Duel witness is missing actor a".into(),
+        };
+    };
+    let Some(b) = body
+        .get("b")
+        .and_then(Value::as_object)
+        .and_then(|slot| slot_actor(slot, "account"))
+    else {
+        return Verdict::SharedFailure {
+            kind: "receipt",
+            reason: "PAIRED_CORE Duel witness is missing actor b".into(),
+        };
+    };
+    let Some(spec) = declared_capture(case) else {
+        return Verdict::PendingVisualReview { captures: kept };
+    };
+    let matching: Vec<&CaptureRecord> = kept
+        .iter()
+        .filter(|record| record.matches_label(&spec.label))
+        .collect();
+    if matching.len() < 2 {
+        return Verdict::SharedFailure {
+            kind: "capture",
+            reason: format!(
+                "Duel terminal capture for both actors was not written (found {})",
+                matching.len()
+            ),
+        };
+    }
+    for actor in [a, b] {
+        match matching.iter().find(|record| {
+            record
+                .sidecar_actor
+                .as_deref()
+                .is_some_and(|name| actor_eq(name, actor))
+        }) {
+            Some(_) => {}
+            None => {
+                let wrong = matching
+                    .iter()
+                    .find_map(|record| record.sidecar_actor.as_deref());
+                let reason = match wrong {
+                    None => format!("Duel terminal capture for {actor:?} carries no actor binding"),
+                    Some(other) if !actor_eq(other, actor) => {
+                        format!("Duel terminal capture names actor {other:?}, expected {actor:?}")
+                    }
+                    Some(_) => format!("missing Duel terminal capture for actor {actor:?}"),
+                };
+                return Verdict::SharedFailure {
+                    kind: "capture",
+                    reason,
+                };
+            }
+        }
+    }
+    Verdict::PendingVisualReview { captures: kept }
 }
 
 /// Capture contract for a successful case.
@@ -2241,7 +2462,226 @@ CATALOG_CORE: script_thiever {\"case\":\"thiever\",\"post_start_observations\":2
         }
     }
 
-    /// A structurally complete capture record for `thiever`'s declared shot.
+    #[test]
+    fn duel_pass_requires_the_native_claim() {
+        use host_play::paired_core::{
+            DuelObservation, DuelPairWitness, DuelSlotRecord, DUEL_CHALLENGE_ANCHOR,
+        };
+
+        let case = core_case("duel_arena");
+        let first = duel_runtime_evidence(&duel_first_combat_pair(), false);
+        let missing = parse(
+            "PASS: live script_duel_arena {\"scenario\":\"duel_arena\"}\n\
+             PAIRED_CORE: script_duel_arena {\"case\":\"duel\"}\n",
+        );
+        match validate(&case, &missing, Some(0), &[]) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("missing actor") || reason.contains("claim"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut queued_json = first.clone();
+        queued_json["claim"] = serde_json::json!("queued-challenge");
+        let queued = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {queued_json}\n"
+        ));
+        match validate(
+            &case,
+            &queued,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("queued-challenge"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {first}\n"
+        ));
+        assert!(matches!(
+            validate(
+                &case,
+                &receipts,
+                Some(0),
+                &duel_actor_captures("alice", "bob")
+            ),
+            Verdict::PendingVisualReview { .. }
+        ));
+
+        match validate(&case, &receipts, Some(0), &[duel_actor_capture("alice")]) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(
+                    reason.contains("both actors") || reason.contains("found 1"),
+                    "{reason}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut unbound = duel_actor_capture("alice");
+        unbound.sidecar_actor = None;
+        match validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[unbound, duel_actor_capture("bob")],
+        ) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(
+                    reason.contains("no actor binding") || reason.contains("expected"),
+                    "{reason}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        match validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[duel_actor_capture("alice"), duel_actor_capture("stranger")],
+        ) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(
+                    reason.contains("stranger") || reason.contains("bob"),
+                    "{reason}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut forged = first.clone();
+        forged["claim"] = serde_json::json!("first-combat");
+        forged["a"]["saw_combat"] = serde_json::json!(false);
+        forged["b"]["saw_combat"] = serde_json::json!(false);
+        let unsupported = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {forged}\n"
+        ));
+        match validate(
+            &case,
+            &unsupported,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("offer/confirm/pen/combat") || reason.contains("not backed"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let full = duel_runtime_evidence(&duel_reset_pair(), true);
+        assert_eq!(full["claim"], "reset-and-further");
+        assert_eq!(full["full"], "reset-and-further");
+        assert_eq!(full["supported"], "first-combat");
+        let full_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {full}\n"
+        ));
+        assert!(matches!(
+            validate(
+                &case,
+                &full_receipts,
+                Some(0),
+                &duel_actor_captures("alice", "bob")
+            ),
+            Verdict::PendingVisualReview { .. }
+        ));
+
+        fn duel_obs(player: &str) -> DuelObservation {
+            DuelObservation {
+                ingame: true,
+                scene_state: 2,
+                inventory_tab_available: true,
+                player: Some(player.into()),
+                tile: Some(DUEL_CHALLENGE_ANCHOR),
+                tick: 0,
+                attack_xp: 0,
+                strength_xp: 0,
+                defence_xp: 0,
+                hitpoints_xp: 0,
+                in_combat: false,
+                in_challenge_area: true,
+                in_fight_pen: false,
+                main_modal: -1,
+                duel_offer_open: false,
+                duel_confirm_open: false,
+                duel_win_open: false,
+                duel_partner: None,
+                waiting_for_other: false,
+                weapon_equipped: true,
+                peer_visible: true,
+            }
+        }
+
+        fn duel_first_combat_pair() -> DuelPairWitness {
+            let mut a = DuelSlotRecord::new(
+                "alice".into(),
+                "alice".into(),
+                "bob".into(),
+                serde_json::Map::new(),
+                duel_obs("alice"),
+            );
+            let mut b = DuelSlotRecord::new(
+                "bob".into(),
+                "bob".into(),
+                "alice".into(),
+                serde_json::Map::new(),
+                duel_obs("bob"),
+            );
+            a.post_start = 8;
+            b.post_start = 8;
+            a.saw_offer = true;
+            b.saw_offer = true;
+            a.saw_confirm = true;
+            b.saw_confirm = true;
+            a.saw_pen = true;
+            b.saw_pen = true;
+            a.saw_combat = true;
+            b.saw_combat = true;
+            a.melee_xp_from_script = 12;
+            b.melee_xp_from_script = 8;
+            DuelPairWitness { a, b }
+        }
+
+        fn duel_reset_pair() -> DuelPairWitness {
+            let mut pair = duel_first_combat_pair();
+            pair.a.saw_win_or_lobby_return = true;
+            pair.a.further_combat = true;
+            pair
+        }
+
+        fn duel_runtime_evidence(pair: &DuelPairWitness, full_cycle: bool) -> Value {
+            assert!(pair.qualify_supported().is_ok());
+            if full_cycle {
+                assert!(pair.qualify_full_cycle().is_ok());
+            } else {
+                assert!(pair.qualify_full_cycle().is_err());
+            }
+            serde_json::json!({
+                "case": "duel",
+                "claim": pair.qualify_full_cycle().ok().or_else(|| pair.qualify_supported().ok()),
+                "supported": pair.qualify_supported().ok(),
+                "full": pair.qualify_full_cycle().ok(),
+                "a": pair.a,
+                "b": pair.b,
+            })
+        }
+    }
     fn capture_record() -> CaptureRecord {
         CaptureRecord {
             label: "2026-09-14T00-00-01_thiever_paint".into(),
@@ -2266,6 +2706,18 @@ CATALOG_CORE: script_thiever {\"case\":\"thiever\",\"post_start_observations\":2
             label: "2026-09-14T00-00-01_nature_crafter_air-alice".into(),
             ..capture_record()
         }
+    }
+
+    fn duel_actor_capture(actor: &str) -> CaptureRecord {
+        CaptureRecord {
+            label: format!("2026-09-14T00-00-01_duel_arena-{actor}"),
+            sidecar_actor: Some(actor.into()),
+            ..capture_record()
+        }
+    }
+
+    fn duel_actor_captures(a: &str, b: &str) -> [CaptureRecord; 2] {
+        [duel_actor_capture(a), duel_actor_capture(b)]
     }
 
     #[test]

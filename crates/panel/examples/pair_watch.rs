@@ -14,12 +14,15 @@ fn main() {
         panel::RunMode::Live(ref name)
             if matches!(
                 name.as_str(),
-                "script_nature_crafter_air" | "script_mule_crafter_air" | "script_flax_runner"
+                "script_nature_crafter_air"
+                    | "script_mule_crafter_air"
+                    | "script_flax_runner"
+                    | "script_duel_arena"
             )
     );
     if !allowed {
         eprintln!(
-            "FAIL: pair_watch requires --live script_nature_crafter_air|script_mule_crafter_air|script_flax_runner"
+            "FAIL: pair_watch requires --live script_nature_crafter_air|script_mule_crafter_air|script_flax_runner|script_duel_arena"
         );
         std::process::exit(1);
     }

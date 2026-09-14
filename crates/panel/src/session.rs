@@ -2408,6 +2408,18 @@ impl Session {
                 .paired_core_watch()
                 .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
             watch.configure(case, names[0].clone(), names[1].clone());
+            if case == host_play::paired_core::PairCase::Duel {
+                let weapon_id = self
+                    .play
+                    .as_ref()
+                    .and_then(|play| play.game_data())
+                    .and_then(|data| {
+                        data.item_by_alias(host_play::paired_core::DUEL_WEAPON_ALIAS)
+                            .map(|item| item.id)
+                    })
+                    .ok_or_else(|| "selected cache has no bronze_scimitar".to_string())?;
+                watch.install_duel_weapon(weapon_id)?;
+            }
         }
         if self.external_core_enabled {
             let frozen = host_play::external_loader::resolve_source(self.external_ts.as_deref())?;

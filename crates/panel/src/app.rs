@@ -7036,9 +7036,65 @@ mod tests {
                     assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
                     watch.begin_shared_start(a, b).unwrap();
                 }
-                PairCase::Duel => unreachable!("headed cells are Air/Mule/Flax"),
+                PairCase::Duel => unreachable!("this table is Air/Mule/Flax role bags"),
             }
         }
+
+        let cli = "script_duel_arena";
+        assert_eq!(
+            parse_live_args(["--live", cli], None),
+            Ok(RunMode::Live(cli.into())),
+            "{cli} must resolve as a headed pair_watch live name"
+        );
+        assert_eq!(PairCase::parse("duel_arena").unwrap(), PairCase::Duel);
+        let scenario = scenario::get("duel_arena").unwrap();
+        assert_eq!(scenario.seed.profiles.len(), 2);
+        assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
+        assert_eq!(scenario.settings.start_script, Some("DuelArena"));
+        assert_eq!(scenario.companions.len(), 1);
+        assert!(scenario
+            .steps
+            .iter()
+            .any(|step| matches!(step.kind, StepKind::StartScript)));
+        let bag_a =
+            host_play::paired_core::pair_settings(PairCase::Duel, &[], 0, "alice", "bob").unwrap();
+        let bag_b =
+            host_play::paired_core::pair_settings(PairCase::Duel, &[], 1, "bob", "alice").unwrap();
+        assert!(bag_a.get("partner").is_none());
+        assert!(bag_b.get("partner").is_none());
+        let watch = PairWatch::default();
+        watch.configure(PairCase::Duel, "alice", "bob");
+        let first = host_play::paired_core::DuelObservation {
+            ingame: true,
+            scene_state: 2,
+            inventory_tab_available: true,
+            player: Some("alice".into()),
+            tile: Some(host_play::paired_core::DUEL_CHALLENGE_ANCHOR),
+            tick: 0,
+            attack_xp: 0,
+            strength_xp: 0,
+            defence_xp: 0,
+            hitpoints_xp: 0,
+            in_combat: false,
+            in_challenge_area: true,
+            in_fight_pen: false,
+            main_modal: -1,
+            duel_offer_open: false,
+            duel_confirm_open: false,
+            duel_win_open: false,
+            duel_partner: None,
+            waiting_for_other: false,
+            weapon_equipped: true,
+            peer_visible: true,
+        };
+        let second = host_play::paired_core::DuelObservation {
+            player: Some("bob".into()),
+            ..first.clone()
+        };
+        watch.observe_duel("alice", first, false);
+        watch.observe_duel("bob", second, false);
+        assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
+        watch.begin_shared_start("alice", "bob").unwrap();
     }
 
     #[test]

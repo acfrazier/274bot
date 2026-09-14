@@ -1,7 +1,7 @@
 use host_play::paired_core::{
-    pair_settings, AirObservation, AirRole, FlaxObservation, FlaxRole, PairCase, PairWatch,
-    PairWatchStatus, StartBarrier, AIR_RUINS, FALADOR_EAST, FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP,
-    TRADE_CAP,
+    pair_settings, AirObservation, AirRole, DuelObservation, FlaxObservation, FlaxRole, PairCase,
+    PairWatch, PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR, FALADOR_EAST,
+    FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
 };
 
 fn air_ready(player: &str, role: AirRole) -> AirObservation {
@@ -39,17 +39,23 @@ fn flax_ready(player: &str, role: FlaxRole) -> FlaxObservation {
 }
 
 #[test]
-fn headed_cells_are_air_mule_flax() {
+fn headed_cells_are_air_mule_flax_duel() {
     assert_eq!(
         PairCase::headed_cells(),
-        [PairCase::Air, PairCase::Mule, PairCase::Flax]
+        [
+            PairCase::Air,
+            PairCase::Mule,
+            PairCase::Flax,
+            PairCase::Duel
+        ]
     );
     assert!(PairCase::Air.is_headed_cell());
-    assert!(!PairCase::Duel.is_headed_cell());
+    assert!(PairCase::Duel.is_headed_cell());
     assert_eq!(
         PairCase::parse("nature_crafter_air").unwrap(),
         PairCase::Air
     );
+    assert_eq!(PairCase::parse("duel_arena").unwrap(), PairCase::Duel);
     assert!(PairCase::parse("mule_crafter").is_err());
 }
 
@@ -426,4 +432,234 @@ fn freeze_pair_carries_installed_bags_and_rejects_wrong_partners() {
         error.contains("reciprocal account"),
         "same-side partner must be rejected: {error}"
     );
+}
+
+fn duel_ready(player: &str) -> DuelObservation {
+    DuelObservation {
+        ingame: true,
+        scene_state: 2,
+        inventory_tab_available: true,
+        player: Some(player.into()),
+        tile: Some(DUEL_CHALLENGE_ANCHOR),
+        tick: 0,
+        attack_xp: 0,
+        strength_xp: 0,
+        defence_xp: 0,
+        hitpoints_xp: 0,
+        in_combat: false,
+        in_challenge_area: true,
+        in_fight_pen: false,
+        main_modal: -1,
+        duel_offer_open: false,
+        duel_confirm_open: false,
+        duel_win_open: false,
+        duel_partner: None,
+        waiting_for_other: false,
+        weapon_equipped: true,
+        peer_visible: true,
+    }
+}
+
+fn duel_watch() -> PairWatch {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Duel, "alice", "bob");
+    watch
+}
+
+fn observe_first_combat(watch: &PairWatch) {
+    let mut a = duel_ready("alice");
+    let mut b = duel_ready("bob");
+    a.tick = 1;
+    b.tick = 1;
+    a.duel_offer_open = true;
+    b.duel_offer_open = true;
+    a.duel_partner = Some("bob".into());
+    b.duel_partner = Some("alice".into());
+    watch.observe_duel("alice", a.clone(), false);
+    watch.observe_duel("bob", b.clone(), false);
+
+    a.duel_offer_open = false;
+    b.duel_offer_open = false;
+    a.duel_confirm_open = true;
+    b.duel_confirm_open = true;
+    watch.observe_duel("alice", a.clone(), false);
+    watch.observe_duel("bob", b.clone(), false);
+
+    a.duel_confirm_open = false;
+    b.duel_confirm_open = false;
+    a.in_challenge_area = false;
+    b.in_challenge_area = false;
+    a.in_fight_pen = true;
+    b.in_fight_pen = true;
+    a.in_combat = true;
+    b.in_combat = true;
+    a.attack_xp = 12;
+    b.attack_xp = 8;
+    watch.observe_duel("alice", a, false);
+    watch.observe_duel("bob", b, false);
+}
+
+#[test]
+fn duel_settings_carry_targets_and_reject_a_partner_key() {
+    let bag = pair_settings(PairCase::Duel, &[], 0, "alice", "bob").unwrap();
+    assert!(
+        bag.get("partner").is_none(),
+        "Duel schema has no partner setting: {bag:?}"
+    );
+    let watch = duel_watch();
+    watch
+        .install_prepared_settings("alice", bag.clone(), "bob", bag.clone())
+        .expect("target bags without partner install");
+
+    let mut with_partner = bag.clone();
+    with_partner.insert("partner".into(), serde_json::json!("bob"));
+    let error = watch
+        .install_prepared_settings("alice", with_partner, "bob", bag)
+        .unwrap_err();
+    assert!(
+        error.contains("must not carry partner"),
+        "injected Duel partner must be rejected: {error}"
+    );
+}
+
+#[test]
+fn duel_barrier_needs_both_prepared_baselines() {
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+    assert!(watch.begin_shared_start("alice", "bob").is_err());
+
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch.begin_shared_start("alice", "bob").unwrap();
+}
+
+#[test]
+fn duel_rejects_wrong_identity_modal_and_unequipped_baselines() {
+    let watch = duel_watch();
+    let mut modal = duel_ready("alice");
+    modal.duel_offer_open = true;
+    watch.observe_duel("alice", modal, false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+
+    let mut stranger = duel_ready("alice");
+    stranger.player = Some("stranger".into());
+    watch.observe_duel("alice", stranger, false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+
+    let mut bare = duel_ready("alice");
+    bare.weapon_equipped = false;
+    watch.observe_duel("alice", bare, false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+}
+
+#[test]
+fn duel_session_boundary_fails_and_keeps_witness() {
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+    watch.observe_duel("alice", duel_ready("alice"), true);
+    let error = watch.failure().expect("post-Start boundary is terminal");
+    assert!(error.contains("session boundary after Start"), "{error}");
+    let evidence = watch.evidence();
+    assert_eq!(evidence["phase"], "failed");
+    assert_eq!(evidence["witness"]["case"], "duel");
+    assert_eq!(evidence["witness"]["a"]["account"], "alice");
+    assert_eq!(evidence["witness"]["b"]["account"], "bob");
+}
+
+#[test]
+fn duel_first_combat_qualifies_without_status_upgrading_to_full_cycle() {
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+    observe_first_combat(&watch);
+
+    assert_eq!(
+        watch.status(),
+        PairWatchStatus::Running,
+        "FirstCombat must not silently become a full-cycle Qualified status"
+    );
+    let evidence = watch
+        .qualify()
+        .expect("supported first combat is a terminal Duel claim");
+    assert_eq!(evidence["case"], "duel");
+    assert_eq!(evidence["claim"], "first-combat");
+    assert_eq!(evidence["full"], serde_json::Value::Null);
+    assert_eq!(watch.status(), PairWatchStatus::Qualified);
+    watch.clear();
+    watch.clear();
+    assert_eq!(watch.status(), PairWatchStatus::Disabled);
+}
+
+#[test]
+fn duel_full_cycle_still_requires_reset_and_further_combat() {
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+    observe_first_combat(&watch);
+    assert!(
+        watch.qualify().is_ok(),
+        "first combat is accepted at the Duel terminal claim"
+    );
+
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+    observe_first_combat(&watch);
+
+    let mut a = duel_ready("alice");
+    let mut b = duel_ready("bob");
+    a.tick = 4;
+    b.tick = 4;
+    a.attack_xp = 12;
+    b.attack_xp = 8;
+    a.in_fight_pen = false;
+    b.in_fight_pen = false;
+    a.in_challenge_area = true;
+    b.in_challenge_area = true;
+    watch.observe_duel("alice", a.clone(), false);
+    watch.observe_duel("bob", b.clone(), false);
+
+    a.in_challenge_area = false;
+    b.in_challenge_area = false;
+    a.in_fight_pen = true;
+    b.in_fight_pen = true;
+    a.in_combat = true;
+    b.in_combat = true;
+    a.attack_xp = 20;
+    b.attack_xp = 14;
+    watch.observe_duel("alice", a, false);
+    watch.observe_duel("bob", b, false);
+
+    assert_eq!(watch.status(), PairWatchStatus::Qualified);
+    let evidence = watch
+        .qualify()
+        .expect("reset and further combat is full-cycle");
+    assert_eq!(evidence["claim"], "reset-and-further");
+}
+
+#[test]
+fn duel_wrong_observed_opponent_does_not_qualify() {
+    let watch = duel_watch();
+    watch.observe_duel("alice", duel_ready("alice"), false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    watch.begin_shared_start("alice", "bob").unwrap();
+
+    let mut a = duel_ready("alice");
+    a.tick = 1;
+    a.duel_offer_open = true;
+    a.duel_partner = Some("stranger".into());
+    watch.observe_duel("alice", a, false);
+    watch.observe_duel("bob", duel_ready("bob"), false);
+    let error = watch.qualify().unwrap_err();
+    assert!(error.contains("wrong partner"), "{error}");
 }
