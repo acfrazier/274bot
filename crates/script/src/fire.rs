@@ -2,10 +2,10 @@
 //!
 //! Frozen `lightFire` uses tinderbox on logs, then Firemaking XP or the
 //! cannot-light game-chat line, with `FIRE_START_TICKS` / `FIRE_LIGHT_TICKS`
-//! from identical `Firemaking.ts`. Next-tile is one walkable posted-plot
-//! tile with no Fire loc and outside the refused set — not the foreign
-//! west-lane ranker. JavaScript marshals the log name / plot / refused
-//! keys and dispatches the returned use-on; it does not poll XP.
+//! from identical `Firemaking.ts`. Burn lanes are ranked and traversed
+//! inside the posted plot using native walkability and step masks, excluding
+//! Fire locs and refused tiles. JavaScript marshals inputs and dispatches
+//! the returned use-on; it does not rank lanes or poll XP.
 
 use crate::isolate_fb::{RowReader, SnapshotReader};
 use api::query::ReachQueryView;
@@ -637,6 +637,18 @@ fn run_length(
     reach: &ReachBits,
     plot: Plot,
 ) -> i32 {
+    if cap <= 0
+        || start.level != plot.level
+        || start.x < plot.x0
+        || start.x > plot.x1
+        || start.z < plot.z0
+        || start.z > plot.z1
+        || refused.contains(&(start.x, start.z))
+        || fire_at(fire_locs, start)
+        || !reach.walkable_at(start)
+    {
+        return 0;
+    }
     let mut current = start;
     let mut run = 1;
     while run < cap {
@@ -1066,11 +1078,11 @@ mod tests {
             3,
         );
         // The east end has a complete west lane; the current tile is closer
-        // but its west step is blocked by the posted mask.
+        // but its west step leaves the plot, so its run is only one.
         reach.step[(3237 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1;
         reach.step[(3236 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1;
         let here = Tile {
-            x: 3237,
+            x: 3235,
             z: 3418,
             level: 0,
         };

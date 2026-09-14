@@ -201,6 +201,7 @@ export default class T extends LoopingBot {
             globalThis.__early = runInDir(globalThis.__here, plot, {}, occupied, () => { globalThis.__events.push('walkable'); return true; }, () => { globalThis.__events.push('canStep'); return true; }, 0);
             globalThis.__callback = runInDir(globalThis.__here, plot, {}, new Set(), () => { globalThis.__events.push('walkable'); return false; }, () => { globalThis.__events.push('canStep'); return true; }, 1);
             globalThis.__native = runInDir({x: 3237, z: 3419, level: 0}, plot, {dx: -1, dz: 0}, new Set(), undefined, undefined, 3);
+            globalThis.__nativeRun = (from, walkable) => runInDir(from, plot, {dx: -1, dz: 0}, new Set(), walkable, undefined, 3);
             const no = new NoLightTiles();
             no.add({ x: 1, z: 2 });
             globalThis.__merged = [...no.merge(new Set(['2,3', '1,2']))];
@@ -418,7 +419,7 @@ fn pause_hold_and_session_reset_abort_a_parked_light() {
 }
 
 #[test]
-fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
+fn find_burn_lane_and_run_use_posted_native_steps_and_validate_start() {
     let iso = spawn(LANE);
     iso.probe(
         r#"
@@ -442,6 +443,16 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
             (3237, 3419),
         ],
     );
+    let scene = api::snapshot::SceneView {
+        available: true,
+        base_x: 3235,
+        base_z: 3418,
+        level: 0,
+        width: 4,
+        height: 3,
+        collision_flags: vec![0; 4 * 3],
+    };
+    let steps = api::query::pack_step_masks(&scene);
     let ranks = vec![u16::MAX; 4 * 3];
     let fires = [loc("Fire", 3235, 3418)];
     let mut snap = base();
@@ -458,7 +469,7 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
         reachable_adj: &words,
         exact_rank: &ranks,
         adjacent_rank: &ranks,
-        step: &[0, 0, 0, 0, 1, 0, 0, 1, 0],
+        step: &steps,
     };
     post(&iso, &snap);
     tick(&iso, 1);
@@ -482,6 +493,48 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
     assert_eq!(
         iso.probe("__merged").unwrap(),
         serde_json::json!(["2,3", "1,2"])
+    );
+    assert_eq!(
+        iso.probe("__nativeRun(__here, () => true)").unwrap(),
+        0,
+        "a true callback must not admit a native Fire on the starting tile"
+    );
+    assert_eq!(
+        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0}, () => true)")
+            .unwrap(),
+        3,
+        "a true callback must retain the native multi-tile run"
+    );
+    let mut blocked_steps = steps.clone();
+    blocked_steps[3 + 1] = 0;
+    snap.reach.step = &blocked_steps;
+    post(&iso, &snap);
+    assert_eq!(
+        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0})")
+            .unwrap(),
+        2,
+        "the posted blocked step must terminate the run"
+    );
+    let blocked_start = walkable_words(4, 3, 3235, 3418, &[(3235, 3419), (3236, 3419)]);
+    snap.reach.walkable = &blocked_start;
+    post(&iso, &snap);
+    for caller in ["undefined", "() => true"] {
+        assert_eq!(
+            iso.probe(&format!(
+                "__nativeRun({{x: 3237, z: 3419, level: 0}}, {caller})"
+            ))
+            .unwrap(),
+            0,
+            "native non-walkable start must fail with or without a caller veto"
+        );
+    }
+    snap.reach = ReachViewInput::UNAVAILABLE;
+    post(&iso, &snap);
+    assert_eq!(
+        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0}, () => true)")
+            .unwrap(),
+        0,
+        "unavailable native reach must not invent a one-tile run"
     );
     iso.join();
 }

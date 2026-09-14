@@ -1,5 +1,5 @@
-// Catalog Firemaking URL: SETTINGS keys + lightFire. Next-tile is host AABB
-// selection, not the foreign west-lane ranker.
+// Catalog Firemaking URL: SETTINGS keys + lightFire. Rust selects and ranks
+// lanes inside the posted host AABB; this shim marshals inputs and results.
 import Tile from '../../geometry/Tile.js';
 import { host, snap, notImpl } from '../../shim/_kernel.js';
 
