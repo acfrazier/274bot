@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 pub const TRADE_OFFER_WAIT_MS: u64 = 5_000;
 /// Frozen wall-clock wait for confirm / close after accept.
 pub const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
+/// Frozen continuous-inactive period required before accepting closure.
+pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
 thread_local! {
     static RUNTIME: RefCell<ExchangeRuntime> = const { RefCell::new(ExchangeRuntime::new()) };
@@ -47,6 +49,7 @@ struct NativeObservation {
     accept_id: i32,
     decline_id: i32,
     mine_len: usize,
+    tick: u64,
 }
 
 impl NativeObservation {
@@ -59,6 +62,7 @@ impl NativeObservation {
             accept_id: -1,
             decline_id: -1,
             mine_len: 0,
+            tick: 0,
         }
     }
 
@@ -92,6 +96,7 @@ impl NativeObservation {
         if snap.has_trade_mine() {
             self.mine_len = snap.trade_mine().len();
         }
+        self.tick = snap.tick();
     }
 }
 
@@ -102,6 +107,7 @@ struct Probe<'a> {
     partner: Option<&'a str>,
     accept_id: i32,
     mine_len: usize,
+    tick: u64,
 }
 
 impl Probe<'_> {
@@ -138,6 +144,8 @@ struct ExchangeRuntime {
     deadline: Option<Instant>,
     decline_reason: String,
     nested_token: u64,
+    inactive_since: Option<Instant>,
+    settle_after_tick: Option<u64>,
 }
 
 impl ExchangeRuntime {
@@ -157,6 +165,8 @@ impl ExchangeRuntime {
             deadline: None,
             decline_reason: String::new(),
             nested_token: 0,
+            inactive_since: None,
+            settle_after_tick: None,
         }
     }
 
@@ -203,6 +213,8 @@ impl ExchangeRuntime {
         self.deadline = None;
         self.decline_reason.clear();
         self.nested_token = 0;
+        self.inactive_since = None;
+        self.settle_after_tick = None;
     }
 
     fn wait(&self) -> Value {
@@ -337,7 +349,7 @@ fn partner_allowed(partners: &[String], name: &str) -> bool {
         .any(|want| want.trim().eq_ignore_ascii_case(have))
 }
 
-fn observe() -> (bool, bool, bool, Option<String>, i32, usize) {
+fn observe() -> (bool, bool, bool, Option<String>, i32, usize, u64) {
     NATIVE_OBSERVATION.with(|o| {
         let o = o.borrow();
         (
@@ -347,6 +359,7 @@ fn observe() -> (bool, bool, bool, Option<String>, i32, usize) {
             o.partner.clone(),
             o.accept_id,
             o.mine_len,
+            o.tick,
         )
     })
 }
@@ -360,6 +373,7 @@ fn with_probe<R>(f: impl FnOnce(&Probe<'_>) -> R) -> R {
         partner: obs.3.as_deref(),
         accept_id: obs.4,
         mine_len: obs.5,
+        tick: obs.6,
     };
     f(&probe)
 }
@@ -471,12 +485,6 @@ fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) ->
     if rt.phase == Phase::Declining {
         return pump_decline(rt, probe);
     }
-    if !probe.active() {
-        if rt.phase == Phase::WaitClose {
-            return settle_close(rt, projection);
-        }
-        return finish_declined(rt, "no-progress");
-    }
     if let Some(seen) = rt.seen_partner.as_deref() {
         match probe.partner {
             Some(have) if !have.eq_ignore_ascii_case(seen) => {
@@ -486,23 +494,50 @@ fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) ->
             Some(_) => {}
         }
     }
+    if probe.active() {
+        rt.inactive_since = None;
+    } else if rt.inactive_since.is_none() {
+        rt.inactive_since = Some(rt.now());
+    }
     if rt.phase == Phase::WaitClose {
+        if let Some(after_tick) = rt.settle_after_tick {
+            if probe.tick >= after_tick {
+                return settle_close(rt, projection);
+            }
+            return rt.wait();
+        }
         if probe.offer_open && !probe.confirm_open {
             return start_decline(rt, "stale-phase");
+        }
+        if probe.active() || !stable_closed(rt) {
+            if rt.bound_reached() {
+                return start_decline(rt, "no-progress");
+            }
+            return rt.wait();
         }
         if rt.bound_reached() {
             return start_decline(rt, "no-progress");
         }
+        rt.settle_after_tick = Some(probe.tick.saturating_add(1));
         return rt.wait();
     }
     if rt.phase == Phase::WaitConfirm {
         if probe.confirm_open {
             return accept_confirm(rt, probe);
         }
+        if probe.active() || !stable_closed(rt) {
+            if rt.bound_reached() {
+                return start_decline(rt, "no-progress");
+            }
+            return rt.wait();
+        }
         if rt.bound_reached() {
             return start_decline(rt, "no-progress");
         }
-        return rt.wait();
+        return finish_declined(rt, "no-progress");
+    }
+    if !probe.active() {
+        return finish_declined(rt, "no-progress");
     }
     match header_gate(rt, probe) {
         Header::NeedHook => {
@@ -522,6 +557,12 @@ fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) ->
             }
         }
     }
+}
+
+fn stable_closed(rt: &ExchangeRuntime) -> bool {
+    rt.inactive_since.is_some_and(|since| {
+        rt.now().saturating_duration_since(since) >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
+    })
 }
 
 enum Header {
@@ -835,6 +876,7 @@ fn settle_close(rt: &mut ExchangeRuntime, projection: &Projection) -> Value {
     let token = rt.token;
     rt.phase = Phase::Idle;
     rt.deadline = None;
+    rt.settle_after_tick = None;
     json!({
         "kind": "complete",
         "token": token,
