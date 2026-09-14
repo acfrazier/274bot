@@ -124,6 +124,22 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
                     "staged reach {} is missing",
                     reach_path.display()
                 );
+                let canlight_path = path.with_extension("navcanlight");
+                assert!(
+                    canlight_path.is_file(),
+                    "staged canlight {} is missing",
+                    canlight_path.display()
+                );
+                assert!(
+                    row.canlight_sha256.as_ref().is_some_and(|h| h.len() == 64),
+                    "bundled canlight identity is required"
+                );
+                assert!(
+                    row.canlight_identity
+                        .as_ref()
+                        .is_some_and(|h| h.len() == 64),
+                    "bundled canlight policy identity is required"
+                );
                 let pack_bytes = std::fs::read(path).expect("staged pack");
                 let world = nav::world::NavWorld::from_bytes(&pack_bytes).expect("decode pack");
                 let expected = nav::paint::bake_reach(&world.collision, &world.graph);
@@ -137,6 +153,22 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
                     row.nav_sha256,
                     "reach binding is the pack identity"
                 );
+                let canlight_bytes = std::fs::read(&canlight_path).expect("staged canlight");
+                let canlight =
+                    nav::pack::decode_canlight_sidecar(&canlight_bytes).expect("decode canlight");
+                let policy = row
+                    .canlight_identity
+                    .as_deref()
+                    .expect("canlight policy identity");
+                let expected = nav::canlight::expected_header_binding(&row.nav_sha256, policy)
+                    .expect("canlight binding");
+                assert_eq!(
+                    canlight.binding, expected,
+                    "canlight binding is pack+policy identity"
+                );
+                assert_eq!(canlight.origin, world.collision.origin);
+                assert_eq!(canlight.width, world.collision.width);
+                assert_eq!(canlight.height, world.collision.height);
                 println!(
                     "bundled nav: revision {} pack {} ({}) in {}",
                     row.revision,
@@ -163,7 +195,13 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
             (1, 0),
             "bundled reach is read once and never content-hashed"
         );
+        assert_eq!(
+            (counters.canlight_reads, counters.canlight_hashes),
+            (1, 0),
+            "bundled canlight is read once and never content-hashed"
+        );
         assert!(profile.reach().is_some());
+        assert!(profile.canlight().is_some());
         let template = SharedClientTemplate::load(profile).expect("shared template");
         assert!(template.world().is_some(), "bundled world decoded");
         std::fs::remove_dir_all(&root).ok();

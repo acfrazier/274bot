@@ -1,6 +1,7 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
 //! transport graph, the bank stand table, the v8 pack bytes, the raw flags
-//! sidecar, the paint-reach sidecar and the bound manifest. Both frontends of this logic call
+//! sidecar, the paint-reach sidecar, the static canlight sidecar and the bound
+//! manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
 //! (`host-play`'s build script) — so the derivation exists once.
 //!
@@ -17,9 +18,13 @@ use client::config::Cache;
 use client::io::JagFile;
 use sha2::{Digest, Sha256};
 
+use crate::canlight::{self, BANK_ZONES_REL};
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::manifest::{CacheManifest, NavManifest};
-use crate::pack::{derive_banks, encode, encode_flags_sidecar, encode_reach_sidecar, FORMAT_ID};
+use crate::pack::{
+    derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar,
+    sha256_hex, FORMAT_ID,
+};
 use crate::paint::bake_reach;
 use crate::transport::derive_transports;
 
@@ -37,8 +42,9 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 6] = [
+pub const GENERATOR_SOURCES: [&str; 7] = [
     "src/bake.rs",
+    "src/canlight.rs",
     "src/collision.rs",
     "src/pack.rs",
     "src/paint.rs",
@@ -156,6 +162,9 @@ pub struct BakedNav {
     pub pack: Vec<u8>,
     pub flags: Vec<u8>,
     pub reach: Vec<u8>,
+    pub canlight: Vec<u8>,
+    /// Hex of the canlight policy digest (algorithm + revision + bank_zones).
+    pub canlight_identity: String,
     pub manifest: Option<NavManifest>,
     pub summary: BakeSummary,
     /// Non-fatal notes the caller reports (skipped door configs).
@@ -235,6 +244,19 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // placement, Use-quickly op).
     let banks = derive_banks(content_root);
 
+    let bank_zones_path = content_root.join(BANK_ZONES_REL);
+    let bank_zones_bytes = std::fs::read(&bank_zones_path)
+        .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
+    let bank_zones_text = std::str::from_utf8(&bank_zones_bytes)
+        .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
+    let zones = canlight::parse_bank_zones(bank_zones_text)?;
+    let flags_ref = collision
+        .flags
+        .as_ref()
+        .expect("bake_from_maps always stamps raw flags");
+    let canlight_bits =
+        canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
+
     // The raw baked flags ride in the sidecar; the v8 pack carries only
     // the packed walk surface (the router's resident form).
     let flags = collision
@@ -253,6 +275,17 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &reach_bits,
         &pack_digest,
     );
+    let revision_for_policy = request.revision.unwrap_or(274);
+    let policy = canlight::policy_digest(revision_for_policy, &bank_zones_bytes);
+    let canlight_identity = sha256_hex(&policy);
+    let canlight_binding = canlight::header_binding(&pack_digest, &policy);
+    let canlight_bytes = encode_canlight_sidecar(
+        collision.origin,
+        collision.width,
+        collision.height,
+        &canlight_bits,
+        &canlight_binding,
+    );
     let manifest = match (request.revision, request.cache) {
         (Some(revision), Some(cache)) => Some(NavManifest::capture(
             revision,
@@ -260,6 +293,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
             &bytes,
             Some(&flags_bytes),
             Some(&reach_bytes),
+            Some(&canlight_bytes),
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
@@ -268,6 +302,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         pack: bytes,
         flags: flags_bytes,
         reach: reach_bytes,
+        canlight: canlight_bytes,
+        canlight_identity,
         manifest,
         summary: BakeSummary {
             mapsquares: squares_baked(request.maps_dir),
@@ -363,6 +399,10 @@ mod tests {
             "GENERATOR_SOURCES must include the step_ok-owning source"
         );
         assert!(GENERATOR_SOURCES.contains(&"src/paint.rs"));
+        assert!(
+            GENERATOR_SOURCES.contains(&"src/canlight.rs"),
+            "GENERATOR_SOURCES must include the canlight-owning source"
+        );
 
         let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
             .iter()
@@ -404,12 +444,16 @@ mod tests {
             nav_sha256: "ab".repeat(32),
             flags_sha256: "cd".repeat(32),
             reach_sha256: "ef".repeat(32),
+            canlight_sha256: "12".repeat(32),
+            canlight_identity: "34".repeat(32),
             pack_bytes: 11,
             flags_bytes: 7,
             reach_bytes: 9,
+            canlight_bytes: 5,
             relative_pack: "nav/289/274bot.navpack".into(),
             relative_flags: "nav/289/274bot.navflags".into(),
             relative_reach: "nav/289/274bot.navreach".into(),
+            relative_canlight: "nav/289/274bot.navcanlight".into(),
             inputs: inputs.to_vec(),
         };
         let expected = crate::bundle::StampExpectation {
@@ -421,6 +465,7 @@ mod tests {
             staged_pack_bytes: Some(11),
             staged_flags_bytes: Some(7),
             staged_reach_bytes: Some(9),
+            staged_canlight_bytes: Some(5),
         };
         let error = baked
             .covers(&expected)

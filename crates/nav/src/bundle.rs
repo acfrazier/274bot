@@ -25,6 +25,10 @@ pub struct NavIdentityRow {
     pub flags_sha256: Option<String>,
     #[serde(default)]
     pub reach_sha256: Option<String>,
+    #[serde(default)]
+    pub canlight_sha256: Option<String>,
+    #[serde(default)]
+    pub canlight_identity: Option<String>,
     pub relative_path: String,
 }
 
@@ -279,6 +283,7 @@ pub struct ArtifactLayout {
     pub relative_pack: String,
     pub relative_flags: String,
     pub relative_reach: String,
+    pub relative_canlight: String,
     pub relative_manifest: String,
     pub relative_stamp: String,
 }
@@ -291,6 +296,10 @@ pub fn artifact_layout(revision: u16) -> ArtifactLayout {
         relative_pack: dir.join("274bot.navpack").to_string_lossy().into_owned(),
         relative_flags: dir.join("274bot.navflags").to_string_lossy().into_owned(),
         relative_reach: dir.join("274bot.navreach").to_string_lossy().into_owned(),
+        relative_canlight: dir
+            .join("274bot.navcanlight")
+            .to_string_lossy()
+            .into_owned(),
         relative_manifest: dir
             .join("274bot.navpack.json")
             .to_string_lossy()
@@ -317,12 +326,16 @@ pub struct BakeStamp {
     pub nav_sha256: String,
     pub flags_sha256: String,
     pub reach_sha256: String,
+    pub canlight_sha256: String,
+    pub canlight_identity: String,
     pub pack_bytes: u64,
     pub flags_bytes: u64,
     pub reach_bytes: u64,
+    pub canlight_bytes: u64,
     pub relative_pack: String,
     pub relative_flags: String,
     pub relative_reach: String,
+    pub relative_canlight: String,
     pub inputs: Vec<InputFingerprint>,
 }
 
@@ -337,6 +350,7 @@ pub struct StampExpectation<'a> {
     pub staged_pack_bytes: Option<u64>,
     pub staged_flags_bytes: Option<u64>,
     pub staged_reach_bytes: Option<u64>,
+    pub staged_canlight_bytes: Option<u64>,
 }
 
 impl BakeStamp {
@@ -387,6 +401,21 @@ impl BakeStamp {
                 return Err(format!(
                     "staged reach {} is {bytes} bytes, stamped {}",
                     self.relative_reach, self.reach_bytes
+                ))
+            }
+            Some(_) => {}
+        }
+        match expected.staged_canlight_bytes {
+            None => {
+                return Err(format!(
+                    "staged canlight {} is missing",
+                    self.relative_canlight
+                ))
+            }
+            Some(bytes) if bytes != self.canlight_bytes => {
+                return Err(format!(
+                    "staged canlight {} is {bytes} bytes, stamped {}",
+                    self.relative_canlight, self.canlight_bytes
                 ))
             }
             Some(_) => {}
@@ -510,12 +539,16 @@ mod tests {
             nav_sha256: "ab".repeat(32),
             flags_sha256: "cd".repeat(32),
             reach_sha256: "ef".repeat(32),
+            canlight_sha256: "12".repeat(32),
+            canlight_identity: "34".repeat(32),
             pack_bytes,
             flags_bytes: 7,
             reach_bytes: 9,
+            canlight_bytes: 5,
             relative_pack: "nav/289/274bot.navpack".into(),
             relative_flags: "nav/289/274bot.navflags".into(),
             relative_reach: "nav/289/274bot.navreach".into(),
+            relative_canlight: "nav/289/274bot.navcanlight".into(),
             inputs: vec![InputFingerprint {
                 path: "/content/maps/m1.jm2".into(),
                 bytes: 10,
@@ -534,6 +567,7 @@ mod tests {
             staged_pack_bytes: Some(11),
             staged_flags_bytes: Some(7),
             staged_reach_bytes: Some(9),
+            staged_canlight_bytes: Some(5),
         }
     }
 
@@ -573,6 +607,10 @@ mod tests {
         let mut changed = expectation(&inputs);
         changed.staged_reach_bytes = None;
         assert!(baked.covers(&changed).unwrap_err().contains("reach"));
+
+        let mut changed = expectation(&inputs);
+        changed.staged_canlight_bytes = None;
+        assert!(baked.covers(&changed).unwrap_err().contains("canlight"));
 
         let modified = [InputFingerprint {
             path: "/content/maps/m1.jm2".into(),
@@ -633,6 +671,8 @@ mod tests {
             nav_sha256: "aa".repeat(32),
             flags_sha256: None,
             reach_sha256: None,
+            canlight_sha256: None,
+            canlight_identity: None,
             relative_path: "nav/289/274bot.navpack".into(),
         };
         let superseded = NavIdentityRow {
@@ -646,6 +686,8 @@ mod tests {
             nav_sha256: "cc".repeat(32),
             flags_sha256: None,
             reach_sha256: None,
+            canlight_sha256: None,
+            canlight_identity: None,
             relative_path: "prebuilt/274bot.navpack".into(),
         };
         let (rows, notes) =
@@ -668,6 +710,7 @@ mod tests {
         assert_eq!(layout.relative_pack, "nav/289/274bot.navpack");
         assert_eq!(layout.relative_flags, "nav/289/274bot.navflags");
         assert_eq!(layout.relative_reach, "nav/289/274bot.navreach");
+        assert_eq!(layout.relative_canlight, "nav/289/274bot.navcanlight");
         assert_eq!(layout.relative_stamp, "nav/289/nav-build.json");
         assert!(!Path::new(&layout.relative_pack).is_absolute());
         assert_eq!(artifact_layout(274).relative_pack, "nav/274/274bot.navpack");
@@ -857,6 +900,7 @@ mod tests {
             "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
             "scripts/skill_magic/configs/magic_spells.dbrow",
             "scripts/skill_magic/configs/enchanted_jewelry.obj",
+            "scripts/skill_firemaking/configs/bank_zones.dbrow",
         ] {
             assert!(paths.contains(&expected), "{expected} is required");
         }

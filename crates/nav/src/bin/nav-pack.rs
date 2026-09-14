@@ -89,6 +89,7 @@ struct BakeInputs {
     out: PathBuf,
     flags_out: PathBuf,
     reach_out: PathBuf,
+    canlight_out: PathBuf,
 }
 
 fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInputs, String> {
@@ -114,6 +115,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             .unwrap_or_else(|_| default_out());
         let flags_out = flags_out(&out);
         let reach_out = out.with_extension("navreach");
+        let canlight_out = out.with_extension("navcanlight");
         let content_dir = maps_dir
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -129,6 +131,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             out,
             flags_out,
             reach_out,
+            canlight_out,
         });
     }
 
@@ -190,6 +193,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let config_jag = config_jag_for(revision, &cache_dir)?;
     let flags_out = explicit_flags.unwrap_or_else(|| flags_path_for(&out));
     let reach_out = out.with_extension("navreach");
+    let canlight_out = out.with_extension("navcanlight");
     Ok(BakeInputs {
         revision: Some(revision),
         content_dir: content,
@@ -201,6 +205,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         out,
         flags_out,
         reach_out,
+        canlight_out,
     })
 }
 
@@ -274,6 +279,10 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
         eprintln!("nav-pack: write {}: {e}", inputs.reach_out.display());
         return ExitCode::FAILURE;
     }
+    if let Err(e) = std::fs::write(&inputs.canlight_out, &baked.canlight) {
+        eprintln!("nav-pack: write {}: {e}", inputs.canlight_out.display());
+        return ExitCode::FAILURE;
+    }
     if let Some(manifest) = &baked.manifest {
         let manifest_path = nav_manifest_path(&inputs.out);
         let bytes = match serde_json::to_vec_pretty(manifest) {
@@ -288,17 +297,18 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
             return ExitCode::FAILURE;
         }
         eprintln!(
-            "nav-pack: bound revision {} cache {} nav {} flags {} reach {}",
+            "nav-pack: bound revision {} cache {} nav {} flags {} reach {} canlight {}",
             manifest.revision,
             manifest.cache_id,
             manifest.nav_sha256,
             manifest.flags_sha256.as_deref().unwrap_or("none"),
-            manifest.reach_sha256.as_deref().unwrap_or("none")
+            manifest.reach_sha256.as_deref().unwrap_or("none"),
+            manifest.canlight_sha256.as_deref().unwrap_or("none")
         );
     }
     let summary = baked.summary;
     eprintln!(
-        "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges, {} bank stands -> {} bytes -> {}; {} flag bytes -> {}; {} reach bytes -> {}",
+        "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges, {} bank stands -> {} bytes -> {}; {} flag bytes -> {}; {} reach bytes -> {}; {} canlight bytes -> {}",
         summary.mapsquares,
         summary.width,
         summary.height,
@@ -310,7 +320,9 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
         baked.flags.len(),
         inputs.flags_out.display(),
         baked.reach.len(),
-        inputs.reach_out.display()
+        inputs.reach_out.display(),
+        baked.canlight.len(),
+        inputs.canlight_out.display()
     );
     ExitCode::SUCCESS
 }
@@ -355,6 +367,7 @@ mod tests {
         assert_eq!(inputs.out, PathBuf::from("/tmp/289.navpack"));
         assert_eq!(inputs.flags_out, PathBuf::from("/tmp/289.navflags"));
         assert_eq!(inputs.reach_out, PathBuf::from("/tmp/289.navreach"));
+        assert_eq!(inputs.canlight_out, PathBuf::from("/tmp/289.navcanlight"));
     }
 
     #[test]

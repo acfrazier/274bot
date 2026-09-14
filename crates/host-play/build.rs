@@ -194,11 +194,18 @@ fn main() {
     let pack_path = resource_root.join(&layout.relative_pack);
     let flags_path = resource_root.join(&layout.relative_flags);
     let reach_path = resource_root.join(&layout.relative_reach);
+    let canlight_path = resource_root.join(&layout.relative_canlight);
     let stamp_path = resource_root.join(&layout.relative_stamp);
     // Staged artifacts are watched so that a later build notices one that was
     // deleted or replaced (cargo treats a missing watched path as changed),
     // while a plain warm build stays a no-op.
-    for staged in [&pack_path, &flags_path, &reach_path, &stamp_path] {
+    for staged in [
+        &pack_path,
+        &flags_path,
+        &reach_path,
+        &canlight_path,
+        &stamp_path,
+    ] {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
@@ -211,6 +218,7 @@ fn main() {
         staged_pack_bytes: file_len(&pack_path),
         staged_flags_bytes: file_len(&flags_path),
         staged_reach_bytes: file_len(&reach_path),
+        staged_canlight_bytes: file_len(&canlight_path),
     };
     let staged = read_stamp(&stamp_path);
     let (row, reused) = match staged
@@ -225,6 +233,8 @@ fn main() {
                 nav_sha256: staged.as_ref().expect("stamp").nav_sha256.clone(),
                 flags_sha256: Some(staged.as_ref().expect("stamp").flags_sha256.clone()),
                 reach_sha256: Some(staged.as_ref().expect("stamp").reach_sha256.clone()),
+                canlight_sha256: Some(staged.as_ref().expect("stamp").canlight_sha256.clone()),
+                canlight_identity: Some(staged.as_ref().expect("stamp").canlight_identity.clone()),
                 relative_path: layout.relative_pack.clone(),
             },
             true,
@@ -301,6 +311,7 @@ fn bake_and_stage(
     let pack_path = resource_root.join(&layout.relative_pack);
     let flags_path = resource_root.join(&layout.relative_flags);
     let reach_path = resource_root.join(&layout.relative_reach);
+    let canlight_path = resource_root.join(&layout.relative_canlight);
     let dir = pack_path
         .parent()
         .ok_or_else(|| format!("resource path {} has no parent", pack_path.display()))?;
@@ -308,6 +319,7 @@ fn bake_and_stage(
     write_atomic(&pack_path, &baked.pack)?;
     write_atomic(&flags_path, &baked.flags)?;
     write_atomic(&reach_path, &baked.reach)?;
+    write_atomic(&canlight_path, &baked.canlight)?;
     let nav_manifest_bytes =
         serde_json::to_vec_pretty(&manifest).map_err(|e| format!("navigation manifest: {e}"))?;
     write_atomic(
@@ -323,6 +335,10 @@ fn bake_and_stage(
         .reach_sha256
         .clone()
         .ok_or_else(|| "a bound bake stamps the reach digest".to_string())?;
+    let canlight_sha256 = manifest
+        .canlight_sha256
+        .clone()
+        .ok_or_else(|| "a bound bake stamps the canlight digest".to_string())?;
     let stamp = BakeStamp {
         generator: generator.to_string(),
         format: FORMAT_ID.to_string(),
@@ -332,12 +348,16 @@ fn bake_and_stage(
         nav_sha256: manifest.nav_sha256.clone(),
         flags_sha256: flags_sha256.clone(),
         reach_sha256: reach_sha256.clone(),
+        canlight_sha256: canlight_sha256.clone(),
+        canlight_identity: baked.canlight_identity.clone(),
         pack_bytes: baked.pack.len() as u64,
         flags_bytes: baked.flags.len() as u64,
         reach_bytes: baked.reach.len() as u64,
+        canlight_bytes: baked.canlight.len() as u64,
         relative_pack: layout.relative_pack.clone(),
         relative_flags: layout.relative_flags.clone(),
         relative_reach: layout.relative_reach.clone(),
+        relative_canlight: layout.relative_canlight.clone(),
         inputs: input_fingerprints.to_vec(),
     };
     let stamp_bytes =
@@ -364,6 +384,8 @@ fn bake_and_stage(
         nav_sha256: manifest.nav_sha256,
         flags_sha256: Some(flags_sha256),
         reach_sha256: Some(reach_sha256),
+        canlight_sha256: Some(canlight_sha256),
+        canlight_identity: Some(baked.canlight_identity),
         relative_path: layout.relative_pack.clone(),
     })
 }

@@ -8,6 +8,7 @@ pub mod bake;
 pub mod bank_fetch;
 pub mod bundle;
 pub mod camera;
+pub mod canlight;
 pub mod collision;
 pub mod essence;
 pub mod grid;
