@@ -903,6 +903,8 @@ pub struct Session {
     /// @deprecated alias kept so tests that still name the force bool
     /// compile during the overlay swap — prefer [`Session::nav_overlay`].
     pub nav_live_force_layers: bool,
+    /// Optional headed live paint override; never persisted with operator UI.
+    nav_paints_override: Option<bool>,
     /// Per-frame nav-paint mirror the slot threads publish from each
     /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
     /// from `ui.nav` + `nav_live_force_layers` every UI frame.
@@ -1190,6 +1192,7 @@ impl Session {
             delete_understood: false,
             nav_overlay: None,
             nav_live_force_layers: false,
+            nav_paints_override: None,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
             route_gen: 0,
             mainland_sent: Arc::new(Mutex::new(HashSet::new())),
@@ -2933,9 +2936,17 @@ impl Session {
 
     /// Live overlay when a scenario armed one, else the operator prefs.
     pub fn effective_nav(&self) -> NavSettings {
-        self.nav_overlay
+        let settings = self
+            .nav_overlay
             .clone()
-            .unwrap_or_else(|| self.ui.nav.clone())
+            .unwrap_or_else(|| self.ui.nav.clone());
+        crate::nav_settings::apply_paint_override(&settings, self.nav_paints_override)
+    }
+
+    /// Set the headed live paint choice without changing saved preferences.
+    pub fn set_nav_paints_override(&mut self, value: Option<bool>) {
+        self.nav_paints_override = value;
+        self.sync_nav_publish();
     }
 
     /// Game window `.build()` Some/None. Closing the pane drops the live

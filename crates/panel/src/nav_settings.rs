@@ -77,6 +77,25 @@ pub fn effective(saved: &NavSettings, live_force_layers: bool) -> NavSettings {
     e
 }
 
+/// Apply a session-only headed live paint choice without changing routing.
+pub fn apply_paint_override(saved: &NavSettings, choice: Option<bool>) -> NavSettings {
+    let Some(enabled) = choice else {
+        return saved.clone();
+    };
+    if enabled {
+        return effective(saved, true);
+    }
+    let mut out = saved.clone();
+    out.show_nav_path = false;
+    out.hop_labels = false;
+    out.collision_fill = false;
+    out.nsew_labels = false;
+    out.client_trail = false;
+    out.component_flood = false;
+    out.camera_follow = false;
+    out
+}
+
 /// Map a scenario's session-only nav bag onto panel settings. Colours stay
 /// the rs2b0t Path-paint defaults (the scenario does not author HTML).
 pub fn from_scenario(n: &scenario::ScenarioNav) -> NavSettings {
