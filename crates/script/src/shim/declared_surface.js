@@ -12,6 +12,7 @@ export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCom
 export { Execution } from '../../api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';
 export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export { Quests } from '../../api/ui/questlog/Quests.js';
 export { Traversal } from '../../api/walking/Traversal.js';
 export { DirectNavigator } from '../../api/walking/DirectNavigator.js';
 export { default as Tile } from '../../geometry/Tile.js';
@@ -101,12 +102,6 @@ export const NEEDLE = '';
 export const NURMOF_VENDOR = '';
 export const PICKAXES = [];
 export const PICKAXE_SHOP_COSTS = [];
-export const Quests = proxy('Quests', {
-    all() { throw notImpl('Quests.all'); },
-    journal() { throw notImpl('Quests.journal'); },
-    points() { throw notImpl('Quests.points'); },
-    status() { throw notImpl('Quests.status'); },
-});
 export const RANDOM_EVENT_CASKET_ID = -1;
 export const ROCK_OPTIONS = [];
 export const ROCK_TYPES = [];
