@@ -959,6 +959,10 @@ pub struct Session {
     pub catalog_refresh_confirm: bool,
     pub catalog_refresh_report: Option<String>,
     pub reload_generation: u64,
+    /// Test-only: fail replacement Start for this profile after it passed
+    /// eligibility and was stopped. Not a cancellation fixture.
+    #[cfg(test)]
+    pub fail_reload_start_for: Option<String>,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
     transpile_armed: bool,
@@ -1201,6 +1205,8 @@ impl Session {
             catalog_refresh_confirm: false,
             catalog_refresh_report: None,
             reload_generation: 0,
+            #[cfg(test)]
+            fail_reload_start_for: None,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -3970,7 +3976,6 @@ impl Session {
         if let Some(play) = self.play.as_ref() {
             play.script_stop(&name);
         }
-        self.reload_generation = self.reload_generation.wrapping_add(1);
     }
 
     /// One-shot script-local paint button on the focused slot.

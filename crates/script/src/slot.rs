@@ -508,6 +508,7 @@ impl SlotScript {
             self.watchdog.cancel_clear();
         }
         self.source_identity = None;
+        self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
     }
 
@@ -1491,6 +1492,23 @@ export default class T extends LoopingBot {
         assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen.wrapping_add(1)));
         slot.stop();
         assert!(slot.source_identity().is_none());
+        assert_ne!(slot.runtime_generation(), gen);
         assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
+    }
+
+    #[test]
+    fn stop_clears_identity_and_bumps_runtime_generation() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.attach_source_identity("file:shared.ts");
+        let gen = slot.runtime_generation();
+        slot.stop();
+        assert!(slot.source_identity().is_none());
+        assert_eq!(slot.state(), RunState::Idle);
+        assert_ne!(
+            slot.runtime_generation(),
+            gen,
+            "Stop must invalidate the previous execution generation"
+        );
     }
 }

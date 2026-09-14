@@ -2,6 +2,7 @@
 //! and catalog refresh. Session is the integration owner.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
@@ -652,6 +653,10 @@ impl Session {
             &card.settings_schema,
         );
         let bag = if bag.is_empty() { None } else { Some(bag) };
+        #[cfg(test)]
+        if self.fail_reload_start_for.as_deref() == Some(profile) {
+            return Err("injected start failure".into());
+        }
         {
             let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
             play.script_start_load(
@@ -699,46 +704,43 @@ impl Session {
                 failed += 1;
                 continue;
             };
-            let live_key = play.script_source_identity(&slot_name);
-            let prepared_card = live_key
-                .as_ref()
-                .and_then(|key| {
-                    prepared_by_key
-                        .iter()
-                        .find(|(k, _)| k == key)
-                        .map(|(_, p)| *p)
-                })
-                .or_else(|| {
-                    prepared_by_key
-                        .iter()
-                        .find(|(k, _)| k == &warning.identity_key)
-                        .map(|(_, p)| *p)
-                });
-            let Some(prepared_card) = prepared_card else {
+            let Some(live_key) = play.script_source_identity(&slot_name) else {
                 continue;
             };
-            if let Some(warned_gen) = warning
+            let Some(prepared_card) = prepared_by_key
+                .iter()
+                .find(|(k, _)| k == &live_key)
+                .map(|(_, p)| *p)
+            else {
+                continue;
+            };
+            let Some(warned_gen) = warning
                 .affected_generations
                 .iter()
                 .find(|(n, _)| n == &slot_name)
                 .map(|(_, g)| *g)
-            {
-                if let Some(now_gen) = play.script_runtime_generation(&slot_name) {
-                    if now_gen != warned_gen {
-                        continue;
-                    }
-                }
+            else {
+                continue;
+            };
+            let Some(now_gen) = play.script_runtime_generation(&slot_name) else {
+                continue;
+            };
+            if now_gen != warned_gen {
+                continue;
+            }
+            if self.reload_logout_pending(&slot_name) {
+                continue;
             }
             let assignment_matches = self
                 .profile_assignment(&slot_name)
                 .is_some_and(|a| a.key() == prepared_card.card.identity_key());
+            if !assignment_matches {
+                continue;
+            }
             let state = play.script_state(&slot_name);
             match state {
                 script::RunState::Running => {
                     play.script_stop(&slot_name);
-                    if !assignment_matches {
-                        continue;
-                    }
                     match self.script_start_prepared(&slot_name, prepared_card) {
                         Ok(()) => restarted += 1,
                         Err(e) => {
@@ -751,23 +753,20 @@ impl Session {
                     play.script_stop(&slot_name);
                     stopped_paused += 1;
                 }
-                _ => {
-                    if warning.running.iter().any(|n| n == &slot_name) {
-                        if !assignment_matches {
-                            continue;
-                        }
-                        match self.script_start_prepared(&slot_name, prepared_card) {
-                            Ok(()) => restarted += 1,
-                            Err(e) => {
-                                failed += 1;
-                                errors.push(format!("{slot_name}: {e}"));
-                            }
-                        }
-                    }
-                }
+                _ => {}
             }
         }
         (restarted, stopped_paused, failed, errors)
+    }
+
+    fn reload_logout_pending(&self, name: &str) -> bool {
+        if self.wall.latch.contains(name) {
+            return true;
+        }
+        self.play
+            .as_ref()
+            .and_then(|p| p.arm(name))
+            .is_some_and(|arm| arm.want_logout.load(Ordering::Relaxed))
     }
 
     fn slots_with_identity(&self, key: &str) -> (Vec<String>, Vec<String>) {
@@ -1734,6 +1733,40 @@ mod tests {
         s.restore_script_heading(name);
     }
 
+    fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
+        focus_profile(s, profile);
+        let sel = script::ScriptSel::Loaded(
+            script::ScriptSource::File,
+            path.to_string_lossy().into_owned(),
+        );
+        s.script_sel = Some(sel.clone());
+        s.set_pending_browse(profile, sel);
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{profile} start: {:?}", s.error);
+    }
+
+    fn warn_shared_reload(s: &mut Session, path: &std::path::Path) {
+        fs::write(path, format!("{BOT_TS}// changed\n")).unwrap();
+        focus_profile(s, "alice");
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+    }
+
+    fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
+        match out {
+            ReloadOutcome::Applied {
+                restarted: got_r,
+                failed: got_f,
+                ..
+            } => {
+                assert_eq!(got_r, restarted, "restarted");
+                assert_eq!(got_f, failed, "failed");
+            }
+            other => panic!(
+                "expected Applied {{ restarted: {restarted}, failed: {failed} }}, got {other:?}"
+            ),
+        }
+    }
+
     #[test]
     fn reload_confirm_does_not_authorize_switched_selection() {
         let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2004,43 +2037,293 @@ mod tests {
     }
 
     #[test]
-    fn reload_reports_restart_failure_without_aborting_peer() {
+    fn reload_removal_skips_target_and_reloads_peer() {
         let (mut s, dir) = session_with_play(&["alice", "bob"]);
         let path = write_bot(&dir, "shared.ts", BOT_TS);
         s.load_js(&path);
-        s.script_start_selected();
-        focus_profile(&mut s, "bob");
-        s.script_sel = Some(script::ScriptSel::Loaded(
-            script::ScriptSource::File,
-            path.to_string_lossy().into_owned(),
-        ));
-        s.set_pending_browse(
-            "bob",
-            script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                path.to_string_lossy().into_owned(),
-            ),
-        );
-        s.script_start_selected();
-        assert_eq!(s.error, None, "{:?}", s.error);
-        fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
-        focus_profile(&mut s, "alice");
-        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
         s.play.as_mut().unwrap().stop_slot("bob");
         let out = s.script_reload_clicked();
-        match out {
-            ReloadOutcome::Applied {
-                restarted, failed, ..
-            } => {
-                assert_eq!(restarted, 1, "alice should restart");
-                assert_eq!(failed, 1, "bob's missing slot is a reported start failure");
-            }
-            other => panic!("expected Applied with mixed restart, got {other:?}"),
-        }
+        assert_applied(out, 1, 0);
+        assert!(
+            !s.error.as_deref().unwrap_or("").contains("bob"),
+            "removal is cancellation, not a start failure: {:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_reports_true_startup_failure_without_aborting_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        s.fail_reload_start_for = Some("bob".into());
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 1);
         assert!(
             s.error.as_deref().unwrap_or("").contains("bob"),
-            "restart failure must stay visible: {:?}",
+            "true post-stop start failure must stay visible: {:?}",
             s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Idle,
+            "failed replacement start leaves the stopped target stopped"
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_native_stop_skips_target_and_reloads_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        s.play.as_ref().unwrap().script_stop("bob");
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Idle
+        );
+        assert!(s
+            .play
+            .as_ref()
+            .unwrap()
+            .script_source_identity("bob")
+            .is_none());
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_session_stop_skips_target_and_reloads_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        focus_profile(&mut s, "bob");
+        s.script_stop();
+        focus_profile(&mut s, "alice");
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Idle
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+    }
+
+    #[test]
+    fn reload_stop_all_clears_pending_without_restart() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        s.script_stop_all();
+        assert!(s.pending_reload.is_none());
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Idle
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Idle
+        );
+    }
+
+    #[test]
+    fn reload_logout_skips_target_and_reloads_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+        s.logout("bob");
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running,
+            "logout skips replacement; it does not stop the isolate"
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("bob"),
+            bob_gen
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn reload_logout_all_skips_replacement() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        let alice_gen = s.play.as_ref().unwrap().script_runtime_generation("alice");
+        let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+        s.logout_all();
+        let out = s.script_reload_clicked();
+        assert_applied(out, 0, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("alice"),
+            alice_gen
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("bob"),
+            bob_gen
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn reload_reassignment_skips_target_and_reloads_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        let other = write_bot(&dir, "other.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+        s.persist_successful_assignment(
+            "bob",
+            ScriptAssignment {
+                source_kind: "file".into(),
+                identity: other.to_string_lossy().into_owned(),
+                display_name: "other".into(),
+                unavailable: None,
+            },
+        );
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running,
+            "reassignment wins; do not stop the old isolate"
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("bob"),
+            bob_gen
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn reload_new_start_after_stop_is_not_consumed() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        warn_shared_reload(&mut s, &path);
+        s.play.as_ref().unwrap().script_stop("bob");
+        start_file_on(&mut s, "bob", &path);
+        let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
+        focus_profile(&mut s, "alice");
+        let out = s.script_reload_clicked();
+        assert_applied(out, 1, 0);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("bob"),
+            bob_gen,
+            "a new Start after cancellation is a new generation"
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn catalog_native_stop_skips_target_and_reloads_peer() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let root = dir.join("catalog-stop");
+        fake_catalog(&root, &[("StopBot", BOT_TS)]);
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "StopBot")
+            .unwrap();
+        let asg = ScriptAssignment {
+            source_kind: "catalog".into(),
+            identity: "StopBot".into(),
+            display_name: "StopBot".into(),
+            unavailable: None,
+        };
+        s.persist_successful_assignment("alice", asg.clone());
+        s.persist_successful_assignment("bob", asg);
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "StopBot".into(),
+        ));
+        focus_profile(&mut s, "alice");
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        focus_profile(&mut s, "bob");
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            script::ScriptSource::Catalog,
+            "StopBot".into(),
+        ));
+        s.script_start_selected();
+        assert_eq!(s.error, None, "{:?}", s.error);
+        fs::write(
+            root.join("src/bot/scripts/StopBot/StopBot.ts"),
+            format!("{BOT_TS}// changed\n"),
+        )
+        .unwrap();
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        s.play.as_ref().unwrap().script_stop("bob");
+        s.refresh_catalog_at(&root);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Idle
         );
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
