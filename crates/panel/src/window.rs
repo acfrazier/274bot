@@ -1087,16 +1087,12 @@ where
                     // shifted punctuation has no ImGui key identity there.
                     // Add only the missing key lifecycle event: text must not
                     // be queued a second time.
-                    if let Some(key) = crate::app::shifted_imgui_key_at_location(
+                    crate::app::add_shifted_key_event(
+                        window.imgui.context.io_mut(),
                         &event.logical_key,
                         event.location,
-                    ) {
-                        window
-                            .imgui
-                            .context
-                            .io_mut()
-                            .add_key_event(key, event.state == winit::event::ElementState::Pressed);
-                    }
+                        event.state == winit::event::ElementState::Pressed,
+                    );
                 }
 
                 match event {

@@ -12,8 +12,8 @@ use crate::window::{self, Gpu, RedrawMode, ShotState, ShotStatus, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
-    DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
-    TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
+    DockNodeFlags, DragDropTargetFlags, Id, Io, Key, MouseButton, SplitDirection, StyleColor,
+    StyleVar, TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
 use winit::keyboard::{Key as WinitKey, KeyLocation};
 
@@ -1984,6 +1984,20 @@ pub(crate) fn shifted_imgui_key_at_location(key: &WinitKey, location: KeyLocatio
         return None;
     }
     shifted_imgui_key(key)
+}
+
+/// Queue the missing ImGui key lifecycle for a logical shifted character.
+/// The backend already queues text for widgets; this adds only the key event
+/// consumed by game capture.
+pub(crate) fn add_shifted_key_event(
+    io: &mut Io,
+    logical_key: &WinitKey,
+    location: KeyLocation,
+    down: bool,
+) {
+    if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
+        io.add_key_event(key, down);
+    }
 }
 
 /// GameShell `ch` for one ImGui key, Shift applied the way client-play
@@ -5124,16 +5138,16 @@ mod tests {
     use winit::keyboard::{Key as WinitKey, KeyLocation};
 
     use super::{
-        apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
-        capture_key_ch, catalog_core_gate, chooser_should_open_popup, clamp_hop_label_px,
-        debug_caption, drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
-        live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
-        manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-        runner_config, shifted_imgui_key, shifted_imgui_key_at_location, smoke_settled,
-        smoke_should_fire, startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript,
-        LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus,
-        StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
-        SMOKE_DEADLINE, SMOKE_SETTLE,
+        add_shifted_key_event, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
+        boot_for, capture_key_ch, capture_keys, catalog_core_gate, chooser_should_open_popup,
+        clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled,
+        game_window_flags, live_null_tick, live_script_tick, live_smoke_tick, live_stress_tick,
+        loading_text, log_follow_bottom, manual_shot_label, parse_args, parse_live_args,
+        progress_channel, random_status_text, runner_config, shifted_imgui_key,
+        shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
+        CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
+        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -5867,6 +5881,53 @@ mod tests {
         assert_eq!(
             shifted_imgui_key_at_location(&WinitKey::Character("*".into()), KeyLocation::Numpad,),
             None
+        );
+    }
+
+    #[test]
+    fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let colon = WinitKey::Character(":".into());
+        let mut captured = Vec::new();
+
+        for _ in 0..2 {
+            ctx.io_mut().add_key_event(Key::LeftShift, true);
+            add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let frame = ctx.frame();
+            captured.push(capture_keys(frame));
+            ctx.render();
+
+            add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let frame = ctx.frame();
+            captured.push(capture_keys(frame));
+            ctx.render();
+            ctx.io_mut().add_key_event(Key::LeftShift, false);
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let frame = ctx.frame();
+            let _ = capture_keys(frame);
+            ctx.render();
+        }
+
+        assert_eq!(
+            captured,
+            vec![
+                vec![(true, b':' as i32)],
+                vec![(false, b':' as i32)],
+                vec![(true, b':' as i32)],
+                vec![(false, b':' as i32)],
+            ]
         );
     }
 
