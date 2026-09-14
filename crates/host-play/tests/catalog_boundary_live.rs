@@ -6101,6 +6101,156 @@ mod tests {
         );
     }
 
+    /// The RockCrab activation witness reads the dormant `Rocks` identity out
+    /// of the bounded frame projection. The dormant rocks sit outside the
+    /// combat window (no target, not in combat, parked far from the stand), so
+    /// a producer that only kept the combat rows could never match
+    /// Rocks -> crab. Drives the whole GameSnapshot -> Observation -> cycle
+    /// path over a real client: the projection has to carry the dormant
+    /// index/tile, the awake crab on it is the activation, and a separately
+    /// spawned crab that was never a rock is not.
+    #[test]
+    fn rock_crab_activation_needs_the_projected_dormant_rock_not_a_bare_crab() {
+        use client::client::{Client, ClientConfig, ClientNpc};
+        use client::config::{Cache, NpcType};
+        use client::dash3d::ClientPlayer;
+        use client::io::ServerProt;
+        use std::sync::Arc;
+
+        const NPC_ROCKS: usize = 1;
+        const NPC_ROCK_CRAB: usize = 2;
+        const PLAYER_SLOT: i32 = 4;
+        /// One build area holding both the scoped stand (2712,3707,0) and the
+        /// field anchor (2704,3726,0).
+        const BASE: (i32, i32) = (2688, 3680);
+
+        let stand = (
+            ROCK_CRAB_SAFE_STAND.0 - BASE.0,
+            ROCK_CRAB_SAFE_STAND.1 - BASE.1,
+        );
+        // One published frame: a real client with the local player on the
+        // stand and the given `(slot, type, world tile, face target)` NPCs.
+        let frame = |npcs: &[(usize, usize, (i32, i32, i32), i32)]| {
+            let mut client = Client::new(ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: false,
+            });
+            client.cache = Arc::new(Cache {
+                npcs: vec![
+                    NpcType {
+                        id: 0,
+                        ..Default::default()
+                    },
+                    NpcType {
+                        id: NPC_ROCKS as i32,
+                        name: "Rocks".into(),
+                        ..Default::default()
+                    },
+                    NpcType {
+                        id: NPC_ROCK_CRAB as i32,
+                        name: "Rock Crab".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            });
+            client.ingame = true;
+            client.scene_state = 2;
+            client.map_build_base_x = BASE.0;
+            client.map_build_base_z = BASE.1;
+            client.minusedlevel = 0;
+            client.loop_cycle = 500;
+            client.self_slot = PLAYER_SLOT;
+            client.local_player = Some(ClientPlayer::at(stand.0, stand.1));
+            for (row, (slot, type_id, tile, face)) in npcs.iter().enumerate() {
+                let mut npc = ClientNpc {
+                    r#type: Some(*type_id as usize),
+                    ..Default::default()
+                };
+                // The actor tile is un-scaled from these pixel coords.
+                npc.entity.x = (tile.0 - BASE.0) * 128 + npc.entity.size * 64;
+                npc.entity.z = (tile.1 - BASE.1) * 128 + npc.entity.size * 64;
+                npc.entity.combat_cycle = client.loop_cycle + 10;
+                npc.entity.health = 30;
+                npc.entity.total_health = 30;
+                npc.entity.face_entity = *face;
+                client.npc[*slot] = Some(Box::new(npc));
+                client.npc_ids[row] = *slot as i32;
+            }
+            client.npc_count = npcs.len() as i32;
+            client.bump_gens(ServerProt::NPC_INFO);
+            // One frame per tick: the local player's own update moves the
+            // player family, which is what publishes `self_slot`.
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.rebuild(&client);
+            snapshot
+        };
+
+        let names = ObjNames::default();
+        let spec = combat_spec(CoreCase::RockCrab).expect("rock crab combat spec");
+
+        // The scoped rock is 19 tiles from the stand: outside the combat
+        // window, inside the supported field.
+        let dormant =
+            Observation::from_snapshot(&frame(&[(7, NPC_ROCKS, ROCK_CRAB_SPOT, -1)]), &names);
+        assert!(dormant.dormant_rocks_seen, "{dormant:?}");
+        let rock = dormant
+            .npc_facts
+            .iter()
+            .find(|npc| npc.name.as_deref() == Some("Rocks"))
+            .expect("the dormant field rock has to reach the frame projection");
+        assert_eq!(rock.index, 7);
+        assert_eq!(rock.tile, ROCK_CRAB_SPOT);
+        assert_eq!(rock.distance, 19);
+
+        // The rock wakes on its own slot and walks the stand's way: the
+        // projection sees the crab, and the cycle already holds the rock's
+        // identity from the earlier frame.
+        let woke = Observation::from_snapshot(
+            &frame(&[(
+                7,
+                NPC_ROCK_CRAB,
+                (2713, 3707, 0),
+                api::snapshot::PLAYER_FACE_BASE + PLAYER_SLOT,
+            )]),
+            &names,
+        );
+        let crab = woke
+            .npc_facts
+            .iter()
+            .find(|npc| npc.index == 7)
+            .expect("the awake crab is inside the combat window");
+        assert!(crab.targeting_local, "{crab:?}");
+
+        let mut cycle = CombatCoreCycle::default();
+        cycle.observe(spec, &dormant, &dormant);
+        assert!(!cycle.activated, "a dormant rock is not an activation");
+        cycle.observe(spec, &dormant, &woke);
+        assert!(cycle.activated, "{cycle:?}");
+
+        // A crab that was never projected as a rock cannot qualify on its own,
+        // even while it fights the local player.
+        let stranger = Observation::from_snapshot(
+            &frame(&[
+                (7, NPC_ROCKS, ROCK_CRAB_SPOT, -1),
+                (
+                    9,
+                    NPC_ROCK_CRAB,
+                    (2713, 3708, 0),
+                    api::snapshot::PLAYER_FACE_BASE + PLAYER_SLOT,
+                ),
+            ]),
+            &names,
+        );
+        let mut stranger_cycle = CombatCoreCycle::default();
+        stranger_cycle.observe(spec, &stranger, &stranger);
+        assert!(!stranger_cycle.activated, "{stranger_cycle:?}");
+    }
+
     #[test]
     fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
         let levels = [

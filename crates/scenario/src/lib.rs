@@ -10802,7 +10802,11 @@ struct CombatCorePlan {
     weapon_alias: &'static str,
     weapon_id: i32,
     extra_give: &'static [(&'static str, i32, i32)],
-    wear_id: Option<i32>,
+    /// Pre-Start wear step: the step's own name plus the item id its
+    /// `Proof::EquipmentId` arm acknowledges. The label belongs to the item
+    /// ("Dragonfire shield", "Adamant scimitar"), so it stays accurate when
+    /// the helper is reused outside the shield cells.
+    wear: Option<(&'static str, i32)>,
     loot_empty: &'static [i32],
     inject: &'static [ScriptSettingInject],
     complete_quest: Option<&'static str>,
@@ -10822,7 +10826,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         weapon_alias,
         weapon_id,
         extra_give,
-        wear_id,
+        wear,
         loot_empty,
         inject,
         complete_quest,
@@ -10950,22 +10954,8 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             Proof::ItemId { id, count },
         ));
     }
-    if let Some(id) = wear_id {
-        steps.push(Step {
-            name: "wear and acknowledge Dragonfire shield before hostile-field teleport",
-            kind: StepKind::Perform {
-                send: Box::new(move |c, snapshot| {
-                    matches!(
-                        Interactions::new(snapshot, c).wear(id),
-                        SendResult::Sent { .. }
-                    )
-                }),
-            },
-            wait: Wait {
-                arm: Proof::EquipmentId { id },
-                budget_ticks: 200,
-            },
-        });
+    if let Some((label, id)) = wear {
+        steps.push(wear_combat_item_step(label, id));
     }
     for &id in loot_empty {
         steps.push(bank_fletcher_watch(
@@ -11194,7 +11184,7 @@ fn chaos_druid_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: CHAOS_DRUID_LOOT_EMPTY,
         inject: CHAOS_DRUID_INJECT,
         complete_quest: None,
@@ -11218,7 +11208,7 @@ fn chaos_druid_tower_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: CHAOS_DRUID_LOOT_EMPTY,
         inject: CHAOS_DRUID_TOWER_INJECT,
         complete_quest: None,
@@ -11241,7 +11231,7 @@ fn chaos_druid_yanille_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: CHAOS_DRUID_LOOT_EMPTY,
         inject: CHAOS_DRUID_YANILLE_INJECT,
         complete_quest: None,
@@ -11264,7 +11254,7 @@ fn moss_giant_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: MOSS_GIANT_LOOT_EMPTY,
         inject: MOSS_GIANT_INJECT,
         complete_quest: None,
@@ -11288,7 +11278,7 @@ fn hill_giant_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
-        wear_id: None,
+        wear: None,
         loot_empty: HILL_GIANT_LOOT_EMPTY,
         inject: HILL_GIANT_INJECT,
         complete_quest: None,
@@ -11311,7 +11301,7 @@ fn auto_fighter_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: AUTO_FIGHTER_LOOT_EMPTY,
         inject: AUTO_FIGHTER_INJECT,
         complete_quest: None,
@@ -11493,8 +11483,11 @@ fn auto_fighter_range_scenario() -> Scenario {
 }
 
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
-/// Catalog requires native Rocks activation into Rock Crab. Banking is not
-/// this cell. SolveClue stays injected off.
+/// Catalog requires native Rocks activation into Rock Crab, and the melee
+/// fixture arrives already wearing the scoped scimitar: the frozen card's own
+/// `GearEquip` refuses a carried melee fixture, so a packed 1331 would fight
+/// unarmed (the native pre-Start wear is the proof). Banking is not this cell.
+/// SolveClue stays injected off.
 fn rock_crab_scenario() -> Scenario {
     let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "rock_crab",
@@ -11507,7 +11500,10 @@ fn rock_crab_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: Some((
+            "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport",
+            COMBAT_SCIMITAR_ID,
+        )),
         loot_empty: ROCK_CRAB_LOOT_EMPTY,
         inject: ROCK_CRAB_INJECT,
         complete_quest: None,
@@ -11566,7 +11562,10 @@ fn green_dragon_scenario() -> Scenario {
         weapon_alias: "rune_scimitar",
         weapon_id: RUNE_SCIMITAR_ID,
         extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
-        wear_id: Some(DRAGONFIRE_SHIELD_ID),
+        wear: Some((
+            "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            DRAGONFIRE_SHIELD_ID,
+        )),
         loot_empty: GREEN_DRAGON_LOOT_EMPTY,
         inject: GREEN_DRAGON_INJECT,
         complete_quest: None,
@@ -11587,7 +11586,10 @@ fn green_dragon_special_scenario() -> Scenario {
         weapon_alias: "dragon_dagger",
         weapon_id: DRAGON_DAGGER_ID,
         extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
-        wear_id: Some(DRAGONFIRE_SHIELD_ID),
+        wear: Some((
+            "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            DRAGONFIRE_SHIELD_ID,
+        )),
         loot_empty: GREEN_DRAGON_LOOT_EMPTY,
         inject: GREEN_DRAGON_SPECIAL_INJECT,
         complete_quest: None,
@@ -11655,7 +11657,10 @@ fn green_dragon_potions_scenario() -> Scenario {
             ("3dose2attack", SUPER_ATTACK_3_ID, 1),
             ("3dose2strength", SUPER_STRENGTH_3_ID, 1),
         ],
-        wear_id: Some(DRAGONFIRE_SHIELD_ID),
+        wear: Some((
+            "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            DRAGONFIRE_SHIELD_ID,
+        )),
         loot_empty: GREEN_DRAGON_LOOT_EMPTY,
         inject: GREEN_DRAGON_POTIONS_INJECT,
         complete_quest: None,
@@ -11737,7 +11742,7 @@ fn fire_giant_scenario() -> Scenario {
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
         ],
-        wear_id: None,
+        wear: None,
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some("Waterfall Quest"),
@@ -11760,7 +11765,7 @@ fn ardy_fighter_scenario() -> Scenario {
         weapon_alias: "adamant_scimitar",
         weapon_id: COMBAT_SCIMITAR_ID,
         extra_give: &[],
-        wear_id: None,
+        wear: None,
         loot_empty: ARDY_FIGHTER_LOOT_EMPTY,
         inject: ARDY_FIGHTER_INJECT,
         complete_quest: None,
@@ -11873,8 +11878,9 @@ const ARDY_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
 
 /// Shared bank-cell fixture: the same safe-tile preparation and acknowledgement
 /// order as `combat_core_scenario`, plus the acknowledged bank stock the trip
-/// has to draw from, a wielded (never carried) weapon so the card's own deposit
-/// cannot stash it, and the bank/return watch chain after Start.
+/// has to draw from, the scoped weapon itself (seeded, acknowledged carried,
+/// then worn — never a card stash: the card's own deposit must not be able to
+/// stash it), and the bank/return watch chain after Start.
 #[allow(clippy::too_many_arguments)]
 fn combat_bank_scenario(
     name: &'static str,
@@ -11884,6 +11890,7 @@ fn combat_bank_scenario(
     food_alias: &'static str,
     food_id: i32,
     food_count: i32,
+    weapon_alias: &'static str,
     weapon_id: i32,
     extra_give: &'static [(&'static str, i32, i32)],
     loot_empty: &'static [i32],
@@ -11909,6 +11916,7 @@ fn combat_bank_scenario(
                     cheat(c, &format!("setstat thieving {thieving}"));
                 }
                 cheat(c, "~clearinv");
+                cheat(c, &format!("give {weapon_alias} 1"));
                 cheat(c, &format!("give {food_alias} {food_count}"));
                 for &(alias, _, count) in extra_give {
                     cheat(c, &format!("give {alias} {count}"));
@@ -12057,6 +12065,7 @@ fn auto_fighter_bank_scenario() -> Scenario {
         "trout",
         TROUT_ID,
         AUTO_FIGHTER_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
         &GUARD_DROP_IDS,
@@ -12112,6 +12121,7 @@ fn moss_giant_bank_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         MOSS_GIANT_BANK_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
         MOSS_GIANT_LOOT_EMPTY,
@@ -12167,6 +12177,7 @@ fn hill_giant_bank_scenario() -> Scenario {
         "trout",
         TROUT_ID,
         HILL_GIANT_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
         HILL_GIANT_LOOT_EMPTY,
@@ -12223,6 +12234,7 @@ fn chaos_druid_bank_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         CHAOS_DRUID_BANK_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
         CHAOS_DRUID_LOOT_EMPTY,
@@ -12273,6 +12285,7 @@ fn ardy_fighter_bank_scenario() -> Scenario {
         "cake",
         CAKE_ID,
         0,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
         ARDY_FIGHTER_BANK_LOOT_EMPTY,
@@ -12389,7 +12402,9 @@ fn acknowledge_dormant_rocks_before_start(scenario: &mut Scenario) {
 /// RockCrab PeriodicBank `Loot count` at Seers. `bankEveryItems=1` ends the
 /// trip on the first listed drop (uncut sapphire 1623 or casket 405). The
 /// PeriodicBank task deposits matching loot and returns to `currentSpot()`;
-/// it does not restock food.
+/// it does not restock food, so this cell seeds no bank stock at all: the
+/// frozen card's `BankRun` (the food-gone withdraw, a different trip) is the
+/// only reader of a bank food window and eight lobster outlast the cell.
 fn rock_crab_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "rock_crab_bank",
@@ -12399,13 +12414,14 @@ fn rock_crab_bank_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         ROCK_CRAB_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
         ROCK_CRAB_LOOT_EMPTY,
         ROCK_CRAB_BANK_INJECT,
         0,
-        "lobster",
-        20,
+        "",
+        0,
         &[
             (
                 "watch listed RockCrab loot enter a fresh Seers bank",
@@ -12458,6 +12474,7 @@ fn green_dragon_bank_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         GREEN_DRAGON_FOOD,
+        "rune_scimitar",
         RUNE_SCIMITAR_ID,
         &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
         GREEN_DRAGON_LOOT_EMPTY,
@@ -12515,6 +12532,7 @@ fn green_dragon_tele_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         GREEN_DRAGON_FOOD,
+        "rune_scimitar",
         RUNE_SCIMITAR_ID,
         &[
             ("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1),
@@ -12621,7 +12639,7 @@ fn fire_giant_approach_scenario() -> Scenario {
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
         ],
-        wear_id: None,
+        wear: None,
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some("Waterfall Quest"),
@@ -12659,6 +12677,7 @@ fn fire_giant_bank_scenario() -> Scenario {
         "lobster",
         LOBSTER_ID,
         FIRE_GIANT_FOOD,
+        "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
@@ -16154,6 +16173,82 @@ mod tests {
             count: 1,
         }));
         assert!(watch.contains(&Proof::BankClosed));
+    }
+
+    /// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
+    /// the seed closure is what has to hand it over. A fixture that acked a
+    /// weapon it never seeded failed the cell at the ack (rock_crab_bank,
+    /// step 12). The loot-count RockCrab cell also draws nothing from the
+    /// bank: its PeriodicBank trip deposits and returns, so no bank window is
+    /// seeded there while the restocking cells keep theirs.
+    #[test]
+    fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
+        use client::client::{Client, ClientConfig};
+        use client::dash3d::ClientPlayer;
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        let snapshot = GameSnapshot::new();
+
+        let mut seed = |name: &str| {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            let prepare = scenario
+                .steps
+                .iter()
+                .find(|step| step.name.starts_with("prepare melee stats"))
+                .unwrap_or_else(|| panic!("{name} prepares on the safe tile before Start"));
+            let StepKind::Perform { send } = &prepare.kind else {
+                panic!("{name} preparation must be a Perform step");
+            };
+            let before = client.out.pos;
+            assert!(send(&mut client, &snapshot));
+            String::from_utf8_lossy(&client.out.data()[before..client.out.pos]).into_owned()
+        };
+
+        for (name, alias) in [
+            ("auto_fighter_bank", "adamant_scimitar"),
+            ("moss_giant_bank", "adamant_scimitar"),
+            ("hill_giant_bank", "adamant_scimitar"),
+            ("chaos_druid_bank", "adamant_scimitar"),
+            ("ardy_fighter_bank", "adamant_scimitar"),
+            ("rock_crab_bank", "adamant_scimitar"),
+            ("green_dragon_bank", "rune_scimitar"),
+            ("green_dragon_tele", "rune_scimitar"),
+            ("fire_giant_bank", "adamant_scimitar"),
+        ] {
+            let written = seed(name);
+            assert!(
+                written.contains(&format!("give {alias} 1")),
+                "{name} must seed the weapon its own ack and wear steps expect: {written}"
+            );
+            assert!(
+                written.contains("~clearinv"),
+                "{name} wipes the pack before its own seed: {written}"
+            );
+        }
+
+        // The loot-count RockCrab cell seeds no bank stock; the restocking
+        // cells keep the window their BankRun withdraws from.
+        let rock = seed("rock_crab_bank");
+        assert!(
+            !rock.contains("givebank"),
+            "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
+        );
+        let dragon = seed("green_dragon_bank");
+        assert!(
+            dragon.contains("givebank lobster 24"),
+            "green_dragon_bank keeps its withdraw window: {dragon}"
+        );
     }
 
     #[test]
@@ -19683,6 +19778,14 @@ mod tests {
             id: COMBAT_SCIMITAR_ID,
             count: 1,
         }));
+        // The frozen RockCrab `GearEquip` refuses the carried melee fixture, so
+        // the cell arrives wearing it: the wear step's own EquipmentId proof is
+        // the pre-Start wear, and the catalog baseline requires the worn id.
+        assert!(seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        assert!(rock.steps[..start].iter().any(|step| step.name
+            == "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport"));
         assert_eq!(rock.steps[start + 1].wait.arm, strength);
         assert_eq!(rock.proof, strength);
 
