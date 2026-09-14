@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::child::{self, ChildSpec, NativeConfig};
-use super::identity::{self, BinaryIdentity, ProfileIdentity, SettingsIdentity};
+use super::identity::{self, ProfileIdentity, SettingsIdentity};
 use super::ledger::{AttemptEnd, AttemptStatus, CleanupSummary, Ledger, ReceiptSummary, Summary};
 use super::manifest::{CaseEntry, SuiteManifest};
 use super::receipt::{self, Verdict};
@@ -260,32 +260,55 @@ fn select_cases(args: &Args, manifest: &SuiteManifest) -> SuiteResult<Selection>
     )
 }
 
-/// Content identity for an engine/cache path: a file is hashed, a directory is digested as
-/// a bounded tree (unresolved when it is past the bound).
+/// Content identity for one resolved input path: a file is hashed, a directory is digested
+/// as a bounded tree, and a path that is not there is recorded as a *defined* absence (the
+/// panel creates its vault on first use and fills its cache from the engine) rather than
+/// invented.
 fn input_digest(path: &Path) -> identity::InputDigest {
-    if path.is_file() {
-        identity::InputDigest::file(path)
-    } else {
-        identity::InputDigest::tree(path)
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => identity::InputDigest::file(path),
+        Ok(meta) if meta.is_dir() => identity::InputDigest::tree(path),
+        Ok(_) => identity::InputDigest::absent(
+            path,
+            "the resolved path is neither a file nor a directory; the suite records that absence instead of a content identity",
+        ),
+        Err(_) => identity::InputDigest::absent(
+            path,
+            "the resolved path does not exist; the panel creates its vault on first use and fills its cache dir from the engine",
+        ),
     }
 }
 
-/// The vault the panel itself would resolve: `--vault` when given (validated to exist),
-/// else the shared default path. An absence is a *defined* identity — the panel creates
-/// the file on first use — never an invented one.
-fn vault_digest(given: Option<&Path>) -> identity::InputDigest {
-    let path = match given {
-        Some(path) => path.to_path_buf(),
-        None => host_play::default_vault_path(),
-    };
-    if path.exists() {
-        identity::InputDigest::file(&path)
-    } else {
-        identity::InputDigest::absent(
-            &path,
-            "no vault file at the resolved path; the panel would create it",
-        )
+/// The profile inputs the *child* itself resolves.
+///
+/// The suite hands a child `--profile ... --catalog ...`, and the child resolves the vault
+/// and cache with its own native resolver. Binding a different path — a process-wide default
+/// vault — would let a same-path change of the vault the panel actually reads pass a resume,
+/// so the suite runs the same read-only resolver over exactly the flags it hands the child.
+fn resolved_profile_inputs(config: &NativeConfig) -> SuiteResult<identity::ResolvedInputs> {
+    let (options, rest) =
+        host_play::parse_profile_args(config.profile_args().iter().map(String::as_str))
+            .map_err(|error| format!("--profile {}: {error}", config.profile))?;
+    if !rest.is_empty() {
+        return Err(format!(
+            "the suite hands a child only native profile flags; these are not: {rest:?}"
+        ));
     }
+    let selection = options.resolve(None).map_err(|error| {
+        format!(
+            "the native profile resolver rejects this configuration ({error}); the suite binds the inputs \
+             the child resolves, so it cannot substitute a different selection"
+        )
+    })?;
+    Ok(identity::ResolvedInputs {
+        selection: selection.selection().name().to_string(),
+        cache: selection.cache_dir().display().to_string(),
+        vault: selection.vault_path().display().to_string(),
+        nav_pack: selection.nav_pack().display().to_string(),
+        nav_flags: selection.nav_flags().display().to_string(),
+        content: selection.content_dir().display().to_string(),
+        unpack: selection.unpack_dir().display().to_string(),
+    })
 }
 
 fn list(args: &Args) -> SuiteResult<()> {
@@ -370,17 +393,47 @@ fn list(args: &Args) -> SuiteResult<()> {
 fn dry_run(args: &Args) -> SuiteResult<()> {
     let manifest = load_manifest(args)?;
     let selection = select_cases(args, &manifest)?;
-    let planned: Vec<(&CaseEntry, Option<Vec<String>>)> = selection
+    let print_commands = !args.config.catalog.as_os_str().is_empty();
+    // The printed line is the line a child would receive: the executable resolved and
+    // hashed into the run identity, never the manifest's cargo template. A plan whose
+    // executable cannot be resolved refuses instead of printing a line the run would
+    // then reject.
+    let mut unresolved: Option<String> = None;
+    let binaries = if print_commands {
+        match args.config.binaries(
+            selection
+                .runnable(&manifest)
+                .into_iter()
+                .map(|case| case.runner()),
+            &manifest,
+            identity::repo_root().as_deref(),
+        ) {
+            Ok(binaries) => binaries,
+            Err(error) => {
+                unresolved = Some(error);
+                BTreeMap::new()
+            }
+        }
+    } else {
+        BTreeMap::new()
+    };
+    let planned: Vec<(&CaseEntry, Result<Vec<String>, String>)> = selection
         .cases
         .iter()
         .filter_map(|id| manifest.case(id))
         .map(|case| {
-            let command = if case.is_runnable() && !args.config.catalog.as_os_str().is_empty() {
-                args.config.command(case, &manifest).ok()
+            let outcome = if !case.is_runnable() {
+                Err(case
+                    .unavailable
+                    .as_ref()
+                    .map(|unavailable| format!("{}: {}", unavailable.code, unavailable.reason))
+                    .unwrap_or_else(|| "no native adapter".into()))
+            } else if !print_commands {
+                Err("pass --catalog with --profile to print the exact child command lines".into())
             } else {
-                None
+                args.config.command(case, &binaries)
             };
-            (case, command)
+            (case, outcome)
         })
         .collect();
     if args.json {
@@ -389,12 +442,12 @@ fn dry_run(args: &Args) -> SuiteResult<()> {
             "why": selection.why,
             "planned": planned
                 .iter()
-                .map(|(case, command)| serde_json::json!({
+                .map(|(case, outcome)| serde_json::json!({
                     "id": case.id,
                     "runnable": case.is_runnable(),
                     "budget_min": case.budget_min(),
-                    "command": command,
-                    "unavailable": case.unavailable.as_ref().map(|u| u.code.clone()),
+                    "command": outcome.as_ref().ok(),
+                    "unavailable": outcome.as_ref().err(),
                 }))
                 .collect::<Vec<_>>(),
         });
@@ -402,34 +455,41 @@ fn dry_run(args: &Args) -> SuiteResult<()> {
             "{}",
             serde_json::to_string_pretty(&payload).unwrap_or_default()
         );
-        return Ok(());
+        return refuse_unresolved_plan(unresolved);
     }
     println!("{}", selection.why);
-    for (index, (case, command)) in planned.iter().enumerate() {
-        match command {
-            Some(command) => println!(
+    for (index, (case, outcome)) in planned.iter().enumerate() {
+        match outcome {
+            Ok(command) => println!(
                 "[{}/{}] would run {} ({})",
                 index + 1,
                 planned.len(),
                 case.id,
                 command.join(" ")
             ),
-            None => println!(
+            Err(reason) => println!(
                 "[{}/{}] would not run {} ({})",
                 index + 1,
                 planned.len(),
                 case.id,
-                case.unavailable
-                    .as_ref()
-                    .map(|unavailable| unavailable.code.as_str())
-                    .unwrap_or("no native adapter")
+                reason
             ),
         }
     }
-    if args.config.catalog.as_os_str().is_empty() {
+    if !print_commands {
         println!("note: pass --catalog with --profile to print the exact child command lines");
     }
-    Ok(())
+    refuse_unresolved_plan(unresolved)
+}
+
+/// A plan that could not resolve the executable it would launch refuses: the suite binds
+/// the bytes of every child it starts, so an unresolvable plan is a configuration error,
+/// not a preview of a run that would start something else.
+fn refuse_unresolved_plan(unresolved: Option<String>) -> SuiteResult<()> {
+    match unresolved {
+        Some(error) => Err(format!("refusing to plan a run: {error}")),
+        None => Ok(()),
+    }
 }
 
 fn run(args: &Args) -> SuiteResult<i32> {
@@ -449,17 +509,18 @@ fn run(args: &Args) -> SuiteResult<i32> {
 
     // Binary identity for every runner kind this selection will launch, resolved and
     // hashed *before* the ledger exists: an unresolved executable is a configuration
-    // error the run refuses, not an identity the suite records and later compares.
-    let mut binaries: BTreeMap<String, BinaryIdentity> = BTreeMap::new();
-    for case in selection.runnable(&manifest) {
-        let kind = case.runner();
-        if !binaries.contains_key(kind.as_str()) {
-            binaries.insert(
-                kind.as_str().to_string(),
-                args.config.binary(kind, &manifest, repo.as_deref())?,
-            );
-        }
-    }
+    // error the run refuses, not an identity the suite records and later compares. The
+    // same map is what every child is launched from, so the bytes in the ledger and the
+    // bytes in the child are one executable — `cargo run` is never re-invoked after the
+    // identity was captured.
+    let binaries = args.config.binaries(
+        selection
+            .runnable(&manifest)
+            .into_iter()
+            .map(|case| case.runner()),
+        &manifest,
+        repo.as_deref(),
+    )?;
 
     let settings = SettingsIdentity {
         level: selection.level.map(|level| level.as_str().to_string()),
@@ -469,15 +530,18 @@ fn run(args: &Args) -> SuiteResult<i32> {
         child_args: args.config.extra_args.clone(),
         child_env_keys: args.config.env_keys(),
     };
+    let resolved = resolved_profile_inputs(&args.config)?;
     let profile = ProfileIdentity {
         profile: args.config.profile.clone(),
         revision: args.config.revision.clone(),
         host: args.config.host.clone(),
         port: args.config.port,
+        selection: resolved.selection.clone(),
+        resolved: resolved.clone(),
         engine: args.config.engine.as_ref().map(|path| input_digest(path)),
-        cache: args.config.cache.as_ref().map(|path| input_digest(path)),
+        cache: input_digest(Path::new(&resolved.cache)),
         catalog: identity::InputDigest::catalog(&args.config.catalog),
-        vault: vault_digest(args.config.vault.as_deref()),
+        vault: input_digest(Path::new(&resolved.vault)),
         lowmem: args.config.lowmem,
         mainland: args.config.mainland,
         jobs: 1,
@@ -571,7 +635,7 @@ fn run(args: &Args) -> SuiteResult<i32> {
             continue;
         }
 
-        let command = args.config.command(case, &manifest)?;
+        let command = args.config.command(case, &binaries)?;
         let spec = ChildSpec {
             label: case.id.clone(),
             command: command.clone(),
@@ -645,12 +709,11 @@ fn run(args: &Args) -> SuiteResult<i32> {
         let cleanup_summary = Some(CleanupSummary {
             killed_signal: run.cleanup.killed_signal,
             escalated_to_sigkill: run.cleanup.escalated_to_sigkill,
-            reaped: if run.timed_out || run.interrupted {
-                run.cleanup.reaped
-            } else {
-                true
-            },
-            note: if run.cleanup.note.is_empty() && !(run.timed_out || run.interrupted) {
+            // Faithful on every path: `reaped` means the direct child was waited *and* no
+            // process of its group survives. A normal exit that left a descendant running
+            // is not a reaped tree, so it is not rounded up to `true` here.
+            reaped: run.cleanup.reaped,
+            note: if run.cleanup.note.is_empty() {
                 "child exited on its own".to_string()
             } else {
                 run.cleanup.note.clone()
@@ -682,6 +745,11 @@ fn run(args: &Args) -> SuiteResult<i32> {
                 ),
                 !reaped,
             )
+        } else if let Some(reason) = cleanup_failure(&run) {
+            // A normal exit is not a reaped tree: a descendant that outlived the direct
+            // child, and could not be terminated inside the suite's bound, is a harness
+            // failure that stops the run instead of launching the next case.
+            (AttemptStatus::CleanupFailed, reason, true)
         } else {
             match receipt::validate(case, &receipts, run.exit_code, &captures) {
                 Verdict::Passed => (AttemptStatus::Passed, String::new(), false),
@@ -782,6 +850,24 @@ fn run(args: &Args) -> SuiteResult<i32> {
     Ok(EXIT_OK)
 }
 
+/// A run whose process tree could not be reaped is a shared harness failure: the suite
+/// cannot claim the child's group is gone, so it stops instead of launching the next case.
+/// `reaped` is only true once the direct child has been waited *and* no process of its
+/// group survives, on every exit path — not only on a timeout.
+fn cleanup_failure(run: &child::ChildRun) -> Option<String> {
+    if run.cleanup.reaped {
+        return None;
+    }
+    Some(format!(
+        "the child's process group could not be reaped within the suite's bound: {}",
+        if run.cleanup.note.is_empty() {
+            "no cleanup note"
+        } else {
+            run.cleanup.note.as_str()
+        }
+    ))
+}
+
 fn report(run_dir: &Path, summary: &Summary, selection: &Selection) {
     println!(
         "attempted {} passed {} pending_visual_review {} failed {} timeout {} shared_failure {} \
@@ -852,6 +938,33 @@ mod tests {
         .unwrap();
         assert_eq!(args.only, vec!["thiever", "ardy"]);
         assert_eq!(args.config.port, None);
+    }
+
+    /// A cleanup that could not reap the process tree is a shared failure on *every* exit
+    /// path, not only on a timeout: the suite cannot claim the child is gone.
+    #[test]
+    fn a_cleanup_that_could_not_reap_the_tree_stops_the_run() {
+        let run = |reaped: bool, note: &str| child::ChildRun {
+            pid: 1,
+            exit_code: Some(0),
+            signal: None,
+            timed_out: false,
+            interrupted: false,
+            output_tail: String::new(),
+            log_truncated: false,
+            elapsed_ms: 0,
+            cleanup: child::CleanupSummary {
+                killed_signal: None,
+                escalated_to_sigkill: false,
+                reaped,
+                note: note.into(),
+            },
+        };
+        assert!(cleanup_failure(&run(true, "child exited on its own")).is_none());
+        let reason = cleanup_failure(&run(false, "a descendant outlived the direct child"))
+            .expect("a surviving tree is a harness failure");
+        assert!(reason.contains("could not be reaped"), "{reason}");
+        assert!(reason.contains("descendant"), "{reason}");
     }
 
     #[test]

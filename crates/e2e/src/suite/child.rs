@@ -14,7 +14,11 @@
 //! harness failure instead of being ignored.
 //!
 //! Platform: bounded process-group ownership uses unix process groups and signals. On
-//! other platforms [`run`] fails closed instead of launching a child it cannot own.
+//! other platforms [`run`] fails closed instead of launching a child it cannot own, so the
+//! unix implementation below is unreachable there and is allowed to be dead code rather
+//! than duplicated into a second, weaker ownership path.
+
+#![cfg_attr(not(unix), allow(dead_code, unused_imports, unused_variables))]
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -146,6 +150,44 @@ impl NativeConfig {
         if self.profile.trim().is_empty() {
             return Err("--profile must name the native server profile".into());
         }
+        // The native resolver expands relative paths against the working directory. The
+        // suite resolves them in its own process while a child resolves them in its own
+        // cwd, so the two would not necessarily agree: refuse a relative input instead of
+        // binding a path the child may not read.
+        for (flag, path) in [
+            ("--catalog", Some(&self.catalog)),
+            ("--engine", self.engine.as_ref()),
+            ("--cache", self.cache.as_ref()),
+            ("--vault", self.vault.as_ref()),
+        ] {
+            if let Some(path) = path {
+                if path.is_relative() && !path.as_os_str().is_empty() {
+                    return Err(format!(
+                        "{flag} {} is relative; the child resolves it against its own working directory, so \
+                         the suite cannot bind the path it reads. Pass an absolute path",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        for name in [
+            "ENGINE_DIR",
+            "CLIENT_UNPACK_DIR",
+            "NAV_PACK",
+            "NAV_FLAGS",
+            "BOT_CACHE_MANIFEST",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                let value = PathBuf::from(value);
+                if !value.as_os_str().is_empty() && value.is_relative() {
+                    return Err(format!(
+                        "${name}={} is relative; the profile resolver expands it against the suite's \
+                         working directory while the child expands it against its own. Use an absolute path",
+                        value.display()
+                    ));
+                }
+            }
+        }
         if !self.lowmem {
             // `panel-play`/`catalog_watch`/`pair_watch` take no memory flag: the panel
             // applies the memory mode from the selected vault profile's settings. Asking
@@ -222,29 +264,71 @@ impl NativeConfig {
         }
     }
 
-    /// The full command line for one case.
-    pub fn command(&self, case: &CaseEntry, manifest: &SuiteManifest) -> SuiteResult<Vec<String>> {
+    /// Resolve and hash the executable for every runner kind these cases will launch.
+    ///
+    /// The map is the run's executable identity *and* its launch program: the same
+    /// [`BinaryIdentity`] that goes into the ledger is what [`NativeConfig::command`]
+    /// launches. Resolving happens before the ledger exists, so an executable the suite
+    /// cannot bind to bytes is a configuration error the run refuses rather than an
+    /// identity it records and compares later.
+    pub fn binaries(
+        &self,
+        runners: impl IntoIterator<Item = RunnerKind>,
+        manifest: &SuiteManifest,
+        repo_root: Option<&Path>,
+    ) -> SuiteResult<BTreeMap<String, BinaryIdentity>> {
+        let mut binaries: BTreeMap<String, BinaryIdentity> = BTreeMap::new();
+        for runner in runners {
+            if !binaries.contains_key(runner.as_str()) {
+                binaries.insert(
+                    runner.as_str().to_string(),
+                    self.binary(runner, manifest, repo_root)?,
+                );
+            }
+        }
+        Ok(binaries)
+    }
+
+    /// The full command line for one case: the executable the run identity resolved and
+    /// hashed, the shared profile flags, and the case's live name.
+    ///
+    /// The manifest's cargo template never appears here. It only names the artifact
+    /// [`NativeConfig::binaries`] resolved; re-invoking `cargo run` after the identity was
+    /// captured could rebuild different bytes under the same command, so a runner kind
+    /// with no resolved executable refuses instead of falling back to the template.
+    pub fn command(
+        &self,
+        case: &CaseEntry,
+        binaries: &BTreeMap<String, BinaryIdentity>,
+    ) -> SuiteResult<Vec<String>> {
         let live = case
             .live
             .as_deref()
             .ok_or_else(|| format!("{}: no native live name", case.id))?;
         let runner = case.runner();
-        let direct = match runner {
-            RunnerKind::Core => self.exec_core.as_ref(),
-            RunnerKind::Pair => self.exec_pair.as_ref(),
+        let flag = match runner {
+            RunnerKind::Core => "--exec-core",
+            RunnerKind::Pair => "--exec-pair",
         };
-        let mut command = Vec::new();
-        match direct {
-            Some(path) => command.push(path.display().to_string()),
-            None => {
-                let template = match runner {
-                    RunnerKind::Core => &manifest.defaults.exec.core,
-                    RunnerKind::Pair => &manifest.defaults.exec.pair,
-                };
-                command.push(template.program.clone());
-                command.extend(template.args.iter().cloned());
-            }
+        let binary = binaries.get(runner.as_str()).ok_or_else(|| {
+            format!(
+                "{}: no {} executable was resolved into the run identity; pass {flag} PATH or \
+                 build the manifest's cargo template before the run",
+                case.id,
+                runner.as_str()
+            )
+        })?;
+        if !binary.resolved() {
+            return Err(format!(
+                "{}: the {} executable {} has no content identity; pass {flag} PATH",
+                case.id,
+                runner.as_str(),
+                binary.program
+            ));
         }
+        // `binary.args` stays identity metadata (the cargo template it came from); the
+        // resolved artifact takes only the profile flags.
+        let mut command = vec![binary.program.clone()];
         command.extend(self.profile_args());
         command.push("--live".into());
         command.push(live.to_string());
@@ -333,6 +417,9 @@ pub struct CleanupSummary {
 /// The bounded result of one child run.
 #[derive(Debug, Clone)]
 pub struct ChildRun {
+    /// The direct child's pid, which is also its process-group id (the group the suite
+    /// owns and reaps).
+    pub pid: u32,
     pub exit_code: Option<i32>,
     pub signal: Option<i32>,
     pub timed_out: bool,
@@ -435,34 +522,60 @@ pub fn run(
     }
     let pid = owned.pid;
     let status = owned.status.or(status);
+
+    // Bounded drain of the output pipes. A descendant that inherited stdout/stderr keeps
+    // the pipe open after the direct child exits, so this waits a bound, then the group is
+    // terminated below to close the write ends. An unbounded join is never taken.
+    let drained = drain_readers(&shared, readers.len(), PIPE_DRAIN);
+
+    // Ownership is the *tree*, not the direct child. A direct child that exited is not a
+    // process group that exited: a descendant can hold the pipes, or be detached with its
+    // own stdio so that nothing looks wrong from here. Either way it is still ours to
+    // reap, and the cleanup stays bounded (`SIGTERM`, a grace, `SIGKILL`, a bounded wait).
+    let case_reaped = status.is_some() && !process_group_alive(pid);
+    if !drained || !case_reaped {
+        let mut parts: Vec<String> = Vec::new();
+        if !drained {
+            parts.push(format!(
+                "output pipes were still open after {:?} (a descendant held them)",
+                PIPE_DRAIN
+            ));
+        } else {
+            parts.push("the direct child exited but a descendant was still running".to_string());
+        }
+        let group = owned.terminate();
+        if group.reaped {
+            if group.escalated_to_sigkill {
+                parts.push("the leftover process group needed a forced kill".to_string());
+            } else {
+                parts.push("the leftover process group was terminated".to_string());
+            }
+        } else {
+            parts.push(format!(
+                "the leftover process group could not be reaped within the bound ({})",
+                group.note
+            ));
+        }
+        // A pipe that was still open gets a further bounded drain now that the write ends
+        // are (or should be) closed.
+        if !drained {
+            let _ = drain_readers(&shared, readers.len(), PIPE_DRAIN_AFTER_KILL);
+        }
+        let note = format!("{}: {}", spec.label, parts.join("; "));
+        cleanup.note = if cleanup.note.is_empty() {
+            note
+        } else {
+            format!("{}; {note}", cleanup.note)
+        };
+        cleanup.killed_signal = cleanup.killed_signal.or(Some(termination_signal()));
+        cleanup.escalated_to_sigkill |= group.escalated_to_sigkill;
+        cleanup.reaped = group.reaped && status.is_some();
+    } else {
+        // The direct child was waited and no process of its group survives.
+        cleanup.reaped = true;
+    }
     drop(owned);
 
-    // Deadline-aware drain. A descendant that inherited stdout/stderr keeps the pipe open
-    // after the direct child exits, so this waits a bound, then force-kills whatever is
-    // left in the group to close the write ends, then gives up and detaches: an unbounded
-    // join is never taken.
-    let drained = drain_readers(&shared, readers.len(), PIPE_DRAIN);
-    if !drained {
-        let leftover = signal_tree(pid, force_signal());
-        let note = if leftover {
-            format!(
-                "{}: output pipes were still open after {:?} (a descendant held them); \
-                 the leftover process group was force-killed",
-                spec.label, PIPE_DRAIN
-            )
-        } else {
-            format!(
-                "{}: output pipes were still open after {:?}",
-                spec.label, PIPE_DRAIN
-            )
-        };
-        let _ = drain_readers(&shared, readers.len(), PIPE_DRAIN_AFTER_KILL);
-        if cleanup.note.is_empty() {
-            cleanup.note = note;
-        } else {
-            cleanup.note = format!("{}; {note}", cleanup.note);
-        }
-    }
     let output_tail = shared.tail.lock().unwrap().text();
     let log_truncated = log.lock().map(|l| l.truncated()).unwrap_or(false)
         || shared.wrapped_lines.load(Ordering::SeqCst) > 0;
@@ -478,6 +591,7 @@ pub fn run(
         cleanup.note = "child exited on its own".into();
     }
     Ok(ChildRun {
+        pid,
         exit_code,
         signal,
         timed_out,
@@ -557,8 +671,10 @@ impl OwnedChild {
         self.reaped = true;
     }
 
-    /// Terminate the whole group with a bounded escalation, reaping the direct child when
-    /// it exits inside the bound.
+    /// Terminate and reap the whole group, bounded: `SIGTERM`, a grace, `SIGKILL`, then a
+    /// bounded wait for the group to disappear. `reaped` is true only when the direct child
+    /// has been waited *and* no process of its group survives: a direct child that exited
+    /// while a descendant lived on is not a reaped tree.
     fn terminate(&mut self) -> CleanupSummary {
         let mut summary = CleanupSummary {
             killed_signal: Some(termination_signal()),
@@ -567,49 +683,54 @@ impl OwnedChild {
             note: String::new(),
         };
         if !signal_tree(self.pid, termination_signal()) {
-            summary.note = "process group was already gone when the suite terminated it".into();
-            summary.reaped = self.reap_bounded(CLEANUP_KILL_WAIT);
-            return summary;
+            summary.note = "the process group was already gone when the suite terminated it".into();
         }
-        if !self.reap_bounded(CLEANUP_GRACE) {
+        if !self.wait_group(CLEANUP_GRACE) {
             summary.escalated_to_sigkill = true;
             if signal_tree(self.pid, force_signal()) {
                 summary.note = format!(
                     "{} did not exit within {:?}; forced kill",
                     self.label, CLEANUP_GRACE
                 );
-            } else {
+            } else if summary.note.is_empty() {
                 summary.note = format!("{}: forced kill found no process group", self.label);
             }
-            summary.reaped = self.reap_bounded(CLEANUP_KILL_WAIT);
+            summary.reaped = self.wait_group(CLEANUP_KILL_WAIT);
         } else {
             summary.reaped = true;
         }
-        if !summary.reaped && summary.note.is_empty() {
-            summary.note = format!(
-                "{} could not be reaped within {:?}",
-                self.label,
-                CLEANUP_GRACE + CLEANUP_KILL_WAIT
-            );
+        if !summary.reaped {
+            summary.note = if summary.note.is_empty() {
+                format!(
+                    "{} could not be reaped within {:?}",
+                    self.label,
+                    CLEANUP_GRACE + CLEANUP_KILL_WAIT
+                )
+            } else {
+                format!("{}; not reaped within the bound", summary.note)
+            };
         }
         summary
     }
 
-    /// Poll the direct child (bounded), so cleanup never blocks on an unbounded `wait`.
-    fn reap_bounded(&mut self, bound: Duration) -> bool {
+    /// Poll, bounded, until the direct child has been waited *and* its process group holds
+    /// no process. Returns whether the group is fully reaped. The direct child is reaped
+    /// first: an unreaped leader keeps the group observable, so a zombie would otherwise
+    /// look like a live tree.
+    fn wait_group(&mut self, bound: Duration) -> bool {
         let deadline = Instant::now() + bound;
         loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
+            if !self.reaped {
+                if let Ok(Some(status)) = self.child.try_wait() {
                     self.reaped = true;
                     self.status = Some(status);
-                    return true;
                 }
-                Ok(None) => {}
-                Err(_) => return false,
+            }
+            if self.reaped && !self.group_alive() {
+                return true;
             }
             if Instant::now() >= deadline {
-                return !self.group_alive();
+                return self.reaped && !self.group_alive();
             }
             std::thread::sleep(POLL);
         }
@@ -622,18 +743,28 @@ impl OwnedChild {
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        if self.reaped {
+        if self.reaped && !self.group_alive() {
             return;
         }
-        // Any exit path that is not the normal reaped one still reaps the tree.
+        // Any other exit path — an early `?`, a panic, a cleanup that ran out of bound —
+        // still owns the tree: force-kill the group and wait, bounded, for the direct
+        // child *and* every other member of the group to be gone.
         let _ = signal_tree(self.pid, force_signal());
         let deadline = Instant::now() + CLEANUP_KILL_WAIT;
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => std::thread::sleep(POLL),
-                Err(_) => return,
+        loop {
+            if !self.reaped {
+                if let Ok(Some(status)) = self.child.try_wait() {
+                    self.reaped = true;
+                    self.status = Some(status);
+                }
             }
+            if self.reaped && !self.group_alive() {
+                return;
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(POLL);
         }
     }
 }
@@ -668,6 +799,30 @@ fn process_group_alive(pid: u32) -> bool {
         return false;
     }
     unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Non-unix platforms have no process groups or signals, so the suite cannot own a tree:
+/// [`run`] refuses to launch there. These fail-closed stand-ins exist so the module still
+/// compiles on those platforms instead of failing to build; no launch path reaches them.
+#[cfg(not(unix))]
+fn termination_signal() -> i32 {
+    0
+}
+
+#[cfg(not(unix))]
+fn force_signal() -> i32 {
+    0
+}
+
+#[cfg(not(unix))]
+fn signal_tree(_pid: u32, _signal: i32) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn process_group_alive(_pid: u32) -> bool {
+    // Nothing is ever launched on this platform, so no group can be alive.
+    false
 }
 
 #[cfg(unix)]
@@ -942,38 +1097,185 @@ mod tests {
     }
 
     #[test]
-    fn a_case_command_is_the_executable_profile_flags_and_its_live_name() {
+    fn relative_input_paths_are_refused() {
+        let mut vaulted = config();
+        vaulted.vault = Some(PathBuf::from("relative-vault"));
+        let error = vaulted.validate().unwrap_err();
+        assert!(
+            error.contains("--vault relative-vault is relative"),
+            "{error}"
+        );
+        assert!(error.contains("absolute"), "{error}");
+
+        let mut catalog_config = config();
+        catalog_config.catalog = PathBuf::from("relative-catalog");
+        let error = catalog_config.validate().unwrap_err();
+        assert!(
+            error.contains("--catalog relative-catalog is relative"),
+            "{error}"
+        );
+    }
+
+    /// A real file standing in for a built native executable.
+    fn fake_executable(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n# {name} fixture\n")).unwrap();
+        path
+    }
+
+    fn test_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("274bot-suite-child-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_case_command_is_the_resolved_executable_profile_flags_and_its_live_name() {
+        let manifest = SuiteManifest::parse(
+            crate::suite::EMBEDDED_MANIFEST.as_bytes(),
+            "embedded fixture",
+        )
+        .unwrap();
+        let dir = test_dir("command");
+        let core_bin = fake_executable(&dir, "fixture-core");
+        let pair_bin = fake_executable(&dir, "fixture-pair");
+        let mut config = config();
+        config.catalog = PathBuf::from(manifest.defaults.exec.core.program.clone());
+        config.exec_core = Some(core_bin.clone());
+        config.exec_pair = Some(pair_bin.clone());
+        config.mainland = true;
+
+        let binaries = config
+            .binaries(
+                [RunnerKind::Core, RunnerKind::Pair],
+                &manifest,
+                Some(Path::new("/repo")),
+            )
+            .unwrap();
+        assert_eq!(
+            binaries["core"].program,
+            core_bin.display().to_string(),
+            "a direct executable is the identity"
+        );
+        assert!(
+            binaries["core"].sha256.is_some(),
+            "the launched executable is content-bound"
+        );
+
+        let core = config.command(&case("thiever"), &binaries).unwrap();
+        assert_eq!(core[0], core_bin.display().to_string());
+        assert_eq!(core[core.len() - 2..], ["--live", "script_thiever"]);
+        assert!(!core.iter().any(|arg| arg == "--lowmem"));
+
+        let pair = config
+            .command(&case("nature_crafter_air"), &binaries)
+            .unwrap();
+        assert_eq!(pair[0], pair_bin.display().to_string());
+        assert_eq!(
+            pair[pair.len() - 2..],
+            ["--live", "script_nature_crafter_air"]
+        );
+    }
+
+    /// Without a direct executable the manifest's cargo template is only a *reference* to
+    /// a built artifact: `command` launches the resolved, hashed path, never `cargo run`
+    /// (which could rebuild different bytes under the same command after the identity was
+    /// captured), and refuses when no executable was resolved at all.
+    #[test]
+    fn a_command_launches_the_resolved_artifact_never_the_cargo_template() {
+        let manifest = SuiteManifest::parse(
+            crate::suite::EMBEDDED_MANIFEST.as_bytes(),
+            "embedded fixture",
+        )
+        .unwrap();
+        let template = &manifest.defaults.exec.core;
+        let resolved = BinaryIdentity {
+            kind: "resolved-cargo".into(),
+            program: "/repo/target/debug/catalog_watch".into(),
+            args: template.args.clone(),
+            sha256: Some("0".repeat(64)),
+            size: Some(1024),
+            note: None,
+        };
+        assert!(!template.args.is_empty(), "{:?}", template.args);
+        let binaries: BTreeMap<String, BinaryIdentity> =
+            [("core".to_string(), resolved)].into_iter().collect();
+        let config = config();
+
+        let command = config.command(&case("thiever"), &binaries).unwrap();
+        assert_eq!(
+            command[0], "/repo/target/debug/catalog_watch",
+            "the launched program is the resolved artifact"
+        );
+        assert!(
+            !command
+                .iter()
+                .any(|arg| arg == "cargo" || arg == "run" || arg == &template.program),
+            "the cargo template must never reach argv: {command:?}"
+        );
+        assert!(
+            !command.windows(2).any(|pair| pair == ["run", "-p"]),
+            "cargo's own arguments are identity metadata, not child arguments: {command:?}"
+        );
+        assert_eq!(command[command.len() - 2..], ["--live", "script_thiever"]);
+
+        // An unresolved identity (a command string, no bytes) is refused.
+        let unresolved: BTreeMap<String, BinaryIdentity> = [(
+            "core".to_string(),
+            BinaryIdentity {
+                kind: "unresolved-cargo".into(),
+                program: template.program.clone(),
+                args: template.args.clone(),
+                sha256: None,
+                size: None,
+                note: Some("cargo run is not an identity".into()),
+            },
+        )]
+        .into_iter()
+        .collect();
+        let error = config.command(&case("thiever"), &unresolved).unwrap_err();
+        assert!(error.contains("no content identity"), "{error}");
+        assert!(error.contains("--exec-core"), "{error}");
+
+        // No identity at all for the runner kind is refused too, with the flag that
+        // resolves it.
+        let error = config
+            .command(&case("thiever"), &BTreeMap::new())
+            .unwrap_err();
+        assert!(error.contains("--exec-core"), "{error}");
+        let error = config
+            .command(&case("nature_crafter_air"), &BTreeMap::new())
+            .unwrap_err();
+        assert!(error.contains("--exec-pair"), "{error}");
+    }
+
+    /// `binaries` keeps one identity per runner kind and resolves nothing it was not
+    /// asked for.
+    #[test]
+    fn binaries_binds_one_executable_per_runner_kind() {
         let manifest = SuiteManifest::parse(
             crate::suite::EMBEDDED_MANIFEST.as_bytes(),
             "embedded fixture",
         )
         .unwrap();
         let mut config = config();
-        config.catalog = PathBuf::from(manifest.defaults.exec.core.program.clone());
-        config.exec_core = Some(PathBuf::from("/bin/fixture-core"));
-        config.exec_pair = Some(PathBuf::from("/bin/fixture-pair"));
-        config.mainland = true;
+        config.exec_core = Some(fake_executable(&test_dir("binaries"), "fixture-core"));
 
-        let core = config.command(&case("thiever"), &manifest).unwrap();
-        assert_eq!(core[0], "/bin/fixture-core");
-        assert_eq!(core[core.len() - 2..], ["--live", "script_thiever"]);
-        assert!(!core.iter().any(|arg| arg == "--lowmem"));
-
-        let pair = config
-            .command(&case("nature_crafter_air"), &manifest)
+        let binaries = config
+            .binaries(
+                [RunnerKind::Core, RunnerKind::Core],
+                &manifest,
+                Some(Path::new("/repo")),
+            )
             .unwrap();
-        assert_eq!(pair[0], "/bin/fixture-pair");
+        assert_eq!(binaries.len(), 1);
         assert_eq!(
-            pair[pair.len() - 2..],
-            ["--live", "script_nature_crafter_air"]
+            binaries["core"].program,
+            config.exec_core.as_ref().unwrap().display().to_string()
         );
-
-        // Without a direct executable the manifest template is used verbatim.
-        config.exec_core = None;
-        let templated = config.command(&case("thiever"), &manifest).unwrap();
-        let mut expected = vec![manifest.defaults.exec.core.program.clone()];
-        expected.extend(manifest.defaults.exec.core.args.iter().cloned());
-        assert_eq!(templated[..expected.len()], expected[..]);
+        assert_eq!(binaries["core"].kind, "direct");
     }
 
     #[test]

@@ -550,7 +550,10 @@ mod tests {
             "binaries": {},
             "profile": {
                 "profile": "local-274", "revision": null, "host": null, "port": null,
-                "engine": null, "cache": null,
+                "selection": "local-274",
+                "resolved": {"selection": "local-274", "cache": "/cache", "vault": "/vault", "nav_pack": "/nav", "nav_flags": "/navflags", "content": "/content", "unpack": "/unpack"},
+                "engine": null,
+                "cache": {"target": "/cache", "sha256": "cc", "bytes": 2, "files": 1, "note": null},
                 "catalog": {"target": "/catalog", "sha256": "cat", "bytes": 2, "files": 1, "note": null},
                 "vault": {"target": "/vault", "sha256": "vv", "bytes": 2, "files": 1, "note": null},
                 "lowmem": true, "mainland": false, "jobs": 1

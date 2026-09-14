@@ -1,6 +1,10 @@
 //! Offline verification of the native suite entrypoint: the real `e2e-suite` binary
 //! driving real child processes.
 //!
+//! The suite's process ownership is unix-only (process groups and signals); on other
+//! platforms `run` fails closed, so there is nothing to exercise there.
+#![cfg(unix)]
+//!
 //! No engine, no client, no login and no gameplay: wherever a real run would launch a
 //! native panel executable, these tests hand the suite the disposable
 //! `e2e-suite-fixture` binary through `--exec-core`. `LIVE` is never read here; the tests
@@ -12,7 +16,7 @@
 //! `pending_visual_review` until a human reads the capture back.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -31,9 +35,12 @@ fn fixture_manifest() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/native-suite/offline-suite-manifest.json")
 }
 
-/// A disposable working root with the catalog the suite binds. A real run points
-/// `--catalog` at the `$RS2B0T` clone; the suite binds its `src/bot/scripts` content, so a
-/// catalog without that tree is refused rather than recorded as an unresolved identity.
+/// A disposable working root with the catalog the suite binds and a disposable `$HOME` for
+/// the native profile resolver. A real run points `--catalog` at the `$RS2B0T` clone and
+/// resolves its profile against the operator's home; the suite binds the catalog's
+/// `src/bot/scripts` content and the *resolved* profile paths, so a catalog without that
+/// tree — or a profile the native resolver does not know — is refused rather than recorded
+/// as an unresolved identity.
 fn temp_dir(tag: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("274bot-suite-offline-{tag}-{}", std::process::id()));
@@ -49,7 +56,20 @@ fn temp_dir(tag: &str) -> PathBuf {
         "// fixture script\n",
     )
     .unwrap();
+    std::fs::create_dir_all(home(&dir)).unwrap();
     dir
+}
+
+/// The disposable `$HOME` the suite resolves the native profile against. The profile the
+/// offline tests select is a real one (`local-289`); only its resolved paths are disposable.
+fn home(tmp: &Path) -> PathBuf {
+    tmp.join("home")
+}
+
+/// The vault the `local-289` profile resolves by default (`~/.274bot/vault-289`), which the
+/// suite must bind — not the process-wide default vault.
+fn default_vault(tmp: &Path) -> PathBuf {
+    home(tmp).join(".274bot/vault-289")
 }
 
 fn catalog(tmp: &Path) -> PathBuf {
@@ -64,12 +84,12 @@ fn suite(tmp: &Path, run_dir: &Path, extra: &[&str], env: &[(&str, &str)]) -> Ou
         .arg(fixture_manifest())
         .arg("--catalog")
         .arg(catalog(tmp))
-        .arg("--profile")
-        .arg("offline-fixture")
+        .args(["--profile", "local-289"])
         .arg("--exec-core")
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(run_dir)
+        .env("HOME", home(tmp))
         .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"));
     for (key, value) in env {
         command.env(key, value);
@@ -101,17 +121,18 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
         .arg(fixture_manifest())
         .args(["--level", "full", "--catalog"])
         .arg(catalog(&tmp))
-        .args(["--profile", "offline-fixture", "--exec-core"])
+        .args(["--profile", "local-289", "--exec-core"])
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(&run_dir)
+        .env("HOME", home(&tmp))
         .output()
         .unwrap();
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(
         stdout.contains(&format!(
-            "{} --profile offline-fixture --catalog {} --live script_thiever",
+            "{} --profile local-289 --catalog {} --live script_thiever",
             FIXTURE,
             catalog(&tmp).display()
         )),
@@ -121,6 +142,140 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
     // The reference row stays visible with its reason instead of being substituted.
     assert!(stdout.contains("excluded_script"), "{stdout}");
     assert!(!run_dir.exists(), "dry-run must not create a run directory");
+}
+
+/// Without `--exec-*` the suite still launches a *resolved, hashed* executable: the
+/// artifact a build produced, never the manifest's `cargo run` template — which could
+/// rebuild different bytes under the same command after the identity was captured.
+#[test]
+fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
+    let tmp = temp_dir("resolved-exec");
+    // A controlled target directory holding exactly one built artifact: the fixture,
+    // standing in for `target/{debug,release}/<bin>` a real `cargo build` would produce.
+    let target = tmp.join("target");
+    let resolved = target.join("debug/e2e-suite-fixture");
+    std::fs::create_dir_all(resolved.parent().unwrap()).unwrap();
+    std::fs::copy(FIXTURE, &resolved).unwrap();
+
+    // The manifest's cargo template names the artifact; it is never a launch program.
+    let manifest = tmp.join("cargo-template-manifest.json");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(fixture_manifest())
+            .unwrap()
+            .replace("\"panel-play\"", "\"cargo\"")
+            .replace(
+                "\"--live\"",
+                "\"run\", \"-p\", \"e2e\", \"--bin\", \"e2e-suite-fixture\"",
+            ),
+    )
+    .unwrap();
+
+    let run_dir = tmp.join("run");
+    let mut command = Command::new(SUITE);
+    let out = command
+        .args(["run", "--manifest"])
+        .arg(&manifest)
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--run-dir"])
+        .arg(&run_dir)
+        .env("HOME", home(&tmp))
+        .env("CARGO_TARGET_DIR", &target)
+        .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(
+        launches(&tmp).len(),
+        1,
+        "the resolved artifact was actually launched"
+    );
+
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let attempt = ledger.attempt("fixture_one").expect("attempt recorded");
+    assert_eq!(
+        attempt.command.first().map(String::as_str),
+        Some(resolved.to_str().unwrap()),
+        "argv[0] is the resolved artifact: {:?}",
+        attempt.command
+    );
+    assert!(
+        !attempt
+            .command
+            .iter()
+            .any(|arg| arg == "cargo" || arg == "run"),
+        "the cargo template never reaches argv: {:?}",
+        attempt.command
+    );
+    let binary = &ledger.state.identity["binaries"]["core"];
+    assert_eq!(
+        binary["program"],
+        serde_json::json!(resolved.display().to_string()),
+        "the ledger identity binds the executable that was launched"
+    );
+    assert_eq!(binary["kind"], serde_json::json!("resolved-cargo"));
+    assert!(
+        binary["sha256"].is_string(),
+        "the resolved artifact is content-bound: {binary}"
+    );
+
+    // dry-run prints the same line the child receives, not the cargo template.
+    let dry = Command::new(SUITE)
+        .args(["dry-run", "--manifest"])
+        .arg(&manifest)
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289"])
+        .env("HOME", home(&tmp))
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    let stdout = text(&dry.stdout);
+    assert!(dry.status.success(), "{}", text(&dry.stderr));
+    assert!(
+        stdout.contains(&format!(
+            "{} --profile local-289 --catalog {} --live script_thiever",
+            resolved.display(),
+            catalog(&tmp).display()
+        )),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("cargo"), "{stdout}");
+
+    // An executable the run cannot resolve and hash refuses before the ledger exists.
+    let empty_target = tmp.join("empty-target");
+    std::fs::create_dir_all(&empty_target).unwrap();
+    let refused_run = tmp.join("refused-run");
+    let refused = Command::new(SUITE)
+        .arg("run")
+        .arg("--manifest")
+        .arg(&manifest)
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--run-dir"])
+        .arg(&refused_run)
+        .env("HOME", home(&tmp))
+        .env("CARGO_TARGET_DIR", &empty_target)
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&refused.stderr);
+    assert!(
+        stderr.contains("no built e2e-suite-fixture executable") && stderr.contains("--exec-core"),
+        "{stderr}"
+    );
+    assert!(
+        !refused_run.exists(),
+        "an unresolved executable refuses before the run directory"
+    );
+    assert_eq!(launches(&tmp).len(), 1, "nothing else was launched");
 }
 
 /// A child that exits 0 without a terminal receipt is a shared harness failure: the run
@@ -369,7 +524,7 @@ fn a_pending_visual_result_is_retained_and_resume_refuses_changed_inputs() {
         .arg(&other)
         .arg("--catalog")
         .arg(catalog(&tmp))
-        .args(["--profile", "offline-fixture", "--exec-core"])
+        .args(["--profile", "local-289", "--exec-core"])
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(&run_dir)
@@ -378,6 +533,7 @@ fn a_pending_visual_result_is_retained_and_resume_refuses_changed_inputs() {
         .arg("--vault")
         .arg(&vault)
         .arg("--resume")
+        .env("HOME", home(&tmp))
         .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"));
     let changed = changed.output().unwrap();
     assert_eq!(changed.status.code(), Some(EXIT_USAGE));
@@ -439,10 +595,11 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
         .arg(&empty)
-        .args(["--profile", "offline-fixture", "--exec-core"])
+        .args(["--profile", "local-289", "--exec-core"])
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(&run_dir)
+        .env("HOME", home(&tmp))
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(EXIT_USAGE));
@@ -462,13 +619,38 @@ fn a_run_refuses_when_it_cannot_bind_its_inputs() {
         .arg(fixture_manifest())
         .args(["--only", "fixture_one", "--catalog"])
         .arg(catalog(&tmp))
-        .args(["--profile", "offline-fixture", "--run-dir"])
+        .args(["--profile", "local-289", "--run-dir"])
         .arg(&run_dir)
+        .env("HOME", home(&tmp))
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(EXIT_USAGE));
     let stderr = text(&out.stderr);
     assert!(stderr.contains("--exec-core"), "{stderr}");
+    assert!(!run_dir.exists(), "nothing was created");
+
+    // A profile the native resolver does not know is refused as well: the suite binds the
+    // inputs the child resolves, so it cannot invent a selection of its own.
+    let tmp = temp_dir("unresolvable-profile");
+    let run_dir = tmp.join("run");
+    let out = Command::new(SUITE)
+        .args(["run", "--manifest"])
+        .arg(fixture_manifest())
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "offline-fixture", "--exec-core"])
+        .arg(FIXTURE)
+        .arg("--run-dir")
+        .arg(&run_dir)
+        .env("HOME", home(&tmp))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("unsupported server profile") && stderr.contains("local-289"),
+        "{stderr}"
+    );
     assert!(!run_dir.exists(), "nothing was created");
 }
 
@@ -620,5 +802,245 @@ fn a_descendant_holding_the_pipes_cannot_hang_the_suite() {
         run.cleanup.note.contains("output pipes were still open"),
         "{:?}",
         run.cleanup
+    );
+}
+
+/// A descendant the direct child left behind with its *own* stdio cannot be detected from
+/// the pipes: nothing looks wrong, the direct child exited, and the drain finishes. It is
+/// still the suite's process, so it is terminated and the group is gone when `run` returns.
+#[test]
+fn a_detached_descendant_is_reaped_not_ignored() {
+    let tmp = temp_dir("detached-descendant");
+    let pid_file = tmp.join("descendant.pid");
+    let script = format!(
+        "sleep 300 >/dev/null 2>&1 </dev/null & echo $! > {}; exit 0",
+        pid_file.display()
+    );
+    let spec = ChildSpec {
+        label: "detached-descendant".into(),
+        command: vec!["/bin/sh".into(), "-c".into(), script],
+        env: Default::default(),
+        cwd: None,
+    };
+    let started = Instant::now();
+    let run = child::run(
+        &spec,
+        Duration::from_secs(30),
+        &tmp.join("child.log"),
+        false,
+    )
+    .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(run.exit_code, Some(0), "{run:?}");
+    assert!(
+        run.cleanup.reaped,
+        "a surviving descendant is not a reaped tree: {:?}",
+        run.cleanup
+    );
+    assert!(
+        run.cleanup.note.contains("descendant"),
+        "the leftover group is reported: {:?}",
+        run.cleanup
+    );
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "cleanup stays bounded: {elapsed:?}"
+    );
+    let descendant: i32 = std::fs::read_to_string(&pid_file)
+        .expect("the descendant reported its pid")
+        .trim()
+        .parse()
+        .expect("a pid");
+    let alive = Command::new("kill")
+        .arg("-0")
+        .arg(descendant.to_string())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        !alive,
+        "descendant {descendant} outlived the suite's ownership"
+    );
+}
+
+/// A descendant that ignores the graceful signal is force-killed and verified inside the
+/// same bound, instead of the suite reporting a clean reap because only the direct child
+/// exited.
+#[test]
+fn a_detached_descendant_that_ignores_the_graceful_signal_is_force_killed() {
+    let tmp = temp_dir("detached-sigkill");
+    let pid_file = tmp.join("descendant.pid");
+    // An ignored disposition is inherited across exec, so the backgrounded loop ignores
+    // SIGTERM and only a forced kill ends it.
+    let script = format!(
+        "trap '' TERM; (while true; do sleep 1; done) >/dev/null 2>&1 </dev/null & echo $! > {}; exit 0",
+        pid_file.display()
+    );
+    let spec = ChildSpec {
+        label: "detached-sigkill".into(),
+        command: vec!["/bin/sh".into(), "-c".into(), script],
+        env: Default::default(),
+        cwd: None,
+    };
+    let started = Instant::now();
+    let run = child::run(
+        &spec,
+        Duration::from_secs(30),
+        &tmp.join("child.log"),
+        false,
+    )
+    .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(run.exit_code, Some(0), "{run:?}");
+    assert!(
+        run.cleanup.escalated_to_sigkill,
+        "a descendant that ignores SIGTERM must be force-killed: {:?}",
+        run.cleanup
+    );
+    assert!(
+        run.cleanup.reaped,
+        "the tree is reaped after the escalation: {:?}",
+        run.cleanup
+    );
+    assert!(
+        elapsed < Duration::from_secs(45),
+        "cleanup stays bounded: {elapsed:?}"
+    );
+    let descendant: i32 = std::fs::read_to_string(&pid_file)
+        .expect("the descendant reported its pid")
+        .trim()
+        .parse()
+        .expect("a pid");
+    let alive = Command::new("kill")
+        .arg("-0")
+        .arg(descendant.to_string())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(!alive, "descendant {descendant} survived the forced kill");
+}
+
+/// The vault of the *selected profile* is bound, not a process-wide default: with
+/// `--profile local-289` and no `--vault`, the suite binds `~/.274bot/vault-289`, so a
+/// same-path change of the vault the panel actually reads refuses a resume.
+#[test]
+fn the_profile_default_vault_is_bound_and_a_same_path_change_refuses_resume() {
+    let tmp = temp_dir("default-vault");
+    let run_dir = tmp.join("run");
+    let vault = default_vault(&tmp);
+    std::fs::create_dir_all(vault.parent().unwrap()).unwrap();
+    std::fs::write(&vault, "vault-289 content v1").unwrap();
+
+    let first = suite(&tmp, &run_dir, &["--only", "fixture_one"], &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let identity = &ledger.state.identity;
+    assert_eq!(
+        identity["profile"]["selection"],
+        serde_json::json!("local-289"),
+        "the native selection is recorded"
+    );
+    assert_eq!(
+        identity["profile"]["resolved"]["vault"],
+        serde_json::json!(vault.display().to_string()),
+        "the vault the selected profile resolves is the one bound"
+    );
+    assert_eq!(
+        identity["profile"]["vault"]["target"],
+        serde_json::json!(vault.display().to_string())
+    );
+    assert!(
+        identity["profile"]["vault"]["sha256"].is_string(),
+        "the resolved vault is content-bound: {identity}"
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    // The same resolved path with different content refuses resume, before any launch.
+    std::fs::write(&vault, "vault-289 content v2").unwrap();
+    let changed = suite(&tmp, &run_dir, &["--only", "fixture_one", "--resume"], &[]);
+    assert_eq!(
+        changed.status.code(),
+        Some(EXIT_USAGE),
+        "{}",
+        text(&changed.stdout)
+    );
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("profile/input configuration"),
+        "{stderr}"
+    );
+    assert_eq!(launches(&tmp).len(), 1, "a refused resume launches nothing");
+}
+
+/// A relative input path is refused: the child would resolve it against its own working
+/// directory, so the suite cannot bind the path the child reads.
+#[test]
+fn a_relative_profile_input_is_refused() {
+    let tmp = temp_dir("relative-input");
+    let run_dir = tmp.join("run");
+    let out = Command::new(SUITE)
+        .args(["run", "--manifest"])
+        .arg(fixture_manifest())
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--exec-core"])
+        .arg(FIXTURE)
+        .args(["--vault", "relative-vault", "--run-dir"])
+        .arg(&run_dir)
+        .env("HOME", home(&tmp))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("--vault relative-vault is relative"),
+        "{stderr}"
+    );
+    assert!(!run_dir.exists(), "nothing was created");
+}
+
+/// dry-run refuses a plan whose executable cannot be resolved rather than printing a line
+/// the run would reject (or a `cargo run` template it would never launch).
+#[test]
+fn dry_run_refuses_an_unresolvable_executable() {
+    let tmp = temp_dir("dry-run-unresolved");
+    let target = tmp.join("target");
+    std::fs::create_dir_all(&target).unwrap();
+    let manifest = tmp.join("cargo-template-manifest.json");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(fixture_manifest())
+            .unwrap()
+            .replace("\"panel-play\"", "\"cargo\"")
+            .replace(
+                "\"--live\"",
+                "\"run\", \"-p\", \"e2e\", \"--bin\", \"e2e-suite-fixture\"",
+            ),
+    )
+    .unwrap();
+    let out = Command::new(SUITE)
+        .args(["dry-run", "--manifest"])
+        .arg(&manifest)
+        .args(["--only", "fixture_one", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289"])
+        .env("HOME", home(&tmp))
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("refusing to plan a run")
+            && stderr.contains("no built e2e-suite-fixture executable"),
+        "{stderr}"
     );
 }
