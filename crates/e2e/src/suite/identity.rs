@@ -12,6 +12,7 @@
 //! as unresolved with its reason.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -167,29 +168,46 @@ pub struct InputDigest {
     pub note: Option<String>,
 }
 
+impl Default for InputDigest {
+    fn default() -> Self {
+        InputDigest {
+            target: String::new(),
+            sha256: None,
+            bytes: None,
+            files: 0,
+            note: Some("unspecified".into()),
+        }
+    }
+}
+
 impl InputDigest {
     pub fn resolved(&self) -> bool {
         self.sha256.is_some()
     }
 
-    /// A single file's content identity.
+    /// A single file's content identity: streamed under [`MAX_DIGEST_FILE_BYTES`].
+    /// `fs::read` is not used; a metadata size check is not itself the cap.
     pub fn file(path: &Path) -> Self {
-        let target = path.display().to_string();
-        match std::fs::read(path) {
-            Ok(bytes) => InputDigest {
-                target,
-                sha256: Some(sha256(&bytes)),
-                bytes: Some(bytes.len() as u64),
+        match hash_file_capped(path, MAX_DIGEST_FILE_BYTES) {
+            Ok((digest, bytes)) => InputDigest {
+                target: path.display().to_string(),
+                sha256: Some(digest),
+                bytes: Some(bytes),
                 files: 1,
                 note: None,
             },
-            Err(error) => InputDigest {
-                target,
-                sha256: None,
-                bytes: None,
-                files: 0,
-                note: Some(format!("cannot read the file: {error}")),
-            },
+            Err(note) => InputDigest::unresolved_at(path, &note),
+        }
+    }
+
+    /// An input that exists but whose content the suite could not bind.
+    pub fn unresolved_at(path: &Path, reason: &str) -> Self {
+        InputDigest {
+            target: path.display().to_string(),
+            sha256: None,
+            bytes: None,
+            files: 0,
+            note: Some(reason.to_string()),
         }
     }
 
@@ -398,6 +416,224 @@ impl InputDigest {
     }
 }
 
+fn is_not_found(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+}
+
+/// Stream a file into SHA-256 without holding it, refusing past `cap` bytes.
+fn hash_file_capped(path: &Path, cap: u64) -> Result<(String, u64), String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let expected = file
+        .metadata()
+        .map_err(|error| format!("cannot stat {}: {error}", path.display()))?
+        .len();
+    if expected > cap {
+        return Err(format!(
+            "{} is {expected} bytes, past the suite's bounded digest of {cap} bytes per file",
+            path.display()
+        ));
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    let mut total = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read as u64);
+        if total > cap {
+            return Err(format!(
+                "{} exceeded the suite's bounded digest of {cap} bytes per file while reading",
+                path.display()
+            ));
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok((format!("{:x}", hasher.finalize()), total))
+}
+
+enum PathClass {
+    Absent,
+    File,
+    Dir(PathBuf),
+    Unresolved(String),
+}
+
+/// Classify one identity path. Only [`std::io::ErrorKind::NotFound`] is absence.
+/// A symlink is followed once (the child follows a linked vault/cache); a dangling
+/// link, an unsupported type, or any other error is unresolved.
+fn classify_input(path: &Path) -> PathClass {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if is_not_found(&error) => PathClass::Absent,
+        Err(error) => PathClass::Unresolved(format!("cannot stat {}: {error}", path.display())),
+        Ok(meta) if meta.file_type().is_symlink() => match std::fs::metadata(path) {
+            Err(error) if is_not_found(&error) => PathClass::Unresolved(format!(
+                "{} is a dangling symlink; the suite will not treat a link as a defined absence",
+                path.display()
+            )),
+            Err(error) => {
+                PathClass::Unresolved(format!("cannot follow {}: {error}", path.display()))
+            }
+            Ok(target) if target.is_file() => PathClass::File,
+            Ok(target) if target.is_dir() => match std::fs::canonicalize(path) {
+                Ok(canonical) => PathClass::Dir(canonical),
+                Err(error) => PathClass::Unresolved(format!(
+                    "cannot canonicalize {}: {error}",
+                    path.display()
+                )),
+            },
+            Ok(_) => PathClass::Unresolved(format!(
+                "{} is a symlink to an unsupported file type",
+                path.display()
+            )),
+        },
+        Ok(meta) if meta.is_file() => PathClass::File,
+        Ok(meta) if meta.is_dir() => PathClass::Dir(path.to_path_buf()),
+        Ok(_) => PathClass::Unresolved(format!(
+            "{} is not a regular file or directory",
+            path.display()
+        )),
+    }
+}
+
+/// Content identity of one resolved input path. Only a missing path is a defined
+/// absence; a link is followed once and hashed, and every other case fails closed.
+pub fn bind_input(path: &Path) -> InputDigest {
+    match classify_input(path) {
+        PathClass::Absent => InputDigest::absent(
+            path,
+            "the resolved path does not exist; the panel creates its vault on first use and fills its cache dir from the engine",
+        ),
+        PathClass::File => InputDigest::file(path),
+        PathClass::Dir(canonical) => InputDigest::tree(&canonical),
+        PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
+    }
+}
+
+/// P1 cache identity: the eight jag archives, not a walk of the pack directory.
+pub fn bind_cache(path: &Path, revision: u16) -> InputDigest {
+    match classify_input(path) {
+        PathClass::Absent => InputDigest::absent(
+            path,
+            "the resolved cache directory does not exist; the panel fills it from the engine",
+        ),
+        PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
+        PathClass::File => {
+            InputDigest::unresolved_at(path, "cache path is a file, not a directory")
+        }
+        PathClass::Dir(canonical) => {
+            match nav::manifest::CacheManifest::capture(revision, &canonical) {
+                Ok(manifest) => InputDigest {
+                    target: path.display().to_string(),
+                    sha256: Some(manifest.identity()),
+                    bytes: None,
+                    files: nav::manifest::CacheManifest::ARCHIVES.len(),
+                    note: Some("cache profile identity (jag archives)".into()),
+                },
+                Err(error) => InputDigest::unresolved_at(
+                    path,
+                    &format!("cannot capture cache profile identity: {error}"),
+                ),
+            }
+        }
+    }
+}
+
+/// Native consumed content: maps, door configs, and gates.loc — not the whole
+/// content tree (models, sprites, fonts).
+pub fn bind_content(path: &Path) -> InputDigest {
+    match classify_input(path) {
+        PathClass::Absent => {
+            InputDigest::absent(path, "the resolved content directory does not exist")
+        }
+        PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
+        PathClass::File => {
+            InputDigest::unresolved_at(path, "content path is a file, not a directory")
+        }
+        PathClass::Dir(canonical) => {
+            let inputs = nav::bake::content_inputs(&canonical);
+            let maps = bind_input(&inputs.maps_dir);
+            let doors = bind_input(&inputs.doors_dir);
+            let gates = bind_input(&inputs.gates);
+            for part in [&maps, &doors, &gates] {
+                if !part.resolved() {
+                    return InputDigest::unresolved_at(
+                        path,
+                        part.note.as_deref().unwrap_or("unresolved content input"),
+                    );
+                }
+            }
+            let mut hasher = Sha256::new();
+            for part in [&maps, &doors, &gates] {
+                hasher.update(part.target.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(part.sha256.as_deref().unwrap_or("").as_bytes());
+                hasher.update(b"\0");
+            }
+            InputDigest {
+                target: path.display().to_string(),
+                sha256: Some(format!("{:x}", hasher.finalize())),
+                bytes: Some(
+                    maps.bytes.unwrap_or(0) + doors.bytes.unwrap_or(0) + gates.bytes.unwrap_or(0),
+                ),
+                files: maps.files + doors.files + gates.files,
+                note: Some("nav content inputs (maps, doors, gates)".into()),
+            }
+        }
+    }
+}
+
+/// The RSA pem the local profile reads from the engine install. Never the engine tree.
+pub fn bind_engine_pem(engine_dir: &Path) -> InputDigest {
+    bind_input(&engine_dir.join("data/config/private.pem"))
+}
+
+/// Unpack is derived runtime of the bound cache. An explicit override must be a
+/// pack directory the cache identity can name, otherwise resume is refused.
+pub fn bind_unpack(path: &Path, revision: u16, overridden: bool) -> InputDigest {
+    if !overridden {
+        match classify_input(path) {
+            PathClass::Absent => InputDigest::absent(
+                path,
+                "default unpack is derived runtime of the bound cache; the path is recorded, the cache archives are the content identity",
+            ),
+            PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
+            _ => InputDigest {
+                target: path.display().to_string(),
+                sha256: Some(sha256(b"unpack-derived-runtime")),
+                bytes: Some(0),
+                files: 0,
+                note: Some(
+                    "default unpack is derived runtime; cache archives are the bound content"
+                        .into(),
+                ),
+            },
+        }
+    } else {
+        bind_cache(path, revision)
+    }
+}
+
+/// Canonicalize a path the suite will both hash and launch. Relative paths are
+/// refused: the child would resolve them against a different working directory.
+pub fn canonicalize_launch_path(path: &Path, flag: &str) -> SuiteResult<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return Err(format!("{flag} is empty"));
+    }
+    if path.is_relative() {
+        return Err(format!(
+            "{flag} {} is relative; the child resolves it against its own working directory, so \
+             the suite cannot bind the path it launches. Pass an absolute path",
+            path.display()
+        ));
+    }
+    std::fs::canonicalize(path).map_err(|error| format!("{flag} {}: {error}", path.display()))
+}
+
 /// The executable a case will be launched from, and its content identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BinaryIdentity {
@@ -415,14 +651,15 @@ pub struct BinaryIdentity {
 
 impl BinaryIdentity {
     pub fn direct(path: &Path) -> SuiteResult<Self> {
-        let bytes = std::fs::read(path)
-            .map_err(|error| format!("native executable {}: {error}", path.display()))?;
+        let canonical = canonicalize_launch_path(path, "native executable")?;
+        let (digest, size) = hash_file_capped(&canonical, MAX_DIGEST_FILE_BYTES)
+            .map_err(|error| format!("native executable {}: {error}", canonical.display()))?;
         Ok(BinaryIdentity {
             kind: "direct".into(),
-            program: path.display().to_string(),
+            program: canonical.display().to_string(),
             args: Vec::new(),
-            sha256: Some(sha256(&bytes)),
-            size: Some(bytes.len() as u64),
+            sha256: Some(digest),
+            size: Some(size),
             note: None,
         })
     }
@@ -459,7 +696,9 @@ impl BinaryIdentity {
             )
         })?;
         let target_dir = match std::env::var_os("CARGO_TARGET_DIR") {
-            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            Some(dir) if !dir.is_empty() => {
+                canonicalize_launch_path(Path::new(&dir), "CARGO_TARGET_DIR")?
+            }
             _ => root.join("target"),
         };
         let relative = if examples {
@@ -475,9 +714,10 @@ impl BinaryIdentity {
         found.sort();
         let mut hashed: Vec<(PathBuf, String, u64)> = Vec::new();
         for candidate in &found {
-            let bytes = std::fs::read(candidate)
-                .map_err(|error| format!("resolved executable {}: {error}", candidate.display()))?;
-            hashed.push((candidate.clone(), sha256(&bytes), bytes.len() as u64));
+            let canonical = canonicalize_launch_path(candidate, "resolved executable")?;
+            let (digest, size) = hash_file_capped(&canonical, MAX_DIGEST_FILE_BYTES)
+                .map_err(|error| format!("resolved executable {}: {error}", canonical.display()))?;
+            hashed.push((canonical, digest, size));
         }
         hashed.dedup_by(|a, b| a.1 == b.1);
         match hashed.len() {
@@ -526,9 +766,9 @@ impl BinaryIdentity {
 /// itself resolves them.
 ///
 /// The suite does not invent these: it runs the same read-only resolver the panel runs over
-/// exactly the flags the child receives. A recorded path is part of the run identity, so a
-/// resume refuses when the selected input moved — and the content-bound inputs below say
-/// which of them were read as well.
+/// the effective argv the child receives, with the child's cwd and env. A recorded path is
+/// part of the run identity; the content-bound inputs on [`ProfileIdentity`] say which of
+/// them were read as well.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedInputs {
     /// The native selection (`local-274`, `local-289`, `public-289`).
@@ -544,14 +784,11 @@ pub struct ResolvedInputs {
 /// The explicit native profile/input configuration a run was started with, including the
 /// content identity of every input the suite binds.
 ///
-/// Content is bound where it can be bound honestly: the catalog script tree, the vault the
-/// selected profile resolves (a file, or a *defined* absence the panel would create), and
-/// the pack cache the panel reads. The nav pack/flags and the content/unpack paths are
-/// recorded as resolved paths only: they are large derived data files, and hashing them as
-/// a run identity would be an expensive substitute for the inputs the child consumes.
-/// The engine install follows the same rule: an explicit `--engine` is content-bound, the
-/// profile's own engine tree is a mutable server runtime the client reads through its cache
-/// dir and is not bound.
+/// Catalog scripts, the selected vault, the P1 cache jag identity, nav pack/flags, the
+/// nav content inputs (maps/doors/gates), and the engine RSA pem are content-bound.
+/// Default unpack is derived runtime of that cache (path recorded; cache archives are
+/// the content). An explicit unpack override must be identifiable as a cache pack or the
+/// run refuses. The engine *tree* is never hashed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileIdentity {
     pub profile: String,
@@ -566,6 +803,14 @@ pub struct ProfileIdentity {
     pub cache: InputDigest,
     pub catalog: InputDigest,
     pub vault: InputDigest,
+    #[serde(default)]
+    pub nav_pack: InputDigest,
+    #[serde(default)]
+    pub nav_flags: InputDigest,
+    #[serde(default)]
+    pub content: InputDigest,
+    #[serde(default)]
+    pub unpack: InputDigest,
     pub lowmem: bool,
     pub mainland: bool,
     pub jobs: u32,
@@ -580,6 +825,9 @@ pub struct SettingsIdentity {
     pub changed_source: String,
     pub child_args: Vec<String>,
     pub child_env_keys: Vec<String>,
+    /// Canonical working directory the children are launched in.
+    #[serde(default)]
+    pub cwd: String,
 }
 
 /// The whole identity block written into the ledger and compared on resume.
@@ -636,6 +884,18 @@ impl RunIdentity {
         }
         if !self.profile.vault.resolved() {
             unresolved.push("vault content".to_string());
+        }
+        if !self.profile.nav_pack.resolved() {
+            unresolved.push("nav pack content".to_string());
+        }
+        if !self.profile.nav_flags.resolved() {
+            unresolved.push("nav flags content".to_string());
+        }
+        if !self.profile.content.resolved() {
+            unresolved.push("content inputs".to_string());
+        }
+        if !self.profile.unpack.resolved() {
+            unresolved.push("unpack content".to_string());
         }
         unresolved
     }
@@ -796,6 +1056,10 @@ mod tests {
                 "cache": {"target": "/cache", "sha256": "cc", "bytes": 2, "files": 1, "note": null},
                 "catalog": {"target": "/catalog", "sha256": "cat", "bytes": 2, "files": 1, "note": null},
                 "vault": {"target": "/vault", "sha256": "vv", "bytes": 2, "files": 1, "note": null},
+                "nav_pack": {"target": "/nav", "sha256": "np", "bytes": 1, "files": 1, "note": null},
+                "nav_flags": {"target": "/navflags", "sha256": "nf", "bytes": 1, "files": 1, "note": null},
+                "content": {"target": "/content", "sha256": "cn", "bytes": 1, "files": 1, "note": null},
+                "unpack": {"target": "/unpack", "sha256": "un", "bytes": 1, "files": 1, "note": null},
                 "lowmem": true, "mainland": false, "jobs": 1
             },
             "settings": {
@@ -1047,5 +1311,68 @@ mod tests {
         assert!(!digest.resolved());
         assert!(digest.note.is_some());
         std::fs::remove_dir_all(missing).unwrap();
+    }
+
+    #[test]
+    fn bind_input_follows_a_linked_file_and_only_not_found_is_absence() {
+        let root = std::env::temp_dir().join(format!("274bot-bind-input-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("vault-bytes");
+        std::fs::write(&target, "vault v1").unwrap();
+        let linked = root.join("vault");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, &linked).unwrap();
+            let first = bind_input(&linked);
+            assert!(first.resolved(), "{:?}", first.note);
+            std::fs::write(&target, "vault v2").unwrap();
+            let second = bind_input(&linked);
+            assert_ne!(first.sha256, second.sha256, "followed content must change");
+
+            let dangling = root.join("dangling");
+            std::os::unix::fs::symlink(root.join("missing-target"), &dangling).unwrap();
+            let digest = bind_input(&dangling);
+            assert!(!digest.resolved(), "{:?}", digest.note);
+            assert!(
+                digest
+                    .note
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("dangling"),
+                "{:?}",
+                digest.note
+            );
+        }
+        let absent = bind_input(&root.join("no-such"));
+        assert!(absent.resolved(), "NotFound is a defined absence");
+        assert_eq!(
+            absent.sha256,
+            InputDigest::absent(&root.join("no-such"), "x").sha256
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_past_the_digest_cap_is_unresolved_without_an_unbounded_read() {
+        let path = std::env::temp_dir().join(format!("274bot-file-cap-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_DIGEST_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let started = std::time::Instant::now();
+        let digest = InputDigest::file(&path);
+        assert!(!digest.resolved(), "{:?}", digest.note);
+        assert!(
+            digest
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("past the suite's bounded digest"),
+            "{:?}",
+            digest.note
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        std::fs::remove_file(&path).unwrap();
     }
 }

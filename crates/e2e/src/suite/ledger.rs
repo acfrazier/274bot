@@ -556,6 +556,10 @@ mod tests {
                 "cache": {"target": "/cache", "sha256": "cc", "bytes": 2, "files": 1, "note": null},
                 "catalog": {"target": "/catalog", "sha256": "cat", "bytes": 2, "files": 1, "note": null},
                 "vault": {"target": "/vault", "sha256": "vv", "bytes": 2, "files": 1, "note": null},
+                "nav_pack": {"target": "/nav", "sha256": "np", "bytes": 1, "files": 1, "note": null},
+                "nav_flags": {"target": "/navflags", "sha256": "nf", "bytes": 1, "files": 1, "note": null},
+                "content": {"target": "/content", "sha256": "cn", "bytes": 1, "files": 1, "note": null},
+                "unpack": {"target": "/unpack", "sha256": "un", "bytes": 1, "files": 1, "note": null},
                 "lowmem": true, "mainland": false, "jobs": 1
             },
             "settings": {

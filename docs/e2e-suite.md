@@ -43,10 +43,8 @@ launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, 
 `--cwd DIR`, `--child-arg ARG` (repeatable).
 
 The child command line is the *resolved* executable, the profile flags and the case's live
-name:
-
-    /path/to/target/debug/examples/catalog_watch \
-        --profile local-274 --catalog /path/to/catalog/274 --live script_thiever
+name. `--exec-core`/`--exec-pair` and `--cwd` must be absolute; the suite canonicalizes the
+program and the effective working directory once and launches exactly those paths.
 
 The manifest's `exec` entry is a cargo template that *names* the artifact
 (`cargo run -p panel --example catalog_watch`); it is never the launch program. The suite
@@ -61,15 +59,18 @@ would never launch.
 Only flags the executables actually accept are emitted: `catalog_watch`, `pair_watch` and
 `panel-play` parse flags with `host_play::parse_profile_args` and then reject anything but
 `--live`/`--smoke`/`--prod`. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
-child's environment, and `--highmem` is refused because the panel takes the memory mode
-from the vault profile and exposes no flag (pending adapter work). Input paths must be
-absolute: a child resolves a relative path against its own working directory, which the
-suite cannot reproduce when it binds the identity, so a relative `--catalog`/`--engine`/
-`--cache`/`--vault` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
-`NAV_FLAGS`/`BOT_CACHE_MANIFEST`) is refused.
+child's environment (and an inherited `BOT_MAINLAND` is removed when `--mainland` is not
+set). `--highmem` is refused because the panel takes the memory mode from the vault profile
+and exposes no flag (pending adapter work). Input paths must be absolute: a child resolves
+a relative path against its own working directory, which the suite cannot reproduce when it
+binds the identity, so a relative `--catalog`/`--engine`/`--cache`/`--vault`/`--exec-core`/
+`--exec-pair`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
+`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`) is refused.
 Every child also receives `274BOT_SMOKE_DIR` pointing at the run's `shots/` directory.
 Reference `args`/`env` from the frozen manifest are preserved as metadata and are never
 applied wholesale; a typed option is added only when a native adapter really consumes it.
+`--child-arg` is appended to the child argv; identity is captured from that *effective*
+argv, so a `--child-arg --vault PATH` is bound as the vault the child will parse.
 
 ## Run directory, identity and resume
 
@@ -86,22 +87,24 @@ match exactly before any spawn:
   path it hashed, so build the executor once before the run (or pass
   `--exec-core`/`--exec-pair`);
 * the profile/input configuration as the *child* resolves it: the suite runs the same
-  read-only native resolver (`host_play::ProfileOptions::resolve`) over exactly the flags
-  it hands the child and records the selection (`local-274`/`local-289`/`public-289`) and
-  the resolved cache, vault, nav pack/flags, content and unpack paths. The vault the
-  selection implies is then content-bound — with no `--vault`, `--profile local-289` binds
-  `~/.274bot/vault-289`, not a process-wide default — as are the catalog script tree
-  (`<catalog>/src/bot/scripts`) and the resolved cache directory. A path that is not there
-  is recorded as a *defined* absence (the panel creates its vault on first use), never as
-  an invented digest;
-* settings (level, `--only`, changed paths, extra child args, child env names) and the
-  ordered selection.
-
-Nav pack/flags and the content/unpack paths are recorded as resolved paths only, and the
-engine install is content-bound only when `--engine` names it: those are large, mutable
-derived trees (the profile's engine install here is ~27k files) that the panel reads
-through its cache, so hashing them would be an expensive substitute for the inputs the
-child actually consumes. A changed resolved path refuses resume.
+  read-only native resolver (`host_play::ProfileOptions::resolve_with_env`) over the
+  effective argv it hands the child (profile flags then `--child-arg`), with the child's
+  canonical working directory and inherited env. It records the selection
+  (`local-274`/`local-289`/`public-289`) and the resolved cache, vault, nav pack/flags,
+  content and unpack paths. Content-bound inputs:
+  * catalog script tree (`<catalog>/src/bot/scripts`);
+  * the vault the selection implies (a file, including a followed symlink; `NotFound` is a
+    defined absence);
+  * cache jag archives via the P1 `CacheManifest` identity (not a walk of the pack dir);
+  * nav pack and nav flags files;
+  * nav content inputs (`maps/`, door configs, `gates.loc`) — not models/sprites/fonts;
+  * the engine RSA pem (`data/config/private.pem`), never the engine tree.
+  Default unpack is derived runtime of the bound cache (path recorded). An explicit
+  `--unpack` / `CLIENT_UNPACK_DIR` must be identifiable as a cache pack or the run refuses.
+  `catalog_watch` isolates script stores on its own thread; those are not the operator
+  vault. `LOGIN_RSAN`/`LOGIN_RSAE` refuse the run (credentials are not recorded).
+* settings (level, `--only`, changed paths, extra child args, child env names, canonical
+  cwd) and the ordered selection.
 
 An input the suite cannot bind (no built executable, a catalog without a script tree, a
 profile the native resolver rejects, an unreadable repository) refuses the run before the
