@@ -486,7 +486,8 @@ impl SlotScript {
     pub fn stop(&mut self) {
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
-            isolate.join();
+            let logs = isolate.join();
+            self.pending_logs.extend(logs);
         }
         if let Some(mut script) = self.compiled.take() {
             script.on_stop();
@@ -918,7 +919,8 @@ impl SlotScript {
             .clone()
             .ok_or_else(|| "watchdog restart: no retained identity".to_string())?;
         if let Some(isolate) = self.load.take() {
-            isolate.join();
+            let logs = isolate.join();
+            self.pending_logs.extend(logs);
         }
         self.last_snapshot = None;
         self.last_world_id = None;
@@ -1510,5 +1512,119 @@ export default class T extends LoopingBot {
             gen,
             "Stop must invalidate the previous execution generation"
         );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn slot_stop_delivers_final_logs_exactly_once() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            "export default class T extends LoopingBot {
+            loop() {}
+            onStop() { this.log('stopped-ok'); }
+        }"
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let _ = slot.probe("1");
+        slot.stop();
+        assert_eq!(slot.state(), RunState::Idle);
+        let logs = slot.take_pending_logs();
+        let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
+        assert_eq!(hits, 1, "exactly one onStop log after take: {logs:?}");
+        slot.stop();
+        let again = slot.take_pending_logs();
+        assert!(
+            again.iter().all(|l| !l.contains("stopped-ok")),
+            "second stop must not rerun the hook: {again:?}"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn self_stop_runs_hook_once_then_slot_stop_does_not() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() { ScriptRunner.stop('done'); }
+    onStop() { this.log('stopped-ok'); }
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while slot.state() == RunState::Running && Instant::now() < deadline {
+            let _ = slot.drain_logs();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(slot.state(), RunState::Idle);
+        let logs = slot.take_pending_logs();
+        let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
+        assert_eq!(hits, 1, "self-stop onStop once: {logs:?}");
+        assert!(logs.iter().any(|l| l.contains("script requested stop")));
+        slot.stop();
+        let again = slot.take_pending_logs();
+        assert!(
+            again.iter().all(|l| !l.contains("stopped-ok")),
+            "join after self-stop then Drop must not rerun: {again:?}"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn watchdog_restart_folds_onstop_logs_into_pending() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            "export default class T extends LoopingBot {
+            onStart() { globalThis.__gen = (globalThis.__gen || 0) + 1; }
+            loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
+            onStop() { this.log('stopped-ok'); }
+        }"
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let _ = slot.probe("1");
+        slot.restart_load_from_identity(Instant::now())
+            .expect("restart from identity");
+        let logs = slot.take_pending_logs();
+        assert!(
+            logs.iter().any(|l| l.contains("stopped-ok")),
+            "dying isolate onStop must land in pending_logs: {logs:?}"
+        );
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        assert_eq!(slot.probe("__gen").unwrap(), 1, "new isolate onStart runs");
+        slot.stop();
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn restart_still_refuses_pause() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            "export default class T extends LoopingBot { loop() {} onStop() { this.log('stopped-ok'); } }"
+                .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        slot.pause();
+        let err = slot.restart_load_from_identity(Instant::now()).unwrap_err();
+        assert!(
+            err.contains("not running") || err.contains("pause") || err.contains("frozen"),
+            "{err}"
+        );
+        slot.stop();
     }
 }
