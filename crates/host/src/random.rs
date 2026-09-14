@@ -227,8 +227,10 @@ fn detect_scene(
         let name = raw.to_lowercase();
         let ours = is_ours(npc, self_slot, display_name.as_deref());
         // FACEENTITY / playerfollow is the ours tell for the dialog five
-        // (including drunken dwarf), not combat. Hostile names only here.
-        if ours && EVADE_NAMES.contains(&name.as_str()) {
+        // (including drunken dwarf), not combat. Hostile names only here,
+        // and only once a positive active type-1 hit has landed (frozen
+        // takingDamage gate — ownership alone is not enough).
+        if ours && EVADE_NAMES.contains(&name.as_str()) && snap.taking_damage() {
             return Some(DetectedRandom {
                 kind: RandomKind::Evade,
                 name,
@@ -1664,6 +1666,23 @@ mod tests {
         lp.entity.z = z * 128 + 64;
         lp.name = Some(name.to_string());
         c.local_player = Some(lp);
+        // Evade's takingDamage gate requires an active session; dialog/pick
+        // detect paths stay ownership-only and do not depend on this flag.
+        c.ingame = true;
+    }
+
+    /// Write one hitmark slot on the local player (value/type/cycle).
+    fn plant_hit(c: &mut Client, slot: usize, value: i32, dtype: i32, cycle: i32) {
+        let lp = c.local_player.as_mut().expect("local player");
+        lp.entity.damage_values[slot] = value;
+        lp.entity.damage_types[slot] = dtype;
+        lp.entity.damage_cycles[slot] = cycle;
+    }
+
+    /// Active positive type-1 combat hit (value 5, type 1, cycle loop+70).
+    fn plant_positive_hit(c: &mut Client) {
+        let until = c.loop_cycle + 70;
+        plant_hit(c, 0, 5, 1, until);
     }
 
     /// An NPC of cache type `name` in client table slot `slot` (the
@@ -1791,6 +1810,7 @@ mod tests {
     fn swarm_targeting_self_is_evade_ours_untargeted_swarm_is_not() {
         let mut c = new_client();
         plant_player(&mut c, "Test", 0, 0);
+        plant_positive_hit(&mut c);
         // `face_entity` >= 32768 decodes as Player kind; + self_slot (0).
         plant_npc(&mut c, 0, "Swarm", 32768, None);
         let snap = snap_at(&mut c);
@@ -1803,9 +1823,175 @@ mod tests {
         // Same type without a target: not ours, so nothing to detect.
         let mut c = new_client();
         plant_player(&mut c, "Test", 0, 0);
+        plant_positive_hit(&mut c);
         plant_npc(&mut c, 0, "Swarm", -1, None);
         let snap = snap_at(&mut c);
         assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    }
+
+    #[test]
+    fn owned_hostile_without_positive_hit_is_not_evade() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Swarm", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(
+            !snap.taking_damage(),
+            "no hitmarks must fail the damage gate"
+        );
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()),
+            None,
+            "owned hostile without a positive hit must not flee"
+        );
+    }
+
+    #[test]
+    fn owned_hostile_zero_hit_or_poison_is_not_evade() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        // Zero red splat (value 0, type 1) does not qualify.
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 0, 1, until);
+        plant_npc(&mut c, 0, "Watchman", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+
+        // Poison type 2 with positive value still fails the type-1 gate.
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 4, 2, until);
+        plant_npc(&mut c, 0, "Shade", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+
+        // Blocked/type-0 value-0 hit is not damage.
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 0, 0, until);
+        plant_npc(&mut c, 0, "Zombie", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    }
+
+    #[test]
+    fn owned_hostile_expired_hit_and_exact_boundary_are_not_evade() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        // Strictly expired: cycle == loop_cycle is no longer active.
+        let boundary = c.loop_cycle;
+        plant_hit(&mut c, 0, 7, 1, boundary);
+        plant_npc(&mut c, 0, "Rock golem", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+
+        // Past expiry.
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        let past = c.loop_cycle - 1;
+        plant_hit(&mut c, 0, 7, 1, past);
+        plant_npc(&mut c, 0, "Tree spirit", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    }
+
+    #[test]
+    fn owned_hostile_positive_hit_with_later_miss_is_evade() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        // Slot 0: live positive combat hit. Slot 1: later miss must not erase it.
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 6, 1, until);
+        plant_hit(&mut c, 1, 0, 1, until);
+        plant_npc(&mut c, 0, "River troll", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(snap.taking_damage());
+        let ev = detect(&snap, 0, &no_cooldown()).expect("evade with live positive hit");
+        assert_eq!(ev.kind, RandomKind::Evade);
+        assert_eq!(ev.name, "river troll");
+    }
+
+    #[test]
+    fn evade_expires_without_player_generation_advance() {
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        let until = c.loop_cycle + 70;
+        plant_hit(&mut c, 0, 9, 1, until);
+        plant_npc(&mut c, 0, "Swarm", 32768, None);
+        let mut snap = GameSnapshot::new();
+        c.gens.npc = 1;
+        c.gens.player = 1;
+        c.gens.scene = 1;
+        snap.rebuild(&c);
+        assert!(snap.taking_damage());
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()).map(|e| e.kind),
+            Some(RandomKind::Evade)
+        );
+
+        // Advance loop_cycle past the splat without bumping player gen.
+        c.loop_cycle += 70;
+        let player_gen_before = c.gens.player;
+        // rebuild_from_drain still refreshes native facts every call.
+        assert!(!snap.rebuild_from_drain(&c, false));
+        assert_eq!(c.gens.player, player_gen_before);
+        assert!(
+            !snap.taking_damage(),
+            "hit expiry must clear without a player packet"
+        );
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()),
+            None,
+            "evade must drop once the positive hit expires"
+        );
+    }
+
+    #[test]
+    fn no_local_player_or_logged_out_fails_damage_gate() {
+        let mut c = new_client();
+        c.ingame = true;
+        // No local player planted.
+        plant_npc(&mut c, 0, "Swarm", 32768, None);
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_positive_hit(&mut c);
+        plant_npc(&mut c, 0, "Swarm", 32768, None);
+        c.ingame = false;
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        assert_eq!(detect(&snap, 0, &no_cooldown()), None);
+    }
+
+    #[test]
+    fn dialog_pick_still_detect_without_damage() {
+        // Dialog ownership path must stay independent of the damage gate.
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        let ev = detect(&snap, 0, &no_cooldown()).expect("dialog");
+        assert_eq!(ev.kind, RandomKind::Dialog);
+
+        // Pick (strange plant) is shown without requiring damage.
+        let mut c = new_client();
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        let snap = snap_at(&mut c);
+        assert!(!snap.taking_damage());
+        let ev = detect(&snap, 0, &no_cooldown()).expect("pick");
+        assert_eq!(ev.kind, RandomKind::Pick);
     }
 
     #[test]
@@ -2564,6 +2750,7 @@ mod tests {
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
+        plant_positive_hit(&mut c);
         plant_npc(&mut c, 0, "Swarm", 32768, None);
         c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
         c.npc[0].as_mut().expect("planted").entity.z = 64;

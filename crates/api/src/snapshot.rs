@@ -598,6 +598,12 @@ pub struct GameSnapshot {
     /// snapshot read because local send/expiry changes do not bump a family.
     #[serde(skip)]
     local_overhead_text: Option<String>,
+    /// Whether the local player currently shows an active positive combat
+    /// hitmark (value > 0, type 1, cycle still ahead of `loop_cycle`). Refreshed
+    /// every snapshot read so splat expiry stays current without a player-gen
+    /// advance; fail-closed when logged out or no local player.
+    #[serde(skip)]
+    taking_damage: bool,
     // Native observation history; deliberately absent from serialized snapshots.
     #[serde(skip)]
     thieving_stun_tick: Option<u32>,
@@ -787,6 +793,7 @@ impl Default for GameSnapshot {
             npc: Vec::new(),
             player: None,
             local_overhead_text: None,
+            taking_damage: false,
             thieving_stun_tick: None,
             thieving_stun_stamp: None,
             players: Vec::new(),
@@ -1074,6 +1081,13 @@ impl GameSnapshot {
         self.ingame
             .then_some(self.local_overhead_text.as_deref())
             .flatten()
+    }
+
+    /// Whether the local player currently has an active positive type-1
+    /// combat hit. Fail-closed outside an active session or without a local
+    /// player; expires with the hitmark cycle even when player gen is quiet.
+    pub fn taking_damage(&self) -> bool {
+        self.taking_damage
     }
 
     /// Remote player views from the last player rebuild, in `player_ids`
@@ -1505,6 +1519,9 @@ impl GameSnapshot {
             x: client.hint_tile_x,
             z: client.hint_tile_z,
         });
+        // Hitmarks live on the local entity and expire against loop_cycle;
+        // neither event bumps a packet family, so recompute every read.
+        self.taking_damage = local_player_taking_damage(client);
     }
 
     /// Rewrite cached loc Chebyshev distances when the local player tile
@@ -2498,6 +2515,11 @@ impl<'a> ReadContext<'a> {
         self.0.local_overhead_text()
     }
 
+    /// Active positive type-1 combat hit on the local player.
+    pub fn taking_damage(&self) -> bool {
+        self.0.taking_damage()
+    }
+
     /// The local player's slot index.
     pub fn self_slot(&self) -> i32 {
         self.0.self_slot()
@@ -2831,6 +2853,26 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
 /// positive number, so `Game.inCombat()` would stick true forever.
 fn actor_in_combat(combat_cycle: i32, loop_cycle: i32) -> bool {
     combat_cycle > loop_cycle
+}
+
+/// Frozen `takingDamage` / positive active combat hit: ingame + local player
+/// required; at least one hitmark with value > 0, type == 1, and cycle still
+/// ahead of the current loop cycle. Zero, blocked, poison, and expired hits
+/// do not qualify; a later miss does not erase an earlier live positive hit.
+fn local_player_taking_damage(client: &Client) -> bool {
+    if !client.ingame {
+        return false;
+    }
+    let Some(player) = client.local_player.as_ref() else {
+        return false;
+    };
+    let entity = &player.entity;
+    let loop_cycle = client.loop_cycle;
+    (0..entity.damage_values.len()).any(|i| {
+        entity.damage_values[i] > 0
+            && entity.damage_types[i] == 1
+            && entity.damage_cycles[i] > loop_cycle
+    })
 }
 
 /// The shared actor fields from one entity, as the m8aq `ActorSnapshot`.
