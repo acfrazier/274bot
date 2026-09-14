@@ -72,10 +72,8 @@ MAPPING = [
          unsupported=[("selected herb/law/nature pickup", "combat fixture for selected pickups is still open")]),
     case("RockCrab", "rock_crab", reference=["rockcrab-dart-test"],
          variants=["rock_crab_range", "rock_crab_bank"],
-         unavailable=("fixture_prerequisite",
-                      "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is "
-                      "outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no "
-                      "coordinate or wake-radius claim is made")),
+         note="Native stand (2712,3707,0) is inside the source spawn visibility window and outside wake range; "
+              "the live baseline must still prove dormant Rocks and subsequent script activation. No LIVE qualification is implied."),
     case("MossGiant", "moss_giant", reference=["mossgiant-dart-test"], variants=["moss_giant_bank"],
          options=["dart/location/bank"],
          unsupported=[("fixture prerequisites", "dart/location/bank fixture reconciliation remains open")]),
@@ -468,6 +466,8 @@ def main():
         script_key = SCRIPT_KEY_BY_DISPLAY.get(script, script)
         if script_key not in script_names:
             raise SystemExit(f"{script}: {script_key} is not a frozen registry script name")
+        if script not in intended:
+            intended.append(script)
         live = spec["live"]
         unavailable = spec["unavailable"]
         refs = reference_rows(spec["reference"]) if spec["reference"] else []
@@ -591,11 +591,10 @@ def main():
                              "headless client"),
                 ])),
                 ("nav_paints", OrderedDict([
-                    ("desired", "scenario_default"),
-                    ("supported", False),
-                    ("pending", "the suite cannot override nav/collision/trail paint options: `catalog_watch` and "
-                                "`pair_watch` expose no paint flag, and the panel applies the scenario's own nav "
-                                "overlay. Default-ON operator paints remain pending adapter work."),
+                    ("desired", "on"),
+                    ("supported", True),
+                    ("note", "--nav-paints on|off controls session-only diagnostic layers; suite headed runs default on. "
+                             "Routing, teleport policy, deadlines and saved operator settings are unchanged."),
                 ])),
                 ("capture", OrderedDict([
                     ("desired", "when_requested"),

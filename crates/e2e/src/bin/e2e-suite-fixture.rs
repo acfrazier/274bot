@@ -266,6 +266,23 @@ fn main() {
     };
 
     match args.mode.as_str() {
+        #[cfg(unix)]
+        "escape-pipe" => {
+            use std::os::unix::process::CommandExt;
+            let pid_file = std::env::var_os("E2E_SUITE_ESCAPED_PID").expect("test pid path");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--mode", "hang"])
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            // This deliberately leaves the suite's group to exercise refusal when an
+            // output pipe remains open. The test owns and terminates this exact PID.
+            if let Err(error) = std::fs::write(pid_file, child.id().to_string()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("record escaped fixture pid: {error}");
+            }
+        }
         "hang" => loop {
             std::thread::sleep(Duration::from_millis(200));
         },

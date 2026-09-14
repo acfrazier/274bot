@@ -824,6 +824,8 @@ pub struct SettingsIdentity {
     pub changed_paths: Vec<String>,
     pub changed_source: String,
     pub child_args: Vec<String>,
+    #[serde(default)]
+    pub nav_paints: bool,
     pub child_env_keys: Vec<String>,
     /// Canonical working directory the children are launched in.
     #[serde(default)]

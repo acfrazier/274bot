@@ -52,9 +52,9 @@
     "note": "`panel --live script_<name>` runs a visible window; the suite never asks for a headless client"
    },
    "nav_paints": {
-    "desired": "scenario_default",
-    "supported": false,
-    "pending": "the suite cannot override nav/collision/trail paint options: `catalog_watch` and `pair_watch` expose no paint flag, and the panel applies the scenario's own nav overlay. Default-ON operator paints remain pending adapter work."
+    "desired": "on",
+    "supported": true,
+    "note": "--nav-paints on|off controls session-only diagnostic layers; suite headed runs default on. Routing, teleport policy, deadlines and saved operator settings are unchanged."
    },
    "capture": {
     "desired": "when_requested",
@@ -96,7 +96,9 @@
  "intended_scripts": [
   "AIO Teleport",
   "ChickenKiller",
+  "Duel Arena Combat Trainer",
   "ChaosDruidKiller",
+  "RockCrab",
   "MossGiant",
   "GreenDragon",
   "FireGiant",
@@ -127,6 +129,7 @@
   "GnomeCourse",
   "WildyAgility",
   "MuleCrafter",
+  "ClimbingBoots",
   "ShopBuyout",
   "DoorOpener",
   "TannerBot",
@@ -507,7 +510,7 @@
    "runner": "core",
    "live": "script_rock_crab",
    "scenario": "rock_crab",
-   "core_case": "RockCrab",
+   "core_case": "rock_crab",
    "pair_case": null,
    "options": [],
    "unsupported": [],
@@ -518,7 +521,10 @@
     "subsystems": [],
     "paths": []
    },
-   "variants": [],
+   "variants": [
+    "rock_crab_range",
+    "rock_crab_bank"
+   ],
    "reference_cases": [
     {
      "id": "rockcrab-dart-test",
@@ -527,10 +533,7 @@
      "budget_min": 12
     }
    ],
-   "unavailable": {
-    "code": "fixture_prerequisite",
-    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
-   }
+   "budget_note": "Native stand (2712,3707,0) is inside the source spawn visibility window and outside wake range; the live baseline must still prove dormant Rocks and subsequent script activation. No LIVE qualification is implied."
   },
   {
    "id": "rock_crab_range",
@@ -544,7 +547,7 @@
    "runner": "core",
    "live": "script_rock_crab_range",
    "scenario": "rock_crab_range",
-   "core_case": "RockCrabRange",
+   "core_case": "rock_crab_range",
    "pair_case": null,
    "options": [],
    "unsupported": [],
@@ -556,11 +559,7 @@
     "paths": []
    },
    "variants": [],
-   "reference_cases": [],
-   "unavailable": {
-    "code": "fixture_prerequisite",
-    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
-   }
+   "reference_cases": []
   },
   {
    "id": "rock_crab_bank",
@@ -574,7 +573,7 @@
    "runner": "core",
    "live": "script_rock_crab_bank",
    "scenario": "rock_crab_bank",
-   "core_case": "RockCrabBank",
+   "core_case": "rock_crab_bank",
    "pair_case": null,
    "options": [],
    "unsupported": [],
@@ -586,11 +585,7 @@
     "paths": []
    },
    "variants": [],
-   "reference_cases": [],
-   "unavailable": {
-    "code": "fixture_prerequisite",
-    "reason": "stand geometry unverified: NPC observation is 15 tiles and the old 28+ tile stand is outside it; docs/compat/p3-rockcrab-fixture-prep.md is not LIVE-verified, so no coordinate or wake-radius claim is made"
-   }
+   "reference_cases": []
   },
   {
    "id": "moss_giant",
