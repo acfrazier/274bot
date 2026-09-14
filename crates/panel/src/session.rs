@@ -597,6 +597,30 @@ struct NavPublishCfg {
     settings: NavSettings,
 }
 
+/// Map the client's last tryMove BFS into world tiles and trim it for
+/// paint. The producer (`try_move_path`) is debug-only: reaching dest or
+/// leaving the path must retire it so a later off-path step or revisit
+/// cannot republish the last click. `here == None` does not retire
+/// (startup / network wait).
+fn live_client_trail(client: &mut Client, here: Option<WorldTile>) -> Vec<WorldTile> {
+    let base_x = client.map_build_base_x;
+    let base_z = client.map_build_base_z;
+    let trail_all: Vec<WorldTile> = client
+        .try_move_path
+        .iter()
+        .map(|&(sx, sz)| WorldTile {
+            x: base_x + sx,
+            z: base_z + sz,
+            level: 0,
+        })
+        .collect();
+    let trail_world = remaining_trail(&trail_all, here);
+    if here.is_some() && trail_world.is_empty() {
+        client.try_move_path.clear();
+    }
+    trail_world
+}
+
 /// Publish the nav-debug scene paint for the focused drawing slot each
 /// observe. `drawing` is the gate: only the focused slot with its renderer
 /// on publishes; unfocused / skip-paint / renderer-off slots store `None`
@@ -2668,18 +2692,7 @@ impl Session {
                     // Full tryMove BFS (every scene tile, src→dest),
                     // not the entity walk buffer (capped at 9) or the
                     // MOVE waypoint list (capped at 25).
-                    let base_x = c.map_build_base_x;
-                    let base_z = c.map_build_base_z;
-                    let trail_all: Vec<WorldTile> = c
-                        .try_move_path
-                        .iter()
-                        .map(|&(sx, sz)| WorldTile {
-                            x: base_x + sx,
-                            z: base_z + sz,
-                            level: 0,
-                        })
-                        .collect();
-                    let trail_world = remaining_trail(&trail_all, here);
+                    let trail_world = live_client_trail(c, here);
                     publish_nav_debug(
                         c,
                         &world,
@@ -4522,12 +4535,13 @@ impl Drop for Session {
 mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
-        is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
-        null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
-        publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
-        script_status_text, script_stop_enabled, seed_on_first_world, start_catalog_with_core,
-        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
-        ProfilePreparationCompletion, Session, SlotIo, WalkArm,
+        is_local_engine, live_client_trail, live_or_walk_paint, maybe_send_click,
+        nav_snapshot_for_follow, null_raster_live_entries_for_target, parse_getvar_line,
+        publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime, script_active,
+        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
+        start_catalog_with_core, stream_capture, stress_live_entries_for_target,
+        temp_live_vault_from, walkto_tele_cmd, ProfilePreparationCompletion, Session, SlotIo,
+        WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -5684,6 +5698,109 @@ mod tests {
             "run-on trail alternates Primary / RunAlt in scene coords"
         );
         assert!(paint.show_trail);
+    }
+
+    fn wt(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    #[test]
+    fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
+        let mut c = paint_client();
+        let world = walled_world();
+        let layers = NavSettings {
+            collision_fill: true,
+            nsew_labels: true,
+            show_nav_path: true,
+            client_trail: true,
+            ..NavSettings::default()
+        };
+        // Producer: last successful tryMove BFS, scene tiles src→dest.
+        c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
+
+        let mid = live_client_trail(&mut c, Some(wt(3201, 3200)));
+        assert_eq!(mid, vec![wt(3201, 3200), wt(3202, 3200)]);
+        assert_eq!(c.try_move_path.len(), 3, "mid-path must keep the producer");
+
+        let arrived = live_client_trail(&mut c, Some(wt(3202, 3200)));
+        assert!(arrived.is_empty(), "dest occupancy must hide the trail");
+        publish_nav_debug(
+            &mut c,
+            &world,
+            None,
+            Some(wt(3202, 3200)),
+            &arrived,
+            false,
+            None,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().expect("arrival still publishes");
+        assert!(
+            paint.trail.is_empty(),
+            "arrived dest must not paint under the player"
+        );
+        assert!(
+            !paint.collision.is_empty(),
+            "retiring the trail must not drop the collision layer"
+        );
+        assert!(
+            c.try_move_path.is_empty(),
+            "arrival must retire the producer, not only the paint trim"
+        );
+
+        // Fire-lane shape: dest, then a west/off-path step, then a revisit
+        // of an old BFS tile. Without producer clear, remaining_trail would
+        // trim from that tile and republish the cyan/yellow trail.
+        let off = live_client_trail(&mut c, Some(wt(3203, 3200)));
+        assert!(off.is_empty());
+        let revisit = live_client_trail(&mut c, Some(wt(3201, 3200)));
+        assert!(
+            revisit.is_empty(),
+            "revisit of a retired click must not resurrect the trail"
+        );
+        assert!(c.try_move_path.is_empty());
+        publish_nav_debug(
+            &mut c,
+            &world,
+            None,
+            Some(wt(3201, 3200)),
+            &revisit,
+            false,
+            None,
+            &layers,
+            true,
+        );
+        let paint = c.nav_debug_paint().expect("off-path still publishes");
+        assert!(
+            paint.trail.is_empty(),
+            "publisher must not resurrect a retired trail"
+        );
+        assert!(
+            !paint.collision.is_empty(),
+            "collision paint remains after trail retirement"
+        );
+    }
+
+    #[test]
+    fn live_client_trail_rearms_on_fresh_path_and_keeps_unknown_here() {
+        let mut c = paint_client();
+        c.try_move_path = vec![(0, 0), (1, 0), (2, 0)];
+        let _ = live_client_trail(&mut c, Some(wt(3202, 3200)));
+        assert!(c.try_move_path.is_empty());
+
+        c.try_move_path = vec![(3, 0), (4, 0), (5, 0)];
+        let fresh = live_client_trail(&mut c, Some(wt(3203, 3200)));
+        assert_eq!(fresh, vec![wt(3203, 3200), wt(3204, 3200), wt(3205, 3200)]);
+        assert_eq!(c.try_move_path.len(), 3, "a new click re-arms the producer");
+
+        let pending = live_client_trail(&mut c, None);
+        assert_eq!(pending.len(), 3);
+        assert_eq!(
+            c.try_move_path.len(),
+            3,
+            "unknown here must not retire a pending trail"
+        );
     }
 
     /// A walk leg then a Door transport (loc-backed), the shape the hull
