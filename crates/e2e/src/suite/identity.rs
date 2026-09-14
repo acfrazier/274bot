@@ -28,6 +28,30 @@ use super::SuiteResult;
 pub const MAX_DIGEST_FILES: usize = 20_000;
 pub const MAX_DIGEST_FILE_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_DIGEST_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
+/// Bound on directories visited. Without it, a tree of directories (or a directory the
+/// walker cannot descend) costs work that no file bound would stop.
+pub const MAX_DIGEST_DIRS: usize = 20_000;
+
+/// The bounds a bounded tree digest is walked under. Production uses [`Bounds::default`];
+/// the tests drive a tiny bound to prove the walk stops early.
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    files: usize,
+    file_bytes: u64,
+    total_bytes: u64,
+    dirs: usize,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Bounds {
+            files: MAX_DIGEST_FILES,
+            file_bytes: MAX_DIGEST_FILE_BYTES,
+            total_bytes: MAX_DIGEST_TOTAL_BYTES,
+            dirs: MAX_DIGEST_DIRS,
+        }
+    }
+}
 
 /// One git tree's identity. `content_sha256` binds HEAD, the index and the working-tree
 /// diff: the same path with different bytes is a different identity, which a bare
@@ -184,89 +208,169 @@ impl InputDigest {
     /// A directory tree's content identity: every regular file below `root`, sorted by
     /// relative path, hashed with its bytes. Past the bounds the digest is unresolved.
     pub fn tree(root: &Path) -> Self {
+        Self::tree_bounded(root, Bounds::default())
+    }
+
+    /// [`InputDigest::tree`] with explicit bounds, so a test can prove the walk stops early
+    /// instead of measuring the tree and rejecting it afterwards.
+    ///
+    /// The bounds are enforced *while* the tree is walked: a tree past them is unresolved
+    /// before its files are read. Symlinks are rejected rather than followed — a link can
+    /// leave the tree (or loop inside it), and the digest binds the paths a child resolves.
+    /// An entry that cannot be read or stat'ed is unresolved, never silently dropped.
+    fn tree_bounded(root: &Path, bounds: Bounds) -> Self {
         let target = root.display().to_string();
-        if !root.is_dir() {
-            return InputDigest {
-                target,
-                sha256: None,
-                bytes: None,
-                files: 0,
-                note: Some("not a directory".into()),
-            };
+        let unresolved = |files: usize, note: String| InputDigest {
+            target: target.clone(),
+            sha256: None,
+            bytes: None,
+            files,
+            note: Some(note),
+        };
+        match std::fs::symlink_metadata(root) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return unresolved(
+                    0,
+                    format!(
+                    "{} is a symlink; a bounded digest binds the path, it does not follow links",
+                    root.display()
+                ),
+                )
+            }
+            Ok(_) => return unresolved(0, "not a directory".into()),
+            Err(error) => {
+                return unresolved(0, format!("cannot stat {}: {error}", root.display()));
+            }
         }
-        let mut files: Vec<PathBuf> = Vec::new();
+        let mut files: Vec<(PathBuf, u64)> = Vec::new();
+        let mut dirs = 0usize;
+        let mut total: u64 = 0;
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
+            dirs += 1;
+            if dirs > bounds.dirs {
+                return unresolved(
+                    files.len(),
+                    format!(
+                        "the tree has more than {} directories, past the suite's bounded digest",
+                        bounds.dirs
+                    ),
+                );
+            }
             let entries = match std::fs::read_dir(&dir) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    return InputDigest {
-                        target,
-                        sha256: None,
-                        bytes: None,
-                        files: files.len(),
-                        note: Some(format!("cannot read {}: {error}", dir.display())),
-                    }
+                    return unresolved(
+                        files.len(),
+                        format!("cannot read {}: {error}", dir.display()),
+                    );
                 }
             };
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        return unresolved(
+                            files.len(),
+                            format!("cannot read an entry of {}: {error}", dir.display()),
+                        );
+                    }
+                };
                 let path = entry.path();
-                if path.is_dir() {
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(error) => {
+                        return unresolved(
+                            files.len(),
+                            format!("cannot stat {}: {error}", path.display()),
+                        );
+                    }
+                };
+                if file_type.is_symlink() {
+                    return unresolved(
+                        files.len(),
+                        format!(
+                            "{} is a symlink; a bounded digest does not follow links",
+                            path.display()
+                        ),
+                    );
+                }
+                if file_type.is_dir() {
                     stack.push(path);
-                } else if path.is_file() {
-                    files.push(path);
+                    continue;
+                }
+                if !file_type.is_file() {
+                    return unresolved(
+                        files.len(),
+                        format!("{} is not a regular file", path.display()),
+                    );
+                }
+                let size = match entry.metadata() {
+                    Ok(meta) => meta.len(),
+                    Err(error) => {
+                        return unresolved(
+                            files.len(),
+                            format!("cannot stat {}: {error}", path.display()),
+                        );
+                    }
+                };
+                // Bounded before the bytes are read: an oversized or oversized-in-total
+                // file is unresolved instead of being loaded to find that out.
+                if size > bounds.file_bytes {
+                    return unresolved(
+                        files.len(),
+                        format!(
+                            "{} is {size} bytes, past the suite's bounded digest of {} bytes per file",
+                            path.display(),
+                            bounds.file_bytes
+                        ),
+                    );
+                }
+                total += size;
+                if total > bounds.total_bytes {
+                    return unresolved(
+                        files.len(),
+                        format!(
+                            "the tree exceeds the suite's bounded digest of {} bytes",
+                            bounds.total_bytes
+                        ),
+                    );
+                }
+                files.push((path, size));
+                if files.len() > bounds.files {
+                    return unresolved(
+                        files.len(),
+                        format!(
+                            "more than {} files, past the suite's bounded digest",
+                            bounds.files
+                        ),
+                    );
                 }
             }
         }
-        files.sort();
-        if files.len() > MAX_DIGEST_FILES {
-            return InputDigest {
-                target,
-                sha256: None,
-                bytes: None,
-                files: files.len(),
-                note: Some(format!(
-                    "{} files exceeds the suite's bounded digest of {MAX_DIGEST_FILES}",
-                    files.len()
-                )),
-            };
-        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
         let mut hasher = Sha256::new();
-        let mut total: u64 = 0;
-        for path in &files {
-            let Ok(bytes) = std::fs::read(path) else {
-                return InputDigest {
-                    target,
-                    sha256: None,
-                    bytes: None,
-                    files: files.len(),
-                    note: Some(format!("cannot read {}", path.display())),
-                };
+        for (path, size) in &files {
+            let bytes = match std::fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return unresolved(
+                        files.len(),
+                        format!("cannot read {}: {error}", path.display()),
+                    );
+                }
             };
-            if bytes.len() as u64 > MAX_DIGEST_FILE_BYTES {
-                return InputDigest {
-                    target,
-                    sha256: None,
-                    bytes: None,
-                    files: files.len(),
-                    note: Some(format!(
-                        "{} is {} bytes, past the suite's bounded digest",
+            // The file can have changed between the walk and the read.
+            if bytes.len() as u64 != *size || bytes.len() as u64 > bounds.file_bytes {
+                return unresolved(
+                    files.len(),
+                    format!(
+                        "{} changed while it was being digested ({} bytes read, {size} stat'ed)",
                         path.display(),
                         bytes.len()
-                    )),
-                };
-            }
-            total += bytes.len() as u64;
-            if total > MAX_DIGEST_TOTAL_BYTES {
-                return InputDigest {
-                    target,
-                    sha256: None,
-                    bytes: None,
-                    files: files.len(),
-                    note: Some(format!(
-                        "the tree exceeds the suite's bounded digest of {MAX_DIGEST_TOTAL_BYTES} bytes"
-                    )),
-                };
+                    ),
+                );
             }
             let relative = path.strip_prefix(root).unwrap_or(path);
             hasher.update(relative.to_string_lossy().as_bytes());
@@ -418,16 +522,48 @@ impl BinaryIdentity {
     }
 }
 
+/// The paths the *native* resolver selected for a configuration, recorded as the child
+/// itself resolves them.
+///
+/// The suite does not invent these: it runs the same read-only resolver the panel runs over
+/// exactly the flags the child receives. A recorded path is part of the run identity, so a
+/// resume refuses when the selected input moved — and the content-bound inputs below say
+/// which of them were read as well.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedInputs {
+    /// The native selection (`local-274`, `local-289`, `public-289`).
+    pub selection: String,
+    pub cache: String,
+    pub vault: String,
+    pub nav_pack: String,
+    pub nav_flags: String,
+    pub content: String,
+    pub unpack: String,
+}
+
 /// The explicit native profile/input configuration a run was started with, including the
-/// content identity of every resolved input path.
+/// content identity of every input the suite binds.
+///
+/// Content is bound where it can be bound honestly: the catalog script tree, the vault the
+/// selected profile resolves (a file, or a *defined* absence the panel would create), and
+/// the pack cache the panel reads. The nav pack/flags and the content/unpack paths are
+/// recorded as resolved paths only: they are large derived data files, and hashing them as
+/// a run identity would be an expensive substitute for the inputs the child consumes.
+/// The engine install follows the same rule: an explicit `--engine` is content-bound, the
+/// profile's own engine tree is a mutable server runtime the client reads through its cache
+/// dir and is not bound.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileIdentity {
     pub profile: String,
     pub revision: Option<String>,
     pub host: Option<String>,
     pub port: Option<u16>,
+    #[serde(default)]
+    pub selection: String,
+    #[serde(default)]
+    pub resolved: ResolvedInputs,
     pub engine: Option<InputDigest>,
-    pub cache: Option<InputDigest>,
+    pub cache: InputDigest,
     pub catalog: InputDigest,
     pub vault: InputDigest,
     pub lowmem: bool,
@@ -490,14 +626,12 @@ impl RunIdentity {
         if !self.profile.catalog.resolved() {
             unresolved.push("catalog script content".to_string());
         }
-        for (name, digest) in [
-            ("engine", &self.profile.engine),
-            ("cache", &self.profile.cache),
-        ] {
-            if let Some(digest) = digest {
-                if !digest.resolved() {
-                    unresolved.push(format!("{name} content"));
-                }
+        if !self.profile.cache.resolved() {
+            unresolved.push("cache content".to_string());
+        }
+        if let Some(engine) = &self.profile.engine {
+            if !engine.resolved() {
+                unresolved.push("engine content".to_string());
             }
         }
         if !self.profile.vault.resolved() {
@@ -656,7 +790,10 @@ mod tests {
             "binaries": {"core": {"kind": "direct", "program": "p", "args": [], "sha256": "d", "size": 1, "note": null}},
             "profile": {
                 "profile": "local-274", "revision": null, "host": null, "port": null,
-                "engine": null, "cache": null,
+                "selection": "local-274",
+                "resolved": {"selection": "local-274", "cache": "/cache", "vault": "/vault", "nav_pack": "/nav", "nav_flags": "/navflags", "content": "/content", "unpack": "/unpack"},
+                "engine": null,
+                "cache": {"target": "/cache", "sha256": "cc", "bytes": 2, "files": 1, "note": null},
                 "catalog": {"target": "/catalog", "sha256": "cat", "bytes": 2, "files": 1, "note": null},
                 "vault": {"target": "/vault", "sha256": "vv", "bytes": 2, "files": 1, "note": null},
                 "lowmem": true, "mainland": false, "jobs": 1
@@ -778,6 +915,108 @@ mod tests {
         assert!(absent.resolved(), "an absence is a defined identity");
         assert_ne!(absent.sha256, second.sha256);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A tree that cannot be bounded is unresolved *before* it is walked unbounded. Each
+    /// bound is checked where it applies: a symlink (which can leave the tree or loop) is
+    /// rejected rather than followed, an oversized file is rejected before its bytes are
+    /// read, and an entry that cannot be read is unresolved instead of silently dropped.
+    #[test]
+    fn a_tree_that_cannot_be_bounded_is_unresolved_not_walked_unbounded() {
+        let root = std::env::temp_dir().join(format!("274bot-tree-bounds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::fs::write(root.join("real/a.ts"), "one").unwrap();
+
+        // The file bound is enforced during the walk, not measured after it.
+        let started = std::time::Instant::now();
+        let bounded = InputDigest::tree_bounded(
+            &root,
+            Bounds {
+                files: 0,
+                ..Bounds::default()
+            },
+        );
+        assert!(!bounded.resolved(), "{:?}", bounded.note);
+        assert!(
+            bounded
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("more than 0 files"),
+            "{:?}",
+            bounded.note
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+        // A directory symlink is not followed: a link back to the tree's own parent would
+        // otherwise loop without bound.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+            let started = std::time::Instant::now();
+            let linked = InputDigest::tree(&root);
+            assert!(!linked.resolved(), "{:?}", linked.note);
+            assert!(
+                linked
+                    .note
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("symlink"),
+                "{:?}",
+                linked.note
+            );
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "a symlink must be rejected, not followed"
+            );
+            std::fs::remove_file(root.join("loop")).unwrap();
+        }
+
+        // A file past the per-file bound is rejected before its bytes are read.
+        let big = root.join("real/big.bin");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(MAX_DIGEST_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let started = std::time::Instant::now();
+        let oversized = InputDigest::tree(&root);
+        assert!(!oversized.resolved(), "{:?}", oversized.note);
+        assert!(
+            oversized
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("past the suite's bounded digest"),
+            "{:?}",
+            oversized.note
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the bound is known from metadata, not by reading the file"
+        );
+        std::fs::remove_file(&big).unwrap();
+
+        // A file the walker cannot read is unresolved, never silently skipped.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let secret = root.join("real/secret.ts");
+            std::fs::write(&secret, "secret").unwrap();
+            std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let unreadable = InputDigest::tree(&root);
+            assert!(!unreadable.resolved(), "{:?}", unreadable.note);
+            assert!(
+                unreadable
+                    .note
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("secret.ts"),
+                "{:?}",
+                unreadable.note
+            );
+            std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

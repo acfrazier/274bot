@@ -42,17 +42,31 @@ launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, 
 `--lowmem` (the default), `--mainland`, `--exec-core PATH`, `--exec-pair PATH`,
 `--cwd DIR`, `--child-arg ARG` (repeatable).
 
-The child command line is the executable, the profile flags and the case's live name:
+The child command line is the *resolved* executable, the profile flags and the case's live
+name:
 
-    cargo run --quiet -p panel --example catalog_watch -- \
+    /path/to/target/debug/examples/catalog_watch \
         --profile local-274 --catalog /path/to/catalog/274 --live script_thiever
 
-`--exec-core`/`--exec-pair` replace the manifest's cargo template with a direct
-executable. Only flags the executables actually accept are emitted: `catalog_watch`,
-`pair_watch` and `panel-play` parse flags with `host_play::parse_profile_args` and then
-reject anything but `--live`/`--smoke`/`--prod`. `--mainland` is therefore passed as
-`BOT_MAINLAND=1` in the child's environment, and `--highmem` is refused because the panel
-takes the memory mode from the vault profile and exposes no flag (pending adapter work).
+The manifest's `exec` entry is a cargo template that *names* the artifact
+(`cargo run -p panel --example catalog_watch`); it is never the launch program. The suite
+resolves it to the built file under `target/{debug,release}[/examples]`, hashes it, and
+launches that path, so the bytes in the ledger and the bytes in the child are the same
+executable — `cargo run` is not re-invoked after the identity was captured (it could
+rebuild different bytes under the same command). `--exec-core`/`--exec-pair PATH` name a
+direct executable instead; either way a case whose executable cannot be resolved and
+hashed refuses the run (and `dry-run` refuses the plan) rather than printing a template it
+would never launch.
+
+Only flags the executables actually accept are emitted: `catalog_watch`, `pair_watch` and
+`panel-play` parse flags with `host_play::parse_profile_args` and then reject anything but
+`--live`/`--smoke`/`--prod`. `--mainland` is therefore passed as `BOT_MAINLAND=1` in the
+child's environment, and `--highmem` is refused because the panel takes the memory mode
+from the vault profile and exposes no flag (pending adapter work). Input paths must be
+absolute: a child resolves a relative path against its own working directory, which the
+suite cannot reproduce when it binds the identity, so a relative `--catalog`/`--engine`/
+`--cache`/`--vault` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
+`NAV_FLAGS`/`BOT_CACHE_MANIFEST`) is refused.
 Every child also receives `274BOT_SMOKE_DIR` pointing at the run's `shots/` directory.
 Reference `args`/`env` from the frozen manifest are preserved as metadata and are never
 applied wholesale; a typed option is added only when a native adapter really consumes it.
@@ -68,18 +82,32 @@ match exactly before any spawn:
   so the same path with different bytes is a different identity);
 * every launched executable: a direct `--exec-*` file is hashed, and the manifest's cargo
   template is resolved to the built artifact under `target/{debug,release}[/examples]` and
-  hashed too — the suite never records an unresolved command string, so build the executor
-  once before the run (or pass `--exec-core`/`--exec-pair`);
-* the resolved profile/input configuration with a content digest for the catalog script
-  tree (`<catalog>/src/bot/scripts`), the vault file, `--engine` and `--cache`;
+  hashed too — the suite never records an unresolved command string, and it launches the
+  path it hashed, so build the executor once before the run (or pass
+  `--exec-core`/`--exec-pair`);
+* the profile/input configuration as the *child* resolves it: the suite runs the same
+  read-only native resolver (`host_play::ProfileOptions::resolve`) over exactly the flags
+  it hands the child and records the selection (`local-274`/`local-289`/`public-289`) and
+  the resolved cache, vault, nav pack/flags, content and unpack paths. The vault the
+  selection implies is then content-bound — with no `--vault`, `--profile local-289` binds
+  `~/.274bot/vault-289`, not a process-wide default — as are the catalog script tree
+  (`<catalog>/src/bot/scripts`) and the resolved cache directory. A path that is not there
+  is recorded as a *defined* absence (the panel creates its vault on first use), never as
+  an invented digest;
 * settings (level, `--only`, changed paths, extra child args, child env names) and the
   ordered selection.
 
-An input the suite cannot bind (no built executable, a catalog without a script tree, an
-unreadable repository) refuses the run before the ledger exists; a recorded identity with
-an unresolved component refuses resume, because such a run cannot prove the input is
-unchanged. A changed input *at the same path* — a vault file, a script source — refuses
-resume with `profile/input configuration`.
+Nav pack/flags and the content/unpack paths are recorded as resolved paths only, and the
+engine install is content-bound only when `--engine` names it: those are large, mutable
+derived trees (the profile's engine install here is ~27k files) that the panel reads
+through its cache, so hashing them would be an expensive substitute for the inputs the
+child actually consumes. A changed resolved path refuses resume.
+
+An input the suite cannot bind (no built executable, a catalog without a script tree, a
+profile the native resolver rejects, an unreadable repository) refuses the run before the
+ledger exists; a recorded identity with an unresolved component refuses resume, because
+such a run cannot prove the input is unchanged. A changed input *at the same path* — a
+vault file, a script source — refuses resume with `profile/input configuration`.
 
 An attempt is written before its child is launched, so a crash or an interrupt still
 leaves the case recorded. Resume skips every case that already has an attempt — passed
@@ -129,15 +157,23 @@ error, `130` when interrupted.
 ## Process ownership
 
 Every launched child runs in its own process group and is wrapped in an RAII guard, so
-success, an early error return and a panic all reap the tree. The wait loop is
-deadline-aware (`SIGTERM`, a 10 s grace, `SIGKILL`, then a bounded reap — never an
-unbounded `wait`), the log file is opened *before* the spawn, and the output pipes are
-drained with a deadline: a descendant that inherits stdout/stderr after the direct child
-exits is force-killed to close the write ends, and an abandoned drain is reported in the
-ledger instead of hanging the suite. Output is read in bounded chunks; a line past 64 KiB
-is emitted wrapped (and marked) rather than buffered without limit. Bounded process-group
-ownership is a unix facility: on other platforms `run` fails closed instead of launching a
-child it cannot own.
+success, an early error return and a panic all reap the tree. Ownership is the *tree*, not
+the direct child: a direct child that exited is not a process group that exited, so after
+the run the group is checked independently of the pipes and of the direct child's exit. A
+descendant that inherited stdout/stderr, or one detached with its own stdio that nothing
+here can see, is terminated with a bounded escalation (`SIGTERM`, a 10 s grace, `SIGKILL`,
+then a bounded wait that requires the whole group to be gone) and `reaped` is only true
+once the direct child has been waited *and* no process of the group survives. A tree that
+cannot be reaped inside the bound is recorded `cleanup_failed` on every exit path — not
+only on a timeout — and stops the run instead of launching the next case.
+
+The log file is opened *before* the spawn, the wait loop is deadline-aware (never an
+unbounded `wait`), and the pipes are drained with a deadline rather than joined: an
+abandoned drain is reported in the ledger instead of hanging the suite. Output is read in
+bounded chunks; a line past 64 KiB is emitted wrapped (and marked) rather than buffered
+without limit. Bounded process-group ownership is a unix facility: the suite compiles on
+other platforms and `run` fails closed there, refusing to launch a child it cannot own
+(rather than claiming ownership it cannot enforce).
 
 
 ## Verification without a game
@@ -150,17 +186,22 @@ child standing in for a panel executable:
 
 The offline suite (see `crates/e2e/tests/suite_offline.rs` and
 `crates/e2e/fixtures/native-suite/offline-suite-manifest.json`) covers printed command
-construction, a zero-exit child with no receipt stopping the run, an isolated assertion
+construction (with and without `--exec-*`: the resolved artifact path is launched and
+printed, `cargo run` never is), a plan whose executable cannot be resolved refusing,
+a zero-exit child with no receipt stopping the run, an isolated assertion
 failure continuing, a successful case retained as `pending_visual_review` with a real
 capture, a contracted terminal shot that never arrives (or arrives under another label)
 stopping the run, resume carrying the result without relaunching it, resume refusing a
 changed settings/manifest request *and* a changed input at the same path (vault content,
-script source) before any launch, refusing an unbindable catalog or executable, budget
-expiry with forced-kill process-tree cleanup, interrupt cleanup, a log that cannot be
-opened refusing before any spawn, and a descendant holding the pipes not hanging the
-suite. The fixture prints the panel's real line contract and writes the scenario's
-declared terminal shot. `LIVE=1` harness tests under `crates/e2e/tests/` remain separate
-and are not part of a suite run.
+script source, the profile's *default* vault at its resolved path) before any launch,
+refusing an unbindable catalog, an unresolvable executable, an unresolvable profile and a
+relative input path, budget expiry with forced-kill process-tree cleanup, interrupt
+cleanup, a log that cannot be opened refusing before any spawn, a descendant holding the
+pipes not hanging the suite, and detached descendants — including one that ignores
+`SIGTERM` — being force-killed and verified gone. The fixture prints the panel's real line
+contract and writes the scenario's declared terminal shot, and the tests resolve their
+profile against a disposable `$HOME`. `LIVE=1` harness tests under `crates/e2e/tests/`
+remain separate and are not part of a suite run.
 
 ## Manifest
 
