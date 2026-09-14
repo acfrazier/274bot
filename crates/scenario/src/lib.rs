@@ -13389,7 +13389,18 @@ fn climbing_boots_variant(
     steps.push(Step {
         name: "deposit the seeded coins and runes through the bank window",
         kind: StepKind::Repeat {
-            send: Box::new(|c, snapshot| {
+            send: Box::new(move |c, snapshot| {
+                // Repeat sends before checking its arm. Once the deposit has
+                // landed the bank-side pack is empty; acknowledge the actual
+                // fresh-bank readback instead of refusing an unnecessary send.
+                if (Proof::BankItemId {
+                    id: COINS_ID,
+                    count: bank_coins,
+                })
+                .check(snapshot, None)
+                {
+                    return true;
+                }
                 let mut ix = Interactions::new(snapshot, c);
                 let mut wrote = false;
                 for item in snapshot.bank_side() {
