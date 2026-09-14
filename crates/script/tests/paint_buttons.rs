@@ -299,6 +299,7 @@ fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
         lines: vec!["line".into()],
         buttons: Vec::new(),
         generation: 0,
+        canvas: Vec::new(),
     };
     let bytes = IsolateBuf::new().encode_paint(&quiet);
     let decoded = decode_paint(&bytes).expect("empty buttons");
@@ -314,6 +315,7 @@ fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
             label: "Go bank".into(),
         }],
         generation: 0,
+        canvas: Vec::new(),
     };
     let resume = ScriptPaint {
         title: Some("t".into()),
@@ -324,6 +326,7 @@ fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
             label: "Resume".into(),
         }],
         generation: 0,
+        canvas: Vec::new(),
     };
     assert_ne!(go, resume, "label toggle must be a real change");
     let round = decode_paint(&IsolateBuf::new().encode_paint(&go)).unwrap();

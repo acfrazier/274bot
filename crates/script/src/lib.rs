@@ -3,6 +3,8 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+#[cfg(feature = "load")]
+pub mod canvas;
 pub mod ctx;
 pub mod declared_abi;
 pub mod host_js;

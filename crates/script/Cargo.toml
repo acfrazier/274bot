@@ -16,6 +16,7 @@ default = ["load"]
 load = ["dep:rustyscript", "dep:v8", "dep:deno_ast", "dep:flatbuffers"]
 
 [dependencies]
+ab_glyph = "=0.2.32"
 api = { path = "../api" }
 # TS -> JS strip for the catalog shape; `transpiling` unifies with the
 # features rustyscript already enables, so no new build graph.

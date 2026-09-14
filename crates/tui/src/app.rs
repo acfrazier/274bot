@@ -1281,6 +1281,7 @@ mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         }
     }
 
@@ -1513,6 +1514,7 @@ mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         });
         assert_eq!(
             app.on_key(key(KeyCode::Char('1'))),
@@ -2039,6 +2041,7 @@ mod tests {
             lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
             buttons: Vec::new(),
             generation: 0,
+            canvas: Vec::new(),
         });
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();

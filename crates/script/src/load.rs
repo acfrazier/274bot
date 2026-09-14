@@ -2523,6 +2523,106 @@ mod isolate {
             )
             .map_err(|e| format!("register ent npc on tile: {e}"))?;
         runtime
+            .register_function("__rs2b0t_canvas_begin", |_args: &[serde_json::Value]| {
+                crate::canvas::begin();
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas begin: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_set", |args: &[serde_json::Value]| {
+                let prop = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let value = args
+                    .get(1)
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default();
+                crate::canvas::set_style(prop, &value);
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas set: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_get", |args: &[serde_json::Value]| {
+                let prop = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let value = match prop {
+                    "font" => crate::canvas::font(),
+                    "fillStyle" => crate::canvas::fill_style(),
+                    _ => String::new(),
+                };
+                Ok(serde_json::Value::String(value))
+            })
+            .map_err(|e| format!("register canvas get: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_fill_rect",
+                |args: &[serde_json::Value]| {
+                    let num = |i: usize| {
+                        args.get(i)
+                            .and_then(serde_json::Value::as_f64)
+                            .or_else(|| {
+                                args.get(i)
+                                    .and_then(serde_json::Value::as_i64)
+                                    .map(|n| n as f64)
+                            })
+                            .unwrap_or(0.0)
+                    };
+                    crate::canvas::fill_rect(num(0), num(1), num(2), num(3));
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas fillRect: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_fill_text",
+                |args: &[serde_json::Value]| {
+                    let text = args
+                        .first()
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    let num = |i: usize| {
+                        args.get(i)
+                            .and_then(serde_json::Value::as_f64)
+                            .or_else(|| {
+                                args.get(i)
+                                    .and_then(serde_json::Value::as_i64)
+                                    .map(|n| n as f64)
+                            })
+                            .unwrap_or(0.0)
+                    };
+                    crate::canvas::fill_text(text, num(1), num(2));
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas fillText: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_measure_text",
+                |args: &[serde_json::Value]| {
+                    let text = args
+                        .first()
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    Ok(serde_json::json!(crate::canvas::measure_text(text)))
+                },
+            )
+            .map_err(|e| format!("register canvas measureText: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_take", |_args: &[serde_json::Value]| {
+                let taken = crate::canvas::take();
+                Ok(serde_json::json!({
+                    "ops": taken.ops,
+                    "overflow": taken.overflow,
+                }))
+            })
+            .map_err(|e| format!("register canvas take: {e}"))?;
+        runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
         let content = format!(
