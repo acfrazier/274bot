@@ -2104,6 +2104,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::ClimbingBoots => {
             near(baseline.tile, TENZING_HUT_DOOR, 12)
                 && baseline.item_id(CLIMBING_BOOTS_ID) == 0
+                && baseline.bank_item_id(CLIMBING_BOOTS_ID) == 0
                 && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_WALK_PACK_COINS
                 && baseline.item_id(LAW_RUNE_ID) == 0
                 && baseline.item_id(AIR_RUNE_ID) == 0
@@ -2112,6 +2113,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::ClimbingBootsTeleport => {
             near(baseline.tile, TENZING_HUT_DOOR, 12)
                 && baseline.item_id(CLIMBING_BOOTS_ID) == 0
+                && baseline.bank_item_id(CLIMBING_BOOTS_ID) == 0
                 && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_TELE_PACK_COINS
                 && baseline.item_id(LAW_RUNE_ID) == CLIMBING_BOOTS_RUNE_STOCK_MIN
                 && baseline.item_id(AIR_RUNE_ID) == 3
@@ -2378,10 +2380,10 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Varrock East bank (3253,3420,0), Firemaking 15, empty pack of 590/1521/1511, no Fire loc in posted plot"
         }
         CoreCase::ClimbingBoots => {
-            "Tenzing hut door (2823,3555,0) r12, zero boots 3105, exact carried 336 coins (28 pair), no runes, Death Plateau complete"
+            "Tenzing hut door (2823,3555,0) r12, zero boots 3105 carried and banked, exact carried 336 coins (28 pair), no runes, Death Plateau complete"
         }
         CoreCase::ClimbingBootsTeleport => {
-            "Tenzing hut door (2823,3555,0) r12, zero boots 3105, exact carried 300 coins (25 pair), Law 563x1/Air 556x3/Water 555x1, Magic 37, Death Plateau complete"
+            "Tenzing hut door (2823,3555,0) r12, zero boots 3105 carried and banked, exact carried 300 coins (25 pair), Law 563x1/Air 556x3/Water 555x1, Magic 37, Death Plateau complete"
         }
     };
     Err(format!(
@@ -6180,17 +6182,23 @@ impl ShopBuyoutCycle {
 /// only a purchase witness once the framed Tenzing projection and the sherpa
 /// dialogue are in the observed window and carried boots rose while coins
 /// fell by exactly 12 a pair. Walk and teleport are separate cells: the
-/// teleport cell must show a real cast (magic XP, Law spend, landing) and
-/// the walk cell must not cast at all. Return, deposit, reopen and the
-/// further purchase stay separate stages, so a failed full cycle keeps its
-/// purchase evidence instead of silently downgrading to a smoke PASS.
+/// teleport cell must show a real post-purchase return cast (magic XP, Law
+/// spend, landing, still carrying the earned pack) and the walk cell must
+/// not cast at all. Return, deposit, reopen and the further purchase stay
+/// separate stages, so a failed full cycle keeps its purchase evidence
+/// instead of silently downgrading to a smoke PASS.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ClimbingBootsCycle {
     pub tenzing: Option<Observation>,
     pub cast: Option<Observation>,
     pub bought: Option<Observation>,
-    /// Pairs gained at `bought` (each pair is exactly 12 coins).
+    /// Pairs gained at the first `bought` sample (each pair is exactly 12 coins).
     pub bought_pairs: i32,
+    /// Peak carried boots after that purchase, until deposit. Deposit must
+    /// bank this earned quantity, not the early 1-pair sample.
+    pub earned_boots: i32,
+    /// First loaded post-Start bank: `Some(true)` only when boots 3105 were 0.
+    pub boot_bank_empty: Option<bool>,
     /// The sherpa sell/buy line seen in a bounded chat projection.
     pub dialogue: bool,
     pub returned: Option<Observation>,
@@ -6252,19 +6260,41 @@ fn climbing_boots_dialogue(now: &Observation) -> bool {
 impl ClimbingBootsCycle {
     pub fn observe(&mut self, spec: ClimbingBootsSpec, baseline: &Observation, now: &Observation) {
         let ClimbingBootsSpec {
+            use_teleport,
             coins: _,
             landing,
             bank,
-            ..
         } = spec;
         self.dialogue |= climbing_boots_dialogue(now);
         if self.tenzing.is_none() && tenzing_visible(now) {
             self.tenzing = Some(now.clone());
         }
+        // The purchase: same player after Start, boots up, exactly 12 coins a
+        // pair gone, with the framed Tenzing/dialogue evidence. The first
+        // matching frame is typically one pair; earned_boots tracks the peak
+        // pack after that until deposit.
+        if self.tenzing.is_some() && self.dialogue {
+            if self.bought.is_none() {
+                let gained = now.item_id(CLIMBING_BOOTS_ID) - baseline.item_id(CLIMBING_BOOTS_ID);
+                let spent = baseline.item_id(COINS_ID) - now.item_id(COINS_ID);
+                if gained >= 1 && spent == gained * CLIMBING_BOOTS_PAIR_COINS {
+                    self.bought_pairs = gained;
+                    self.earned_boots = gained;
+                    self.bought = Some(now.clone());
+                }
+            } else if self.deposited.is_none() {
+                self.earned_boots = self.earned_boots.max(now.item_id(CLIMBING_BOOTS_ID));
+            }
+        }
         // A real cast, not the option: magic XP plus the whole Falador cost
-        // (Law, Air and Water, no staff assumed) and the landing. Recorded for
-        // either cell, so a walking cell that cast fails closed.
+        // (Law, Air and Water, no staff assumed) and the landing. Only after
+        // the purchase, on a frame that still carries the earned pack, so a
+        // pre-purchase Falador-shaped cast cannot satisfy the teleport cell.
+        // Recorded for either cell, so a walking cell that cast fails closed.
         if self.cast.is_none()
+            && self.bought.is_some()
+            && self.earned_boots >= 1
+            && now.item_id(CLIMBING_BOOTS_ID) >= self.earned_boots
             && now.skill_xp("magic") > baseline.skill_xp("magic")
             && now.item_id(LAW_RUNE_ID) < baseline.item_id(LAW_RUNE_ID)
             && now.item_id(AIR_RUNE_ID) < baseline.item_id(AIR_RUNE_ID)
@@ -6273,41 +6303,37 @@ impl ClimbingBootsCycle {
         {
             self.cast = Some(now.clone());
         }
-        // The purchase: same player after Start, boots up, exactly 12 coins a
-        // pair gone, with the framed Tenzing/dialogue evidence.
-        if self.bought.is_none() && self.tenzing.is_some() && self.dialogue {
-            let gained = now.item_id(CLIMBING_BOOTS_ID) - baseline.item_id(CLIMBING_BOOTS_ID);
-            let spent = baseline.item_id(COINS_ID) - now.item_id(COINS_ID);
-            if gained >= 1 && spent == gained * CLIMBING_BOOTS_PAIR_COINS {
-                self.bought_pairs = gained;
-                self.bought = Some(now.clone());
-            }
-        }
         // Return is genuine position after the purchase (the first arrival can
         // still be inside the baseline bank generation), never a generation
-        // counter that would demand a second bank trip.
-        if let Some(bought) = &self.bought {
-            if self.returned.is_none() && !now.bank_open && near(now.tile, bank, 8) {
-                self.returned = Some(now.clone());
-            }
-            // The deposit is a fresh bank session plus a real delta: the boots
-            // lost from the pack must appear as bank gain over the clean
-            // baseline, so a pre-existing banked pair cannot qualify.
-            if self.returned.is_some()
-                && self.deposited.is_none()
-                && now.bank_open
-                && now.bank_loaded
-            {
-                let carried_lost =
-                    bought.item_id(CLIMBING_BOOTS_ID) - now.item_id(CLIMBING_BOOTS_ID);
-                let bank_gained =
-                    now.bank_item_id(CLIMBING_BOOTS_ID) - baseline.bank_item_id(CLIMBING_BOOTS_ID);
-                if now.bank_generation > baseline.bank_generation
-                    && carried_lost >= 1
-                    && bank_gained >= carried_lost
-                {
-                    self.deposited = Some(now.clone());
-                }
+        // counter that would demand a second bank trip. Teleport return must
+        // follow the post-purchase cast, still carrying the earned pack.
+        if self.bought.is_some()
+            && self.returned.is_none()
+            && !now.bank_open
+            && near(now.tile, bank, 8)
+            && self.earned_boots >= 1
+            && now.item_id(CLIMBING_BOOTS_ID) >= self.earned_boots
+            && (!use_teleport || self.cast.is_some())
+        {
+            self.returned = Some(now.clone());
+        }
+        if now.bank_open && now.bank_loaded && self.boot_bank_empty.is_none() {
+            self.boot_bank_empty = Some(now.bank_item_id(CLIMBING_BOOTS_ID) == 0);
+        }
+        // Deposit the earned peak against a verified empty boot bank, not the
+        // first 1-pair bought sample and not leftover bank stock.
+        if self.returned.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && self.boot_bank_empty == Some(true)
+            && now.bank_generation > baseline.bank_generation
+            && self.earned_boots >= 1
+        {
+            let carried_lost = self.earned_boots - now.item_id(CLIMBING_BOOTS_ID);
+            let bank_gained = now.bank_item_id(CLIMBING_BOOTS_ID);
+            if carried_lost >= self.earned_boots && bank_gained >= self.earned_boots {
+                self.deposited = Some(now.clone());
             }
         }
         if let Some(deposited) = &self.deposited {
