@@ -7050,7 +7050,10 @@ mod tests {
         let scenario = scenario::get("duel_arena").unwrap();
         assert_eq!(scenario.seed.profiles.len(), 2);
         assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
-        assert_eq!(scenario.settings.start_script, Some("DuelArena"));
+        assert_eq!(
+            scenario.settings.start_script,
+            Some(PairCase::Duel.card_name())
+        );
         assert_eq!(scenario.companions.len(), 1);
         assert!(scenario
             .steps
