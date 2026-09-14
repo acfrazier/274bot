@@ -2507,6 +2507,10 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .map(|sel| sel.label())
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
+    if session.heading_is_pending() {
+        ui.same_line();
+        ui.text_disabled("(pending)");
+    }
     if let (Some(script::ScriptSel::Loaded(source, sel_name)), Some((front_src, front_name))) = (
         session.script_sel.clone(),
         session.transpile_front().map(|(s, n)| (s, n.to_string())),
@@ -2589,6 +2593,15 @@ fn script_section(ui: &Ui, session: &mut Session) {
         if ui.button_with_size("Stop", [sw, 0.0]) {
             session.script_stop();
         }
+    }
+    if !sstack {
+        gap_line(ui);
+    }
+    {
+        if ui.button_with_size("Reload", [sw, 0.0]) {
+            let _ = session.script_reload(true);
+        }
+        ui.set_item_tooltip("hash source and supported siblings; unchanged skips transpile");
     }
 
     let status = script_status_text(state);
@@ -2803,7 +2816,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
         ui.is_mouse_released(MouseButton::Left),
         ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0),
     ) {
-        session.select_script_card(card.source, card.name.clone());
+        session.select_script_card(card.source, card.identity_id());
     }
 }
 
@@ -2821,6 +2834,10 @@ fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
 
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
+    if ui.button_with_size("Refresh catalog", [w, 0.0]) {
+        session.refresh_catalog();
+    }
+    ui.spacing();
     if script::rs2b0t_import_deferred() {
         if ui.button_with_size("Import catalog…", [w, 0.0]) {
             session.rs2b0t_catalog_defer_ok = false;
@@ -3308,6 +3325,23 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
 }
 
 /// Typed editors for the selected card's settings schema (honours `showIf` / `group`).
+fn persist_profile_setting(
+    session: &mut Session,
+    source: script::ScriptSource,
+    card: &script::JsCard,
+    id: &str,
+    value: serde_json::Value,
+) {
+    if let Some(profile) = session.focused_name() {
+        session.set_profile_setting(&profile, source, &card.name, &card.path, id, value);
+        return;
+    }
+    session
+        .script_settings
+        .set_value(source, &card.name, id, value);
+    let _ = session.script_settings.save();
+}
+
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     let Some(script::ScriptSel::Loaded(source, name)) = session.script_sel.clone() else {
         ui.text_wrapped("select a loaded script with a parameter schema");
@@ -3321,7 +3355,17 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         ui.text_disabled("(no parameters)");
         return;
     }
-    let mut bag = session.merged_settings_bag(source, &name, &card.settings_schema);
+    let mut bag = if let Some(profile) = session.focused_name() {
+        session.merged_profile_bag(
+            &profile,
+            source,
+            &card.name,
+            &card.path,
+            &card.settings_schema,
+        )
+    } else {
+        session.merged_settings_bag(source, &name, &card.settings_schema)
+    };
     let game_data = session.selected_game_data();
     let game_data_ref = game_data.as_deref();
     let mut last_group: Option<String> = None;
@@ -3346,10 +3390,13 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .and_then(|v| v.as_bool())
                     .unwrap_or_else(|| def.default.as_deref() == Some("true"));
                 if ui.checkbox(&label, &mut value) {
-                    session
-                        .script_settings
-                        .set_bool(source, &name, &def.id, value);
-                    let _ = session.script_settings.save();
+                    persist_profile_setting(
+                        session,
+                        source,
+                        &card,
+                        &def.id,
+                        serde_json::json!(value),
+                    );
                     bag.insert(def.id.clone(), serde_json::json!(value));
                 }
             }
@@ -3360,10 +3407,13 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .or_else(|| def.default.as_deref().and_then(|s| s.parse::<f64>().ok()))
                     .unwrap_or(0.0) as i32;
                 if ui.input_int(&label, &mut value) {
-                    session
-                        .script_settings
-                        .set_num(source, &name, &def.id, value as f64);
-                    let _ = session.script_settings.save();
+                    persist_profile_setting(
+                        session,
+                        source,
+                        &card,
+                        &def.id,
+                        serde_json::json!(value),
+                    );
                     bag.insert(def.id.clone(), serde_json::json!(value));
                 }
             }
@@ -3388,8 +3438,13 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                         let selected = opt == &current;
                         let shown = resolved.label_for(opt);
                         if ui.selectable_config(shown).selected(selected).build() {
-                            session.script_settings.set_str(source, &name, &def.id, opt);
-                            let _ = session.script_settings.save();
+                            persist_profile_setting(
+                                session,
+                                source,
+                                &card,
+                                &def.id,
+                                serde_json::json!(opt),
+                            );
                             bag.insert(def.id.clone(), serde_json::json!(opt));
                         }
                     }
@@ -3426,10 +3481,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                 if changed {
                     let coerced =
                         script::coerce_setting_value(&def.ty, &serde_json::json!(selected));
-                    session
-                        .script_settings
-                        .set_value(source, &name, &def.id, coerced.clone());
-                    let _ = session.script_settings.save();
+                    persist_profile_setting(session, source, &card, &def.id, coerced.clone());
                     bag.insert(def.id.clone(), coerced);
                 }
             }
@@ -3441,10 +3493,7 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
                     .unwrap_or_default();
                 if ui.input_text(&label, &mut text).build() {
                     let coerced = script::coerce_setting_value(&def.ty, &serde_json::json!(text));
-                    session
-                        .script_settings
-                        .set_value(source, &name, &def.id, coerced.clone());
-                    let _ = session.script_settings.save();
+                    persist_profile_setting(session, source, &card, &def.id, coerced.clone());
                     bag.insert(def.id.clone(), coerced);
                 }
             }
@@ -3481,6 +3530,10 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             ) {
                 crate::ui_state::save(&session.ui);
             }
+            ui.spacing();
+            ui.text_wrapped(
+                "Values a script reads only at Start apply on the next Start. Live edits reach a matching running or paused isolate without restart.",
+            );
             ui.spacing();
             if edit_parameters_enabled() {
                 script_parameter_editors(ui, session);
@@ -4004,6 +4057,16 @@ fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
     }
     if ui.button_with_size("Logout all", [w, 0.0]) {
         state.session.logout_all();
+    }
+    let (w, stack) = button_row_layout(ui.content_region_avail()[0], 2);
+    if ui.button_with_size("Start all", [w, 0.0]) {
+        state.session.script_start_all();
+    }
+    if !stack {
+        ui.same_line();
+    }
+    if ui.button_with_size("Stop all", [w, 0.0]) {
+        state.session.script_stop_all();
     }
     let current = state.session.focus.lock().unwrap().only_render_selected;
     let mut only = current;

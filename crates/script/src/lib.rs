@@ -6,6 +6,7 @@
 pub mod ctx;
 pub mod declared_abi;
 pub mod host_js;
+pub mod identity;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
@@ -25,14 +26,21 @@ pub mod slot;
 pub mod watchdog;
 
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
+pub use identity::{
+    card_assignment, card_identity_id, card_identity_key, claim_legacy_overrides,
+    combine_fingerprints, compiled_assignment, compiled_identity_key, file_identity,
+    migrate_legacy_setting_value, migrate_overrides, missing_file_assignment, parse_source_kind,
+    paths_match, raw_sha, source_kind, NOTHING_CHANGED_CATALOG, NOTHING_CHANGED_RELOAD,
+};
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
-    live_file_fixture_path, live_file_fixture_stem, resolve_sibling_modules,
-    scan_import_specifiers, scan_same_folder_js_imports, sibling_module_url, JsCard, JsLibrary,
-    LoadShape, ScriptSel,
+    live_file_fixture_path, live_file_fixture_stem, raw_content_fingerprint,
+    resolve_sibling_modules, scan_import_specifiers, scan_same_folder_js_imports,
+    sibling_module_url, CatalogApplyReport, CatalogDiff, JsCard, JsLibrary, LoadShape,
+    PreparedCard, ScriptSel,
 };
 pub use loadouts_store::{
     copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
