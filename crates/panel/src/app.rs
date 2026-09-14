@@ -1266,6 +1266,35 @@ fn enqueue_pair_terminal_shots(session: &Session, shots: &Mutex<ShotState>, base
     }
 }
 
+/// Post-run (or failure) capture of the owned external actor at scene 2.
+/// Prerequisite fixture writes use a distinct label and cannot discharge this.
+fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
+    let Some(watch) = session.external_core_watch() else {
+        return;
+    };
+    if !watch.configured() {
+        return;
+    }
+    let name = watch.account();
+    let json = {
+        let states = session.nav_states.lock().unwrap();
+        let Some((snapshot, _)) = states.get(&name) else {
+            return;
+        };
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return;
+        }
+        actor_snapshot_json(&name, snapshot).ok()
+    };
+    let Some(json) = json else {
+        return;
+    };
+    let mut shots = shots.lock().unwrap();
+    if matches!(shots.status(label), ShotStatus::Missing) {
+        shots.enqueue(label.to_string(), json);
+    }
+}
+
 fn hold_script_terminal_shot(
     live: &mut LiveScript,
     session: &Session,
@@ -1274,8 +1303,13 @@ fn hold_script_terminal_shot(
     shots: Option<&Mutex<ShotState>>,
 ) -> Result<bool, String> {
     let owned;
-    let status = match (shots, terminal_shot, session.paired_core_watch()) {
-        (Some(shots), Some(label), Some(watch)) if watch.configured() => {
+    let status = match (
+        shots,
+        terminal_shot,
+        session.paired_core_watch(),
+        session.external_core_watch(),
+    ) {
+        (Some(shots), Some(label), Some(watch), _) if watch.configured() => {
             enqueue_pair_terminal_shots(session, shots, label);
             match pair_terminal_actor_names(session) {
                 Some((a, b)) => {
@@ -1285,6 +1319,15 @@ fn hold_script_terminal_shot(
                 }
                 None => fallback,
             }
+        }
+        (Some(shots), _, _, Some(watch)) if watch.configured() && watch.needs_terminal_hold() => {
+            let label = host_play::external_loader::TERMINAL_SHOT;
+            enqueue_external_terminal_shot(session, shots, label);
+            owned = shots.lock().unwrap().status(label);
+            if !matches!(owned, ShotStatus::Missing) {
+                watch.note_capture_requested();
+            }
+            return hold_terminal_shot(live, Some(label), &owned);
         }
         _ => fallback,
     };
@@ -1361,6 +1404,18 @@ fn live_script_tick(
         }
     }
     session.pump_external_loader();
+    if let (Some(watch), Some(shots)) = (session.external_core_watch(), shots) {
+        if watch.needs_terminal_hold() || watch.terminal_capture_due() {
+            let label = host_play::external_loader::TERMINAL_SHOT;
+            enqueue_external_terminal_shot(session, shots, label);
+            let issued = !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing);
+            if issued {
+                watch.note_capture_requested();
+            } else if watch.terminal_capture_due() {
+                watch.fail("external loader terminal capture without ingame && scene_state == 2");
+            }
+        }
+    }
     let ext_watch = session.external_core_watch();
     let ext_gate = external_core_gate(ext_watch.as_ref());
     let record = |evidence: &Option<scenario::Evidence>| {
@@ -1405,6 +1460,7 @@ fn live_script_tick(
                     .unwrap_or_else(|_| watch.evidence().to_string()),
             })
     };
+    let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
         if let Some(core) = record_core() {
@@ -1436,7 +1492,7 @@ fn live_script_tick(
             Ok(false) => {}
         }
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+        eprintln!("FAIL: live {} {}", live.name, live_line());
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
@@ -1447,7 +1503,7 @@ fn live_script_tick(
             Ok(false) => {}
         }
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+        eprintln!("FAIL: live {} {}", live.name, live_line());
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
@@ -1458,7 +1514,7 @@ fn live_script_tick(
             Ok(false) => {}
         }
         emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+        eprintln!("FAIL: live {} {}", live.name, live_line());
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
@@ -1486,7 +1542,7 @@ fn live_script_tick(
             }
             if !live.announced_pass {
                 emit_proof(true);
-                println!("PASS: live {} {}", live.name, record(&evidence));
+                println!("PASS: live {} {}", live.name, live_line());
                 live.announced_pass = true;
             }
             if live.soak {
@@ -1519,7 +1575,7 @@ fn live_script_tick(
             if let Some(ext) = record_ext() {
                 eprintln!("EXTERNAL_LOADER: {} {ext}", live.name);
             }
-            eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+            eprintln!("FAIL: live {} {}", live.name, live_line());
             live.failed = Some(msg.clone());
             Some(msg)
         }
@@ -7424,6 +7480,205 @@ mod tests {
             2,
             "paired headed snapshots must retain distinct observed payloads"
         );
+    }
+
+    fn passed_prereq_runner() -> scenario::ScenarioRunner {
+        use scenario::{
+            Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
+        };
+        let pass = Scenario {
+            name: "t",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 5;
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 5 },
+                    budget_ticks: 5,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 5 },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut runner = ScenarioRunner::new(pass);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.set_terminal_shot(host_play::external_loader::PREREQ_SHOT);
+        {
+            let mut c = script_client();
+            runner.tick(&mut c);
+            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+            runner.tick(&mut c);
+        }
+        assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+        runner
+    }
+
+    fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalWatch) {
+        use host_play::external_loader::{
+            BONES_COUNT, FROZEN_SHA256, NOTHING_CHANGED, SCRIPT_NAME,
+        };
+        use std::path::Path;
+        let t0 = Instant::now();
+        watch.configure(
+            "alice",
+            PathBuf::from("/tmp/ExampleBot.ts"),
+            FROZEN_SHA256.into(),
+        );
+        watch.note_scene(true, 2);
+        watch.note_inventory(t0, "alice", BONES_COUNT, 0);
+        watch.note_prereq_passed();
+        watch.note_load(
+            1,
+            SCRIPT_NAME,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "compiled-a",
+            true,
+            false,
+        );
+        watch.begin_start(t0).unwrap();
+        let lines: Vec<String> = (1..=10)
+            .map(|i| format!("buried bones (#{i}, +{i} prayer xp total)"))
+            .collect();
+        watch.note_logs(t0, "alice", &lines);
+        watch.note_inventory(t0, "alice", 12, 45);
+        let stop = t0 + Duration::from_millis(8);
+        watch.request_stop(stop);
+        watch.note_logs(
+            stop,
+            "alice",
+            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+        );
+        watch.note_stop(stop + Duration::from_millis(40), true, false);
+        watch.note_reload_unchanged(NOTHING_CHANGED);
+        watch.note_reload_changed(
+            1,
+            true,
+            false,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "sha-before",
+            "sha-after",
+            "compiled-a",
+            "compiled-b",
+            true,
+            false,
+        );
+    }
+
+    fn alice_scene2_session() -> crate::session::Session {
+        let s = crate::session::Session::new();
+        *s.scenario.lock().unwrap() = Some(passed_prereq_runner());
+        let mut client = script_client();
+        let mut player = client::dash3d::ClientPlayer::at(20, 20);
+        player.name = Some("Alice".into());
+        client.local_player = Some(player);
+        let mut snap = api::snapshot::GameSnapshot::new();
+        snap.rebuild(&client);
+        assert!(snap.ingame() && snap.scene_state() == 2);
+        s.nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snap, nav::WorldState::default()));
+        s
+    }
+
+    #[test]
+    fn earlier_fixture_written_cannot_discharge_external_terminal_hold() {
+        let mut s = alice_scene2_session();
+        let watch = host_play::external_loader::ExternalWatch::default();
+        drive_external_watch_to_capture(&watch);
+        s.install_external_core_watch(Some(watch));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots
+            .lock()
+            .unwrap()
+            .mark_written(host_play::external_loader::PREREQ_SHOT);
+
+        let mut live = LiveScript {
+            name: "script_external_loader".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: None,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
+            None,
+            "prereq Written must not latch PASS before the post-run shot"
+        );
+        assert!(!live.passed);
+        assert_eq!(
+            shots
+                .lock()
+                .unwrap()
+                .status(host_play::external_loader::TERMINAL_SHOT),
+            ShotStatus::Requested
+        );
+
+        shots
+            .lock()
+            .unwrap()
+            .mark_written(host_play::external_loader::TERMINAL_SHOT);
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
+            None
+        );
+        assert!(
+            live.passed,
+            "PASS only after the external terminal shot writes"
+        );
+    }
+
+    #[test]
+    fn missing_external_terminal_shot_fails_after_drain() {
+        let mut s = alice_scene2_session();
+        let watch = host_play::external_loader::ExternalWatch::default();
+        drive_external_watch_to_capture(&watch);
+        s.install_external_core_watch(Some(watch));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots
+            .lock()
+            .unwrap()
+            .mark_written(host_play::external_loader::PREREQ_SHOT);
+
+        let mut live = LiveScript {
+            name: "script_external_loader".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            core_deadline: None,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
+            None
+        );
+        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots))
+            .expect("missing external shot is FAIL");
+        assert!(error.contains("external_loader terminal"), "{error}");
+        assert!(error.contains("not written"), "{error}");
+        assert!(live.failed.is_some());
+        assert!(!live.passed);
     }
 
     #[test]
