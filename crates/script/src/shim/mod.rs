@@ -98,7 +98,15 @@ globalThis.__rs2b0t_dispatch_native_events = (evs) => {
         if (!cbs) continue;
         const payload = e.payload;
         for (let j = 0; j < cbs.length; j++) {
-            try { cbs[j](payload); } catch (_) {}
+            try {
+                const r = cbs[j](payload);
+                if (r && typeof r.then === 'function') {
+                    r.then(() => {}, (err) => {
+                        const h = globalThis.__rs2b0t_host;
+                        if (h) h.lastError = String((err && err.message) || err);
+                    });
+                }
+            } catch (_) {}
         }
     }
 };
