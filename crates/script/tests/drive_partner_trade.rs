@@ -9,6 +9,9 @@ use serde_json::Value;
 use std::thread::sleep;
 use std::time::Duration;
 
+const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
+const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
+
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
 }
@@ -318,12 +321,13 @@ fn giver_offer_then_confirm_completes_only_after_metric_change() {
     post(&iso, &snap);
     tick(&iso, 4);
     assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
-    sleep(Duration::from_millis(
-        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
-    ));
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
     snap.tick = 5;
     post(&iso, &snap);
     tick(&iso, 5);
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::from(-24));
     assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
@@ -365,12 +369,14 @@ fn receiver_matched_product_completes_on_inventory_gain() {
     post(&iso, &snap);
     tick(&iso, 3);
     assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
-    sleep(Duration::from_millis(
-        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
-    ));
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
     snap.tick = 4;
     post(&iso, &snap);
     tick(&iso, 4);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::from(24));
     assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
@@ -499,15 +505,219 @@ fn no_progress_close_is_not_successful_completion() {
     post(&iso, &snap);
     tick(&iso, 4);
     assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
-    sleep(Duration::from_millis(
-        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
-    ));
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
     snap.tick = 5;
     post(&iso, &snap);
     tick(&iso, 5);
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
     assert_eq!(iso.probe("__decline").unwrap(), "no-progress");
+    iso.join();
+}
+
+#[test]
+fn screenless_offer_to_confirm_gap_waits_instead_of_declining() {
+    let iso = spawn(GIVER);
+    let side = flax_side();
+    let inv = flax_inv();
+    let mine = flax_mine();
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_side = &side;
+    snap.trade_accept_id = 3420;
+    snap.trade_decline_id = 3422;
+    snap.inv = &inv;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let _ = iso.drain_interacts();
+    snap.tick = 2;
+    snap.trade_mine = &mine;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let _ = iso.drain_interacts();
+    snap.tick = 3;
+    snap.trade_offer_open = false;
+    snap.trade_partner = None;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
+    snap.tick = 4;
+    snap.trade_confirm_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_accept_id = 3546;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(iso.drain_interacts(), vec![if_button(3546)]);
+    iso.join();
+}
+
+#[test]
+fn close_reopen_close_resets_debounce() {
+    let iso = spawn(GIVER);
+    let side = flax_side();
+    let inv = flax_inv();
+    let mine = flax_mine();
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_side = &side;
+    snap.trade_accept_id = 3420;
+    snap.trade_decline_id = 3422;
+    snap.inv = &inv;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let _ = iso.drain_interacts();
+    snap.tick = 2;
+    snap.trade_mine = &mine;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let _ = iso.drain_interacts();
+    snap.tick = 3;
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    snap.trade_accept_id = 3546;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    let _ = iso.drain_interacts();
+    snap.tick = 4;
+    snap.trade_confirm_open = false;
+    snap.trade_partner = None;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    sleep(Duration::from_millis(100));
+    snap.tick = 5;
+    snap.trade_confirm_open = true;
+    snap.trade_partner = Some("spinner");
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    snap.tick = 6;
+    snap.trade_confirm_open = false;
+    snap.trade_partner = None;
+    snap.inv = &[];
+    post(&iso, &snap);
+    tick(&iso, 6);
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
+    snap.tick = 7;
+    post(&iso, &snap);
+    tick(&iso, 7);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    snap.tick = 8;
+    post(&iso, &snap);
+    tick(&iso, 8);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::from(-24));
+    iso.join();
+}
+
+#[test]
+fn reopen_after_stable_close_resets_post_tick_settlement() {
+    let iso = spawn(GIVER);
+    let side = flax_side();
+    let inv = flax_inv();
+    let mine = flax_mine();
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_side = &side;
+    snap.trade_accept_id = 3420;
+    snap.trade_decline_id = 3422;
+    snap.inv = &inv;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 2;
+    snap.trade_mine = &mine;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 3;
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    snap.trade_accept_id = 3546;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 4;
+    snap.trade_confirm_open = false;
+    snap.trade_partner = None;
+    snap.inv = &[];
+    post(&iso, &snap);
+    tick(&iso, 4);
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
+
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+
+    snap.tick = 6;
+    snap.trade_confirm_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_accept_id = 3546;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
+    iso.join();
+}
+
+#[test]
+fn stable_close_waiting_for_tick_honors_confirm_deadline() {
+    let iso = spawn(GIVER);
+    let side = flax_side();
+    let inv = flax_inv();
+    let mine = flax_mine();
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("spinner");
+    snap.trade_side = &side;
+    snap.trade_accept_id = 3420;
+    snap.trade_decline_id = 3422;
+    snap.inv = &inv;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 2;
+    snap.trade_mine = &mine;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 3;
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    snap.trade_accept_id = 3546;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    let _ = iso.drain_interacts();
+
+    snap.tick = 4;
+    snap.trade_confirm_open = false;
+    snap.trade_partner = None;
+    snap.inv = &[];
+    post(&iso, &snap);
+    tick(&iso, 4);
+    sleep(Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS + 50));
+
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+
+    sleep(Duration::from_millis(TRADE_CONFIRM_WAIT_MS + 100));
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    assert_eq!(iso.probe("__decline").unwrap(), Value::from("no-progress"));
     iso.join();
 }
 
