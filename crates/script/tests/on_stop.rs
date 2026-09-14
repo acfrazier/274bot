@@ -93,8 +93,20 @@ fn hostile_onstop_is_bounded_by_50ms_and_2s_join() {
     );
 }
 
+fn wait_until(timeout: Duration, mut pred: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if pred() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    pred()
+}
+
 #[test]
 fn self_stop_hostile_onstop_without_later_tick_or_probe() {
+    let workers_before = LoadIsolate::teardown_deadline_workers();
     let iso = spawn_class(
         r#"
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
@@ -106,8 +118,26 @@ export default class T extends LoopingBot {
     );
     iso.on_game_tick(1);
     let t0 = Instant::now();
-    let logs = iso.join();
+    let mut logs = Vec::new();
+    let finished = wait_until(Duration::from_secs(2), || {
+        logs.extend(iso.drain_logs());
+        iso.stopped()
+            && contains_line(&logs, "script requested stop")
+            && contains_line(&logs, "onStop threw")
+    });
     let elapsed = t0.elapsed();
+    assert!(
+        finished && iso.stopped(),
+        "self-stop must finish from the native deadline without join/tick/pause/probe: logs={logs:?}"
+    );
+    assert!(
+        contains_line(&logs, "script requested stop"),
+        "autonomous ScriptRunner.stop must be the path: {logs:?}"
+    );
+    assert!(
+        contains_line(&logs, "onStop threw"),
+        "onStop must have entered and been interrupted before join: {logs:?}"
+    );
     assert!(
         elapsed < Duration::from_secs(2),
         "join ceiling is 2s: {elapsed:?} logs={logs:?}"
@@ -117,9 +147,62 @@ export default class T extends LoopingBot {
         "self-stop hostile onStop must finish around 50ms without another tick/pause/probe: {elapsed:?} logs={logs:?}"
     );
     assert!(
-        contains_line(&logs, "script requested stop") || contains_line(&logs, "onStop threw"),
-        "self-stop teardown must run: {logs:?}"
+        elapsed >= Duration::from_millis(20),
+        "watchdog should consume the 50ms budget: {elapsed:?}"
     );
+    let leftover = iso.join();
+    logs.extend(leftover);
+    assert!(
+        wait_until(Duration::from_secs(1), || {
+            LoadIsolate::teardown_deadline_workers() == workers_before
+        }),
+        "deadline worker must not remain after self-stop: {}",
+        LoadIsolate::teardown_deadline_workers()
+    );
+}
+
+#[test]
+fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
+    let workers_before = LoadIsolate::teardown_deadline_workers();
+    let invokes_before = LoadIsolate::on_stop_invoke_count();
+    let iso = spawn_class(
+        "export default class T extends LoopingBot {
+            loop() {}
+            onStop() { this.log('stopped-ok'); }
+        }",
+    );
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    assert_eq!(
+        LoadIsolate::teardown_deadline_workers(),
+        workers_before,
+        "no idle deadline fleet while Running"
+    );
+    let t0 = Instant::now();
+    drop(iso);
+    assert!(
+        t0.elapsed() < Duration::from_millis(500),
+        "raw Drop must not join: {:?}",
+        t0.elapsed()
+    );
+    assert!(
+        wait_until(Duration::from_secs(1), || {
+            LoadIsolate::teardown_deadline_workers() == workers_before
+        }),
+        "deadline workers must not remain after Drop: {}",
+        LoadIsolate::teardown_deadline_workers()
+    );
+    assert_eq!(
+        LoadIsolate::on_stop_invoke_count(),
+        invokes_before,
+        "raw Drop must not invoke onStop"
+    );
+    let iso = spawn_class(
+        "export default class T extends LoopingBot { loop() { globalThis.__fresh = 1; } }",
+    );
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__fresh").unwrap(), 1);
+    iso.join();
 }
 
 #[test]
@@ -352,29 +435,4 @@ fn reset_session_does_not_run_onstop() {
     );
     let logs = iso.join();
     assert!(contains_line(&logs, "stopped-ok"), "{logs:?}");
-}
-
-#[test]
-fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
-    let iso = spawn_class(
-        "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }",
-    );
-    iso.on_game_tick(1);
-    let _ = iso.probe("1");
-    let t0 = Instant::now();
-    drop(iso);
-    assert!(
-        t0.elapsed() < Duration::from_millis(500),
-        "raw Drop must not join: {:?}",
-        t0.elapsed()
-    );
-    let iso = spawn_class(
-        "export default class T extends LoopingBot { loop() { globalThis.__fresh = 1; } }",
-    );
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__fresh").unwrap(), 1);
-    iso.join();
 }
