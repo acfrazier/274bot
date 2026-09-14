@@ -198,8 +198,8 @@ abandoned drain is reported in the ledger instead of hanging the suite. Output i
 bounded chunks; a line past 64 KiB is emitted wrapped (and marked) rather than buffered
 without limit.
 
-Windows runs currently need `--exec-core`/`--exec-pair`: the manifest cargo-template
-resolution looks for `target/{release,debug}/<name>` without the platform executable suffix.
+The manifest cargo-template resolution uses the platform executable suffix, including
+`.exe` on Windows; `--exec-core`/`--exec-pair` remain optional explicit overrides.
 The runner itself is native on Windows (see
 `docs/compat/release-p3-process-portability.md`).
 

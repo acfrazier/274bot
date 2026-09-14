@@ -1404,6 +1404,14 @@ fn live_script_tick(
         }
     }
     session.pump_external_loader();
+    // A failed proof still owns its execution. Stop must reach its bounded
+    // outcome before a terminal capture or scenario failure can exit the host.
+    if session
+        .external_core_watch()
+        .is_some_and(|watch| watch.cleanup_pending())
+    {
+        return None;
+    }
     if let (Some(watch), Some(shots)) = (session.external_core_watch(), shots) {
         if watch.needs_terminal_hold() || watch.terminal_capture_due() {
             let label = host_play::external_loader::TERMINAL_SHOT;

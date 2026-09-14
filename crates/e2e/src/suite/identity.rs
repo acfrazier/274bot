@@ -701,10 +701,11 @@ impl BinaryIdentity {
             }
             _ => root.join("target"),
         };
+        let executable_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
         let relative = if examples {
-            PathBuf::from("examples").join(&name)
+            PathBuf::from("examples").join(&executable_name)
         } else {
-            PathBuf::from(&name)
+            PathBuf::from(&executable_name)
         };
         let mut found: Vec<PathBuf> = ["release", "debug"]
             .into_iter()

@@ -74,7 +74,7 @@ fn home(tmp: &Path) -> PathBuf {
 /// The vault the `local-289` profile resolves by default (`~/.274bot/vault-289`), which the
 /// suite must bind — not the process-wide default vault.
 fn default_vault(tmp: &Path) -> PathBuf {
-    home(tmp).join(".274bot/vault-289")
+    home(tmp).join(".274bot").join("vault-289")
 }
 
 fn catalog(tmp: &Path) -> PathBuf {
@@ -221,19 +221,16 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
 /// artifact a build produced, never the manifest's `cargo run` template — which could
 /// rebuild different bytes under the same command after the identity was captured.
 ///
-/// Unix-only: the template resolution in `identity.rs` looks for
-/// `target/{release,debug}/<name>` without the platform executable suffix, so on Windows a
-/// run needs `--exec-core`/`--exec-pair` until that resolution is extended (recorded as a
-/// limitation in `docs/compat/release-p3-process-portability.md`, outside this task's owned
-/// paths).
-#[cfg(unix)]
+/// The template resolves the native artifact suffix on each supported platform.
 #[test]
 fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     let tmp = temp_dir("resolved-exec");
     // A controlled target directory holding exactly one built artifact: the fixture,
     // standing in for `target/{debug,release}/<bin>` a real `cargo build` would produce.
     let target = tmp.join("target");
-    let resolved = target.join("debug/e2e-suite-fixture");
+    let resolved = target
+        .join("debug")
+        .join(format!("e2e-suite-fixture{}", std::env::consts::EXE_SUFFIX));
     std::fs::create_dir_all(resolved.parent().unwrap()).unwrap();
     std::fs::copy(FIXTURE, &resolved).unwrap();
 
@@ -868,6 +865,91 @@ fn an_interrupted_child_is_reaped_before_run_returns() {
     );
 }
 
+/// Exercise the real Windows console handler in the suite process, not only
+/// the interrupt flag used by the shared child-run path above.
+#[cfg(windows)]
+#[test]
+fn a_windows_console_interrupt_stops_the_suite_and_owned_job() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
+    use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
+
+    let tmp = temp_dir("console-interrupt");
+    let run_dir = tmp.join("run");
+    let mut command = suite_command(&tmp);
+    command
+        .args(["run", "--manifest"])
+        .arg(fixture_manifest())
+        .arg("--catalog")
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--exec-core"])
+        .arg(FIXTURE)
+        .arg("--run-dir")
+        .arg(&run_dir)
+        .args([
+            "--only",
+            "fixture_one",
+            "--child-arg",
+            "--mode",
+            "--child-arg",
+            "hang",
+        ])
+        .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"))
+        .creation_flags(CREATE_NEW_PROCESS_GROUP)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut process = command.spawn().expect("start the actual suite");
+    let result = (|| -> Result<std::process::ExitStatus, String> {
+        let ready_deadline = Instant::now() + Duration::from_secs(30);
+        while launches(&tmp).is_empty() {
+            if process.try_wait().map_err(|e| e.to_string())?.is_some() {
+                return Err("suite exited before launching its fixture".into());
+            }
+            if Instant::now() >= ready_deadline {
+                return Err("suite did not launch its fixture within the bound".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process.id()) } == 0 {
+            return Err(format!(
+                "console interrupt: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = process.try_wait().map_err(|e| e.to_string())? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                return Err("suite did not finish interrupted job cleanup within the bound".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    })();
+    if result.is_err() {
+        // Closing the suite process closes its kill-on-close job too.
+        let _ = process.kill();
+        let _ = process.wait();
+    }
+    assert_eq!(
+        result.expect("real console interrupt completes").code(),
+        Some(130)
+    );
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let attempt = ledger
+        .attempt("fixture_one")
+        .expect("interrupted attempt retained");
+    assert_eq!(attempt.status, AttemptStatus::Interrupted);
+    assert!(
+        attempt.cleanup.as_ref().unwrap().reaped,
+        "{:?}",
+        attempt.cleanup
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+}
+
 /// A log that cannot be opened refuses before any spawn: the suite must not launch a child
 /// it would then have to abandon.
 #[test]
@@ -1275,14 +1357,15 @@ fn launched_argv_and_cwd_match_the_bound_identity() {
     );
 
     let report_text = std::fs::read_to_string(&report).expect("fixture reported launch paths");
-    assert!(
-        report_text.contains(&format!("cwd={cwd_canonical}")),
-        "{report_text}"
-    );
-    assert!(
-        report_text.contains(&format!("argv0={exec_canonical}")),
-        "{report_text}"
-    );
+    for (prefix, expected) in [("cwd=", &cwd_canonical), ("argv0=", &exec_canonical)] {
+        let actual = report_text
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .unwrap_or_else(|| panic!("missing {prefix} in {report_text}"));
+        // Windows current_dir can omit the verbatim-path prefix. Resolve the
+        // reported path before comparing it with the bound canonical identity.
+        assert_eq!(&canonical(actual), expected, "{report_text}");
+    }
 
     let other_cwd = tmp.join("other-cwd");
     std::fs::create_dir_all(&other_cwd).unwrap();
