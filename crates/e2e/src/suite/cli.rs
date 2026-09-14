@@ -260,47 +260,103 @@ fn select_cases(args: &Args, manifest: &SuiteManifest) -> SuiteResult<Selection>
     )
 }
 
-/// Content identity for one resolved input path: a file is hashed, a directory is digested
-/// as a bounded tree, and a path that is not there is recorded as a *defined* absence (the
-/// panel creates its vault on first use and fills its cache from the engine) rather than
-/// invented.
-fn input_digest(path: &Path) -> identity::InputDigest {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() => identity::InputDigest::file(path),
-        Ok(meta) if meta.is_dir() => identity::InputDigest::tree(path),
-        Ok(_) => identity::InputDigest::absent(
-            path,
-            "the resolved path is neither a file nor a directory; the suite records that absence instead of a content identity",
-        ),
-        Err(_) => identity::InputDigest::absent(
-            path,
-            "the resolved path does not exist; the panel creates its vault on first use and fills its cache dir from the engine",
-        ),
+/// Inherited env names that change what `ProfileOptions::resolve_with_env` selects.
+/// Values are not serialized; the resolved paths and their content digests are.
+const BOUND_PROFILE_ENV: &[&str] = &[
+    "BOT_SERVER_PROFILE",
+    "BOT_REVISION",
+    "BOT_TARGET",
+    "ENGINE_DIR",
+    "CLIENT_UNPACK_DIR",
+    "NAV_PACK",
+    "NAV_FLAGS",
+    "BOT_CACHE_MANIFEST",
+    "RS2B0T",
+];
+
+fn launch_profile_env(cwd: &Path) -> SuiteResult<host_play::profile::ProfileEnvironment> {
+    if std::env::var_os("LOGIN_RSAN")
+        .filter(|value| !value.is_empty())
+        .is_some()
+        || std::env::var_os("LOGIN_RSAE")
+            .filter(|value| !value.is_empty())
+            .is_some()
+    {
+        return Err(
+            "LOGIN_RSAN/LOGIN_RSAE are set; the suite does not record credentials and will not \
+             bind an env-supplied RSA key. Unset them so the engine pem is the identity"
+                .into(),
+        );
+    }
+    let mut env = host_play::profile::ProfileEnvironment::capture();
+    env.working_dir = Some(cwd.to_path_buf());
+    Ok(env)
+}
+
+/// Parse the argv the child will actually receive: profile flags then extra_args.
+fn effective_profile_options(
+    config: &NativeConfig,
+) -> SuiteResult<(host_play::ProfileOptions, Vec<String>)> {
+    let mut argv = config.profile_args();
+    argv.extend(config.extra_args.iter().cloned());
+    host_play::parse_profile_args(argv).map_err(|error| format!("child argv: {error}"))
+}
+
+/// Same engine-dir precedence as `ProfileOptions::resolve_with_env`. host-play does not
+/// expose `ProfileSelection::engine_dir()`; that getter is the precise later dependency.
+fn resolved_engine_dir(
+    options: &host_play::ProfileOptions,
+    env: &host_play::profile::ProfileEnvironment,
+    selection: &host_play::ProfileSelection,
+) -> PathBuf {
+    let home = env.home.clone().unwrap_or_default();
+    let is_289 = selection.revision().as_i32() == 289;
+    let engine = options
+        .engine_dir
+        .clone()
+        .or_else(|| env.engine_dir.clone())
+        .unwrap_or_else(|| {
+            home.join(if is_289 {
+                "experiments/lostcity-289/engine"
+            } else {
+                "experiments/Server/engine"
+            })
+        });
+    if engine.is_absolute() {
+        engine
+    } else {
+        env.working_dir.clone().unwrap_or_default().join(engine)
     }
 }
 
-/// The profile inputs the *child* itself resolves.
-///
-/// The suite hands a child `--profile ... --catalog ...`, and the child resolves the vault
-/// and cache with its own native resolver. Binding a different path — a process-wide default
-/// vault — would let a same-path change of the vault the panel actually reads pass a resume,
-/// so the suite runs the same read-only resolver over exactly the flags it hands the child.
-fn resolved_profile_inputs(config: &NativeConfig) -> SuiteResult<identity::ResolvedInputs> {
-    let (options, rest) =
-        host_play::parse_profile_args(config.profile_args().iter().map(String::as_str))
-            .map_err(|error| format!("--profile {}: {error}", config.profile))?;
-    if !rest.is_empty() {
-        return Err(format!(
-            "the suite hands a child only native profile flags; these are not: {rest:?}"
-        ));
+fn settings_env_keys(config: &NativeConfig) -> Vec<String> {
+    let mut keys = config.env_keys();
+    for name in BOUND_PROFILE_ENV {
+        if std::env::var_os(name).is_some_and(|value| !value.is_empty()) {
+            keys.push((*name).to_string());
+        }
     }
-    let selection = options.resolve(None).map_err(|error| {
+    keys
+}
+
+/// The profile inputs the *child* itself resolves, from the effective argv, cwd and env.
+fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentity> {
+    let env = launch_profile_env(cwd)?;
+    let (options, _rest) = effective_profile_options(config)?;
+    let selection = options.resolve_with_env(None, &env).map_err(|error| {
         format!(
             "the native profile resolver rejects this configuration ({error}); the suite binds the inputs \
              the child resolves, so it cannot substitute a different selection"
         )
     })?;
-    Ok(identity::ResolvedInputs {
+    let revision = selection.revision().as_i32() as u16;
+    let unpack_overridden = options.unpack_dir.is_some() || env.unpack_dir.is_some();
+    let engine_dir = resolved_engine_dir(&options, &env, &selection);
+    let catalog_path = selection
+        .catalog_root()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| config.catalog.clone());
+    let resolved = identity::ResolvedInputs {
         selection: selection.selection().name().to_string(),
         cache: selection.cache_dir().display().to_string(),
         vault: selection.vault_path().display().to_string(),
@@ -308,6 +364,28 @@ fn resolved_profile_inputs(config: &NativeConfig) -> SuiteResult<identity::Resol
         nav_flags: selection.nav_flags().display().to_string(),
         content: selection.content_dir().display().to_string(),
         unpack: selection.unpack_dir().display().to_string(),
+    };
+    Ok(ProfileIdentity {
+        profile: options
+            .profile
+            .clone()
+            .unwrap_or_else(|| config.profile.clone()),
+        revision: options.revision.clone().or_else(|| config.revision.clone()),
+        host: options.host.clone().or_else(|| config.host.clone()),
+        port: options.port.or(config.port),
+        selection: resolved.selection.clone(),
+        resolved: resolved.clone(),
+        engine: Some(identity::bind_engine_pem(&engine_dir)),
+        cache: identity::bind_cache(Path::new(&resolved.cache), revision),
+        catalog: identity::InputDigest::catalog(&catalog_path),
+        vault: identity::bind_input(Path::new(&resolved.vault)),
+        nav_pack: identity::bind_input(Path::new(&resolved.nav_pack)),
+        nav_flags: identity::bind_input(Path::new(&resolved.nav_flags)),
+        content: identity::bind_content(Path::new(&resolved.content)),
+        unpack: identity::bind_unpack(Path::new(&resolved.unpack), revision, unpack_overridden),
+        lowmem: config.lowmem,
+        mainland: config.mainland,
+        jobs: 1,
     })
 }
 
@@ -522,30 +600,17 @@ fn run(args: &Args) -> SuiteResult<i32> {
         repo.as_deref(),
     )?;
 
+    let cwd = args.config.launch_cwd(repo.as_deref())?;
     let settings = SettingsIdentity {
         level: selection.level.map(|level| level.as_str().to_string()),
         only: selection.only.clone(),
         changed_paths: selection.changed.clone(),
         changed_source: format!("{:?}", selection.changed_source).to_lowercase(),
         child_args: args.config.extra_args.clone(),
-        child_env_keys: args.config.env_keys(),
+        child_env_keys: settings_env_keys(&args.config),
+        cwd: cwd.display().to_string(),
     };
-    let resolved = resolved_profile_inputs(&args.config)?;
-    let profile = ProfileIdentity {
-        profile: args.config.profile.clone(),
-        revision: args.config.revision.clone(),
-        host: args.config.host.clone(),
-        port: args.config.port,
-        selection: resolved.selection.clone(),
-        resolved: resolved.clone(),
-        engine: args.config.engine.as_ref().map(|path| input_digest(path)),
-        cache: input_digest(Path::new(&resolved.cache)),
-        catalog: identity::InputDigest::catalog(&args.config.catalog),
-        vault: input_digest(Path::new(&resolved.vault)),
-        lowmem: args.config.lowmem,
-        mainland: args.config.mainland,
-        jobs: 1,
-    };
+    let profile = bind_profile(&args.config, &cwd)?;
     let run_identity = identity::capture(&identity::IdentityInputs {
         manifest_bytes: EMBEDDED_MANIFEST.as_bytes(),
         manifest: &manifest,
@@ -640,12 +705,7 @@ fn run(args: &Args) -> SuiteResult<i32> {
             label: case.id.clone(),
             command: command.clone(),
             env: args.config.child_env(case, &shots_root, &BTreeMap::new()),
-            cwd: args
-                .config
-                .cwd
-                .clone()
-                .or_else(|| repo.clone())
-                .or_else(|| std::env::current_dir().ok()),
+            cwd: Some(cwd.clone()),
         };
         let budget = Duration::from_secs(case.budget_min() as u64 * 60);
         let log_path = ledger.log_path(id);

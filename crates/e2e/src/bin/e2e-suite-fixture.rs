@@ -232,10 +232,12 @@ fn main() {
     let args = parse();
     record_launch(&args);
     if let Some(path) = &args.report_args {
-        let _ = std::fs::write(
-            path,
-            std::env::args().skip(1).collect::<Vec<_>>().join("\n"),
-        );
+        let cwd = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        let argv0 = std::env::args().next().unwrap_or_default();
+        let rest = std::env::args().skip(1).collect::<Vec<_>>().join("\n");
+        let _ = std::fs::write(path, format!("cwd={cwd}\nargv0={argv0}\n{rest}"));
     }
     if args.ignore_sigterm {
         #[cfg(unix)]

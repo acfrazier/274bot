@@ -159,6 +159,9 @@ impl NativeConfig {
             ("--engine", self.engine.as_ref()),
             ("--cache", self.cache.as_ref()),
             ("--vault", self.vault.as_ref()),
+            ("--exec-core", self.exec_core.as_ref()),
+            ("--exec-pair", self.exec_pair.as_ref()),
+            ("--cwd", self.cwd.as_ref()),
         ] {
             if let Some(path) = path {
                 if path.is_relative() && !path.as_os_str().is_empty() {
@@ -176,6 +179,7 @@ impl NativeConfig {
             "NAV_PACK",
             "NAV_FLAGS",
             "BOT_CACHE_MANIFEST",
+            "CARGO_TARGET_DIR",
         ] {
             if let Some(value) = std::env::var_os(name) {
                 let value = PathBuf::from(value);
@@ -372,13 +376,30 @@ impl NativeConfig {
     }
 
     /// The environment *names* this configuration hands to a child. Recorded in the run
-    /// identity so a changed environment request refuses resume.
+    /// identity so a changed environment request refuses resume. Inherited profile env
+    /// (NAV_*, ENGINE_DIR, …) is bound through the resolver, not by copying values here.
     pub fn env_keys(&self) -> Vec<String> {
         let mut keys = vec![scenario::shot::SHOT_ROOT_ENV.to_string()];
         if self.mainland {
             keys.push(MAINLAND_ENV.to_string());
         }
         keys
+    }
+
+    /// Canonical working directory every child is launched in. Relative `--cwd` is
+    /// already refused by [`NativeConfig::validate`].
+    pub fn launch_cwd(&self, repo_root: Option<&Path>) -> SuiteResult<PathBuf> {
+        let (raw, flag) = match &self.cwd {
+            Some(cwd) => (cwd.clone(), "--cwd"),
+            None => (
+                repo_root
+                    .map(Path::to_path_buf)
+                    .or_else(|| std::env::current_dir().ok())
+                    .ok_or_else(|| "cannot determine the child working directory".to_string())?,
+                "working directory",
+            ),
+        };
+        super::identity::canonicalize_launch_path(&raw, flag)
     }
 }
 
@@ -458,6 +479,11 @@ pub fn run(
     }
     for (key, value) in &spec.env {
         command.env(key, value);
+    }
+    // Mainland is always overridden: an inherited BOT_MAINLAND cannot evade the
+    // recorded profile flag. Removal happens after the copy so it actually takes effect.
+    if !spec.env.contains_key(MAINLAND_ENV) {
+        command.env_remove(MAINLAND_ENV);
     }
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
@@ -1114,6 +1140,14 @@ mod tests {
             error.contains("--catalog relative-catalog is relative"),
             "{error}"
         );
+
+        let mut exec = config();
+        exec.exec_core = Some(PathBuf::from("relative-bin"));
+        let error = exec.validate().unwrap_err();
+        assert!(
+            error.contains("--exec-core relative-bin is relative"),
+            "{error}"
+        );
     }
 
     /// A real file standing in for a built native executable.
@@ -1154,10 +1188,11 @@ mod tests {
                 Some(Path::new("/repo")),
             )
             .unwrap();
+        let core_canonical = std::fs::canonicalize(&core_bin).unwrap();
         assert_eq!(
             binaries["core"].program,
-            core_bin.display().to_string(),
-            "a direct executable is the identity"
+            core_canonical.display().to_string(),
+            "a direct executable is the canonical identity"
         );
         assert!(
             binaries["core"].sha256.is_some(),
@@ -1165,14 +1200,20 @@ mod tests {
         );
 
         let core = config.command(&case("thiever"), &binaries).unwrap();
-        assert_eq!(core[0], core_bin.display().to_string());
+        assert_eq!(core[0], core_canonical.display().to_string());
         assert_eq!(core[core.len() - 2..], ["--live", "script_thiever"]);
         assert!(!core.iter().any(|arg| arg == "--lowmem"));
 
         let pair = config
             .command(&case("nature_crafter_air"), &binaries)
             .unwrap();
-        assert_eq!(pair[0], pair_bin.display().to_string());
+        assert_eq!(
+            pair[0],
+            std::fs::canonicalize(&pair_bin)
+                .unwrap()
+                .display()
+                .to_string()
+        );
         assert_eq!(
             pair[pair.len() - 2..],
             ["--live", "script_nature_crafter_air"]
@@ -1273,7 +1314,10 @@ mod tests {
         assert_eq!(binaries.len(), 1);
         assert_eq!(
             binaries["core"].program,
-            config.exec_core.as_ref().unwrap().display().to_string()
+            std::fs::canonicalize(config.exec_core.as_ref().unwrap())
+                .unwrap()
+                .display()
+                .to_string()
         );
         assert_eq!(binaries["core"].kind, "direct");
     }

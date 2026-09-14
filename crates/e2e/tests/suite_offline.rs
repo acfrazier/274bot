@@ -111,6 +111,13 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+fn canonical(path: impl AsRef<Path>) -> String {
+    std::fs::canonicalize(path.as_ref())
+        .unwrap()
+        .display()
+        .to_string()
+}
+
 /// `list`/`dry-run` must print the real command line and leave the run directory alone.
 #[test]
 fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
@@ -133,7 +140,7 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
     assert!(
         stdout.contains(&format!(
             "{} --profile local-289 --catalog {} --live script_thiever",
-            FIXTURE,
+            canonical(FIXTURE),
             catalog(&tmp).display()
         )),
         "the printed command must be exactly what a child would receive:\n{stdout}"
@@ -200,9 +207,10 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
 
     let ledger = Ledger::resume(&run_dir).unwrap();
     let attempt = ledger.attempt("fixture_one").expect("attempt recorded");
+    let resolved_canonical = canonical(&resolved);
     assert_eq!(
         attempt.command.first().map(String::as_str),
-        Some(resolved.to_str().unwrap()),
+        Some(resolved_canonical.as_str()),
         "argv[0] is the resolved artifact: {:?}",
         attempt.command
     );
@@ -217,7 +225,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     let binary = &ledger.state.identity["binaries"]["core"];
     assert_eq!(
         binary["program"],
-        serde_json::json!(resolved.display().to_string()),
+        serde_json::json!(resolved_canonical),
         "the ledger identity binds the executable that was launched"
     );
     assert_eq!(binary["kind"], serde_json::json!("resolved-cargo"));
@@ -242,7 +250,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     assert!(
         stdout.contains(&format!(
             "{} --profile local-289 --catalog {} --live script_thiever",
-            resolved.display(),
+            resolved_canonical,
             catalog(&tmp).display()
         )),
         "{stdout}"
@@ -1043,4 +1051,233 @@ fn dry_run_refuses_an_unresolvable_executable() {
             && stderr.contains("no built e2e-suite-fixture executable"),
         "{stderr}"
     );
+}
+
+/// A linked vault whose target bytes change at the same path refuses resume before launch.
+#[test]
+fn resume_refuses_a_linked_vault_whose_target_bytes_changed() {
+    let tmp = temp_dir("symlink-vault");
+    let run_dir = tmp.join("run");
+    let target = tmp.join("vault-bytes");
+    std::fs::write(&target, "vault v1").unwrap();
+    let vault = tmp.join("vault");
+    std::os::unix::fs::symlink(&target, &vault).unwrap();
+    let vault_arg = vault.display().to_string();
+
+    let first = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one", "--vault", &vault_arg],
+        &[],
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    std::fs::write(&target, "vault v2").unwrap();
+    let changed = suite(
+        &tmp,
+        &run_dir,
+        &["--only", "fixture_one", "--vault", &vault_arg, "--resume"],
+        &[],
+    );
+    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("profile/input configuration"),
+        "{stderr}"
+    );
+    assert_eq!(launches(&tmp).len(), 1, "a refused resume launches nothing");
+}
+
+/// Nav pack bytes at the resolved path are bound; a same-path edit refuses resume.
+#[test]
+fn resume_refuses_when_nav_pack_bytes_change_at_the_same_path() {
+    let tmp = temp_dir("nav-pack");
+    let run_dir = tmp.join("run");
+    let nav = home(&tmp).join(".274bot/289/274bot.navpack");
+    std::fs::create_dir_all(nav.parent().unwrap()).unwrap();
+    std::fs::write(&nav, "nav pack v1").unwrap();
+
+    let first = suite(&tmp, &run_dir, &["--only", "fixture_one"], &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    std::fs::write(&nav, "nav pack v2").unwrap();
+    let changed = suite(&tmp, &run_dir, &["--only", "fixture_one", "--resume"], &[]);
+    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("profile/input configuration"),
+        "{stderr}"
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+}
+
+/// The launched argv[0] and cwd are the canonical paths recorded in the identity.
+#[test]
+fn launched_argv_and_cwd_match_the_bound_identity() {
+    let tmp = temp_dir("launch-bind");
+    let run_dir = tmp.join("run");
+    let child_cwd = tmp.join("child-cwd");
+    std::fs::create_dir_all(&child_cwd).unwrap();
+    let report = tmp.join("report.txt");
+    let cwd_arg = child_cwd.display().to_string();
+    let report_arg = report.display().to_string();
+
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_one",
+            "--cwd",
+            &cwd_arg,
+            "--child-arg",
+            "--report-args",
+            "--child-arg",
+            &report_arg,
+        ],
+        &[],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let cwd_canonical = canonical(&child_cwd);
+    let exec_canonical = canonical(FIXTURE);
+    assert_eq!(
+        ledger.state.identity["settings"]["cwd"],
+        serde_json::json!(cwd_canonical)
+    );
+    assert_eq!(
+        ledger.state.identity["binaries"]["core"]["program"],
+        serde_json::json!(exec_canonical)
+    );
+    let attempt = ledger.attempt("fixture_one").expect("attempt recorded");
+    assert_eq!(
+        attempt.command.first().map(String::as_str),
+        Some(exec_canonical.as_str())
+    );
+
+    let report_text = std::fs::read_to_string(&report).expect("fixture reported launch paths");
+    assert!(
+        report_text.contains(&format!("cwd={cwd_canonical}")),
+        "{report_text}"
+    );
+    assert!(
+        report_text.contains(&format!("argv0={exec_canonical}")),
+        "{report_text}"
+    );
+
+    let other_cwd = tmp.join("other-cwd");
+    std::fs::create_dir_all(&other_cwd).unwrap();
+    let other = other_cwd.display().to_string();
+    let changed = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_one",
+            "--cwd",
+            &other,
+            "--child-arg",
+            "--report-args",
+            "--child-arg",
+            &report_arg,
+            "--resume",
+        ],
+        &[],
+    );
+    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("settings"),
+        "{stderr}"
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+}
+
+/// A --child-arg that supplies --vault is bound as the effective argv, not the earlier request.
+#[test]
+fn extra_args_cannot_evade_profile_identity() {
+    let tmp = temp_dir("extra-vault");
+    let run_dir = tmp.join("run");
+    let vault_a = tmp.join("vault-a");
+    let vault_b = tmp.join("vault-b");
+    std::fs::write(&vault_a, "a-v1").unwrap();
+    std::fs::write(&vault_b, "b-v1").unwrap();
+    let a = vault_a.display().to_string();
+    let b = vault_b.display().to_string();
+
+    let first = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_one",
+            "--vault",
+            &a,
+            "--child-arg",
+            "--vault",
+            "--child-arg",
+            &b,
+        ],
+        &[],
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&first.stdout),
+        text(&first.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    assert_eq!(
+        ledger.state.identity["profile"]["resolved"]["vault"],
+        serde_json::json!(b),
+        "effective extra --vault is what the identity binds"
+    );
+
+    std::fs::write(&vault_b, "b-v2").unwrap();
+    let changed = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_one",
+            "--vault",
+            &a,
+            "--child-arg",
+            "--vault",
+            "--child-arg",
+            &b,
+            "--resume",
+        ],
+        &[],
+    );
+    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("profile/input configuration"),
+        "{stderr}"
+    );
+    assert_eq!(launches(&tmp).len(), 1);
 }
