@@ -13663,6 +13663,7 @@ export default class T extends LoopingBot {
             lines: vec!["same".into()],
             buttons: Vec::new(),
             generation: 0,
+            canvas: Vec::new(),
         };
         let mut status = SlotStatus {
             username: "alice".into(),
@@ -13684,6 +13685,7 @@ export default class T extends LoopingBot {
             lines: vec!["different".into()],
             buttons: Vec::new(),
             generation: 0,
+            canvas: Vec::new(),
         };
         publish_script_paint(&mut status, Some(&changed));
         assert_ne!(
@@ -13702,6 +13704,7 @@ export default class T extends LoopingBot {
                 label: "Resume".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         };
         publish_script_paint(&mut status, Some(&relabel));
         assert_eq!(

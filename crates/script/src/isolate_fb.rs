@@ -29,6 +29,10 @@ const MAX_INTERACT_REQS: usize = 256;
 const MAX_PAINT_LINES: usize = 512;
 /// Max advertised paint buttons per frame (isolate→host).
 const MAX_PAINT_BUTTONS: usize = 32;
+/// Max canvas ops per paint frame (isolate→host).
+const MAX_CANVAS_OPS: usize = crate::canvas::MAX_CANVAS_OPS;
+/// Max UTF-8 bytes per canvas fillText string.
+const MAX_PAINT_TEXT: usize = crate::canvas::MAX_PAINT_TEXT;
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -277,11 +281,23 @@ const VT_REQS: VOffsetT = 4;
 const VT_PAINT_BTN_ID: VOffsetT = 4;
 const VT_PAINT_BTN_LABEL: VOffsetT = 6;
 
-// Paint: { title: string, accent: string, lines: [string], buttons: [PaintButton] }
+// Paint: { title, accent, lines, buttons, canvas }
 const VT_PAINT_TITLE: VOffsetT = 4;
 const VT_PAINT_ACCENT: VOffsetT = 6;
 const VT_PAINT_LINES: VOffsetT = 8;
 const VT_PAINT_BUTTONS: VOffsetT = 10;
+const VT_PAINT_CANVAS: VOffsetT = 12;
+
+// CanvasOp: { kind, x, y, w, h, color, text, font_px, mono }
+const VT_CANVAS_KIND: VOffsetT = 4;
+const VT_CANVAS_X: VOffsetT = 6;
+const VT_CANVAS_Y: VOffsetT = 8;
+const VT_CANVAS_W: VOffsetT = 10;
+const VT_CANVAS_H: VOffsetT = 12;
+const VT_CANVAS_COLOR: VOffsetT = 14;
+const VT_CANVAS_TEXT: VOffsetT = 16;
+const VT_CANVAS_FONT_PX: VOffsetT = 18;
+const VT_CANVAS_MONO: VOffsetT = 20;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4082,6 +4098,43 @@ fn paint_button_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+fn canvas_op_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    op: &crate::canvas::CanvasOp,
+) -> WIPOffset<CanvasOpReader<'b>> {
+    match op {
+        crate::canvas::CanvasOp::FillRect { x, y, w, h, color } => {
+            let tab = b.start_table();
+            b.push_slot_always(VT_CANVAS_KIND, 0i8);
+            b.push_slot_always(VT_CANVAS_X, *x);
+            b.push_slot_always(VT_CANVAS_Y, *y);
+            b.push_slot_always(VT_CANVAS_W, *w);
+            b.push_slot_always(VT_CANVAS_H, *h);
+            b.push_slot_always(VT_CANVAS_COLOR, *color);
+            WIPOffset::new(b.end_table(tab).value())
+        }
+        crate::canvas::CanvasOp::FillText {
+            text,
+            x,
+            y,
+            color,
+            font_px,
+            mono,
+        } => {
+            let text_off = b.create_string(text);
+            let tab = b.start_table();
+            b.push_slot_always(VT_CANVAS_KIND, 1i8);
+            b.push_slot_always(VT_CANVAS_X, *x);
+            b.push_slot_always(VT_CANVAS_Y, *y);
+            b.push_slot_always(VT_CANVAS_COLOR, *color);
+            b.push_slot_always(VT_CANVAS_TEXT, text_off);
+            b.push_slot_always(VT_CANVAS_FONT_PX, *font_px);
+            b.push_slot_always(VT_CANVAS_MONO, *mono);
+            WIPOffset::new(b.end_table(tab).value())
+        }
+    }
+}
+
 fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptPaint) {
     let title_off = paint.title.as_deref().map(|s| b.create_string(s));
     let accent_off = paint.accent.as_deref().map(|s| b.create_string(s));
@@ -4097,6 +4150,12 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
     } else {
         Some(b.create_vector(&btn_offs))
     };
+    let canvas_offs: Vec<_> = paint.canvas.iter().map(|op| canvas_op_off(b, op)).collect();
+    let canvas_off = if canvas_offs.is_empty() {
+        None
+    } else {
+        Some(b.create_vector(&canvas_offs))
+    };
     let tab = b.start_table();
     if let Some(off) = title_off {
         b.push_slot_always(VT_PAINT_TITLE, off);
@@ -4107,6 +4166,9 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
     b.push_slot_always(VT_PAINT_LINES, lines_off);
     if let Some(off) = buttons_off {
         b.push_slot_always(VT_PAINT_BUTTONS, off);
+    }
+    if let Some(off) = canvas_off {
+        b.push_slot_always(VT_PAINT_CANVAS, off);
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -4139,6 +4201,11 @@ impl Verifiable for PaintReader<'_> {
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<PaintButtonReader>>>>(
                 "buttons",
                 VT_PAINT_BUTTONS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasOpReader>>>>(
+                "canvas",
+                VT_PAINT_CANVAS,
                 false,
             )?
             .finish();
@@ -4183,6 +4250,71 @@ impl PaintButtonReader<'_> {
     }
 }
 
+struct CanvasOpReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for CanvasOpReader<'a> {
+    type Inner = CanvasOpReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for CanvasOpReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i8>("kind", VT_CANVAS_KIND, false)?
+            .visit_field::<i32>("x", VT_CANVAS_X, false)?
+            .visit_field::<i32>("y", VT_CANVAS_Y, false)?
+            .visit_field::<i32>("w", VT_CANVAS_W, false)?
+            .visit_field::<i32>("h", VT_CANVAS_H, false)?
+            .visit_field::<u32>("color", VT_CANVAS_COLOR, false)?
+            .visit_field::<ForwardsUOffset<&str>>("text", VT_CANVAS_TEXT, false)?
+            .visit_field::<u16>("font_px", VT_CANVAS_FONT_PX, false)?
+            .visit_field::<bool>("mono", VT_CANVAS_MONO, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl CanvasOpReader<'_> {
+    fn into_op(&self) -> Result<crate::canvas::CanvasOp, String> {
+        let kind = unsafe { self.tab.get::<i8>(VT_CANVAS_KIND, None) }.unwrap_or(0);
+        let x = unsafe { self.tab.get::<i32>(VT_CANVAS_X, None) }.unwrap_or(0);
+        let y = unsafe { self.tab.get::<i32>(VT_CANVAS_Y, None) }.unwrap_or(0);
+        let w = unsafe { self.tab.get::<i32>(VT_CANVAS_W, None) }.unwrap_or(0);
+        let h = unsafe { self.tab.get::<i32>(VT_CANVAS_H, None) }.unwrap_or(0);
+        let color = unsafe { self.tab.get::<u32>(VT_CANVAS_COLOR, None) }.unwrap_or(0);
+        match kind {
+            0 => Ok(crate::canvas::CanvasOp::FillRect { x, y, w, h, color }),
+            1 => {
+                let text = unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CANVAS_TEXT, None) }
+                    .unwrap_or("");
+                if text.len() > MAX_PAINT_TEXT {
+                    return Err(format!(
+                        "canvas text length {} exceeds cap {MAX_PAINT_TEXT}",
+                        text.len()
+                    ));
+                }
+                let font_px = unsafe { self.tab.get::<u16>(VT_CANVAS_FONT_PX, None) }.unwrap_or(10);
+                let mono = unsafe { self.tab.get::<bool>(VT_CANVAS_MONO, None) }.unwrap_or(false);
+                Ok(crate::canvas::CanvasOp::FillText {
+                    text: text.to_string(),
+                    x,
+                    y,
+                    color,
+                    font_px,
+                    mono,
+                })
+            }
+            other => Err(format!("unknown canvas op kind {other}")),
+        }
+    }
+}
+
 impl PaintReader<'_> {
     pub fn title(&self) -> Option<&str> {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_TITLE, None) }
@@ -4218,6 +4350,10 @@ impl PaintReader<'_> {
             })
             .collect())
     }
+    fn canvas(&self) -> Result<Vec<crate::canvas::CanvasOp>, String> {
+        let rows = rows_capped::<CanvasOpReader>(&self.tab, VT_PAINT_CANVAS, MAX_CANVAS_OPS)?;
+        rows.into_iter().map(|row| row.into_op()).collect()
+    }
 }
 
 /// Decode a root-`Paint` FlatBuffer into the shim's recorded frame.
@@ -4228,6 +4364,7 @@ pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
         accent: paint.accent().map(str::to_string),
         lines: paint.lines()?,
         buttons: paint.buttons()?,
+        canvas: paint.canvas()?,
         generation: 0,
     })
 }
@@ -5110,6 +5247,7 @@ pub(crate) mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         };
         let pbytes = buf.encode_paint(&paint);
         let decoded = decode_paint(&pbytes).expect("paint");
@@ -5166,6 +5304,7 @@ pub(crate) mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         };
         let full = IsolateBuf::new().encode_paint(&paint);
         for cut in 1..full.len() {

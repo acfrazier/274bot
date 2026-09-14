@@ -15,7 +15,7 @@ pub(crate) const BOT_MODULE: &str = "/rs2b0t/bot/scripts/bot/bot.js";
 pub(crate) const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
 
 /// The prelude eval'd into every isolate before any module loads: the host
-/// handle, the bot base classes, `defineBot`, and a no-op canvas ctx for
+/// handle, the bot base classes, `defineBot`, and a recording canvas ctx for
 /// `onPaint`. The compat shapes and the shim modules rely on these
 /// globals. The classes live here (not in a module) so `extends` and
 /// `instanceof` agree with the tick wrapper; `Bot.js` re-exports them.
@@ -110,10 +110,42 @@ globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
         throw new Error('not impl: TreeBot.root');
     }
 };
-globalThis.__dummy_ctx = {
-    fillRect() {},
-    fillText() {},
-    measureText() { return { width: 7 }; },
+globalThis.__rs2b0t_make_paint_ctx = () => {
+    const fn = globalThis.rustyscript.functions;
+    fn.__rs2b0t_canvas_begin();
+    const ctx = {
+        set font(v) { fn.__rs2b0t_canvas_set('font', String(v)); },
+        get font() { return fn.__rs2b0t_canvas_get('font'); },
+        set fillStyle(v) { fn.__rs2b0t_canvas_set('fillStyle', String(v)); },
+        get fillStyle() { return fn.__rs2b0t_canvas_get('fillStyle'); },
+        fillRect(x, y, w, h) { fn.__rs2b0t_canvas_fill_rect(x, y, w, h); },
+        fillText(text, x, y) {
+            if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
+            fn.__rs2b0t_canvas_fill_text(String(text), x, y);
+        },
+        measureText(text) {
+            return { width: fn.__rs2b0t_canvas_measure_text(String(text)) };
+        },
+    };
+    return new Proxy(ctx, {
+        get(target, prop) {
+            if (typeof prop === 'symbol') return target[prop];
+            if (prop === 'canvas') return undefined;
+            if (prop in target) return target[prop];
+            throw new Error('not impl: Canvas.' + String(prop));
+        },
+        set(target, prop, value) {
+            if (prop === 'font' || prop === 'fillStyle') {
+                target[prop] = value;
+                return true;
+            }
+            throw new Error('not impl: Canvas.' + String(prop));
+        },
+        has(target, prop) {
+            if (prop === 'canvas') return false;
+            return prop in target;
+        },
+    });
 };
 globalThis.__rs2b0t_call_on_paint = (bot) => {
     bot = bot || globalThis.__rs_bot;
@@ -122,15 +154,36 @@ globalThis.__rs2b0t_call_on_paint = (bot) => {
         h.paint = { title: 'onPaint', accent: '#ff5555', lines: ['no onPaint on bot'] };
         return;
     }
+    const ctx = globalThis.__rs2b0t_make_paint_ctx();
     try {
-        bot.onPaint(globalThis.__dummy_ctx);
+        bot.onPaint(ctx);
     } catch (e) {
         const msg = String((e && e.message) || e);
         h.paint = { title: 'onPaint', accent: '#ff5555', lines: [msg] };
         h.lastError = msg;
         return;
     }
-    if (!h.paint) {
+    const taken = globalThis.rustyscript.functions.__rs2b0t_canvas_take();
+    const ops = (!taken || taken.overflow) ? [] : (taken.ops || []);
+    const isBanner = (p) => {
+        if (!p) return false;
+        if (p.title === 'onPaint' && p.accent === '#ff5555') return true;
+        const lines = p.lines || [];
+        return p.title === 'onPaint' && lines.some((l) => String(l).indexOf('Paint.end') >= 0 || String(l).indexOf('no onPaint') >= 0);
+    };
+    const hasStructured = (p) => {
+        if (!p || isBanner(p)) return false;
+        return !!(p.title || (p.lines && p.lines.length) || (p.buttons && p.buttons.length));
+    };
+    if (ops.length) {
+        if (hasStructured(h.paint)) {
+            h.paint.canvas = ops;
+        } else {
+            h.paint = { title: null, lines: [], buttons: [], canvas: ops };
+        }
+    } else if (hasStructured(h.paint)) {
+        h.paint.canvas = [];
+    } else {
         h.paint = { title: 'onPaint', lines: ['onPaint ran but Paint.end was not called'] };
     }
 };
@@ -703,9 +756,9 @@ pub struct ScriptPaintButton {
 }
 
 /// One recorded paint frame (`Paint.begin(...)` ... `end()`): the title,
-/// the accent colour, the rows (gap rows are empty lines), and optional
-/// one-shot buttons. No canvas — the host reads it off `__rs2b0t_host.paint`
-/// for the script paint views.
+/// the accent colour, the rows (gap rows are empty lines), optional
+/// one-shot buttons, and optional canvas ops. The host reads it off
+/// `__rs2b0t_host.paint` for the script paint views.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct ScriptPaint {
     pub title: Option<String>,
@@ -714,6 +767,10 @@ pub struct ScriptPaint {
     /// Absent on older `host.paint` objects; empty means no controls.
     #[serde(default)]
     pub buttons: Vec<ScriptPaintButton>,
+    /// Recorded Canvas ops for this onPaint call. Absent on older
+    /// `host.paint` objects; empty means no applet-space canvas.
+    #[serde(default)]
+    pub canvas: Vec<crate::canvas::CanvasOp>,
     /// Host-owned rendered-frame generation. Not a JS field; stamped when
     /// the isolate forwards the frame so a stale overlay cannot target a
     /// later script that advertises the same id.

@@ -618,6 +618,7 @@ mod tests {
             lines: vec!["Runtime: 1.2m | Buried: 3".into()],
             buttons: Vec::new(),
             generation: 0,
+            canvas: Vec::new(),
         };
         let view = ChatView {
             lines: &lines,
@@ -662,6 +663,7 @@ mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         }
     }
 
@@ -742,6 +744,7 @@ mod tests {
                 label: "Go bank".into(),
             }],
             generation: 0,
+            canvas: Vec::new(),
         };
         let view = ChatView {
             lines: &[],

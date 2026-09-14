@@ -1,14 +1,15 @@
 //! Script-paint overlay for the Game Image.
 //!
-//! Drawn on the Game window draw list over the client's chatbox rect —
-//! never a second ImGui window (those dock into the Game node and vanish)
-//! and never pixels on the 765×503 game texture. The title row collapses
-//! to title-only (rs2b0t `paint:collapsed`, view-local).
+//! Structured Paint is drawn on the Game window draw list over the client's
+//! chatbox rect — never a second ImGui window and never pixels on the
+//! 765×503 game texture. Canvas ops rasterize to a small cached transparent
+//! texture over the applet, using the same native font as measureText.
 
-use dear_imgui_rs::{MouseButton, Ui};
+use dear_imgui_rs::{MouseButton, TextureId, Ui};
+use script::canvas::{self, CanvasOp};
 use script::shim::ScriptPaint;
 
-use crate::game_view::{APPLET_H, APPLET_W};
+use crate::game_view::{FrameGpu, APPLET_H, APPLET_W};
 use crate::theme::{ACCENT, BG_DEEP, TEXT};
 
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
@@ -29,6 +30,14 @@ pub fn chatbox_rect(min: [f32; 2], size: [f32; 2]) -> [f32; 4] {
     ]
 }
 
+struct CanvasGpu {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    tex_id: TextureId,
+    w: u32,
+    h: u32,
+}
+
 /// Cached script-paint overlay for the focused slot.
 pub struct PaintOverlay {
     /// `true` = title-only (rs2b0t `paint:collapsed`). View-local: reset
@@ -42,6 +51,12 @@ pub struct PaintOverlay {
     button_labels: Vec<String>,
     /// Screen-space button rects `(min, max)` for GPU-less click tests.
     button_hits: Vec<[f32; 4]>,
+    /// Screen-space canvas dest `(x, y, w, h)` this frame, if any.
+    canvas_dest: Option<[f32; 4]>,
+    /// Applet-space dirty rect this frame, if any.
+    canvas_dirty: Option<[i32; 4]>,
+    last_ops: Vec<CanvasOp>,
+    canvas_gpu: Option<CanvasGpu>,
 }
 
 impl PaintOverlay {
@@ -51,7 +66,21 @@ impl PaintOverlay {
             lines: Vec::new(),
             button_labels: Vec::new(),
             button_hits: Vec::new(),
+            canvas_dest: None,
+            canvas_dirty: None,
+            last_ops: Vec::new(),
+            canvas_gpu: None,
         }
+    }
+
+    /// Unregister the cached canvas texture (Stop / owner teardown).
+    pub fn release_canvas(&mut self, gpu: &mut dyn FrameGpu) {
+        if let Some(cached) = self.canvas_gpu.take() {
+            gpu.unregister_texture(cached.tex_id);
+        }
+        self.last_ops.clear();
+        self.canvas_dest = None;
+        self.canvas_dirty = None;
     }
 
     /// Draw the focused slot's paint over the Game Image. `min`/`size`
@@ -60,6 +89,7 @@ impl PaintOverlay {
     pub fn frame(
         &mut self,
         ui: &Ui,
+        gpu: Option<&mut dyn FrameGpu>,
         paint: Option<&ScriptPaint>,
         min: [f32; 2],
         size: [f32; 2],
@@ -67,10 +97,52 @@ impl PaintOverlay {
         self.lines.clear();
         self.button_labels.clear();
         self.button_hits.clear();
-        let Some(paint) =
-            paint.filter(|p| p.title.is_some() || !p.lines.is_empty() || !p.buttons.is_empty())
-        else {
+        self.canvas_dest = None;
+        self.canvas_dirty = None;
+
+        let structured =
+            paint.filter(|p| p.title.is_some() || !p.lines.is_empty() || !p.buttons.is_empty());
+        let canvas_ops = paint.map(|p| p.canvas.as_slice()).unwrap_or(&[]);
+
+        if structured.is_none() && canvas_ops.is_empty() {
             self.collapsed = false;
+            if let Some(gpu) = gpu {
+                self.release_canvas(gpu);
+            } else {
+                self.last_ops.clear();
+            }
+            return None;
+        }
+
+        if !canvas_ops.is_empty() {
+            if let Some(dirty) = canvas::dirty_bounds(canvas_ops) {
+                self.canvas_dirty = Some([dirty.x, dirty.y, dirty.w, dirty.h]);
+                let dest = canvas::map_applet_rect(min, size, dirty.x, dirty.y, dirty.w, dirty.h);
+                self.canvas_dest = Some(dest);
+                if let Some(gpu) = gpu {
+                    if let Some(raster) = canvas::rasterize(canvas_ops) {
+                        self.sync_canvas_texture(gpu, &raster, canvas_ops);
+                        if let Some(cached) = &self.canvas_gpu {
+                            let dl = ui.get_window_draw_list();
+                            dl.add_image(
+                                cached.tex_id,
+                                [dest[0], dest[1]],
+                                [dest[0] + dest[2], dest[1] + dest[3]],
+                                [0.0, 0.0],
+                                [1.0, 1.0],
+                                [1.0, 1.0, 1.0, 1.0],
+                            );
+                        }
+                    }
+                }
+            }
+        } else if let Some(gpu) = gpu {
+            self.release_canvas(gpu);
+        } else {
+            self.last_ops.clear();
+        }
+
+        let Some(paint) = structured else {
             return None;
         };
         let [x, y, w, h] = chatbox_rect(min, size);
@@ -128,6 +200,78 @@ impl PaintOverlay {
         }
         clicked
     }
+
+    fn sync_canvas_texture(
+        &mut self,
+        gpu: &mut dyn FrameGpu,
+        raster: &canvas::Raster,
+        ops: &[CanvasOp],
+    ) {
+        let reuse = self.last_ops.as_slice() == ops
+            && self
+                .canvas_gpu
+                .as_ref()
+                .is_some_and(|c| c.w == raster.w && c.h == raster.h);
+        if reuse {
+            return;
+        }
+        self.last_ops = ops.to_vec();
+        if self
+            .canvas_gpu
+            .as_ref()
+            .is_some_and(|c| c.w != raster.w || c.h != raster.h)
+        {
+            if let Some(old) = self.canvas_gpu.take() {
+                gpu.unregister_texture(old.tex_id);
+            }
+        }
+        if self.canvas_gpu.is_none() {
+            let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
+                label: Some("274 script canvas"),
+                size: wgpu::Extent3d {
+                    width: raster.w.max(1),
+                    height: raster.h.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let tex_id = gpu.register_texture(&texture, &view);
+            self.canvas_gpu = Some(CanvasGpu {
+                texture,
+                view,
+                tex_id,
+                w: raster.w.max(1),
+                h: raster.h.max(1),
+            });
+        }
+        let cached = self.canvas_gpu.as_ref().expect("canvas texture");
+        gpu.queue().write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &cached.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &raster.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * raster.w.max(1)),
+                rows_per_image: Some(raster.h.max(1)),
+            },
+            wgpu::Extent3d {
+                width: raster.w.max(1),
+                height: raster.h.max(1),
+                depth_or_array_layers: 1,
+            },
+        );
+        let _ = &cached.view;
+    }
 }
 
 impl Default for PaintOverlay {
@@ -150,6 +294,7 @@ mod tests {
             lines: lines.iter().map(|l| l.to_string()).collect(),
             buttons: Vec::new(),
             generation: 0,
+            canvas: Vec::new(),
         }
     }
 
@@ -202,7 +347,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
                 });
         }
         ctx.render();
@@ -225,7 +370,7 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            overlay.frame(ui, None, [10.0, 20.0], [765.0, 503.0]);
+            overlay.frame(ui, None, None, [10.0, 20.0], [765.0, 503.0]);
         }
         ctx.render();
         assert!(overlay.lines.is_empty(), "no paint -> no overlay text");
@@ -253,7 +398,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    overlay.frame(ui, Some(p), [10.0, 20.0], [765.0, 503.0]);
+                    overlay.frame(ui, None, Some(p), [10.0, 20.0], [765.0, 503.0]);
                 });
         }
         ctx.render();
@@ -304,7 +449,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let clicked = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let clicked = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
                     assert!(clicked.is_none(), "no click this frame");
                 });
         }
@@ -328,7 +473,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let _ = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    let _ = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
                 });
         }
         ctx.render();
@@ -344,7 +489,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    clicked = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    clicked = overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
                 });
         }
         ctx.render();
@@ -366,5 +511,112 @@ mod tests {
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
         assert!(!overlay.collapsed);
         assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
+    }
+
+    fn canvas_banner() -> ScriptPaint {
+        let mut p = paint(None, &[]);
+        p.canvas = vec![script::canvas::CanvasOp::FillRect {
+            x: 6,
+            y: 6,
+            w: 400,
+            h: 50,
+            color: script::canvas::pack_rgba(0, 0, 0, 178),
+        }];
+        p
+    }
+
+    #[test]
+    fn canvas_dirty_rect_maps_native_and_half_blit() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = canvas_banner();
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+        }
+        ctx.render();
+        assert_eq!(overlay.canvas_dirty, Some([6, 6, 400, 50]));
+        assert_eq!(overlay.canvas_dest, Some([16.0, 26.0, 400.0, 50.0]));
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            overlay.frame(ui, None, Some(&p), [0.0, 0.0], [382.5, 251.5]);
+        }
+        ctx.render();
+        let dest = overlay.canvas_dest.expect("scaled dest");
+        assert!((dest[0] - 3.0).abs() < 0.01);
+        assert!((dest[1] - 3.0).abs() < 0.01);
+        assert!((dest[2] - 200.0).abs() < 0.01);
+        assert!((dest[3] - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn canvas_only_frame_does_not_populate_chatbox() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = canvas_banner();
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+        }
+        ctx.render();
+        assert!(overlay.lines.is_empty(), "canvas-only has no chatbox lines");
+        assert!(overlay.button_labels.is_empty());
+        assert!(overlay.canvas_dest.is_some());
+    }
+
+    #[test]
+    fn structured_plus_canvas_keeps_chatbox_out_of_applet_dest() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let mut p = paint(Some("BoneBurier"), &["a row"]);
+        p.canvas = canvas_banner().canvas;
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+        }
+        ctx.render();
+        assert_eq!(
+            overlay.lines,
+            vec!["BoneBurier".to_string(), "a row".to_string()]
+        );
+        let dest = overlay.canvas_dest.expect("canvas dest");
+        let chat = chatbox_rect([10.0, 20.0], [765.0, 503.0]);
+        assert!(
+            dest[1] + dest[3] < chat[1],
+            "canvas banner stays in applet space, not the chatbox ({dest:?} vs {chat:?})"
+        );
+    }
+
+    #[test]
+    fn measured_fillrect_raster_covers_glyphs() {
+        script::canvas::begin();
+        script::canvas::set_style("font", "12px monospace");
+        let text = "BoneBurier (external)  buried 0";
+        let width = script::canvas::measure_text(text);
+        script::canvas::set_style("fillStyle", "rgba(0, 0, 0, 0.6)");
+        script::canvas::fill_rect(6.0, 6.0, width + 12.0, 24.0);
+        script::canvas::set_style("fillStyle", "#ffb15b");
+        script::canvas::fill_text(text, 12.0, 22.0);
+        let taken = script::canvas::take();
+        let raster = script::canvas::rasterize(&taken.ops).expect("raster");
+        assert!(raster.x <= 6 && raster.y <= 6);
+        assert!(raster.x + raster.w as i32 >= 6 + (width + 12.0).round() as i32);
+        let mut painted = 0usize;
+        for px in raster.rgba.chunks_exact(4) {
+            if px[3] > 0 {
+                painted += 1;
+            }
+        }
+        assert!(
+            painted > 50,
+            "glyphs and rect must land in the dirty pixmap"
+        );
     }
 }
