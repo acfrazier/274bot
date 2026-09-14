@@ -6,6 +6,8 @@ use script::isolate_fb::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput}
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
@@ -315,6 +317,13 @@ fn giver_offer_then_confirm_completes_only_after_metric_change() {
     snap.inv = &[];
     post(&iso, &snap);
     tick(&iso, 4);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    sleep(Duration::from_millis(
+        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
+    ));
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::from(-24));
     assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
@@ -355,6 +364,13 @@ fn receiver_matched_product_completes_on_inventory_gain() {
     snap.inv = &inv;
     post(&iso, &snap);
     tick(&iso, 3);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    sleep(Duration::from_millis(
+        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
+    ));
+    snap.tick = 4;
+    post(&iso, &snap);
+    tick(&iso, 4);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::from(24));
     assert_eq!(iso.probe("__decline").unwrap(), Value::Null);
@@ -482,6 +498,13 @@ fn no_progress_close_is_not_successful_completion() {
     snap.trade_confirm_open = false;
     post(&iso, &snap);
     tick(&iso, 4);
+    assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
+    sleep(Duration::from_millis(
+        script::drive_partner_trade::TRADE_CLOSE_DEBOUNCE_MS + 50,
+    ));
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
     assert_eq!(iso.probe("__ok").unwrap(), "done");
     assert_eq!(iso.probe("__complete").unwrap(), Value::Null);
     assert_eq!(iso.probe("__decline").unwrap(), "no-progress");
