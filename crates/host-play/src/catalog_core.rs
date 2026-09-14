@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
+use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldTile};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -246,6 +246,18 @@ pub const BLUE_DRAGONHIDE_ID: i32 = 1751;
 pub const GLARIALS_AMULET_ID: i32 = 295;
 pub const ROPE_ID: i32 = 954;
 pub const ROCK_CRAB_SPOT: (i32, i32, i32) = (2704, 3726, 0);
+/// The dormant field resource the RockCrab branches wake: the frozen 289
+/// content's `Rocks` NPC, which the source's own AI turns into the
+/// `Rock Crab` target.
+pub const ROCK_CRAB_DORMANT_NAME: &str = "Rocks";
+/// Chebyshev radius around [`ROCK_CRAB_SPOT`] the dormant Rocks and the scoped
+/// stand both live inside. The source's own `DEFAULT_SPOTS` field is smaller;
+/// this stays the audited outer bound.
+pub const ROCK_CRAB_FIELD_RADIUS: i32 = 50;
+/// Dormant Rocks carried in the bounded per-frame projection: the nearest few
+/// to the player, the ones this player can actually wake. A live frame can
+/// hold more; only their index/tile identity is retained.
+pub const DORMANT_ROCK_FACTS_MAX: usize = 8;
 /// Inside the native visibility window while remaining outside dormant
 /// RockCrab wake range; the live witness observes Rocks before Start.
 pub const ROCK_CRAB_SAFE_STAND: (i32, i32, i32) = (2712, 3707, 0);
@@ -1119,30 +1131,32 @@ impl Observation {
                         || local_target_npc == Some(npc.index))
             })
             .take(8)
-            .map(|npc| BoundedNpc {
-                index: npc.index,
-                name: npc.name.clone(),
-                health: npc.health,
-                total_health: npc.total_health,
-                animation: npc.animation,
-                in_combat: npc.in_combat,
-                targeting_local: npc.target.is_some_and(|target| {
-                    target.kind == ActorKind::Player
-                        && self_slot >= 0
-                        && target.index == self_slot as usize
-                }),
-                tile: (npc.tile.x, npc.tile.z, npc.tile.level),
-                distance: npc.distance,
-            })
+            .map(|npc| bounded_combat_npc(npc, self_slot))
+            .collect::<Vec<_>>();
+        // Dormant RockCrab `Rocks` are outside that combat window by
+        // construction (no target, not in combat, parked far from the player),
+        // yet their real index/tile identity is what the activation witness
+        // matches: a `Rock Crab` on one of those witnesses is the source's own
+        // Rocks->crab transition, not a separately spawned crab. Project the
+        // nearest dormant Rocks inside the supported field, bounded, so the
+        // cycle can see that identity without the world copy.
+        let mut dormant_rocks = snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| dormant_rock_in_field(npc))
+            .collect::<Vec<_>>();
+        dormant_rocks.sort_by_key(|npc| (npc.distance, npc.index));
+        dormant_rocks.truncate(DORMANT_ROCK_FACTS_MAX);
+        // The field boolean is this projection, not a second sweep.
+        let dormant_rocks_seen = !dormant_rocks.is_empty();
+        let npc_facts = npc_facts
+            .into_iter()
+            .chain(
+                dormant_rocks
+                    .into_iter()
+                    .map(|npc| bounded_combat_npc(npc, self_slot)),
+            )
             .collect();
-        let dormant_rocks_seen = snapshot.npcs().iter().any(|npc| {
-            npc.name.as_deref() == Some("Rocks")
-                && npc.tile.level == ROCK_CRAB_SPOT.2
-                && (npc.tile.x - ROCK_CRAB_SPOT.0)
-                    .abs()
-                    .max((npc.tile.z - ROCK_CRAB_SPOT.1).abs())
-                    <= 50
-        });
         let ground_loot = snapshot
             .ground_items()
             .iter()
@@ -1273,6 +1287,37 @@ pub fn combat_npc_name(name: Option<&str>) -> bool {
         name.map(str::trim),
         Some("Chaos druid" | "Moss giant" | "Giant" | "Guard")
     )
+}
+
+/// One compact combat/fact record from the published npc family. The
+/// `targeting_local` flag is recomputed here rather than copied, so a decoded
+/// face target is the only source of that claim.
+fn bounded_combat_npc(npc: &NpcView, self_slot: i32) -> BoundedNpc {
+    BoundedNpc {
+        index: npc.index,
+        name: npc.name.clone(),
+        health: npc.health,
+        total_health: npc.total_health,
+        animation: npc.animation,
+        in_combat: npc.in_combat,
+        targeting_local: npc.target.is_some_and(|target| {
+            target.kind == ActorKind::Player && self_slot >= 0 && target.index == self_slot as usize
+        }),
+        tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+        distance: npc.distance,
+    }
+}
+
+/// A dormant RockCrab `Rocks` parked inside the supported field. This is the
+/// field predicate the scoped stand is audited against; it is identity
+/// evidence for the activation witness, never combat evidence on its own.
+fn dormant_rock_in_field(npc: &NpcView) -> bool {
+    npc.name.as_deref() == Some(ROCK_CRAB_DORMANT_NAME)
+        && npc.tile.level == ROCK_CRAB_SPOT.2
+        && (npc.tile.x - ROCK_CRAB_SPOT.0)
+            .abs()
+            .max((npc.tile.z - ROCK_CRAB_SPOT.1).abs())
+            <= ROCK_CRAB_FIELD_RADIUS
 }
 
 pub fn unidentified_herb_id(id: i32) -> bool {
@@ -2008,6 +2053,11 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                         baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
                             && baseline.dormant_rocks_seen
                     }
+                    // The melee RockCrab core fights with the scoped weapon:
+                    // the frozen card's own GearEquip refuses the carried
+                    // fixture, so the cell has to arrive already wearing 1331
+                    // (the fixture's own pre-Start wear is the native proof).
+                    CoreCase::RockCrab => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
                     CoreCase::GreenDragonTele => {
                         baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
@@ -4368,10 +4418,14 @@ impl CombatCoreCycle {
                 let Some(name) = npc.name.as_deref().map(str::trim) else {
                     continue;
                 };
-                if name == "Rocks" {
+                if name == ROCK_CRAB_DORMANT_NAME {
                     self.dormant_indexes.insert(npc.index);
                     self.dormant_tiles.insert(npc.index, npc.tile);
                 }
+                // The target only counts when it stands on a witness the
+                // projection actually recorded as dormant: a crab that spawned
+                // elsewhere (or respawned on a reused slot away from its rock)
+                // is not this source's activation.
                 if name == spec.target
                     && (self.dormant_indexes.contains(&npc.index)
                         || self.dormant_tiles.values().any(|tile| *tile == npc.tile))
