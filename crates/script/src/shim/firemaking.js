@@ -10,6 +10,7 @@ export const CANT_LIGHT = /can't light a fire here/i;
 export const FIRE_START_TICKS = 14;
 export const FIRE_LIGHT_TICKS = 150;
 export const BURN_WEST = { dx: -1, dz: 0 };
+export const BURN_DIRS = [BURN_WEST, { dx: 1, dz: 0 }, { dx: 0, dz: -1 }, { dx: 0, dz: 1 }];
 
 function fireSpots() {
     const out = {};
@@ -135,21 +136,21 @@ export function fireReactionTicks() {
     return Number(callFire({ op: 'fire-reaction-ticks' }));
 }
 
-/** Honest single-tile run: in-plot and not refused. Does not walk a west lane. */
-export function runInDir(from, plot, _dir, occupied, walkable, _canStep, cap) {
+/** Native posted-reach run; callback args preserve the frozen signature. */
+export function runInDir(from, plot, dir, occupied, walkable, _canStep, cap) {
     const step = callFire({
-        op: 'run-in-dir', from, plot,
+        op: 'run-in-dir', from, plot, dir,
         occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [],
         hasWalkable: typeof walkable === 'function', cap,
     });
     if (step.kind === 'callback') {
-        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from), from, dir: _dir,
+        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from), from, dir,
             plot, occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [], cap }).run;
     }
     return step.run || 0;
 }
 
-export function findBurnLane(plot, here, occupied, want = 1, directions = [BURN_WEST]) {
+export function findBurnLane(plot, here, occupied, want = 1, _walkable, _canStep, directions = BURN_DIRS) {
     if (!plot || typeof plot.x0 !== 'number' || typeof plot.x1 !== 'number') {
         throw notImpl('Firemaking.findBurnLane');
     }
@@ -170,7 +171,7 @@ export function findBurnLane(plot, here, occupied, want = 1, directions = [BURN_
         here: here || snap().here || null,
         refused,
         want: burnLaneWant(want),
-        directions,
+        directions: directions || BURN_DIRS,
     });
     if (!step || step.kind === 'none') return null;
     if (step.kind === 'notImpl') throw notImpl('Firemaking.findBurnLane', step.reason);

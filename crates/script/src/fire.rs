@@ -22,6 +22,7 @@ pub const FIRE_LIGHT_TICKS: u64 = 150;
 const TINDERBOX: &str = "Tinderbox";
 const CANT_LIGHT: &str = "can't light a fire here";
 const FIRE_LOC: &str = "fire";
+const BURN_DIRS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
 thread_local! {
     static RUNTIME: RefCell<FireRuntime> = const { RefCell::new(FireRuntime::new()) };
@@ -92,13 +93,13 @@ impl ReachBits {
             return false;
         }
         let bit = match (to.x - from.x, to.z - from.z) {
-            (-1, -1) => 0,
-            (0, -1) => 1,
-            (1, -1) => 2,
-            (-1, 0) => 3,
-            (1, 0) => 4,
-            (-1, 1) => 5,
-            (0, 1) => 6,
+            (-1, 0) => 0,
+            (1, 0) => 1,
+            (0, -1) => 2,
+            (0, 1) => 3,
+            (-1, -1) => 4,
+            (1, -1) => 5,
+            (-1, 1) => 6,
             (1, 1) => 7,
             _ => return false,
         };
@@ -699,7 +700,8 @@ fn select_burn_tile(
                 continue;
             }
             for &direction in directions {
-                let run = run_length(tile, direction, want, refused, fire_locs, reach, plot);
+                let cap = if direction == (-1, 0) { want } else { 1 };
+                let run = run_length(tile, direction, cap, refused, fire_locs, reach, plot);
                 let full = run >= want;
                 let west = direction == (-1, 0);
                 let d = (x - here.x).abs().max((z - here.z).abs());
@@ -740,7 +742,7 @@ fn next_tile(input: &Value) -> Value {
                 .collect::<Vec<_>>()
         })
         .filter(|rows| !rows.is_empty())
-        .unwrap_or_else(|| vec![(-1, 0)]);
+        .unwrap_or_else(|| BURN_DIRS.to_vec());
     let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
         let o = o.borrow();
         (o.reach.clone(), o.fire_locs.clone())
@@ -847,7 +849,16 @@ fn run_in_dir(input: &Value) -> Value {
     {
         json!({ "kind": "callback", "callback": "walkable" })
     } else {
-        json!({ "kind": "run", "run": 1 })
+        let direction = direction_from(input.get("dir")).unwrap_or((-1, 0));
+        let cap = cap.floor().clamp(0.0, 27.0) as i32;
+        let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
+            let o = o.borrow();
+            (o.reach.clone(), o.fire_locs.clone())
+        });
+        json!({ "kind": "run", "run": run_length(
+            from, direction, cap, &refused_keys(input.get("occupied")),
+            &fire_locs, &reach, plot
+        ) })
     }
 }
 
@@ -1007,6 +1018,37 @@ mod tests {
     }
 
     #[test]
+    fn non_west_lane_is_capped_to_one_during_ranking() {
+        let reach = reach_covering(
+            &[(3235, 3418), (3236, 3418), (3237, 3418)],
+            3235,
+            3418,
+            4,
+            3,
+        );
+        let selected = select_burn_tile(
+            Plot {
+                x0: 3235,
+                x1: 3237,
+                z0: 3418,
+                z1: 3418,
+                level: 0,
+            },
+            None,
+            &HashSet::new(),
+            &[],
+            &reach,
+            3,
+            &[(1, 0)],
+        )
+        .expect("east tile");
+        assert_eq!(
+            selected.2, 1,
+            "non-west directions cannot win by run length"
+        );
+    }
+
+    #[test]
     fn unavailable_reach_is_not_a_guessed_walkable_tile() {
         let reach = ReachBits::empty();
         assert!(
@@ -1023,10 +1065,10 @@ mod tests {
             4,
             3,
         );
-        // The west end has a complete east lane; the current tile is closer
+        // The east end has a complete west lane; the current tile is closer
         // but its west step is blocked by the posted mask.
-        reach.step[(3235 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1 << 4;
-        reach.step[(3236 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1 << 4;
+        reach.step[(3237 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1;
+        reach.step[(3236 - 3235) as usize * 3 + (3418 - 3418) as usize] = 1;
         let here = Tile {
             x: 3237,
             z: 3418,
@@ -1048,8 +1090,8 @@ mod tests {
             &[(-1, 0), (1, 0)],
         )
         .expect("lane");
-        assert_eq!(selected.0.x, 3235);
-        assert_eq!(selected.1, (1, 0));
+        assert_eq!(selected.0.x, 3237);
+        assert_eq!(selected.1, (-1, 0));
         assert_eq!(selected.2, 3);
     }
 

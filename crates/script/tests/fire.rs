@@ -192,7 +192,7 @@ export default class T extends LoopingBot {
         try {
             const plot = globalThis.__plot;
             const occupied = new Set(globalThis.__occupied || []);
-            globalThis.__found = findBurnLane(plot, globalThis.__here, occupied);
+            globalThis.__found = findBurnLane(plot, globalThis.__here, occupied, 3, undefined, undefined, [{dx: -1, dz: 0}]);
             globalThis.__in = inFirePlot(globalThis.__here, plot);
             globalThis.__want = burnLaneWant(20);
             globalThis.__ticks = fireReactionTicks();
@@ -200,6 +200,7 @@ export default class T extends LoopingBot {
             globalThis.__events = [];
             globalThis.__early = runInDir(globalThis.__here, plot, {}, occupied, () => { globalThis.__events.push('walkable'); return true; }, () => { globalThis.__events.push('canStep'); return true; }, 0);
             globalThis.__callback = runInDir(globalThis.__here, plot, {}, new Set(), () => { globalThis.__events.push('walkable'); return false; }, () => { globalThis.__events.push('canStep'); return true; }, 1);
+            globalThis.__native = runInDir({x: 3237, z: 3419, level: 0}, plot, {dx: -1, dz: 0}, new Set(), undefined, undefined, 3);
             const no = new NoLightTiles();
             no.add({ x: 1, z: 2 });
             globalThis.__merged = [...no.merge(new Set(['2,3', '1,2']))];
@@ -432,7 +433,14 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
         3,
         3235,
         3418,
-        &[(3235, 3418), (3236, 3418), (3237, 3418), (3235, 3419)],
+        &[
+            (3235, 3418),
+            (3236, 3418),
+            (3237, 3418),
+            (3235, 3419),
+            (3236, 3419),
+            (3237, 3419),
+        ],
     );
     let ranks = vec![u16::MAX; 4 * 3];
     let fires = [loc("Fire", 3235, 3418)];
@@ -450,15 +458,15 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
         reachable_adj: &words,
         exact_rank: &ranks,
         adjacent_rank: &ranks,
-        step: &[],
+        step: &[0, 0, 0, 0, 1, 0, 0, 1, 0],
     };
     post(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.probe("__ok").unwrap(), true);
     let found = iso.probe("__found").unwrap();
-    assert_eq!(found["start"]["x"], 3235);
+    assert_eq!(found["start"]["x"], 3237);
     assert_eq!(found["start"]["z"], 3419);
-    assert_eq!(found["run"], 1);
+    assert_eq!(found["run"], 3);
     assert_eq!(iso.probe("__in").unwrap(), true);
     assert_eq!(iso.probe("__want").unwrap(), 20);
     assert_eq!(iso.probe("__ticks").unwrap(), 1);
@@ -466,6 +474,7 @@ fn find_burn_lane_returns_one_walkable_tile_skipping_fire_and_refused() {
     assert_eq!(iso.probe("__refused").unwrap(), true);
     assert_eq!(iso.probe("__early").unwrap(), 0);
     assert_eq!(iso.probe("__callback").unwrap(), 0);
+    assert_eq!(iso.probe("__native").unwrap(), 3);
     assert_eq!(
         iso.probe("__events").unwrap(),
         serde_json::json!(["walkable"])
