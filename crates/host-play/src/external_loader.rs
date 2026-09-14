@@ -33,6 +33,9 @@ pub const PREP_DEADLINE: Duration = Duration::from_secs(180);
 
 pub const BURIAL_LOG_PREFIX: &str = "buried bones";
 pub const ONSTOP_LOG_NEEDLE: &str = "BoneBurier stopped";
+/// Prerequisite 25-bones fixture capture. Distinct from the post-run terminal.
+pub const PREREQ_SHOT: &str = "external_loader prereq";
+/// Post-Stop/reload (or failure) native capture of the owned actor at scene 2.
 pub const TERMINAL_SHOT: &str = "external_loader terminal";
 
 /// Headed-qualified raw ExampleBot / BoneBurier source.
@@ -186,6 +189,8 @@ struct WatchState {
     source_sha: String,
     script_name: String,
     script_version: String,
+    identity_key: String,
+    compiled_sha: String,
     registration_count: usize,
     registration_after_reload: Option<usize>,
     selected: bool,
@@ -201,7 +206,12 @@ struct WatchState {
     stop_at: Option<Instant>,
     stop_elapsed_ms: Option<u128>,
     reload_unchanged: Option<String>,
+    source_sha_after: Option<String>,
+    compiled_sha_after: Option<String>,
     capture_requested: bool,
+    failed_at: Option<Instant>,
+    cleanup_invoked: bool,
+    cleanup_outcome: Option<String>,
     terminal: Option<Arc<Value>>,
 }
 
@@ -217,6 +227,8 @@ impl Default for WatchState {
             source_sha: String::new(),
             script_name: String::new(),
             script_version: String::new(),
+            identity_key: String::new(),
+            compiled_sha: String::new(),
             registration_count: 0,
             registration_after_reload: None,
             selected: false,
@@ -235,7 +247,12 @@ impl Default for WatchState {
             stop_at: None,
             stop_elapsed_ms: None,
             reload_unchanged: None,
+            source_sha_after: None,
+            compiled_sha_after: None,
             capture_requested: false,
+            failed_at: None,
+            cleanup_invoked: false,
+            cleanup_outcome: None,
             terminal: None,
         }
     }
@@ -285,6 +302,35 @@ impl ExternalWatch {
         self.inner.lock().unwrap().requested
     }
 
+    /// Last requested operation that the session pump may still dispatch.
+    /// Failed/qualified/disabled watches keep the diagnostic request but
+    /// are not eligible for further load/Start/Stop/reload work.
+    pub fn dispatch_operation(&self) -> Option<Operation> {
+        let state = self.inner.lock().unwrap();
+        if matches!(
+            state.stage,
+            Stage::Failed | Stage::Qualified | Stage::Disabled
+        ) {
+            return None;
+        }
+        match state.requested {
+            Some(Operation::Capture) => None,
+            other => other,
+        }
+    }
+
+    pub fn needs_terminal_hold(&self) -> bool {
+        matches!(
+            self.inner.lock().unwrap().stage,
+            Stage::Capture | Stage::Qualified | Stage::Failed
+        )
+    }
+
+    pub fn terminal_capture_due(&self) -> bool {
+        let state = self.inner.lock().unwrap();
+        matches!(state.stage, Stage::Capture | Stage::Failed) && !state.capture_requested
+    }
+
     pub fn source_path(&self) -> PathBuf {
         self.inner.lock().unwrap().source_path.clone()
     }
@@ -299,13 +345,7 @@ impl ExternalWatch {
 
     pub fn fail(&self, reason: impl Into<String>) {
         let mut state = self.inner.lock().unwrap();
-        if matches!(state.stage, Stage::Qualified | Stage::Failed) {
-            return;
-        }
-        state.failure = Some(reason.into());
-        state.stage = Stage::Failed;
-        state.requested = None;
-        state.terminal = Some(Arc::new(receipt_locked(&state)));
+        fail_locked(&mut state, reason);
     }
 
     pub fn note_prereq_failed(&self, reason: impl Into<String>) {
@@ -334,7 +374,7 @@ impl ExternalWatch {
         }
     }
 
-    pub fn note_inventory(&self, bones: i32, prayer_xp: i32) {
+    pub fn note_inventory(&self, now: Instant, account: &str, bones: i32, prayer_xp: i32) {
         let mut state = self.inner.lock().unwrap();
         if matches!(
             state.stage,
@@ -342,9 +382,12 @@ impl ExternalWatch {
         ) {
             return;
         }
+        if account != state.account {
+            return;
+        }
         state.current.bones = bones;
         state.current.prayer_xp = prayer_xp;
-        try_advance_run_locked(&mut state);
+        try_advance_run_locked(&mut state, now);
     }
 
     pub fn note_prereq_passed(&self) {
@@ -376,9 +419,13 @@ impl ExternalWatch {
         state.completed = Some(Operation::PrepareFixture);
         state.requested = Some(Operation::LoadRawTs);
         state.stage = Stage::Load;
+        state.distinct_burials.clear();
+        state.saw_onstop = false;
+        state.current.burial_logs = 0;
+        state.current.distinct_burial_logs = 0;
     }
 
-    pub fn note_logs(&self, lines: &[String]) {
+    pub fn note_logs(&self, now: Instant, account: &str, lines: &[String]) {
         let mut state = self.inner.lock().unwrap();
         if matches!(
             state.stage,
@@ -386,18 +433,25 @@ impl ExternalWatch {
         ) {
             return;
         }
+        if account != state.account {
+            return;
+        }
+        match state.stage {
+            Stage::Run | Stage::Stop => {}
+            _ => return,
+        }
         for line in lines {
             let msg = line.strip_prefix("script: ").unwrap_or(line.as_str());
-            if msg.starts_with(BURIAL_LOG_PREFIX) {
+            if state.stage == Stage::Run && msg.starts_with(BURIAL_LOG_PREFIX) {
                 state.distinct_burials.insert(msg.to_string());
             }
-            if msg.contains(ONSTOP_LOG_NEEDLE) {
+            if state.stage == Stage::Stop && msg.contains(ONSTOP_LOG_NEEDLE) {
                 state.saw_onstop = true;
             }
         }
         state.current.burial_logs = state.distinct_burials.len();
         state.current.distinct_burial_logs = state.distinct_burials.len();
-        try_advance_run_locked(&mut state);
+        try_advance_run_locked(&mut state, now);
     }
 
     pub fn note_paint(&self, present: bool) {
@@ -416,8 +470,10 @@ impl ExternalWatch {
         &self,
         registration_count: usize,
         name: &str,
-        version: &str,
-        selected: bool,
+        path: &Path,
+        identity_key: &str,
+        compiled_sha: &str,
+        selected_file: bool,
         running: bool,
     ) {
         let mut state = self.inner.lock().unwrap();
@@ -429,10 +485,9 @@ impl ExternalWatch {
         }
         state.registration_count = registration_count;
         state.script_name = name.to_string();
-        if !version.is_empty() {
-            state.script_version = version.to_string();
-        }
-        state.selected = selected;
+        state.identity_key = identity_key.to_string();
+        state.compiled_sha = compiled_sha.to_string();
+        state.selected = selected_file;
         state.running = running;
         if running {
             state.auto_start = true;
@@ -456,11 +511,32 @@ impl ExternalWatch {
             );
             return;
         }
-        if !selected {
+        if !selected_file {
             fail_locked(
                 &mut state,
-                "external loader did not select the profile script",
+                "external loader did not select the exact File card",
             );
+            return;
+        }
+        if !script::paths_match(&state.source_path.display().to_string(), path)
+            && path != state.source_path.as_path()
+        {
+            let expected = state.source_path.display().to_string();
+            fail_locked(
+                &mut state,
+                format!(
+                    "external loader loaded {} , expected {expected}",
+                    path.display()
+                ),
+            );
+            return;
+        }
+        if identity_key.is_empty() {
+            fail_locked(&mut state, "external loader load missing card identity");
+            return;
+        }
+        if compiled_sha.is_empty() {
+            fail_locked(&mut state, "external loader load missing compiled hash");
             return;
         }
         if !(state.scene.ingame && state.scene.scene_state == 2) {
@@ -503,6 +579,10 @@ impl ExternalWatch {
             fail_locked(&mut state, error.clone());
             return Err(error);
         }
+        state.distinct_burials.clear();
+        state.saw_onstop = false;
+        state.current.burial_logs = 0;
+        state.current.distinct_burial_logs = 0;
         state.initial = Some(state.current);
         state.start_at = Some(now);
         state.running = true;
@@ -541,13 +621,8 @@ impl ExternalWatch {
         if state.stage == Stage::Stop {
             if let Some(stop) = state.stop_at {
                 if now.saturating_duration_since(stop) >= STOP_DEADLINE {
-                    fail_locked(
-                        &mut state,
-                        format!(
-                            "external loader Stop did not finish inside {}ms",
-                            STOP_DEADLINE.as_millis()
-                        ),
-                    );
+                    let reason = stop_missing_facts(&state, now);
+                    fail_locked(&mut state, reason);
                 }
             }
         }
@@ -582,35 +657,16 @@ impl ExternalWatch {
         state.stop_elapsed_ms = Some(elapsed.as_millis());
         state.running = !idle;
         state.paint_present = paint_present;
-        if elapsed > STOP_DEADLINE {
-            fail_locked(
-                &mut state,
-                format!(
-                    "external loader Stop took {}ms, deadline {}ms",
-                    elapsed.as_millis(),
-                    STOP_DEADLINE.as_millis()
-                ),
-            );
+        if elapsed >= STOP_DEADLINE {
+            let reason = stop_missing_facts(&state, now);
+            fail_locked(&mut state, reason);
             return;
         }
-        if !idle {
-            fail_locked(&mut state, "external loader Stop did not reach Idle");
-            return;
+        if idle && !paint_present && state.saw_onstop {
+            state.completed = Some(Operation::Stop);
+            state.requested = Some(Operation::ReloadUnchanged);
+            state.stage = Stage::ReloadUnchanged;
         }
-        if paint_present {
-            fail_locked(&mut state, "external loader Stop left Canvas paint live");
-            return;
-        }
-        if !state.saw_onstop {
-            fail_locked(
-                &mut state,
-                "external loader Stop did not deliver onStop log",
-            );
-            return;
-        }
-        state.completed = Some(Operation::Stop);
-        state.requested = Some(Operation::ReloadUnchanged);
-        state.stage = Stage::ReloadUnchanged;
     }
 
     pub fn note_reload_unchanged(&self, message: &str) {
@@ -641,7 +697,20 @@ impl ExternalWatch {
         state.stage = Stage::ReloadChanged;
     }
 
-    pub fn note_reload_changed(&self, registration_count: usize) {
+    pub fn note_reload_changed(
+        &self,
+        registration_count: usize,
+        applied: bool,
+        nothing_changed: bool,
+        path: &Path,
+        identity_key: &str,
+        source_sha_before: &str,
+        source_sha_after: &str,
+        compiled_sha_before: &str,
+        compiled_sha_after: &str,
+        selected_file: bool,
+        running: bool,
+    ) {
         let mut state = self.inner.lock().unwrap();
         if matches!(
             state.stage,
@@ -657,6 +726,36 @@ impl ExternalWatch {
             return;
         }
         state.registration_after_reload = Some(registration_count);
+        state.source_sha_after = Some(source_sha_after.to_string());
+        state.compiled_sha_after = Some(compiled_sha_after.to_string());
+        if source_sha_before == source_sha_after {
+            fail_locked(
+                &mut state,
+                "external loader changed reload source hash did not change",
+            );
+            return;
+        }
+        if nothing_changed {
+            fail_locked(
+                &mut state,
+                "external loader changed reload returned NothingChanged after verified byte change",
+            );
+            return;
+        }
+        if !applied {
+            fail_locked(
+                &mut state,
+                "external loader changed reload did not apply the replacement",
+            );
+            return;
+        }
+        if compiled_sha_before == compiled_sha_after {
+            fail_locked(
+                &mut state,
+                "external loader changed reload compiled identity did not change",
+            );
+            return;
+        }
         if registration_count != 1 {
             fail_locked(
                 &mut state,
@@ -666,31 +765,91 @@ impl ExternalWatch {
             );
             return;
         }
+        if !selected_file {
+            fail_locked(
+                &mut state,
+                "external loader changed reload did not keep the exact File card selected",
+            );
+            return;
+        }
+        if running {
+            fail_locked(
+                &mut state,
+                "external loader changed reload left execution running",
+            );
+            return;
+        }
+        if !identity_key.is_empty() {
+            state.identity_key = identity_key.to_string();
+        }
+        if path != state.source_path.as_path()
+            && !script::paths_match(&state.source_path.display().to_string(), path)
+        {
+            let expected = state.source_path.display().to_string();
+            fail_locked(
+                &mut state,
+                format!(
+                    "external loader changed reload path {} , expected {expected}",
+                    path.display()
+                ),
+            );
+            return;
+        }
+        state.compiled_sha = compiled_sha_after.to_string();
         state.completed = Some(Operation::ReloadChanged);
         state.requested = Some(Operation::Capture);
         state.stage = Stage::Capture;
     }
 
+    /// Record that a native capture request was actually issued.
+    /// Failed watches keep the original failure and only flip the receipt bit.
     pub fn note_capture_requested(&self) {
         let mut state = self.inner.lock().unwrap();
-        if matches!(
-            state.stage,
-            Stage::Qualified | Stage::Failed | Stage::Disabled
-        ) {
+        match state.stage {
+            Stage::Failed => {
+                state.capture_requested = true;
+                state.terminal = Some(Arc::new(receipt_locked(&state)));
+            }
+            Stage::Capture => {
+                state.capture_requested = true;
+                state.completed = Some(Operation::Capture);
+                state.stage = Stage::Qualified;
+                state.terminal = Some(Arc::new(receipt_locked(&state)));
+            }
+            Stage::Qualified | Stage::Disabled => {}
+            _ => {
+                fail_locked(
+                    &mut state,
+                    "external loader capture requested outside Capture stage",
+                );
+            }
+        }
+    }
+
+    pub fn note_cleanup_progress(&self, now: Instant, idle: bool, stop_invoked: bool) {
+        let mut state = self.inner.lock().unwrap();
+        if state.stage != Stage::Failed || state.cleanup_outcome.is_some() {
             return;
         }
-        if state.stage != Stage::Capture {
-            fail_locked(
-                &mut state,
-                "external loader capture requested outside Capture stage",
-            );
+        if stop_invoked {
+            state.cleanup_invoked = true;
+        }
+        if idle {
+            state.cleanup_outcome = Some(if state.cleanup_invoked {
+                "stopped".into()
+            } else {
+                "already_idle".into()
+            });
+            state.terminal = Some(Arc::new(receipt_locked(&state)));
             return;
         }
-        state.capture_requested = true;
-        state.completed = Some(Operation::Capture);
-        state.requested = None;
-        state.stage = Stage::Qualified;
-        state.terminal = Some(Arc::new(receipt_locked(&state)));
+        let Some(failed_at) = state.failed_at else {
+            return;
+        };
+        if now.saturating_duration_since(failed_at) >= STOP_DEADLINE {
+            state.cleanup_outcome = Some("stop_timeout".into());
+            state.terminal = Some(Arc::new(receipt_locked(&state)));
+        }
     }
 
     pub fn qualify(&self) -> Result<Arc<Value>, String> {
@@ -732,8 +891,24 @@ impl ExternalWatch {
     }
 }
 
-fn try_advance_run_locked(state: &mut WatchState) {
+fn try_advance_run_locked(state: &mut WatchState, now: Instant) {
     if state.stage != Stage::Run {
+        return;
+    }
+    if !(state.scene.ingame && state.scene.scene_state == 2) {
+        return;
+    }
+    let Some(start) = state.start_at else {
+        return;
+    };
+    if now.saturating_duration_since(start) >= START_DEADLINE {
+        fail_locked(
+            state,
+            format!(
+                "external loader did not observe {MIN_DISTINCT_BURIALS}+ distinct burials and inventory/Prayer progress within {}ms",
+                START_DEADLINE.as_millis()
+            ),
+        );
         return;
     }
     let Some(initial) = state.initial else {
@@ -747,7 +922,7 @@ fn try_advance_run_locked(state: &mut WatchState) {
         state.requested = Some(Operation::Stop);
         state.stage = Stage::Stop;
         if state.stop_at.is_none() {
-            state.stop_at = Some(Instant::now());
+            state.stop_at = Some(now);
         }
     }
 }
@@ -758,8 +933,37 @@ fn fail_locked(state: &mut WatchState, reason: impl Into<String>) {
     }
     state.failure = Some(reason.into());
     state.stage = Stage::Failed;
-    state.requested = None;
+    state.failed_at = Some(Instant::now());
     state.terminal = Some(Arc::new(receipt_locked(state)));
+}
+
+fn stop_missing_facts(state: &WatchState, now: Instant) -> String {
+    let elapsed = state
+        .stop_at
+        .map(|t| now.saturating_duration_since(t).as_millis())
+        .unwrap_or(0);
+    let mut missing = Vec::new();
+    if state.running {
+        missing.push("Idle");
+    }
+    if state.paint_present {
+        missing.push("Canvas clear");
+    }
+    if !state.saw_onstop {
+        missing.push("onStop log");
+    }
+    if missing.is_empty() {
+        format!(
+            "external loader Stop did not finish inside {}ms (elapsed {elapsed}ms)",
+            STOP_DEADLINE.as_millis()
+        )
+    } else {
+        format!(
+            "external loader Stop missing {} inside {}ms (elapsed {elapsed}ms)",
+            missing.join(", "),
+            STOP_DEADLINE.as_millis()
+        )
+    }
 }
 
 fn receipt_locked(state: &WatchState) -> Value {
@@ -773,6 +977,8 @@ fn receipt_locked(state: &WatchState) -> Value {
             "version": state.script_version,
             "sha256": state.source_sha,
             "path": state.source_path.display().to_string(),
+            "identity_key": state.identity_key,
+            "compiled_sha": state.compiled_sha,
         },
         "registration_count": state.registration_count,
         "registration_count_after_reload": state.registration_after_reload,
@@ -784,6 +990,9 @@ fn receipt_locked(state: &WatchState) -> Value {
         "stop_elapsed_ms": state.stop_elapsed_ms,
         "capture_requested": state.capture_requested,
         "reload_unchanged": state.reload_unchanged,
+        "source_sha_after": state.source_sha_after,
+        "compiled_sha_after": state.compiled_sha_after,
+        "cleanup_outcome": state.cleanup_outcome,
         "auto_start": state.auto_start,
         "account": state.account,
     })
@@ -795,15 +1004,24 @@ mod tests {
     use serde_json::Value;
 
     fn ready(watch: &ExternalWatch) {
+        let now = Instant::now();
         watch.configure(
             "alice",
             PathBuf::from("/tmp/ExampleBot.ts"),
             FROZEN_SHA256.into(),
         );
         watch.note_scene(true, 2);
-        watch.note_inventory(BONES_COUNT, 0);
+        watch.note_inventory(now, "alice", BONES_COUNT, 0);
         watch.note_prereq_passed();
-        watch.note_load(1, SCRIPT_NAME, SCRIPT_VERSION, true, false);
+        watch.note_load(
+            1,
+            SCRIPT_NAME,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "compiled-a",
+            true,
+            false,
+        );
     }
 
     fn burial_lines(n: usize) -> Vec<String> {
@@ -812,9 +1030,44 @@ mod tests {
             .collect()
     }
 
+    fn observe(watch: &ExternalWatch, now: Instant, n: usize, bones: i32, xp: i32) {
+        watch.note_logs(now, "alice", &burial_lines(n));
+        watch.note_inventory(now, "alice", bones, xp);
+    }
+
     fn drive_to_run(watch: &ExternalWatch, now: Instant) {
         ready(watch);
         watch.begin_start(now).unwrap();
+    }
+
+    fn drive_to_reload_changed(watch: &ExternalWatch, t0: Instant) {
+        drive_to_run(watch, t0);
+        let now = t0 + Duration::from_millis(8);
+        observe(watch, now, 10, 12, 45);
+        watch.request_stop(now);
+        watch.note_logs(
+            now + Duration::from_millis(5),
+            "alice",
+            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+        );
+        watch.note_stop(now + Duration::from_millis(40), true, false);
+        watch.note_reload_unchanged(NOTHING_CHANGED);
+    }
+
+    fn reload_changed_ok(watch: &ExternalWatch) {
+        watch.note_reload_changed(
+            1,
+            true,
+            false,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "sha-before",
+            "sha-after",
+            "compiled-a",
+            "compiled-b",
+            true,
+            false,
+        );
     }
 
     #[test]
@@ -822,9 +1075,17 @@ mod tests {
         let watch = ExternalWatch::default();
         watch.configure("alice", PathBuf::from("/tmp/x.ts"), FROZEN_SHA256.into());
         watch.note_scene(true, 2);
-        watch.note_inventory(BONES_COUNT, 0);
+        watch.note_inventory(Instant::now(), "alice", BONES_COUNT, 0);
         watch.note_prereq_passed();
-        watch.note_load(1, SCRIPT_NAME, SCRIPT_VERSION, true, true);
+        watch.note_load(
+            1,
+            SCRIPT_NAME,
+            Path::new("/tmp/x.ts"),
+            "file:/tmp/x.ts",
+            "compiled-a",
+            true,
+            true,
+        );
         assert_eq!(watch.status(), ExternalWatchStatus::Failed);
         let reason = watch.failure().unwrap();
         assert!(reason.contains("auto-start"), "{reason}");
@@ -836,9 +1097,17 @@ mod tests {
         let watch = ExternalWatch::default();
         watch.configure("alice", PathBuf::from("/tmp/x.ts"), FROZEN_SHA256.into());
         watch.note_scene(true, 2);
-        watch.note_inventory(BONES_COUNT, 0);
+        watch.note_inventory(Instant::now(), "alice", BONES_COUNT, 0);
         watch.note_prereq_passed();
-        watch.note_load(2, SCRIPT_NAME, SCRIPT_VERSION, true, false);
+        watch.note_load(
+            2,
+            SCRIPT_NAME,
+            Path::new("/tmp/x.ts"),
+            "file:/tmp/x.ts",
+            "compiled-a",
+            true,
+            false,
+        );
         assert!(watch.failure().unwrap().contains("registration count 2"));
     }
 
@@ -847,8 +1116,8 @@ mod tests {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
         drive_to_run(&watch, t0);
-        watch.note_logs(&burial_lines(3));
-        watch.note_inventory(BONES_COUNT, 0);
+        watch.note_logs(t0, "alice", &burial_lines(3));
+        watch.note_inventory(t0, "alice", BONES_COUNT, 0);
         watch.poll_deadlines(t0 + START_DEADLINE);
         let reason = watch.failure().expect("deadline");
         assert!(
@@ -863,7 +1132,7 @@ mod tests {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
         drive_to_run(&watch, t0);
-        watch.note_inventory(0, 45);
+        watch.note_inventory(t0, "alice", 0, 45);
         assert_eq!(watch.requested_operation(), Some(Operation::ObserveBurials));
         assert!(watch.qualify().is_err());
     }
@@ -873,8 +1142,7 @@ mod tests {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
         drive_to_run(&watch, t0);
-        watch.note_logs(&burial_lines(10));
-        watch.note_inventory(15, 45);
+        observe(&watch, t0, 10, 15, 45);
         assert_eq!(watch.requested_operation(), Some(Operation::Stop));
         let stop_at = t0 + Duration::from_millis(1);
         watch.request_stop(stop_at);
@@ -891,11 +1159,14 @@ mod tests {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
         drive_to_run(&watch, t0);
-        watch.note_logs(&burial_lines(10));
-        watch.note_inventory(10, 45);
+        observe(&watch, t0, 10, 10, 45);
         let stop = t0 + Duration::from_millis(5);
         watch.request_stop(stop);
-        watch.note_logs(&["BoneBurier stopped — 10 buried, +45 prayer xp".into()]);
+        watch.note_logs(
+            stop,
+            "alice",
+            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+        );
         watch.note_stop(stop + Duration::from_millis(20), true, false);
         watch.note_reload_unchanged("something else");
         assert!(watch.failure().unwrap().contains("Nothing changed"));
@@ -905,15 +1176,8 @@ mod tests {
     fn happy_path_receipt_serializes_required_fields() {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
-        drive_to_run(&watch, t0);
-        watch.note_logs(&burial_lines(10));
-        watch.note_inventory(12, 45);
-        let stop = t0 + Duration::from_millis(8);
-        watch.request_stop(stop);
-        watch.note_logs(&["BoneBurier stopped — 10 buried, +45 prayer xp".into()]);
-        watch.note_stop(stop + Duration::from_millis(40), true, false);
-        watch.note_reload_unchanged(NOTHING_CHANGED);
-        watch.note_reload_changed(1);
+        drive_to_reload_changed(&watch, t0);
+        reload_changed_ok(&watch);
         watch.note_capture_requested();
         let evidence = watch.qualify().expect("qualified");
         let cached = watch.qualify().expect("cached");
@@ -941,6 +1205,10 @@ mod tests {
         assert_eq!(evidence["stage"], "qualified");
         assert_eq!(evidence["script"]["name"], SCRIPT_NAME);
         assert_eq!(evidence["script"]["version"], SCRIPT_VERSION);
+        assert_eq!(
+            evidence["script"]["identity_key"],
+            "file:/tmp/ExampleBot.ts"
+        );
         assert_eq!(evidence["registration_count"], 1);
         assert_eq!(evidence["registration_count_after_reload"], 1);
         assert_eq!(evidence["scene_gate"]["ingame"], true);
@@ -952,6 +1220,8 @@ mod tests {
         assert_eq!(evidence["capture_requested"], true);
         assert_eq!(evidence["auto_start"], false);
         assert_eq!(evidence["reload_unchanged"], NOTHING_CHANGED);
+        assert_eq!(evidence["source_sha_after"], "sha-after");
+        assert_eq!(evidence["compiled_sha_after"], "compiled-b");
         assert!(evidence["failure_reason"].is_null());
         let _parsed: Value = serde_json::from_str(&evidence.to_string()).unwrap();
     }
@@ -960,16 +1230,187 @@ mod tests {
     fn changed_reload_duplicate_registration_fails() {
         let watch = ExternalWatch::default();
         let t0 = Instant::now();
-        drive_to_run(&watch, t0);
-        watch.note_logs(&burial_lines(10));
-        watch.note_inventory(12, 45);
-        let stop = t0 + Duration::from_millis(8);
-        watch.request_stop(stop);
-        watch.note_logs(&["BoneBurier stopped — 10 buried, +45 prayer xp".into()]);
-        watch.note_stop(stop + Duration::from_millis(40), true, false);
-        watch.note_reload_unchanged(NOTHING_CHANGED);
-        watch.note_reload_changed(2);
+        drive_to_reload_changed(&watch, t0);
+        watch.note_reload_changed(
+            2,
+            true,
+            false,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "sha-before",
+            "sha-after",
+            "compiled-a",
+            "compiled-b",
+            true,
+            false,
+        );
         assert!(watch.failure().unwrap().contains("duplicated registration"));
+    }
+
+    #[test]
+    fn changed_reload_nothing_changed_after_byte_change_fails() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_reload_changed(&watch, t0);
+        watch.note_reload_changed(
+            1,
+            false,
+            true,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "sha-before",
+            "sha-after",
+            "compiled-a",
+            "compiled-b",
+            true,
+            false,
+        );
+        let reason = watch.failure().unwrap();
+        assert!(reason.contains("NothingChanged"), "{reason}");
+        assert_eq!(watch.requested_operation(), Some(Operation::ReloadChanged));
+        assert!(watch.dispatch_operation().is_none());
+    }
+
+    #[test]
+    fn late_final_log_at_deadline_fails_closed() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        observe(&watch, t0 + Duration::from_millis(10), 9, 12, 45);
+        assert_eq!(watch.requested_operation(), Some(Operation::ObserveBurials));
+        watch.note_logs(t0 + START_DEADLINE, "alice", &burial_lines(10));
+        let reason = watch.failure().expect("deadline");
+        assert!(
+            reason.contains("180000") || reason.contains("distinct burials"),
+            "{reason}"
+        );
+        assert_eq!(watch.requested_operation(), Some(Operation::ObserveBurials));
+    }
+
+    #[test]
+    fn late_inventory_at_deadline_fails_closed() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        watch.note_logs(t0 + Duration::from_millis(10), "alice", &burial_lines(10));
+        watch.note_inventory(t0 + START_DEADLINE, "alice", 12, 45);
+        let reason = watch.failure().expect("deadline");
+        assert!(
+            reason.contains("180000") || reason.contains("distinct burials"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn progress_before_deadline_still_advances() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        observe(
+            &watch,
+            t0 + START_DEADLINE - Duration::from_millis(1),
+            10,
+            12,
+            45,
+        );
+        assert_eq!(watch.requested_operation(), Some(Operation::Stop));
+        assert!(watch.failure().is_none());
+    }
+
+    #[test]
+    fn pre_start_logs_cannot_qualify_current_start() {
+        let watch = ExternalWatch::default();
+        watch.configure(
+            "alice",
+            PathBuf::from("/tmp/ExampleBot.ts"),
+            FROZEN_SHA256.into(),
+        );
+        watch.note_scene(true, 2);
+        watch.note_inventory(Instant::now(), "alice", BONES_COUNT, 0);
+        watch.note_prereq_passed();
+        watch.note_logs(Instant::now(), "alice", &burial_lines(10));
+        watch.note_logs(
+            Instant::now(),
+            "alice",
+            &["BoneBurier stopped — stale".into()],
+        );
+        watch.note_load(
+            1,
+            SCRIPT_NAME,
+            Path::new("/tmp/ExampleBot.ts"),
+            "file:/tmp/ExampleBot.ts",
+            "compiled-a",
+            true,
+            false,
+        );
+        let t0 = Instant::now();
+        watch.begin_start(t0).unwrap();
+        watch.note_inventory(t0, "alice", 12, 45);
+        assert_eq!(watch.requested_operation(), Some(Operation::ObserveBurials));
+        assert_eq!(watch.evidence()["final"]["distinct_burial_logs"], 0);
+    }
+
+    #[test]
+    fn stop_waits_for_onstop_within_budget() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        observe(&watch, t0, 10, 12, 45);
+        let stop = t0 + Duration::from_millis(5);
+        watch.request_stop(stop);
+        watch.note_stop(stop + Duration::from_millis(20), true, false);
+        assert!(watch.failure().is_none());
+        assert_eq!(watch.requested_operation(), Some(Operation::Stop));
+        watch.note_logs(
+            stop + Duration::from_millis(30),
+            "alice",
+            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+        );
+        watch.note_stop(stop + Duration::from_millis(40), true, false);
+        assert_eq!(
+            watch.requested_operation(),
+            Some(Operation::ReloadUnchanged)
+        );
+    }
+
+    #[test]
+    fn stop_deadline_reports_missing_facts() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        observe(&watch, t0, 10, 12, 45);
+        let stop = t0 + Duration::from_millis(5);
+        watch.request_stop(stop);
+        watch.note_stop(stop + Duration::from_millis(20), true, true);
+        watch.poll_deadlines(stop + STOP_DEADLINE);
+        let reason = watch.failure().unwrap();
+        assert!(reason.contains("onStop"), "{reason}");
+        assert!(reason.contains("Canvas"), "{reason}");
+        assert_eq!(watch.requested_operation(), Some(Operation::Stop));
+        assert!(watch.dispatch_operation().is_none());
+    }
+
+    #[test]
+    fn fail_retains_last_request() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_run(&watch, t0);
+        watch.poll_deadlines(t0 + START_DEADLINE);
+        assert_eq!(watch.requested_operation(), Some(Operation::ObserveBurials));
+        assert!(watch.dispatch_operation().is_none());
+        assert_eq!(watch.evidence()["requested_operation"], "observe_burials");
+    }
+
+    #[test]
+    fn capture_is_not_completed_without_an_issued_request() {
+        let watch = ExternalWatch::default();
+        let t0 = Instant::now();
+        drive_to_reload_changed(&watch, t0);
+        reload_changed_ok(&watch);
+        assert!(watch.terminal_capture_due());
+        assert!(watch.qualify().is_err());
+        assert_eq!(watch.evidence()["capture_requested"], false);
+        assert_eq!(watch.evidence()["completed_operation"], "reload_changed");
     }
 
     #[test]

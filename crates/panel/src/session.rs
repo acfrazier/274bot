@@ -1068,23 +1068,9 @@ fn push_log(map: &mut HashMap<String, Vec<String>>, name: &str, line: String) {
     }
 }
 
-fn parse_define_bot_version(origin: &str) -> String {
-    origin
-        .split("version:")
-        .nth(1)
-        .and_then(|rest| {
-            rest.split(['\'', '"'])
-                .nth(1)
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-        })
-        .unwrap_or(host_play::external_loader::SCRIPT_VERSION)
-        .to_string()
-}
-
 pub(crate) fn external_loader_fixture() -> scenario::Scenario {
     use api::interact::cheat;
-    use host_play::external_loader::{BONES_COUNT, PREP_DEADLINE, TERMINAL_SHOT};
+    use host_play::external_loader::{BONES_COUNT, PREP_DEADLINE, PREREQ_SHOT};
     use scenario::{Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
     Scenario {
         name: host_play::external_loader::LIVE_SCENARIO,
@@ -1129,7 +1115,7 @@ pub(crate) fn external_loader_fixture() -> scenario::Scenario {
             require_mainland_base: true,
             deadline: PREP_DEADLINE,
             start_script: None,
-            terminal_shot: Some(TERMINAL_SHOT),
+            terminal_shot: Some(PREREQ_SHOT),
             nav: scenario::ScenarioNav::default().with_tick_ms(600),
             ..Default::default()
         },
@@ -1406,8 +1392,8 @@ impl Session {
 
     pub fn pump_external_loader(&mut self) {
         use host_play::external_loader::{
-            apply_harmless_whitespace, Operation, BONES_ID, PRAYER_STAT_ID, SCRIPT_NAME,
-            SCRIPT_VERSION,
+            apply_harmless_whitespace, source_sha256, Operation, BONES_ID, PRAYER_STAT_ID,
+            SCRIPT_NAME,
         };
         let Some(watch) = self.external_core_watch() else {
             return;
@@ -1417,29 +1403,45 @@ impl Session {
         }
         let now = Instant::now();
         watch.poll_deadlines(now);
-        let Some(name) = self.focused_name() else {
+        let account = watch.account();
+        let name = self.focused_name().unwrap_or_else(|| account.clone());
+        if name == account {
+            if let Some(slot) = self.statuses.iter().find(|s| s.username == name) {
+                watch.note_scene(slot.ingame, slot.scene_state);
+                watch.note_paint(slot.script_paint.is_some());
+            }
+            if let Some((snap, _)) = self.nav_states.lock().unwrap().get(&name) {
+                let bones: i32 = snap
+                    .inventory()
+                    .iter()
+                    .filter(|item| item.def.id == BONES_ID)
+                    .map(|item| item.count)
+                    .sum();
+                let prayer = snap
+                    .stats()
+                    .iter()
+                    .find(|stat| stat.index == PRAYER_STAT_ID)
+                    .map(|stat| stat.xp)
+                    .unwrap_or(0);
+                watch.note_inventory(now, &account, bones, prayer);
+            }
+        }
+        if watch.status() == host_play::external_loader::ExternalWatchStatus::Failed {
+            let state = self
+                .play
+                .as_ref()
+                .map(|play| play.script_state(&account))
+                .unwrap_or(script::RunState::Idle);
+            let idle = matches!(state, script::RunState::Idle);
+            let mut stop_invoked = false;
+            if !idle && !matches!(state, script::RunState::Stopping) {
+                self.script_stop();
+                stop_invoked = true;
+            }
+            watch.note_cleanup_progress(now, idle, stop_invoked);
             return;
-        };
-        if let Some(slot) = self.statuses.iter().find(|s| s.username == name) {
-            watch.note_scene(slot.ingame, slot.scene_state);
-            watch.note_paint(slot.script_paint.is_some());
         }
-        if let Some((snap, _)) = self.nav_states.lock().unwrap().get(&name) {
-            let bones: i32 = snap
-                .inventory()
-                .iter()
-                .filter(|item| item.def.id == BONES_ID)
-                .map(|item| item.count)
-                .sum();
-            let prayer = snap
-                .stats()
-                .iter()
-                .find(|stat| stat.index == PRAYER_STAT_ID)
-                .map(|stat| stat.xp)
-                .unwrap_or(0);
-            watch.note_inventory(bones, prayer);
-        }
-        match watch.requested_operation() {
+        match watch.dispatch_operation() {
             Some(Operation::LoadRawTs) => {
                 let path = watch.source_path();
                 self.load_js(&path);
@@ -1455,22 +1457,42 @@ impl Session {
                     watch.fail(format!("transpile: {error}"));
                     return;
                 }
+                let Some(card) = self
+                    .js
+                    .get(script::ScriptSource::File, &lookup)
+                    .or_else(|| {
+                        self.js
+                            .get(script::ScriptSource::File, &path.display().to_string())
+                    })
+                else {
+                    watch.fail("external loader load did not produce a File card");
+                    return;
+                };
                 let count = self
                     .js
                     .cards()
                     .iter()
-                    .filter(|card| card.name == SCRIPT_NAME)
+                    .filter(|c| {
+                        c.source == script::ScriptSource::File
+                            && (c.identity_key() == card.identity_key() || c.name == SCRIPT_NAME)
+                    })
                     .count();
-                let version = self
-                    .js
-                    .get(script::ScriptSource::File, &lookup)
-                    .map(|c| parse_define_bot_version(&c.origin))
-                    .unwrap_or_else(|| SCRIPT_VERSION.to_string());
-                let selected = self.script_sel.is_some() || self.pending_browse.contains_key(&name);
+                let want =
+                    script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
+                let selected = self.script_sel.as_ref() == Some(&want)
+                    || self.pending_browse.get(&account) == Some(&want);
                 let running = self.play.as_ref().is_some_and(|play| {
-                    !matches!(play.script_state(&name), script::RunState::Idle)
+                    !matches!(play.script_state(&account), script::RunState::Idle)
                 });
-                watch.note_load(count, SCRIPT_NAME, &version, selected, running);
+                watch.note_load(
+                    count,
+                    &card.name,
+                    &card.path,
+                    &card.identity_key(),
+                    &card.sha256,
+                    selected,
+                    running,
+                );
             }
             Some(Operation::Start) => {
                 if watch.begin_start(now).is_err() {
@@ -1485,17 +1507,20 @@ impl Session {
                 let state = self
                     .play
                     .as_ref()
-                    .map(|play| play.script_state(&name))
+                    .map(|play| play.script_state(&account))
                     .unwrap_or(script::RunState::Idle);
                 let paint = self
                     .statuses
                     .iter()
-                    .find(|s| s.username == name)
+                    .find(|s| s.username == account)
                     .is_some_and(|s| s.script_paint.is_some());
                 match state {
                     script::RunState::Idle => watch.note_stop(now, true, paint),
-                    script::RunState::Stopping => {}
-                    _ => self.script_stop(),
+                    script::RunState::Stopping => watch.note_stop(now, false, paint),
+                    _ => {
+                        self.script_stop();
+                        watch.note_stop(now, false, paint);
+                    }
                 }
             }
             Some(Operation::ReloadUnchanged) => match self.script_reload_clicked() {
@@ -1505,13 +1530,36 @@ impl Session {
                 other => watch.fail(format!("unchanged reload: {other:?}")),
             },
             Some(Operation::ReloadChanged) => {
-                if let Err(error) = apply_harmless_whitespace(&watch.source_path()) {
+                let path = watch.source_path();
+                let before_bytes = match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        watch.fail(format!("changed reload read {}: {error}", path.display()));
+                        return;
+                    }
+                };
+                let source_before = source_sha256(&before_bytes);
+                let compiled_before = self
+                    .js
+                    .get(script::ScriptSource::File, &path.display().to_string())
+                    .map(|c| c.sha256.clone())
+                    .unwrap_or_default();
+                if let Err(error) = apply_harmless_whitespace(&path) {
                     watch.fail(error);
                     return;
                 }
-                match self.script_reload(true) {
-                    crate::profile_script::ReloadOutcome::Applied { .. }
-                    | crate::profile_script::ReloadOutcome::NothingChanged => {}
+                let after_bytes = match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        watch.fail(format!("changed reload reread {}: {error}", path.display()));
+                        return;
+                    }
+                };
+                let source_after = source_sha256(&after_bytes);
+                let outcome = self.script_reload(true);
+                let (applied, nothing_changed) = match &outcome {
+                    crate::profile_script::ReloadOutcome::Applied { .. } => (true, false),
+                    crate::profile_script::ReloadOutcome::NothingChanged => (false, true),
                     crate::profile_script::ReloadOutcome::Failed(error) => {
                         watch.fail(format!("changed reload: {error}"));
                         return;
@@ -1520,16 +1568,44 @@ impl Session {
                         watch.fail(format!("changed reload: {other:?}"));
                         return;
                     }
-                }
+                };
+                let Some(card) = self
+                    .js
+                    .get(script::ScriptSource::File, &path.display().to_string())
+                else {
+                    watch.fail("external loader changed reload lost the File card");
+                    return;
+                };
                 let count = self
                     .js
                     .cards()
                     .iter()
-                    .filter(|card| card.name == SCRIPT_NAME)
+                    .filter(|c| {
+                        c.source == script::ScriptSource::File
+                            && (c.identity_key() == card.identity_key() || c.name == SCRIPT_NAME)
+                    })
                     .count();
-                watch.note_reload_changed(count);
+                let want =
+                    script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id());
+                let selected = self.script_sel.as_ref() == Some(&want)
+                    || self.pending_browse.get(&account) == Some(&want);
+                let running = self.play.as_ref().is_some_and(|play| {
+                    !matches!(play.script_state(&account), script::RunState::Idle)
+                });
+                watch.note_reload_changed(
+                    count,
+                    applied,
+                    nothing_changed,
+                    &card.path,
+                    &card.identity_key(),
+                    &source_before,
+                    &source_after,
+                    &compiled_before,
+                    &card.sha256,
+                    selected,
+                    running,
+                );
             }
-            Some(Operation::Capture) => watch.note_capture_requested(),
             _ => {}
         }
     }
@@ -2838,7 +2914,11 @@ impl Session {
                 for line in play.script_take_pending_logs(&s.username) {
                     if let Some(watch) = self.external_core_watch() {
                         if watch.configured() && watch.account() == s.username {
-                            watch.note_logs(std::slice::from_ref(&line));
+                            watch.note_logs(
+                                Instant::now(),
+                                &s.username,
+                                std::slice::from_ref(&line),
+                            );
                         }
                     }
                     push_log(&mut log_by, &s.username, format!("script: {line}"));
