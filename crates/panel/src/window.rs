@@ -1085,9 +1085,10 @@ where
                 if let WindowEvent::KeyboardInput { event, .. } = &event {
                     // The backend queues event.text for text widgets, but
                     // shifted punctuation has no ImGui key identity there.
-                    // Add only the missing key lifecycle and the produced
-                    // capture character: text must not be queued a second
-                    // time, and key-repeat must not extra-deliver.
+                    // Add only the missing key lifecycle and record the
+                    // produced/named capture ch in event order: text must
+                    // not be queued a second time, and key-repeat must not
+                    // extra-deliver.
                     if !event.repeat {
                         crate::app::add_shifted_key_event(
                             window.imgui.context.io_mut(),
