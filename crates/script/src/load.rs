@@ -585,6 +585,9 @@ impl JsLibrary {
             },
         )?;
         let fingerprint = raw_content_fingerprint(&card.path, &origin);
+        #[cfg(feature = "load")]
+        crate::LoadIsolate::validate_source(&cached.js, shape, &siblings)
+            .map_err(|e| format!("prepare {name}: {e}"))?;
         let mut prepared = card;
         prepared.origin = origin;
         prepared.shape = shape;
@@ -1527,6 +1530,32 @@ mod isolate {
             named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
         ) -> Result<Self, String> {
             Self::spawn_inner(js, shape, siblings, game_data, named_banks)
+        }
+
+        /// Evaluate and instantiate the candidate in a throwaway Runtime
+        /// using the same [`wire_runtime`] path Start uses. Old isolates
+        /// are not touched. Fails on top-level throw, missing export, or
+        /// unresolvable sibling.
+        pub fn validate_source(
+            js: &str,
+            shape: LoadShape,
+            siblings: &[(String, String)],
+        ) -> Result<(), String> {
+            ensure_platform();
+            let mut runtime = Runtime::new(RuntimeOptions {
+                timeout: RUNTIME_TIMEOUT,
+                max_heap_size: Some(MAX_HEAP),
+                ..Default::default()
+            })
+            .map_err(|e| format!("js engine init: {e}"))?;
+            wire_runtime(
+                &mut runtime,
+                js,
+                shape,
+                siblings,
+                None,
+                std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            )
         }
 
         fn spawn_inner(
