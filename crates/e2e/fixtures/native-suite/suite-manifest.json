@@ -358,13 +358,26 @@
    "status": "unvetted",
    "manual": false,
    "budget_min": 12,
-   "runner": "core",
+   "runner": "pair",
    "live": "script_duel_arena",
    "scenario": "duel_arena",
    "core_case": null,
-   "pair_case": null,
-   "options": [],
-   "unsupported": [],
+   "pair_case": "duel",
+   "options": [
+    "two actual actors",
+    "native counterpart identity",
+    "target Attack/Strength/Defence"
+   ],
+   "unsupported": [
+    {
+     "option": "reference case",
+     "reason": "frozen e2e/manifest.ts has no Duel entry; native FirstCombat/ResetAndFurther is declared native coverage, not a frozen reference PASS"
+    },
+    {
+     "option": "LIVE qualification",
+     "reason": "the headed adapter is runnable and unvetted until actual LIVE"
+    }
+   ],
    "covers": {
     "scripts": [
      "DuelArena"
@@ -373,11 +386,7 @@
     "paths": []
    },
    "variants": [],
-   "reference_cases": [],
-   "unavailable": {
-    "code": "missing_adapter",
-    "reason": "pair Duel witness is retained as blocked: no headed live cell (pair_watch accepts nature_crafter_air|mule_crafter_air|flax_runner) and no in-combat observation has been recorded"
-   }
+   "reference_cases": []
   },
   {
    "id": "chaos_druid",

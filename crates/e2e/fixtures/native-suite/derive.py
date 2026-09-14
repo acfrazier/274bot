@@ -64,10 +64,10 @@ MAPPING = [
          options=["seed chicken/feather", "food/bank state"],
          unsupported=[("hosted/manual prerequisite",
                        "reference case is documented/manual (hosted wall); native run is a script witness only")]),
-    case("Duel Arena Combat Trainer", "duel_arena", unavailable=(
-        "missing_adapter",
-        "pair Duel witness is retained as blocked: no headed live cell (pair_watch accepts "
-        "nature_crafter_air|mule_crafter_air|flax_runner) and no in-combat observation has been recorded")),
+    case("Duel Arena Combat Trainer", "duel_arena", runner=PAIR,
+         options=["two actual actors", "native counterpart identity", "target Attack/Strength/Defence"],
+         unsupported=[("reference case", "frozen e2e/manifest.ts has no Duel entry; native FirstCombat/ResetAndFurther is declared native coverage, not a frozen reference PASS"),
+                      ("LIVE qualification", "the headed adapter is runnable and unvetted until actual LIVE")]),
     case("ChaosDruidKiller", "chaos_druid", variants=["chaos_druid_tower", "chaos_druid_yanille", "chaos_druid_bank"],
          options=["location/drop/loot"],
          unsupported=[("selected herb/law/nature pickup", "combat fixture for selected pickups is still open")]),
@@ -330,7 +330,7 @@ def parse_core_cases(path):
 
 
 def parse_pair_cases(path):
-    """Canonical headed pair live name -> witness identity (`Air`/`Mule`/`Flax`)."""
+    """Canonical headed pair live name -> witness identity (`Air`/`Mule`/`Flax`/`Duel`)."""
     block = _parse_fn_block(path, "impl PairCase {")
     canonical = {}
     for name, variant in re.findall(

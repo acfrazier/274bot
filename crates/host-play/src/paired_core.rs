@@ -1,9 +1,10 @@
 //! Shared paired full-cycle witness used by the existing paired harness and
 //! the opt-in headed pair-watch bridge.
 //!
-//! This is proof infrastructure, not a second gameplay engine. Duel types stay
-//! here so the existing harness keeps one consumer; headed 157 cells are Air,
-//! Mule, and Flax only.
+//! This is proof infrastructure, not a second gameplay engine. Headed pair
+//! cells are Air, Mule, Flax, and Duel. Duel counterpart identity is native
+//! witness-owned; Duel settings carry schema target stats and have no partner
+//! key.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -58,6 +59,7 @@ pub const FLAX_MEET: (i32, i32, i32) = (2719, 3471, 0);
 pub const FLAX_BANK: (i32, i32, i32) = (2725, 3493, 0);
 pub const FLAX_WHEEL: (i32, i32, i32) = (2711, 3471, 1);
 pub const DUEL_CHALLENGE_ANCHOR: (i32, i32, i32) = (3368, 3274, 0);
+pub const DUEL_WEAPON_ALIAS: &str = "bronze_scimitar";
 pub const SCRIPT_GOLD_DEADLINE_SECS: u64 = 180;
 pub const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
 pub const PREP_DEADLINE_SECS: u64 = 180;
@@ -92,8 +94,8 @@ pub enum PairCase {
 }
 
 impl PairCase {
-    pub fn headed_cells() -> [Self; 3] {
-        [Self::Air, Self::Mule, Self::Flax]
+    pub fn headed_cells() -> [Self; 4] {
+        [Self::Air, Self::Mule, Self::Flax, Self::Duel]
     }
 
     pub fn parse(name: &str) -> Result<Self, String> {
@@ -101,8 +103,9 @@ impl PairCase {
             "nature_crafter_air" | "air_pair" => Ok(Self::Air),
             "mule_crafter_air" | "mule_pair" => Ok(Self::Mule),
             "flax_runner" | "flax_pair" => Ok(Self::Flax),
+            "duel_arena" | "duel_pair" => Ok(Self::Duel),
             other => Err(format!(
-                "pair core watch does not accept {other:?}; headed cells are nature_crafter_air, mule_crafter_air, flax_runner"
+                "pair core watch does not accept {other:?}; headed cells are nature_crafter_air, mule_crafter_air, flax_runner, duel_arena"
             )),
         }
     }
@@ -135,7 +138,7 @@ impl PairCase {
     }
 
     pub fn is_headed_cell(self) -> bool {
-        matches!(self, Self::Air | Self::Mule | Self::Flax)
+        matches!(self, Self::Air | Self::Mule | Self::Flax | Self::Duel)
     }
 }
 
@@ -991,7 +994,7 @@ impl DuelObservation {
             duel_win_open: main == DUEL_WIN_MODAL,
             duel_partner: partner,
             waiting_for_other: waiting,
-            weapon_equipped: count_id(snapshot.equipment(), weapon_id) > 0,
+            weapon_equipped: weapon_id > 0 && count_id(snapshot.equipment(), weapon_id) > 0,
             peer_visible,
         }
     }
@@ -2285,15 +2288,19 @@ pub struct PairWatch {
 
 struct SlotReady {
     account: String,
+    peer: String,
     settings: Map<String, Value>,
     latest_air: Option<AirObservation>,
     latest_flax: Option<FlaxObservation>,
+    latest_duel: Option<DuelObservation>,
+    weapon_id: i32,
 }
 
 enum PairRuntimeWitness {
     Air(AirPairWitness),
     Mule(MulePairWitness),
     Flax(FlaxPairWitness),
+    Duel(DuelPairWitness),
 }
 
 #[derive(Default)]
@@ -2309,6 +2316,7 @@ enum PairWatchState {
         a_account: String,
         b_account: String,
         witness: Box<PairRuntimeWitness>,
+        duel_weapon_id: i32,
     },
     Qualified {
         evidence: Arc<Value>,
@@ -2331,16 +2339,22 @@ impl PairWatch {
         *self.inner.lock().unwrap() = PairWatchState::Ready {
             case,
             a: Box::new(SlotReady {
-                account: a,
+                account: a.clone(),
+                peer: b.clone(),
                 settings: Map::new(),
                 latest_air: None,
                 latest_flax: None,
+                latest_duel: None,
+                weapon_id: 0,
             }),
             b: Box::new(SlotReady {
                 account: b,
+                peer: a,
                 settings: Map::new(),
                 latest_air: None,
                 latest_flax: None,
+                latest_duel: None,
+                weapon_id: 0,
             }),
         };
         self.active.store(true, Ordering::Release);
@@ -2357,11 +2371,11 @@ impl PairWatch {
     ) -> Result<(), String> {
         let mut state = self.inner.lock().unwrap();
         match &mut *state {
-            PairWatchState::Ready { a, b, .. }
+            PairWatchState::Ready { case, a, b }
                 if a.account == account_a && b.account == account_b =>
             {
-                prepared_settings_match(account_a, account_b, &bag_a)?;
-                prepared_settings_match(account_b, account_a, &bag_b)?;
+                prepared_settings_match(*case, account_a, account_b, &bag_a)?;
+                prepared_settings_match(*case, account_b, account_a, &bag_b)?;
                 a.settings = bag_a;
                 b.settings = bag_b;
                 Ok(())
@@ -2371,6 +2385,31 @@ impl PairWatch {
                 a.account, b.account
             )),
             _ => Err("pair settings can only be installed on a configured ready pair".into()),
+        }
+    }
+
+    /// Bind the selected-revision bronze scimitar id so snapshot
+    /// observations can check the actual equipped weapon. Counterpart
+    /// identity is already the other configured account.
+    pub fn install_duel_weapon(&self, weapon_id: i32) -> Result<(), String> {
+        if weapon_id <= 0 {
+            return Err("Duel weapon id must come from the selected cache".into());
+        }
+        let mut state = self.inner.lock().unwrap();
+        match &mut *state {
+            PairWatchState::Ready {
+                case: PairCase::Duel,
+                a,
+                b,
+            } => {
+                a.weapon_id = weapon_id;
+                b.weapon_id = weapon_id;
+                Ok(())
+            }
+            PairWatchState::Ready { case, .. } => {
+                Err(format!("Duel weapon is not used for headed {case:?} cells"))
+            }
+            _ => Err("Duel weapon can only be installed on a configured ready pair".into()),
         }
     }
 
@@ -2424,6 +2463,7 @@ impl PairWatch {
                             a_account: account_a.to_string(),
                             b_account: account_b.to_string(),
                             witness: Box::new(witness),
+                            duel_weapon_id: a.weapon_id,
                         };
                         Ok(())
                     }
@@ -2481,26 +2521,63 @@ impl PairWatch {
         observe_flax_locked(&mut state, account, observation, session_boundary);
     }
 
+    pub fn observe_duel(
+        &self,
+        account: &str,
+        observation: DuelObservation,
+        session_boundary: bool,
+    ) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
+        }
+        let mut state = self.inner.lock().unwrap();
+        observe_duel_locked(&mut state, account, observation, session_boundary);
+    }
+
     pub fn observe_snapshot(&self, account: &str, snapshot: &GameSnapshot, session_boundary: bool) {
         if !self.active.load(Ordering::Acquire) {
             return;
         }
         let mut state = self.inner.lock().unwrap();
-        let case = match &*state {
+        let dispatch = match &*state {
             PairWatchState::Ready { case, a, b }
                 if a.account == account || b.account == account =>
             {
-                Some(*case)
+                let (peer, weapon_id) = if a.account == account {
+                    (a.peer.clone(), a.weapon_id)
+                } else {
+                    (b.peer.clone(), b.weapon_id)
+                };
+                Some((*case, peer, weapon_id))
             }
             PairWatchState::Running {
                 a_account,
                 b_account,
-                ..
-            } if a_account == account || b_account == account => None,
-            _ => return,
+                witness,
+                duel_weapon_id,
+            } if a_account == account || b_account == account => {
+                let case = match &**witness {
+                    PairRuntimeWitness::Air(_) => PairCase::Air,
+                    PairRuntimeWitness::Mule(_) => PairCase::Mule,
+                    PairRuntimeWitness::Flax(_) => PairCase::Flax,
+                    PairRuntimeWitness::Duel(_) => PairCase::Duel,
+                };
+                let peer = match &**witness {
+                    PairRuntimeWitness::Duel(pair) if a_account == account => {
+                        pair.a.partner.clone()
+                    }
+                    PairRuntimeWitness::Duel(pair) => pair.b.partner.clone(),
+                    _ => String::new(),
+                };
+                Some((case, peer, *duel_weapon_id))
+            }
+            _ => None,
+        };
+        let Some((case, peer, weapon_id)) = dispatch else {
+            return;
         };
         match case {
-            Some(PairCase::Flax) => {
+            PairCase::Flax => {
                 observe_flax_locked(
                     &mut state,
                     account,
@@ -2508,37 +2585,22 @@ impl PairWatch {
                     session_boundary,
                 );
             }
-            Some(PairCase::Air | PairCase::Mule) | None => {
-                // Running witnesses already know the case via their variant.
-                if matches!(
-                    &*state,
-                    PairWatchState::Running {
-                        witness,
-                        ..
-                    } if matches!(**witness, PairRuntimeWitness::Flax(_))
-                ) {
-                    observe_flax_locked(
-                        &mut state,
-                        account,
-                        FlaxObservation::from_snapshot(snapshot),
-                        session_boundary,
-                    );
-                } else if !matches!(
-                    &*state,
-                    PairWatchState::Ready {
-                        case: PairCase::Duel,
-                        ..
-                    }
-                ) {
-                    observe_air_locked(
-                        &mut state,
-                        account,
-                        AirObservation::from_snapshot(snapshot),
-                        session_boundary,
-                    );
-                }
+            PairCase::Air | PairCase::Mule => {
+                observe_air_locked(
+                    &mut state,
+                    account,
+                    AirObservation::from_snapshot(snapshot),
+                    session_boundary,
+                );
             }
-            Some(PairCase::Duel) => {}
+            PairCase::Duel => {
+                observe_duel_locked(
+                    &mut state,
+                    account,
+                    DuelObservation::from_snapshot(snapshot, &peer, weapon_id),
+                    session_boundary,
+                );
+            }
         }
     }
 
@@ -2583,7 +2645,8 @@ impl PairWatch {
                 a_account,
                 b_account,
                 witness,
-            } => match runtime_full_cycle(&witness) {
+                duel_weapon_id,
+            } => match runtime_terminal_claim(&witness) {
                 Ok(()) => {
                     let evidence = Arc::new(runtime_evidence(&witness));
                     *state = PairWatchState::Qualified {
@@ -2596,6 +2659,7 @@ impl PairWatch {
                         a_account,
                         b_account,
                         witness,
+                        duel_weapon_id,
                     };
                     Err(error)
                 }
@@ -2636,7 +2700,7 @@ impl PairWatch {
             PairWatchState::Running { witness, .. } => json!({
                 "phase": "running",
                 "witness": runtime_evidence(witness),
-                "qualification": runtime_full_cycle(witness).err(),
+                "qualification": runtime_terminal_claim(witness).err(),
             }),
             PairWatchState::Qualified { evidence } => json!({
                 "phase": "qualified",
@@ -2689,7 +2753,10 @@ fn slot_prepared(case: PairCase, first: bool, slot: &SlotReady) -> bool {
             )
             .is_ok()
         }),
-        PairCase::Duel => false,
+        PairCase::Duel => slot
+            .latest_duel
+            .as_ref()
+            .is_some_and(|obs| duel_prepared_current(&slot.account, obs).is_ok()),
     }
 }
 
@@ -2697,8 +2764,8 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
     if a.settings.is_empty() != b.settings.is_empty() {
         return Err("pair settings must be prepared for both slots or neither".into());
     }
-    let a_settings = freeze_slot_settings(a, &b.account)?;
-    let b_settings = freeze_slot_settings(b, &a.account)?;
+    let a_settings = freeze_slot_settings(case, a, &b.account)?;
+    let b_settings = freeze_slot_settings(case, b, &a.account)?;
     match case {
         PairCase::Air => {
             let Some(a_obs) = a.latest_air.clone() else {
@@ -2785,17 +2852,45 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             }))
         }
         PairCase::Duel => {
-            Err("headed pair core does not accept Duel; Duel stays on the existing harness".into())
+            let Some(a_obs) = a.latest_duel.clone() else {
+                return Err("pair core has no published pre-Start observation".into());
+            };
+            let Some(b_obs) = b.latest_duel.clone() else {
+                return Err("pair core has no published pre-Start observation".into());
+            };
+            duel_prepared_current(&a.account, &a_obs)?;
+            duel_prepared_current(&b.account, &b_obs)?;
+            Ok(PairRuntimeWitness::Duel(DuelPairWitness {
+                a: DuelSlotRecord::new(
+                    a.account.clone(),
+                    a.account.clone(),
+                    b.account.clone(),
+                    a_settings,
+                    a_obs,
+                ),
+                b: DuelSlotRecord::new(
+                    b.account.clone(),
+                    b.account.clone(),
+                    a.account.clone(),
+                    b_settings,
+                    b_obs,
+                ),
+            }))
         }
     }
 }
 
-fn freeze_slot_settings(slot: &SlotReady, partner: &str) -> Result<Map<String, Value>, String> {
-    prepared_settings_match(&slot.account, partner, &slot.settings)?;
+fn freeze_slot_settings(
+    case: PairCase,
+    slot: &SlotReady,
+    partner: &str,
+) -> Result<Map<String, Value>, String> {
+    prepared_settings_match(case, &slot.account, partner, &slot.settings)?;
     Ok(slot.settings.clone())
 }
 
 fn prepared_settings_match(
+    case: PairCase,
     account: &str,
     partner: &str,
     bag: &Map<String, Value>,
@@ -2803,12 +2898,22 @@ fn prepared_settings_match(
     if bag.is_empty() {
         return Ok(());
     }
-    match bag.get("partner").and_then(Value::as_str) {
-        Some(name) if account_identity_eq(name, partner) => Ok(()),
-        Some(name) => Err(format!(
-            "pair settings partner {name:?} is not the reciprocal account {partner:?}"
-        )),
-        None => Err(format!("pair settings for {account} are missing partner")),
+    match case {
+        PairCase::Duel => match bag.get("partner") {
+            Some(value) => Err(format!(
+                "Duel settings for {account} must not carry partner {value}; counterpart identity is native witness-owned"
+            )),
+            None => Ok(()),
+        },
+        PairCase::Air | PairCase::Mule | PairCase::Flax => {
+            match bag.get("partner").and_then(Value::as_str) {
+                Some(name) if account_identity_eq(name, partner) => Ok(()),
+                Some(name) => Err(format!(
+                    "pair settings partner {name:?} is not the reciprocal account {partner:?}"
+                )),
+                None => Err(format!("pair settings for {account} are missing partner")),
+            }
+        }
     }
 }
 
@@ -2840,6 +2945,7 @@ fn observe_air_locked(
             a_account,
             b_account,
             mut witness,
+            duel_weapon_id,
         } if a_account == account || b_account == account => {
             if session_boundary {
                 PairWatchState::Failed {
@@ -2856,12 +2962,13 @@ fn observe_air_locked(
                         pair.crafter.observe(observation);
                     }
                     PairRuntimeWitness::Mule(pair) => pair.mule.observe(observation),
-                    PairRuntimeWitness::Flax(_) => {}
+                    PairRuntimeWitness::Flax(_) | PairRuntimeWitness::Duel(_) => {}
                 }
                 PairWatchState::Running {
                     a_account,
                     b_account,
                     witness,
+                    duel_weapon_id,
                 }
             }
         }
@@ -2897,6 +3004,7 @@ fn observe_flax_locked(
             a_account,
             b_account,
             mut witness,
+            duel_weapon_id,
         } if a_account == account || b_account == account => {
             if session_boundary {
                 PairWatchState::Failed {
@@ -2915,6 +3023,62 @@ fn observe_flax_locked(
                     a_account,
                     b_account,
                     witness,
+                    duel_weapon_id,
+                }
+            }
+        }
+        other => other,
+    };
+}
+
+fn observe_duel_locked(
+    state: &mut PairWatchState,
+    account: &str,
+    observation: DuelObservation,
+    session_boundary: bool,
+) {
+    let current = std::mem::take(state);
+    *state = match current {
+        PairWatchState::Ready { case, mut a, mut b }
+            if a.account == account || b.account == account =>
+        {
+            if session_boundary {
+                if a.account == account {
+                    a.latest_duel = None;
+                } else {
+                    b.latest_duel = None;
+                }
+            } else if a.account == account {
+                a.latest_duel = Some(observation);
+            } else {
+                b.latest_duel = Some(observation);
+            }
+            PairWatchState::Ready { case, a, b }
+        }
+        PairWatchState::Running {
+            a_account,
+            b_account,
+            mut witness,
+            duel_weapon_id,
+        } if a_account == account || b_account == account => {
+            if session_boundary {
+                PairWatchState::Failed {
+                    error: "pair core session boundary after Start".into(),
+                    evidence: Some(runtime_evidence(&witness)),
+                }
+            } else {
+                if let PairRuntimeWitness::Duel(pair) = &mut *witness {
+                    if a_account == account {
+                        pair.a.observe(observation);
+                    } else {
+                        pair.b.observe(observation);
+                    }
+                }
+                PairWatchState::Running {
+                    a_account,
+                    b_account,
+                    witness,
+                    duel_weapon_id,
                 }
             }
         }
@@ -2927,6 +3091,19 @@ fn runtime_full_cycle(witness: &PairRuntimeWitness) -> Result<(), String> {
         PairRuntimeWitness::Air(pair) => pair.qualify_full_cycle().map(|_| ()),
         PairRuntimeWitness::Mule(pair) => pair.qualify_full_cycle().map(|_| ()),
         PairRuntimeWitness::Flax(pair) => pair.qualify_full_cycle().map(|_| ()),
+        PairRuntimeWitness::Duel(pair) => pair.qualify_full_cycle().map(|_| ()),
+    }
+}
+
+fn runtime_terminal_claim(witness: &PairRuntimeWitness) -> Result<(), String> {
+    match witness {
+        PairRuntimeWitness::Air(_) | PairRuntimeWitness::Mule(_) | PairRuntimeWitness::Flax(_) => {
+            runtime_full_cycle(witness)
+        }
+        PairRuntimeWitness::Duel(pair) => pair
+            .qualify_full_cycle()
+            .map(|_| ())
+            .or_else(|_| pair.qualify_supported().map(|_| ())),
     }
 }
 
@@ -2952,6 +3129,14 @@ fn runtime_evidence(witness: &PairRuntimeWitness) -> Value {
             "full": pair.qualify_full_cycle().ok(),
             "runner": pair.runner,
             "spinner": pair.spinner,
+        }),
+        PairRuntimeWitness::Duel(pair) => json!({
+            "case": PairCase::Duel,
+            "claim": pair.qualify_full_cycle().ok().or_else(|| pair.qualify_supported().ok()),
+            "supported": pair.qualify_supported().ok(),
+            "full": pair.qualify_full_cycle().ok(),
+            "a": pair.a,
+            "b": pair.b,
         }),
     }
 }

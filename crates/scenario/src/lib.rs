@@ -484,6 +484,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nature_crafter_air" => Some(nature_crafter_air_scenario()),
         "mule_crafter_air" => Some(mule_crafter_air_scenario()),
         "flax_runner" => Some(flax_runner_scenario()),
+        "duel_arena" => Some(duel_arena_scenario()),
         _ => None,
     }
 }
@@ -602,6 +603,7 @@ pub fn names() -> Vec<&'static str> {
         "nature_crafter_air",
         "mule_crafter_air",
         "flax_runner",
+        "duel_arena",
     ]
 }
 
@@ -4620,6 +4622,12 @@ const FLAX_FIELD: WorldTile = WorldTile {
 const FLAX_MEET: WorldTile = WorldTile {
     x: 2719,
     z: 3471,
+    level: 0,
+};
+/// Duel Arena challenge-area seed. Same stand as the shared pair witness.
+const DUEL_CHALLENGE: WorldTile = WorldTile {
+    x: 3368,
+    z: 3274,
     level: 0,
 };
 
@@ -13856,6 +13864,7 @@ enum PairCompanionKind {
     AirRunner,
     MuleMule,
     FlaxSpinner,
+    DuelPeer,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -13870,6 +13879,8 @@ enum PairPrepStage {
     CloseBank,
     FirstLoad,
     WaitReady,
+    Wear,
+    WaitWear,
     Idle,
 }
 
@@ -13992,6 +14003,13 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                         cheat(c, "setstat crafting 1");
                         cheat(c, &tele_args(FLAX_MEET.level, FLAX_MEET.x, FLAX_MEET.z));
                     }
+                    PairCompanionKind::DuelPeer => {
+                        cheat(c, "give bronze_scimitar 1");
+                        cheat(
+                            c,
+                            &tele_args(DUEL_CHALLENGE.level, DUEL_CHALLENGE.x, DUEL_CHALLENGE.z),
+                        );
+                    }
                 }
                 slot.seed_sent = true;
                 slot.last_action = now;
@@ -14011,6 +14029,11 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                     && pair_inv_id(&snap, BOW_STRING_ID) == 0
                 {
                     slot.stage = PairPrepStage::Idle;
+                }
+            }
+            PairCompanionKind::DuelPeer => {
+                if pair_near(&snap, DUEL_CHALLENGE, 8) && pair_inv_any(&snap) {
+                    slot.stage = PairPrepStage::Wear;
                 }
             }
         },
@@ -14052,7 +14075,7 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                 let n = match slot.kind {
                     PairCompanionKind::AirRunner => PAIR_AIR_FIRST_LOAD,
                     PairCompanionKind::MuleMule => PAIR_MULE_FIRST_LOAD,
-                    PairCompanionKind::FlaxSpinner => 0,
+                    PairCompanionKind::FlaxSpinner | PairCompanionKind::DuelPeer => 0,
                 };
                 cheat(c, &format!("give blankrune {n}"));
                 cheat(
@@ -14072,13 +14095,32 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             let want = match slot.kind {
                 PairCompanionKind::AirRunner => PAIR_AIR_FIRST_LOAD,
                 PairCompanionKind::MuleMule => PAIR_MULE_FIRST_LOAD,
-                PairCompanionKind::FlaxSpinner => 0,
+                PairCompanionKind::FlaxSpinner | PairCompanionKind::DuelPeer => 0,
             };
             if pair_near(&snap, MULECRAFTER_AIR_RUINS, 8)
                 && pair_inv_id(&snap, RUNE_ESSENCE_ID) >= want
                 && snap.bank_component_id() < 0
             {
                 slot.stage = PairPrepStage::Idle;
+            }
+        }
+        PairPrepStage::Wear => {
+            if !send_ok(slot, now) {
+                return;
+            }
+            pair_wear_first_inv(c, &snap);
+            slot.last_action = now;
+            slot.stage = PairPrepStage::WaitWear;
+        }
+        PairPrepStage::WaitWear => {
+            if pair_near(&snap, DUEL_CHALLENGE, 8)
+                && pair_weapon_equipped(&snap)
+                && snap.modals().main < 0
+            {
+                slot.stage = PairPrepStage::Idle;
+            } else if send_ok(slot, now) {
+                pair_wear_first_inv(c, &snap);
+                slot.last_action = now;
             }
         }
         PairPrepStage::Idle => {}
@@ -14111,6 +14153,25 @@ fn pair_inv_id(snap: &GameSnapshot, id: i32) -> i32 {
         .filter(|(item_id, _)| *item_id == id)
         .map(|(_, count)| *count)
         .sum()
+}
+
+fn pair_inv_any(snap: &GameSnapshot) -> bool {
+    snap.inv().iter().any(|(_, count)| *count > 0)
+}
+
+fn pair_weapon_equipped(snap: &GameSnapshot) -> bool {
+    snap.equipment()
+        .iter()
+        .any(|item| item.count > 0 && item.def.id > 0)
+}
+
+fn pair_wear_first_inv(c: &mut Client, snap: &GameSnapshot) {
+    let Some((id, _)) = snap.inv().iter().copied().find(|(_, count)| *count > 0) else {
+        return;
+    };
+    match Interactions::new(snap, c).wear(id) {
+        SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+    }
 }
 
 fn pair_bank_id(snap: &GameSnapshot, id: i32) -> i32 {
@@ -14356,6 +14417,66 @@ fn flax_runner_scenario() -> Scenario {
         proof: Proof::Stat { id: 16, min: 0 },
         companions: vec![pair_companion(PairCompanionKind::FlaxSpinner)],
         settings: pair_watch_settings("flax_runner", "FlaxRunner"),
+    }
+}
+
+/// DuelArena both actors: bronze scimitar at the challenge anchor, wear it,
+/// then shared Start. Counterpart identity is native witness-owned; the
+/// frozen script has target stats and no partner setting.
+fn duel_arena_scenario() -> Scenario {
+    let dest = DUEL_CHALLENGE;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Duel bronze scimitar at the challenge anchor before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "give bronze_scimitar 1");
+                cheat(c, &tele_args(dest.level, dest.x, dest.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm bronze scimitar in pack before Start",
+        Proof::Item {
+            name: "Bronze scimitar",
+            count: 1,
+        },
+    ));
+    steps.push(Step {
+        name: "wear the seeded bronze scimitar before Start",
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snap| {
+                pair_wear_first_inv(c, snap);
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemAtMost {
+                name: "Bronze scimitar",
+                count: 0,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    Scenario {
+        name: "duel_arena",
+        seed: pair_fleet_seed(),
+        steps,
+        proof: Proof::Stat { id: 16, min: 0 },
+        companions: vec![pair_companion(PairCompanionKind::DuelPeer)],
+        settings: pair_watch_settings("duel_arena", "DuelArena"),
     }
 }
 
@@ -14798,6 +14919,7 @@ mod tests {
                 "nature_crafter_air",
                 "mule_crafter_air",
                 "flax_runner",
+                "duel_arena",
             ]
         );
     }
@@ -20198,6 +20320,15 @@ mod tests {
                 WorldTile {
                     x: 2741,
                     z: 3444,
+                    level: 0,
+                },
+            ),
+            (
+                "duel_arena",
+                "DuelArena",
+                WorldTile {
+                    x: 3368,
+                    z: 3274,
                     level: 0,
                 },
             ),

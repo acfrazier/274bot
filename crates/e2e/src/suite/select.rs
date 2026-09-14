@@ -572,7 +572,13 @@ mod tests {
             .map(|(id, _)| id.as_str())
             .collect();
         assert!(unavailable.contains(&"banksorter-live"), "{unavailable:?}");
-        assert!(unavailable.contains(&"duel_arena"));
+        assert!(
+            !unavailable.contains(&"duel_arena"),
+            "headed Duel is runnable unvetted native coverage, not missing_adapter: {unavailable:?}"
+        );
+        let duel = manifest.case("duel_arena").expect("duel_arena row");
+        assert!(duel.is_runnable());
+        assert_eq!(duel.pair_case.as_deref(), Some("duel"));
         for (id, reason) in &selection.unavailable {
             assert!(!reason.trim().is_empty(), "{id}");
             let case = manifest.case(id).unwrap();
