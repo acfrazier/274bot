@@ -12769,6 +12769,10 @@ const NEEDLE_ID: i32 = 1733;
 const THREAD_ID: i32 = 1734;
 const LEATHER_GLOVES_ID: i32 = 1059;
 const HARDLEATHER_BODY_ID: i32 = 1131;
+const LEATHER_CERT_ID: i32 = 1742;
+const HARD_LEATHER_CERT_ID: i32 = 1744;
+const LOGS_CERT_ID: i32 = 1512;
+const OAK_LOGS_CERT_ID: i32 = 1522;
 const OAK_LOGS_ID: i32 = 1521;
 const TINDERBOX_ID: i32 = 590;
 
@@ -12868,7 +12872,18 @@ fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> 
                     snapshot
                         .bank_side()
                         .into_iter()
-                        .filter(|item| item.def.id == seed.unnoted_id)
+                        .filter(|item| {
+                            // Bank-side rows are the pack: bulk fixtures sit
+                            // there as certificates, not as unnoted bases.
+                            item.def.id == inv_id
+                                && match seed.note_id {
+                                    Some(_) => {
+                                        item.def.noted
+                                            && item.def.certificate_link == seed.unnoted_id
+                                    }
+                                    None => !item.def.noted,
+                                }
+                        })
                         .filter_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
                         .any(|(item, op)| {
                             matches!(
@@ -14024,9 +14039,9 @@ fn leather_crafter_variant(
     let bank = AL_KHARID_BANK;
     let mut steps = script_live_seed_steps();
     let leather_note = if leather_alias == "leather" {
-        1742
+        LEATHER_CERT_ID
     } else {
-        1744
+        HARD_LEATHER_CERT_ID
     };
     steps.push(native_bank_seed(
         "seed Crafting, banked needle/thread/leather, and tele to Al-Kharid before Start",
@@ -14332,7 +14347,11 @@ fn firemaker_variant(
     };
     let bank = VARROCK_EAST_BANK;
     let mut steps = script_live_seed_steps();
-    let log_note = if log_alias == "logs" { 1512 } else { 1522 };
+    let log_note = if log_alias == "logs" {
+        LOGS_CERT_ID
+    } else {
+        OAK_LOGS_CERT_ID
+    };
     steps.push(native_bank_seed(
         "seed Firemaking, banked tinderbox/logs, and tele to Varrock East before Start",
         bank,
@@ -15611,6 +15630,505 @@ mod tests {
                 ..seed
             }
         ));
+        objs[2].certtemplate = 0;
+        objs[2].stackable = false;
+        assert!(!native_seed_definition_valid(&objs, seed));
+        objs[2].stackable = true;
+        objs[1].id = 99;
+        assert!(!native_seed_definition_valid(&objs, seed));
+        objs[1].id = 1;
+        objs[1].certlink = 2;
+        assert!(!native_seed_definition_valid(&objs, seed));
+        objs[1].certlink = -1;
+        objs[1].stackable = true;
+        assert!(native_seed_definition_valid(
+            &objs,
+            NativeSeed {
+                note_alias: None,
+                note_id: None,
+                quantity: 100,
+                ..seed
+            }
+        ));
+        objs[1].stackable = false;
+        assert!(!native_seed_definition_valid(
+            &objs,
+            NativeSeed {
+                note_alias: None,
+                note_id: None,
+                quantity: 28,
+                ..seed
+            }
+        ));
+        assert!(native_seed_definition_valid(
+            &objs,
+            NativeSeed {
+                note_alias: None,
+                note_id: None,
+                quantity: 1,
+                ..seed
+            }
+        ));
+    }
+
+    fn native_seed_client() -> Client {
+        use client::client::ClientConfig;
+        use client::dash3d::ClientPlayer;
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        plant_production_objs(&mut client);
+        client
+    }
+
+    fn plant_obj(client: &mut Client, obj: client::config::ObjType) {
+        let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        let id = obj.id as usize;
+        if cache.objs.len() <= id {
+            cache
+                .objs
+                .resize(id + 1, client::config::ObjType::default());
+        }
+        cache.objs[id] = obj;
+    }
+
+    fn unnoted_obj(id: i32, stackable: bool) -> client::config::ObjType {
+        client::config::ObjType {
+            id,
+            stackable,
+            certlink: -1,
+            certtemplate: -1,
+            ..Default::default()
+        }
+    }
+
+    fn certificate_obj(note_id: i32, base_id: i32) -> client::config::ObjType {
+        client::config::ObjType {
+            id: note_id,
+            stackable: true,
+            certlink: base_id,
+            certtemplate: 0,
+            ..Default::default()
+        }
+    }
+
+    fn plant_production_objs(client: &mut Client) {
+        for obj in [
+            unnoted_obj(HAMMER_ID, false),
+            unnoted_obj(BRONZE_BAR_ID, false),
+            certificate_obj(BRONZE_BAR_CERT_ID, BRONZE_BAR_ID),
+            unnoted_obj(NEEDLE_ID, true),
+            unnoted_obj(THREAD_ID, true),
+            unnoted_obj(SOFT_LEATHER_ID, false),
+            certificate_obj(LEATHER_CERT_ID, SOFT_LEATHER_ID),
+            unnoted_obj(HARD_LEATHER_ID, false),
+            certificate_obj(HARD_LEATHER_CERT_ID, HARD_LEATHER_ID),
+            unnoted_obj(TINDERBOX_ID, false),
+            unnoted_obj(LOGS_ID, false),
+            certificate_obj(LOGS_CERT_ID, LOGS_ID),
+            unnoted_obj(OAK_LOGS_ID, false),
+            certificate_obj(OAK_LOGS_CERT_ID, OAK_LOGS_ID),
+        ] {
+            plant_obj(client, obj);
+        }
+    }
+
+    fn seed_step(scenario: &Scenario) -> &Step {
+        scenario
+            .steps
+            .iter()
+            .find(|step| {
+                matches!(step.kind, StepKind::Perform { .. })
+                    && (step.name.starts_with("seed Smithing")
+                        || step.name.starts_with("seed Crafting")
+                        || step.name.starts_with("seed Firemaking"))
+            })
+            .unwrap_or_else(|| panic!("{} has a native inventory seed", scenario.name))
+    }
+
+    fn send_seed(name: &str, client: &mut Client) -> (bool, String) {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        let step = seed_step(&scenario);
+        let StepKind::Perform { send } = &step.kind else {
+            panic!("{name} seed must be a Perform step");
+        };
+        let snapshot = GameSnapshot::new();
+        let before = client.out.pos;
+        let ok = send(client, &snapshot);
+        let written =
+            String::from_utf8_lossy(&client.out.data()[before..client.out.pos]).into_owned();
+        (ok, written)
+    }
+
+    fn attach_loopback(client: &mut Client) -> (std::net::TcpListener, std::net::TcpStream) {
+        use client::io::{ClientStream, ServerProt};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let (peer, _) = listener.accept().unwrap();
+        client.bump_gens(ServerProt::UPDATE_INV_FULL);
+        (listener, peer)
+    }
+
+    fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
+        use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+        client.set_iface(
+            700,
+            IfType {
+                id: 700,
+                layer_id: 700,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![701]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            701,
+            IfType {
+                id: 701,
+                layer_id: 700,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Deposit All".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            701,
+            IfTypeMut {
+                link_obj_type: Some(vec![id + 1, 0]),
+                link_obj_number: Some(vec![count, 0]),
+                ..Default::default()
+            },
+        );
+        client.side_modal_id = 700;
+    }
+
+    fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
+        scenario
+            .steps
+            .iter()
+            .find(|step| {
+                matches!(
+                    (&step.kind, &step.wait.arm),
+                    (
+                        StepKind::Repeat { .. },
+                        Proof::BankItemId {
+                            id: wait_id,
+                            count: wait_count
+                        }
+                    ) if *wait_id == id && *wait_count == count
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} deposits obj {id} x{count} through a Repeat wait",
+                    scenario.name
+                )
+            })
+    }
+
+    fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) -> (bool, i32) {
+        use api::snapshot::Family;
+        let mut client = native_seed_client();
+        plant_bank_side(&mut client, side_id, side_count);
+        let _peer = attach_loopback(&mut client);
+        let mut snapshot = GameSnapshot::new();
+        assert!(snapshot.rebuild_family(&client, Family::BankSide));
+        assert!(
+            snapshot.rebuild(&client) || !snapshot.bank_side().is_empty(),
+            "bank-side rows must rebuild from the planted deposit component"
+        );
+        if snapshot.bank_side().is_empty() {
+            client.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+            assert!(snapshot.rebuild_family(&client, Family::BankSide));
+        }
+        assert_eq!(
+            snapshot
+                .bank_side()
+                .iter()
+                .map(|item| item.def.id)
+                .collect::<Vec<_>>(),
+            vec![side_id],
+            "bank-side must expose the planted inv row"
+        );
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        let step = deposit_step(&scenario, id, count);
+        let StepKind::Repeat { send } = &step.kind else {
+            panic!("{name} deposit must be a Repeat step");
+        };
+        let ok = send(&mut client, &snapshot);
+        (ok, client.menu_param_a.first().copied().unwrap_or(-1))
+    }
+
+    #[test]
+    fn production_native_seeds_give_verified_certificates_through_real_send() {
+        for (name, expected, forbidden) in [
+            (
+                "smithing_bot",
+                &["give hammer 1", "give cert_bronze_bar 28"][..],
+                &["givebank", "give bronze_bar 28", "bronze_bar_cert"][..],
+            ),
+            (
+                "smithing_bot_platebody",
+                &["give hammer 1", "give cert_bronze_bar 30"],
+                &["givebank", "give cert_bronze_bar 28", "give bronze_bar 30"],
+            ),
+            (
+                "leather_crafter",
+                &["give needle 1", "give thread 100", "give cert_leather 28"],
+                &[
+                    "givebank",
+                    "give leather 28",
+                    "leather_cert",
+                    "cert_hard_leather",
+                ],
+            ),
+            (
+                "leather_crafter_hard_body",
+                &[
+                    "give needle 1",
+                    "give thread 100",
+                    "give cert_hard_leather 28",
+                ],
+                &["givebank", "give hard_leather 28", "give cert_leather 28"],
+            ),
+            (
+                "firemaker",
+                &["give tinderbox 1", "give cert_logs 28"],
+                &["givebank", "give logs 28", "logs_cert", "cert_oak_logs"],
+            ),
+            (
+                "firemaker_oak",
+                &["give tinderbox 1", "give cert_oak_logs 28"],
+                &["givebank", "give oak_logs 28", "give cert_logs 28"],
+            ),
+        ] {
+            let mut client = native_seed_client();
+            let (ok, written) = send_seed(name, &mut client);
+            assert!(
+                ok,
+                "{name} seed must accept loaded certificate defs: {written}"
+            );
+            for needle in expected {
+                assert!(
+                    written.contains(needle),
+                    "{name} must send {needle}: {written}"
+                );
+            }
+            for needle in forbidden {
+                assert!(
+                    !written.contains(needle),
+                    "{name} must not send {needle}: {written}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn production_native_seed_send_rejects_broken_certificate_definitions() {
+        let mut client = native_seed_client();
+        {
+            let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+            cache.objs[BRONZE_BAR_CERT_ID as usize].certlink = 0;
+        }
+        let (ok, written) = send_seed("smithing_bot", &mut client);
+        assert!(!ok, "wrong certlink must fail closed: {written}");
+        assert!(
+            !written.contains("give "),
+            "rejected seed must not send give: {written}"
+        );
+
+        let mut client = native_seed_client();
+        {
+            let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+            cache.objs[BRONZE_BAR_CERT_ID as usize].certtemplate = -1;
+        }
+        assert!(!send_seed("smithing_bot", &mut client).0);
+
+        let mut client = native_seed_client();
+        {
+            let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+            cache.objs[BRONZE_BAR_CERT_ID as usize].stackable = false;
+        }
+        assert!(!send_seed("smithing_bot", &mut client).0);
+
+        let mut client = native_seed_client();
+        {
+            let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+            cache.objs[HARD_LEATHER_CERT_ID as usize].certlink = SOFT_LEATHER_ID;
+        }
+        assert!(!send_seed("leather_crafter_hard_body", &mut client).0);
+    }
+
+    #[test]
+    fn production_native_deposit_dispatches_certificate_rows_by_inv_id() {
+        let (ok, dispatched) =
+            send_deposit("smithing_bot", BRONZE_BAR_ID, 28, BRONZE_BAR_CERT_ID, 28);
+        assert!(
+            ok,
+            "noted bronze bars must deposit from the certificate row"
+        );
+        assert_eq!(
+            dispatched, BRONZE_BAR_CERT_ID,
+            "Deposit All must fire on the note inv id, not the unnoted base"
+        );
+
+        let (ok, _) = send_deposit("smithing_bot", BRONZE_BAR_ID, 28, BRONZE_BAR_ID, 28);
+        assert!(
+            !ok,
+            "unnoted bronze bars on bank-side must not satisfy the noted seed"
+        );
+
+        let (ok, dispatched) = send_deposit("smithing_bot", HAMMER_ID, 1, HAMMER_ID, 1);
+        assert!(ok, "single unnoted hammer still deposits as itself");
+        assert_eq!(dispatched, HAMMER_ID);
+
+        let (ok, dispatched) = send_deposit(
+            "leather_crafter_hard_body",
+            HARD_LEATHER_ID,
+            28,
+            HARD_LEATHER_CERT_ID,
+            28,
+        );
+        assert!(ok, "hard leather must deposit cert_hard_leather");
+        assert_eq!(dispatched, HARD_LEATHER_CERT_ID);
+
+        let (ok, _) = send_deposit(
+            "leather_crafter_hard_body",
+            HARD_LEATHER_ID,
+            28,
+            LEATHER_CERT_ID,
+            28,
+        );
+        assert!(
+            !ok,
+            "soft leather certificates must not seed the hard variant"
+        );
+
+        let (ok, dispatched) = send_deposit("firemaker_oak", OAK_LOGS_ID, 28, OAK_LOGS_CERT_ID, 28);
+        assert!(ok, "oak logs must deposit cert_oak_logs");
+        assert_eq!(dispatched, OAK_LOGS_CERT_ID);
+
+        let (ok, dispatched) = send_deposit(
+            "smithing_bot_platebody",
+            BRONZE_BAR_ID,
+            30,
+            BRONZE_BAR_CERT_ID,
+            30,
+        );
+        assert!(ok, "platebody must deposit the 30-bar certificate stack");
+        assert_eq!(dispatched, BRONZE_BAR_CERT_ID);
+    }
+
+    #[test]
+    fn production_native_seed_proofs_bound_exact_counts_before_start() {
+        for (name, note_id, note_count, unnoted_id) in [
+            ("smithing_bot", BRONZE_BAR_CERT_ID, 28, BRONZE_BAR_ID),
+            (
+                "smithing_bot_platebody",
+                BRONZE_BAR_CERT_ID,
+                30,
+                BRONZE_BAR_ID,
+            ),
+            ("leather_crafter", LEATHER_CERT_ID, 28, SOFT_LEATHER_ID),
+            (
+                "leather_crafter_hard_body",
+                HARD_LEATHER_CERT_ID,
+                28,
+                HARD_LEATHER_ID,
+            ),
+            ("firemaker", LOGS_CERT_ID, 28, LOGS_ID),
+            ("firemaker_oak", OAK_LOGS_CERT_ID, 28, OAK_LOGS_ID),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name} starts a script"));
+            let before = &scenario.steps[..start];
+            let seed_at = before
+                .iter()
+                .position(|step| std::ptr::eq(step, seed_step(&scenario)))
+                .unwrap();
+            let deposit_at = before
+                .iter()
+                .position(|step| {
+                    matches!(
+                        (&step.kind, &step.wait.arm),
+                        (
+                            StepKind::Repeat { .. },
+                            Proof::BankItemId { id, count }
+                        ) if *id == unnoted_id && *count == note_count
+                    )
+                })
+                .unwrap_or_else(|| panic!("{name} deposits unnoted {unnoted_id} x{note_count}"));
+            let close_at = before
+                .iter()
+                .position(|step| matches!(step.wait.arm, Proof::BankClosed))
+                .unwrap_or_else(|| panic!("{name} closes the seed bank"));
+            assert!(seed_at < deposit_at, "{name} gives before deposit");
+            assert!(deposit_at < close_at, "{name} deposits before close");
+            let given = before[seed_at + 1..deposit_at]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(
+                given.contains(&Proof::ItemId {
+                    id: note_id,
+                    count: note_count
+                }),
+                "{name} must prove the given note count"
+            );
+            assert!(
+                given.contains(&Proof::ItemIdAtMost {
+                    id: note_id,
+                    count: note_count
+                }),
+                "{name} must bound the given note count"
+            );
+            let after = before[deposit_at + 1..close_at]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(
+                after.contains(&Proof::BankItemId {
+                    id: unnoted_id,
+                    count: note_count
+                }),
+                "{name} must prove the unnoted bank count"
+            );
+            assert!(
+                after.contains(&Proof::BankItemIdAtMost {
+                    id: unnoted_id,
+                    count: note_count
+                }),
+                "{name} must bound the unnoted bank count"
+            );
+            assert!(
+                after.contains(&Proof::ItemIdAtMost {
+                    id: note_id,
+                    count: 0
+                }),
+                "{name} must prove note removal from pack"
+            );
+            assert!(
+                after.contains(&Proof::BankItemIdAtMost {
+                    id: note_id,
+                    count: 0
+                }),
+                "{name} must prove no noted bank remainder"
+            );
+        }
     }
 
     #[test]
