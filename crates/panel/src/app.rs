@@ -1344,25 +1344,30 @@ fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, l
 /// Re-arm a completed single-actor terminal capture for a later native-core
 /// decision, pairing that failure with the current scene instead of the old image.
 fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
-    let Some(actor) = session.focused_name() else {
-        return;
-    };
-    let json = {
+    let current = (|| {
+        let actor = session
+            .focused_name()
+            .ok_or_else(|| "native failure capture has no focused actor".to_string())?;
         let states = session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&actor) else {
-            return;
-        };
+        let (snapshot, _) = states
+            .get(&actor)
+            .ok_or_else(|| "native failure capture has no current snapshot".to_string())?;
         if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return;
+            return Err("native failure capture requires a current ingame scene-2 snapshot".into());
         }
-        actor_snapshot_json(&actor, snapshot).ok()
-    };
-    let Some(json) = json else {
-        return;
-    };
+        actor_snapshot_json(&actor, snapshot)
+    })();
     let mut shots = shots.lock().unwrap();
-    if matches!(shots.status(label), ShotStatus::Written) {
-        shots.enqueue(label.to_string(), json);
+    match current {
+        Ok(json) if matches!(shots.status(label), ShotStatus::Written) => {
+            shots.enqueue(label.to_string(), json);
+        }
+        Ok(_) => {}
+        Err(error) => {
+            // The earlier image remains historical evidence on disk, but may
+            // not discharge the current failure capture when its scene is gone.
+            shots.fail_labels(&[label.to_string()], &error);
+        }
     }
 }
 
@@ -7764,6 +7769,29 @@ mod tests {
             Ok(false),
             "exit is released only after the current capture is written"
         );
+    }
+
+    #[test]
+    fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let mut client = script_client();
+        client.scene_state = 1;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots.lock().unwrap().mark_written("thiever");
+        super::enqueue_current_terminal_shot(&session, &shots, "thiever");
+        assert!(matches!(
+            shots.lock().unwrap().status("thiever"),
+            ShotStatus::Failed(error) if error.contains("scene-2")
+        ));
+        assert!(shots.lock().unwrap().requests.is_empty());
     }
 
     #[test]
