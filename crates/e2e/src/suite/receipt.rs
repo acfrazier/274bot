@@ -895,6 +895,12 @@ fn validate_external(
             exit_text(exit_code)
         )),
         (Some(pass), None) => {
+            if pass.name != live {
+                return shared(format!(
+                    "PASS receipt names {:?}, expected {live:?}",
+                    pass.name
+                ));
+            }
             if exit_code != Some(0) {
                 return shared(format!(
                     "{live} printed a PASS receipt but exited {}",
@@ -917,6 +923,12 @@ fn validate_external(
             external_capture_verdict(case, captures, &account)
         }
         (None, Some(fail)) => {
+            if fail.name != live {
+                return shared(format!(
+                    "FAIL receipt names {:?}, expected {live:?}",
+                    fail.name
+                ));
+            }
             if exit_code == Some(0) {
                 return shared(format!("{live} printed a FAIL receipt but exited 0"));
             }
@@ -1111,14 +1123,17 @@ fn qualified_external_account(
     };
     let initial = counters("initial")?;
     let last = counters("final")?;
-    let initial_bones = initial
-        .get("bones")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let final_bones = last
-        .get("bones")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
+    let counter = |section: &str, fields: &serde_json::Map<String, Value>, key: &str| {
+        fields
+            .get(key)
+            .and_then(Value::as_i64)
+            .filter(|value| *value >= 0)
+            .ok_or_else(|| {
+                format!("external receipt {section}.{key} must be a nonnegative integer")
+            })
+    };
+    let initial_bones = counter("initial", initial, "bones")?;
+    let final_bones = counter("final", last, "bones")?;
     // The prerequisite is the fixture's own 25 carried bones, not merely "some" starting count.
     require(
         initial_bones == BONES_COUNT as i64,
@@ -1131,14 +1146,8 @@ fn qualified_external_account(
         final_bones < initial_bones,
         format!("external receipt did not consume bones ({final_bones} of {initial_bones})"),
     )?;
-    let initial_xp = initial
-        .get("prayer_xp")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let final_xp = last
-        .get("prayer_xp")
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
+    let initial_xp = counter("initial", initial, "prayer_xp")?;
+    let final_xp = counter("final", last, "prayer_xp")?;
     require(
         final_xp > initial_xp,
         format!("external receipt gained no Prayer xp ({final_xp} of {initial_xp})"),
@@ -1561,6 +1570,85 @@ mod tests {
                 )
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn external_receipt_requires_real_counters() {
+        let case = external_case();
+        let source = bound_source(host_play::external_loader::FROZEN_SHA256);
+        let receipt = qualified_external_receipt("alice", &source.sha256);
+        let capture = terminal_capture("alice");
+        for (section, key) in [
+            ("initial", "bones"),
+            ("final", "bones"),
+            ("initial", "prayer_xp"),
+            ("final", "prayer_xp"),
+        ] {
+            for value in [
+                None,
+                Some(Value::Null),
+                Some(serde_json::json!("0")),
+                Some(serde_json::json!(-1)),
+            ] {
+                let mut broken = receipt.clone();
+                let fields = broken[section].as_object_mut().unwrap();
+                match &value {
+                    Some(value) => {
+                        fields.insert(key.into(), value.clone());
+                    }
+                    None => {
+                        fields.remove(key);
+                    }
+                }
+                let parsed = parse(&external_output(&broken, "PASS"));
+                assert!(
+                    matches!(
+                        super::validate(&case, &parsed, Some(0), &[capture.clone()], Some(&source)),
+                        Verdict::SharedFailure {
+                            kind: "receipt",
+                            ..
+                        }
+                    ),
+                    "accepted {section}.{key}={value:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn external_receipt_requires_the_terminal_case_name() {
+        let case = external_case();
+        let source = bound_source(host_play::external_loader::FROZEN_SHA256);
+        for (terminal, receipt, exit) in [
+            (
+                "PASS",
+                qualified_external_receipt("alice", &source.sha256),
+                0,
+            ),
+            ("FAIL", failed_external_receipt("alice"), 1),
+        ] {
+            let output = external_output(&receipt, terminal).replace(
+                &format!("{terminal}: live script_external_loader"),
+                &format!("{terminal}: live script_thiever"),
+            );
+            let parsed = parse(&output);
+            assert!(
+                matches!(
+                    super::validate(
+                        &case,
+                        &parsed,
+                        Some(exit),
+                        &[terminal_capture("alice")],
+                        Some(&source)
+                    ),
+                    Verdict::SharedFailure {
+                        kind: "receipt",
+                        ..
+                    }
+                ),
+                "accepted wrong {terminal} name"
+            );
         }
     }
 
