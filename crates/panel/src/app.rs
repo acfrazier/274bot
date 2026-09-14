@@ -2504,9 +2504,24 @@ fn script_section(ui: &Ui, session: &mut Session) {
     let name = session
         .script_sel
         .as_ref()
-        .map(|sel| sel.label())
+        .map(|sel| match sel {
+            script::ScriptSel::Loaded(source, identity) => session
+                .js
+                .get(*source, identity)
+                .map(|card| card.name.clone())
+                .unwrap_or_else(|| {
+                    std::path::Path::new(identity)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| identity.clone())
+                }),
+            script::ScriptSel::Compiled(_) => sel.label(),
+        })
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
+    if let Some(sel) = &session.script_sel {
+        ui.set_item_tooltip(sel.label());
+    }
     if session.heading_is_pending() {
         ui.same_line();
         ui.text_disabled("(pending)");
@@ -2526,9 +2541,8 @@ fn script_section(ui: &Ui, session: &mut Session) {
             ui.text_disabled(line);
         }
     }
-    ui.same_line();
     let avail = ui.content_region_avail()[0];
-    let (w, stack) = button_row_layout(avail, 2);
+    let (w, stack) = button_row_layout(avail, 3);
     {
         let _browse = if active {
             Some(ui.begin_disabled())
@@ -2556,6 +2570,13 @@ fn script_section(ui: &Ui, session: &mut Session) {
         }
         ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
     }
+    if !stack {
+        gap_line(ui);
+    }
+    if ui.button_with_size("Reload", [w, 0.0]) {
+        let _ = session.script_reload_clicked();
+    }
+    ui.set_item_tooltip("hash source and supported siblings; unchanged skips transpile");
 
     let (sw, sstack) = button_row_layout(ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
@@ -2594,16 +2615,6 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.script_stop();
         }
     }
-    if !sstack {
-        gap_line(ui);
-    }
-    {
-        if ui.button_with_size("Reload", [sw, 0.0]) {
-            let _ = session.script_reload_clicked();
-        }
-        ui.set_item_tooltip("hash source and supported siblings; unchanged skips transpile");
-    }
-
     let status = script_status_text(state);
     match session.focused_script_last_error() {
         Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
