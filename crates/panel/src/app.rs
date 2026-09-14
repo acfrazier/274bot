@@ -1212,10 +1212,17 @@ fn pair_shot_labels(base: &str, a: &str, b: &str) -> [String; 2] {
     [format!("{base}-{a}"), format!("{base}-{b}")]
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static ACTOR_SNAPSHOT_SERIALIZATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 fn actor_snapshot_json(
     actor: &str,
     snapshot: &api::snapshot::GameSnapshot,
 ) -> Result<String, String> {
+    #[cfg(test)]
+    ACTOR_SNAPSHOT_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
     let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
     if let Some(object) = value.as_object_mut() {
         object.insert("actor".into(), serde_json::Value::String(actor.to_string()));
@@ -5348,8 +5355,20 @@ fn pump_shots(state: &mut PanelState) -> usize {
     if !hold {
         drive_pair_capture_focus(state);
         let focused = state.session.focused_name();
-        let ready_json = focused
-            .as_deref()
+        // Rebuild current scene2 JSON only for the pending actor-tagged job.
+        // Ordinary focused frames and untagged promote must not serialize.
+        let pending_actor_is_focused = focused.as_deref().is_some_and(|actor| {
+            state
+                .shot_state
+                .lock()
+                .unwrap()
+                .pending_actor_request()
+                .and_then(|request| request.actor.as_deref())
+                == Some(actor)
+        });
+        let ready_json = pending_actor_is_focused
+            .then(|| focused.as_deref())
+            .flatten()
             .and_then(|actor| pair_actor_capture_ready(state, actor));
         let presented = ready_json.is_some().then(|| focused.clone()).flatten();
         let mut shots = state.shot_state.lock().unwrap();
@@ -7771,6 +7790,49 @@ mod tests {
             shots.requests[0].snapshot_json,
             "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}"
         );
+    }
+
+    fn actor_snapshot_serialization_count() -> u64 {
+        super::ACTOR_SNAPSHOT_SERIALIZATIONS.with(|count| count.get())
+    }
+
+    #[test]
+    fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
+        let mut state = PanelState::default();
+        state.session.slots.insert("alice".into(), dummy_slot());
+        state.session.focus.lock().unwrap().focused = Some("alice".into());
+        insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
+        state.last_upload = Some(("alice".into(), 1));
+
+        let before = actor_snapshot_serialization_count();
+        assert_eq!(super::pump_shots(&mut state), 0);
+        assert_eq!(
+            actor_snapshot_serialization_count(),
+            before,
+            "ordinary focused scene2 must not serialize a pair sidecar with no actor-tagged request"
+        );
+        assert!(state.shot_state.lock().unwrap().wanted.is_empty());
+        assert!(state.shot_state.lock().unwrap().requests.is_empty());
+
+        state
+            .shot_state
+            .lock()
+            .unwrap()
+            .enqueue("manual".into(), "{\"untagged\":true}".into());
+        let before = actor_snapshot_serialization_count();
+        assert_eq!(super::pump_shots(&mut state), 0);
+        assert_eq!(
+            actor_snapshot_serialization_count(),
+            before,
+            "untagged promote must not require pair sidecar serialization"
+        );
+        {
+            let shots = state.shot_state.lock().unwrap();
+            assert_eq!(shots.wanted.len(), 1);
+            assert_eq!(shots.wanted[0].0, "manual");
+            assert_eq!(shots.wanted[0].1, "{\"untagged\":true}");
+            assert!(shots.requests.is_empty());
+        }
     }
 
     #[test]
