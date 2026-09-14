@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use api::game_data::{DuelControls, SelectedGameData};
 use api::snapshot::{GameSnapshot, ItemView, WidgetView};
 use client::util::JString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
@@ -916,7 +916,7 @@ impl AirObservation {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DuelObservation {
     pub ingame: bool,
     pub scene_state: i32,
@@ -1029,7 +1029,7 @@ pub enum MuleClaim {
     MuleBankReturnSecondCycle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DuelClaim {
     FirstCombat,
@@ -1660,7 +1660,7 @@ impl MulePairWitness {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DuelSlotRecord {
     pub account: String,
     pub expected_player: String,
@@ -1748,7 +1748,7 @@ impl DuelSlotRecord {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DuelPairWitness {
     pub a: DuelSlotRecord,
     pub b: DuelSlotRecord,
