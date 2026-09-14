@@ -377,6 +377,22 @@ pub const FIRE_PLOT_VARROCK_EAST_X0: i32 = 3235;
 pub const FIRE_PLOT_VARROCK_EAST_X1: i32 = 3275;
 pub const FIRE_PLOT_VARROCK_EAST_Z0: i32 = 3418;
 pub const FIRE_PLOT_VARROCK_EAST_Z1: i32 = 3432;
+/// ClimbingBoots native witness (frozen `ClimbingBoots.ts` + clean 289 pack).
+/// Tenzing's standing targets: Falador West bank stand, the hut door, and the
+/// inside tile he is bought from. These are route targets, never PASS
+/// predicates. Boots id 3105 and the 12-coin pair come from
+/// `death_sherpa.rs2` (inv_del(coins,12) + inv_add(death_climbingboots,1)).
+pub const CLIMBING_BOOTS_ID: i32 = 3105;
+pub const CLIMBING_BOOTS_PAIR_COINS: i32 = 12;
+pub const TENZING_HUT_DOOR: (i32, i32, i32) = (2823, 3555, 0);
+pub const TENZING_INSIDE: (i32, i32, i32) = (2820, 3556, 0);
+pub const TENZING_NAME: &str = "Tenzing";
+/// `useTeleport`/`runeStock` bounds and the Falador cast cost. Magic below 37
+/// walks even with useTeleport=true, so the teleport cell must prove a real
+/// cast: magic XP plus a Law/Air/Water spend and a landing, not the option.
+pub const CLIMBING_BOOTS_RUNE_STOCK_MIN: i32 = 1;
+pub const CLIMBING_BOOTS_WALK_PACK_COINS: i32 = 28 * CLIMBING_BOOTS_PAIR_COINS;
+pub const CLIMBING_BOOTS_TELE_PACK_COINS: i32 = 25 * CLIMBING_BOOTS_PAIR_COINS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -477,6 +493,8 @@ pub enum CoreCase {
     LeatherCrafterHardBody,
     Firemaker,
     FiremakerOak,
+    ClimbingBoots,
+    ClimbingBootsTeleport,
 }
 
 impl CoreCase {
@@ -578,6 +596,8 @@ impl CoreCase {
             "leather_crafter_hard_body" => Ok(Self::LeatherCrafterHardBody),
             "firemaker" => Ok(Self::Firemaker),
             "firemaker_oak" => Ok(Self::FiremakerOak),
+            "climbing_boots" => Ok(Self::ClimbingBoots),
+            "climbing_boots_teleport" => Ok(Self::ClimbingBootsTeleport),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -682,6 +702,8 @@ impl CoreCase {
             Self::LeatherCrafterHardBody => "leather_crafter_hard_body",
             Self::Firemaker => "firemaker",
             Self::FiremakerOak => "firemaker_oak",
+            Self::ClimbingBoots => "climbing_boots",
+            Self::ClimbingBootsTeleport => "climbing_boots_teleport",
         }
     }
 
@@ -751,6 +773,7 @@ impl CoreCase {
             Self::SmithingBot | Self::SmithingBotPlatebody => "SmithingBot",
             Self::LeatherCrafter | Self::LeatherCrafterHardBody => "LeatherCrafter",
             Self::Firemaker | Self::FiremakerOak => "Firemaker",
+            Self::ClimbingBoots | Self::ClimbingBootsTeleport => "ClimbingBoots",
         }
     }
 }
@@ -2078,6 +2101,23 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                 && baseline.item_id(LOGS_ID) == 0
                 && !fire_in_varrock_east_plot(baseline)
         }
+        CoreCase::ClimbingBoots => {
+            near(baseline.tile, TENZING_HUT_DOOR, 12)
+                && baseline.item_id(CLIMBING_BOOTS_ID) == 0
+                && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_WALK_PACK_COINS
+                && baseline.item_id(LAW_RUNE_ID) == 0
+                && baseline.item_id(AIR_RUNE_ID) == 0
+                && baseline.item_id(WATER_RUNE_ID) == 0
+        }
+        CoreCase::ClimbingBootsTeleport => {
+            near(baseline.tile, TENZING_HUT_DOOR, 12)
+                && baseline.item_id(CLIMBING_BOOTS_ID) == 0
+                && baseline.item_id(COINS_ID) == CLIMBING_BOOTS_TELE_PACK_COINS
+                && baseline.item_id(LAW_RUNE_ID) == CLIMBING_BOOTS_RUNE_STOCK_MIN
+                && baseline.item_id(AIR_RUNE_ID) == 3
+                && baseline.item_id(WATER_RUNE_ID) == 1
+                && baseline.level("magic") >= FALADOR_TELE_MAGIC
+        }
     };
     if ready {
         return Ok(());
@@ -2337,6 +2377,12 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::FiremakerOak => {
             "Varrock East bank (3253,3420,0), Firemaking 15, empty pack of 590/1521/1511, no Fire loc in posted plot"
         }
+        CoreCase::ClimbingBoots => {
+            "Tenzing hut door (2823,3555,0) r12, zero boots 3105, exact carried 336 coins (28 pair), no runes, Death Plateau complete"
+        }
+        CoreCase::ClimbingBootsTeleport => {
+            "Tenzing hut door (2823,3555,0) r12, zero boots 3105, exact carried 300 coins (25 pair), Law 563x1/Air 556x3/Water 555x1, Magic 37, Death Plateau complete"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -2394,6 +2440,7 @@ pub struct CoreWitness {
     pub smithing_bot_cycle: SmithingBotCycle,
     pub leather_crafter_cycle: LeatherCrafterCycle,
     pub firemaker_cycle: FiremakerCycle,
+    pub climbing_boots_cycle: ClimbingBootsCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -6129,6 +6176,195 @@ impl ShopBuyoutCycle {
     }
 }
 
+/// ClimbingBoots (frozen `ClimbingBoots.ts`) at Tenzing's hut. The buy is
+/// only a purchase witness once the framed Tenzing projection and the sherpa
+/// dialogue are in the observed window and carried boots rose while coins
+/// fell by exactly 12 a pair. Walk and teleport are separate cells: the
+/// teleport cell must show a real cast (magic XP, Law spend, landing) and
+/// the walk cell must not cast at all. Return, deposit, reopen and the
+/// further purchase stay separate stages, so a failed full cycle keeps its
+/// purchase evidence instead of silently downgrading to a smoke PASS.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ClimbingBootsCycle {
+    pub tenzing: Option<Observation>,
+    pub cast: Option<Observation>,
+    pub bought: Option<Observation>,
+    /// Pairs gained at `bought` (each pair is exactly 12 coins).
+    pub bought_pairs: i32,
+    /// The sherpa sell/buy line seen in a bounded chat projection.
+    pub dialogue: bool,
+    pub returned: Option<Observation>,
+    pub deposited: Option<Observation>,
+    pub restocked: Option<Observation>,
+    pub departed: Option<Observation>,
+    pub further: bool,
+}
+
+pub struct ClimbingBootsSpec {
+    /// Explicit typed fixture option, not the frozen default.
+    pub use_teleport: bool,
+    /// Exact `readyToBuy` trip money: 12 coins a pair for the whole pack.
+    pub coins: i32,
+    /// Falador landing the teleport branch must reach after a real cast.
+    pub landing: (i32, i32, i32),
+    /// Falador West bank stand the walk returns through.
+    pub bank: (i32, i32, i32),
+}
+
+pub fn climbing_boots_spec(case: CoreCase) -> Option<ClimbingBootsSpec> {
+    match case {
+        // Walking cell: 28 boots * 12 coins, no runes, no Magic requirement.
+        CoreCase::ClimbingBoots => Some(ClimbingBootsSpec {
+            use_teleport: false,
+            coins: CLIMBING_BOOTS_WALK_PACK_COINS,
+            landing: FALADOR_TELE_LAND,
+            bank: FALADOR_WEST_BANK,
+        }),
+        // Teleport cell: the `tripQty` is 28 minus the carried rune stacks
+        // (Law, Air, Water), so the ready-to-buy money is 25 pairs.
+        CoreCase::ClimbingBootsTeleport => Some(ClimbingBootsSpec {
+            use_teleport: true,
+            coins: CLIMBING_BOOTS_TELE_PACK_COINS,
+            landing: FALADOR_TELE_LAND,
+            bank: FALADOR_WEST_BANK,
+        }),
+        _ => None,
+    }
+}
+
+/// The real framed Tenzing NPC near the hut inside tile. Route coordinates
+/// and quest state never stand in for this projection.
+fn tenzing_visible(now: &Observation) -> bool {
+    now.npc_facts.iter().any(|npc| {
+        npc.name.as_deref() == Some(TENZING_NAME) && near(Some(npc.tile), TENZING_INSIDE, 12)
+    })
+}
+
+/// The sherpa sale line or the purchase confirmation, from the bounded chat
+/// projection (`death_sherpa.rs2`: "for 12 gold" then "Tenzing has given you
+/// some Climbing boots.").
+fn climbing_boots_dialogue(now: &Observation) -> bool {
+    now.chat
+        .iter()
+        .any(|(_, text)| text.contains("Climbing boots"))
+}
+
+impl ClimbingBootsCycle {
+    pub fn observe(&mut self, spec: ClimbingBootsSpec, baseline: &Observation, now: &Observation) {
+        let ClimbingBootsSpec {
+            coins: _,
+            landing,
+            bank,
+            ..
+        } = spec;
+        self.dialogue |= climbing_boots_dialogue(now);
+        if self.tenzing.is_none() && tenzing_visible(now) {
+            self.tenzing = Some(now.clone());
+        }
+        // A real cast, not the option: magic XP plus the whole Falador cost
+        // (Law, Air and Water, no staff assumed) and the landing. Recorded for
+        // either cell, so a walking cell that cast fails closed.
+        if self.cast.is_none()
+            && now.skill_xp("magic") > baseline.skill_xp("magic")
+            && now.item_id(LAW_RUNE_ID) < baseline.item_id(LAW_RUNE_ID)
+            && now.item_id(AIR_RUNE_ID) < baseline.item_id(AIR_RUNE_ID)
+            && now.item_id(WATER_RUNE_ID) < baseline.item_id(WATER_RUNE_ID)
+            && near(now.tile, landing, 8)
+        {
+            self.cast = Some(now.clone());
+        }
+        // The purchase: same player after Start, boots up, exactly 12 coins a
+        // pair gone, with the framed Tenzing/dialogue evidence.
+        if self.bought.is_none() && self.tenzing.is_some() && self.dialogue {
+            let gained = now.item_id(CLIMBING_BOOTS_ID) - baseline.item_id(CLIMBING_BOOTS_ID);
+            let spent = baseline.item_id(COINS_ID) - now.item_id(COINS_ID);
+            if gained >= 1 && spent == gained * CLIMBING_BOOTS_PAIR_COINS {
+                self.bought_pairs = gained;
+                self.bought = Some(now.clone());
+            }
+        }
+        // Return is genuine position after the purchase (the first arrival can
+        // still be inside the baseline bank generation), never a generation
+        // counter that would demand a second bank trip.
+        if let Some(bought) = &self.bought {
+            if self.returned.is_none() && !now.bank_open && near(now.tile, bank, 8) {
+                self.returned = Some(now.clone());
+            }
+            // The deposit is a fresh bank session plus a real delta: the boots
+            // lost from the pack must appear as bank gain over the clean
+            // baseline, so a pre-existing banked pair cannot qualify.
+            if self.returned.is_some()
+                && self.deposited.is_none()
+                && now.bank_open
+                && now.bank_loaded
+            {
+                let carried_lost =
+                    bought.item_id(CLIMBING_BOOTS_ID) - now.item_id(CLIMBING_BOOTS_ID);
+                let bank_gained =
+                    now.bank_item_id(CLIMBING_BOOTS_ID) - baseline.bank_item_id(CLIMBING_BOOTS_ID);
+                if now.bank_generation > baseline.bank_generation
+                    && carried_lost >= 1
+                    && bank_gained >= carried_lost
+                {
+                    self.deposited = Some(now.clone());
+                }
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
+                && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        // Departure: a later bank session closed with the restocked pack.
+        if let Some(restocked) = &self.restocked {
+            if self.departed.is_none()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > restocked.bank_generation
+                && now.item_id(COINS_ID) >= CLIMBING_BOOTS_PAIR_COINS
+            {
+                self.departed = Some(now.clone());
+            }
+        }
+        // A further pair bought back at Tenzing's hut after the departure.
+        if let Some(departed) = &self.departed {
+            let gained = now.item_id(CLIMBING_BOOTS_ID) - departed.item_id(CLIMBING_BOOTS_ID);
+            let spent = departed.item_id(COINS_ID) - now.item_id(COINS_ID);
+            self.further |= gained >= 1
+                && spent == gained * CLIMBING_BOOTS_PAIR_COINS
+                && near(now.tile, TENZING_HUT_DOOR, 12);
+        }
+    }
+
+    /// The honest intermediate state: a real purchase with its Tenzing and
+    /// dialogue evidence but no claim of return, deposit or further work.
+    pub fn purchase_smoke(&self) -> bool {
+        self.tenzing.is_some() && self.dialogue && self.bought.is_some()
+    }
+
+    pub fn qualified(&self, spec: ClimbingBootsSpec) -> bool {
+        let branch = if spec.use_teleport {
+            self.cast.is_some()
+        } else {
+            // A walking cell must not silently run the teleport branch.
+            self.cast.is_none()
+        };
+        branch
+            && self.purchase_smoke()
+            && self.returned.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+            && self.departed.is_some()
+            && self.further
+    }
+}
+
 /// Anvil main-panel production (not chat make), then deposit except hammer,
 /// restock bars, and further smithing.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -6517,6 +6753,7 @@ impl CoreWitness {
             smithing_bot_cycle: SmithingBotCycle::default(),
             leather_crafter_cycle: LeatherCrafterCycle::default(),
             firemaker_cycle: FiremakerCycle::default(),
+            climbing_boots_cycle: ClimbingBootsCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -6684,6 +6921,10 @@ impl CoreWitness {
         }
         if let Some(spec) = firemaker_spec(self.case) {
             self.firemaker_cycle
+                .observe(spec, &self.baseline, observation);
+        }
+        if let Some(spec) = climbing_boots_spec(self.case) {
+            self.climbing_boots_cycle
                 .observe(spec, &self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
@@ -7038,6 +7279,12 @@ impl CoreWitness {
                 self.leather_crafter_cycle.qualified()
             }
             CoreCase::Firemaker | CoreCase::FiremakerOak => self.firemaker_cycle.qualified(),
+            CoreCase::ClimbingBoots | CoreCase::ClimbingBootsTeleport => {
+                match climbing_boots_spec(self.case) {
+                    Some(spec) => self.climbing_boots_cycle.qualified(spec),
+                    None => false,
+                }
+            }
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -7118,6 +7365,7 @@ impl CoreWitness {
             "smithing_bot_cycle": self.smithing_bot_cycle,
             "leather_crafter_cycle": self.leather_crafter_cycle,
             "firemaker_cycle": self.firemaker_cycle,
+            "climbing_boots_cycle": self.climbing_boots_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }

@@ -3213,10 +3213,62 @@
    "runner": "core",
    "live": "script_climbing_boots",
    "scenario": "climbing_boots",
-   "core_case": null,
+   "core_case": "climbing_boots",
    "pair_case": null,
-   "options": [],
-   "unsupported": [],
+   "options": [
+    "useTeleport false walk cell / true teleport cell",
+    "runeStock 1 explicit fixture value (product default 50)"
+   ],
+   "unsupported": [
+    {
+     "option": "Death Plateau completion/Tenzing NPC/dialogue prerequisite",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "custom Sherpa paint interaction",
+     "reason": "not claimed by the native witness"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "ClimbingBoots"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [
+    "climbing_boots_teleport"
+   ],
+   "reference_cases": []
+  },
+  {
+   "id": "climbing_boots_teleport",
+   "kind": "native",
+   "script": "ClimbingBoots",
+   "script_key": "ClimbingBoots",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 12,
+   "runner": "core",
+   "live": "script_climbing_boots_teleport",
+   "scenario": "climbing_boots_teleport",
+   "core_case": "climbing_boots_teleport",
+   "pair_case": null,
+   "options": [
+    "useTeleport false walk cell / true teleport cell",
+    "runeStock 1 explicit fixture value (product default 50)"
+   ],
+   "unsupported": [
+    {
+     "option": "Death Plateau completion/Tenzing NPC/dialogue prerequisite",
+     "reason": "fixture prerequisite"
+    },
+    {
+     "option": "custom Sherpa paint interaction",
+     "reason": "not claimed by the native witness"
+    }
+   ],
    "covers": {
     "scripts": [
      "ClimbingBoots"
@@ -3225,11 +3277,7 @@
     "paths": []
    },
    "variants": [],
-   "reference_cases": [],
-   "unavailable": {
-    "code": "missing_adapter",
-    "reason": "enabled but unqualified: useTeleport/runeStock, Tenzing/Falador/teleport/shop dialogue fixture and custom interaction paint are needed before any PASS claim"
-   }
+   "reference_cases": []
   },
   {
    "id": "shop_buyout",
