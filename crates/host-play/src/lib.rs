@@ -9682,6 +9682,10 @@ export default class T extends LoopingBot {
             cache.objs[11].id = 11;
             cache.objs[11].name = "Dragonhide".into();
         }
+        c.handle_packet(
+            ServerProt::UPDATE_INV_FULL,
+            &mut Packet::new(vec![2, 89, 0]),
+        );
         c.set_iface_mut(
             601,
             IfTypeMut {
