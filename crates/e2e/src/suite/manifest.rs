@@ -341,35 +341,40 @@ impl SuiteManifest {
                         if live.trim().is_empty() {
                             return Err(format!("{}: runnable case without a live name", case.id));
                         }
-                        match case.runner() {
-                            RunnerKind::Pair => {
-                                if case
-                                    .pair_case
-                                    .as_deref()
-                                    .unwrap_or_default()
-                                    .trim()
-                                    .is_empty()
-                                {
-                                    return Err(format!(
-                                        "{}: pair case without a declared PAIRED_CORE identity",
-                                        case.id
-                                    ));
-                                }
-                            }
-                            RunnerKind::Core => {
-                                if case
-                                    .core_case
-                                    .as_deref()
-                                    .unwrap_or_default()
-                                    .trim()
-                                    .is_empty()
-                                {
-                                    return Err(format!(
-                                        "{}: core case without a declared CATALOG_CORE identity",
-                                        case.id
-                                    ));
-                                }
-                            }
+                        let scenario = case.scenario.as_deref().unwrap_or_default();
+                        if live != format!("script_{scenario}") {
+                            return Err(format!(
+                                "{}: --live name {live:?} is not the live name of scenario {scenario:?} \
+                                 (the panel's PASS/CATALOG_CORE proof name is the live name, and the \
+                                 witness identity is the snake_case host enum wire form)",
+                                case.id
+                            ));
+                        }
+                        // The declared witness identity must be the host enum's wire form
+                        // (`thiever`, not `Thiever`): the panel serializes the real enum.
+                        let declared = match case.runner() {
+                            RunnerKind::Pair => case.pair_case.as_deref(),
+                            RunnerKind::Core => case.core_case.as_deref(),
+                        };
+                        let declared = declared.unwrap_or_default();
+                        if declared.trim().is_empty() {
+                            return Err(format!(
+                                "{}: {} case without a declared witness identity",
+                                case.id,
+                                case.runner().as_str()
+                            ));
+                        }
+                        let expected = super::receipt::wire_case(scenario, case.runner()).map_err(
+                            |error| {
+                                format!("{}: cannot derive the witness identity: {error}", case.id)
+                            },
+                        )?;
+                        if declared != expected {
+                            return Err(format!(
+                                "{}: declared witness identity {declared:?} is not the host enum wire \
+                                 form {expected:?} for scenario {scenario:?}",
+                                case.id
+                            ));
                         }
                     } else if let Some(unavailable) = &case.unavailable {
                         if unavailable.code.trim().is_empty()
@@ -544,22 +549,28 @@ mod tests {
                 scenario::get(scenario).is_some(),
                 "{scenario} does not resolve"
             );
+            // The declared witness identity is the host enum's serde wire form, the value
+            // the panel actually prints in the CATALOG_CORE/PAIRED_CORE receipt.
             match case.runner() {
                 RunnerKind::Core => {
                     let identity = case.core_case.as_deref().unwrap();
                     let parsed = host_play::catalog_core::CoreCase::parse(scenario)
                         .unwrap_or_else(|error| panic!("{scenario}: {error}"));
-                    assert_eq!(format!("{parsed:?}"), identity, "{scenario} core identity");
+                    assert_eq!(
+                        identity,
+                        serde_json::to_value(parsed).unwrap().as_str().unwrap(),
+                        "{scenario} core identity"
+                    );
                 }
                 RunnerKind::Pair => {
                     let identity = case.pair_case.as_deref().unwrap();
-                    assert!(
-                        matches!(identity, "Air" | "Mule" | "Flax"),
-                        "{scenario}: unexpected pair identity {identity}"
-                    );
                     let parsed = host_play::paired_core::PairCase::parse(scenario)
                         .unwrap_or_else(|error| panic!("{scenario}: {error}"));
-                    assert_eq!(format!("{parsed:?}"), identity, "{scenario} pair identity");
+                    assert_eq!(
+                        identity,
+                        serde_json::to_value(parsed).unwrap().as_str().unwrap(),
+                        "{scenario} pair identity"
+                    );
                 }
             }
         }

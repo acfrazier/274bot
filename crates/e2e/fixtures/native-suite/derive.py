@@ -340,6 +340,27 @@ def parse_pair_cases(path):
     return OrderedDict((name, variant) for variant, name in canonical.items())
 
 
+def wire_case(variant):
+    """The serde wire form of a host enum variant (`rename_all = "snake_case"`).
+
+    The panel's CATALOG_CORE/PAIRED_CORE receipt carries this, not the variant name, so
+    the manifest must declare it or the suite would reject real native output.
+    """
+    if variant is None:
+        return None
+    out = []
+    for i, ch in enumerate(variant):
+        if ch.isupper():
+            prev = variant[i - 1] if i else ""
+            nxt = variant[i + 1] if i + 1 < len(variant) else ""
+            if i and (prev.islower() or prev.isdigit() or (prev.isupper() and nxt.islower())):
+                out.append("_")
+            out.append(ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def scenario_names(path):
     src = path.read_text()
     block = src[src.index("pub fn names()"):]
@@ -426,8 +447,10 @@ def main():
             ("runner", runner),
             ("live", f"script_{live}"),
             ("scenario", live),
-            ("core_case", core_case),
-            ("pair_case", pair_case),
+            # The witness identity is what the panel actually prints: the host enum's
+            # serde wire form (`CoreCase::Thiever` -> "thiever"), never the Rust variant.
+            ("core_case", wire_case(core_case)),
+            ("pair_case", wire_case(pair_case)),
             ("options", list(options)),
             ("unsupported", [{"option": o, "reason": r} for o, r in unsupported]),
             ("covers", {"scripts": [script_key] if script_key else [], "subsystems": [], "paths": []}),

@@ -60,10 +60,26 @@ applied wholesale; a typed option is added only when a native adapter really con
 ## Run directory, identity and resume
 
 `run` requires `--run-dir DIR` and refuses to reuse an occupied directory (state.json or
-any other content); `--resume` continues one. Before any spawn, the recorded identity must
-match exactly: manifest bytes, suite id, reference commit/tree/archive hash, host commit,
-client commit, executable identity, profile/input configuration, settings (level, `--only`,
-changed paths, extra child args, child env names) and the ordered selection.
+any other content); `--resume` continues one. The identity is *content-bound* and must
+match exactly before any spawn:
+
+* manifest bytes, suite id and the frozen reference commit/tree/archive hash;
+* the host and client checkout content (HEAD, index and the working-tree diff are hashed,
+  so the same path with different bytes is a different identity);
+* every launched executable: a direct `--exec-*` file is hashed, and the manifest's cargo
+  template is resolved to the built artifact under `target/{debug,release}[/examples]` and
+  hashed too — the suite never records an unresolved command string, so build the executor
+  once before the run (or pass `--exec-core`/`--exec-pair`);
+* the resolved profile/input configuration with a content digest for the catalog script
+  tree (`<catalog>/src/bot/scripts`), the vault file, `--engine` and `--cache`;
+* settings (level, `--only`, changed paths, extra child args, child env names) and the
+  ordered selection.
+
+An input the suite cannot bind (no built executable, a catalog without a script tree, an
+unreadable repository) refuses the run before the ledger exists; a recorded identity with
+an unresolved component refuses resume, because such a run cannot prove the input is
+unchanged. A changed input *at the same path* — a vault file, a script source — refuses
+resume with `profile/input configuration`.
 
 An attempt is written before its child is launched, so a crash or an interrupt still
 leaves the case recorded. Resume skips every case that already has an attempt — passed
@@ -76,27 +92,53 @@ attempt. A retry would need an explicit new attempt number; there is no silent r
 
 ## Verdicts
 
-A zero exit code alone never qualifies a case. Each case must show exactly one terminal
-scenario receipt (`PASS: live <scenario> ...` / `FAIL: live <scenario> ...`), the witness
-identity the manifest declares (`CATALOG_CORE` for core cases, `PAIRED_CORE` for pairs),
-matching scenario names, and — when the case declares a capture — a real PNG/JSON pair
-with a valid signature and a parseable sidecar.
+A zero exit code alone never qualifies a case. The panel prints the *live* name as the
+proof name while the scenario and the host enum's wire form identify the case inside, and
+the suite checks all three independently:
+
+    PASS: live script_thiever {"scenario":"thiever","outcome":"PASS",...}
+    CATALOG_CORE: script_thiever {"case":"thiever","post_start_observations":2,...}
+
+`script_thiever` is `live.name`; `thiever` in the evidence is the scenario; `thiever` in
+the witness is `CoreCase::Thiever` serialized snake_case (`air`/`mule`/`flax` for
+`PairCase`). A PascalCase witness, or a receipt that names the scenario where the live
+name belongs, is rejected.
+
+Each case must show exactly one terminal scenario receipt (never both PASS and FAIL), the
+witness the scenario declares, and — when the case declares a capture, or when the
+scenario itself declares a terminal shot (the panel holds a PASS until that shot is
+written) — a capture *written by this case*: attributed by the before/after shot-root
+diff, so a same-labelled file from an earlier case is never reused. A capture counts as
+evidence only when it decodes as a real PNG with pixels and its snapshot sidecar was
+recorded in game at `scene_state == 2`; file magic and existence are not visual approval.
 
 | status | meaning |
 | --- | --- |
 | `passed` | terminal receipt plus witness identity, no capture involved |
 | `pending_visual_review` | the above, plus captures a human has not read back yet |
 | `failed` | a case assertion failure: recorded, the run continues while the shared harness is healthy |
-| `shared_failure` | missing/duplicate/malformed receipt, wrong witness identity, an infrastructure signal, or a requested capture that never arrived: the run stops |
+| `shared_failure` | missing/duplicate/malformed/dual receipt, wrong witness identity, an infrastructure signal, a malformed capture or a contracted capture that this case did not write: the run stops |
 | `timeout` / `cleanup_failed` | the case budget expired; `cleanup_failed` means the owned tree could not be reaped |
 | `interrupted` | the operator interrupted the run; the owned tree was terminated |
 | `unavailable` | selected but not executable, with the explicit reason |
 
 The run exits `0` only when nothing was unsuccessful, nothing was left unreached and no
 shared stop happened; `1` for any unsuccessful execution, `2` for a usage or configuration
-error, `130` when interrupted. Every launched child runs in its own process group and is
-terminated as a tree on budget expiry or interrupt: `SIGTERM`, a 10 s grace, then
-`SIGKILL`, with the outcome recorded in the ledger.
+error, `130` when interrupted.
+
+## Process ownership
+
+Every launched child runs in its own process group and is wrapped in an RAII guard, so
+success, an early error return and a panic all reap the tree. The wait loop is
+deadline-aware (`SIGTERM`, a 10 s grace, `SIGKILL`, then a bounded reap — never an
+unbounded `wait`), the log file is opened *before* the spawn, and the output pipes are
+drained with a deadline: a descendant that inherits stdout/stderr after the direct child
+exits is force-killed to close the write ends, and an abandoned drain is reported in the
+ledger instead of hanging the suite. Output is read in bounded chunks; a line past 64 KiB
+is emitted wrapped (and marked) rather than buffered without limit. Bounded process-group
+ownership is a unix facility: on other platforms `run` fails closed instead of launching a
+child it cannot own.
+
 
 ## Verification without a game
 
@@ -109,10 +151,16 @@ child standing in for a panel executable:
 The offline suite (see `crates/e2e/tests/suite_offline.rs` and
 `crates/e2e/fixtures/native-suite/offline-suite-manifest.json`) covers printed command
 construction, a zero-exit child with no receipt stopping the run, an isolated assertion
-failure continuing, resume carrying a pass without relaunching it, resume refusing a
-changed settings or manifest request before any launch, budget-expiry process-tree
-cleanup with forced kill, and interrupt cleanup. `LIVE=1` harness tests under
-`crates/e2e/tests/` remain separate and are not part of a suite run.
+failure continuing, a successful case retained as `pending_visual_review` with a real
+capture, a contracted terminal shot that never arrives (or arrives under another label)
+stopping the run, resume carrying the result without relaunching it, resume refusing a
+changed settings/manifest request *and* a changed input at the same path (vault content,
+script source) before any launch, refusing an unbindable catalog or executable, budget
+expiry with forced-kill process-tree cleanup, interrupt cleanup, a log that cannot be
+opened refusing before any spawn, and a descendant holding the pipes not hanging the
+suite. The fixture prints the panel's real line contract and writes the scenario's
+declared terminal shot. `LIVE=1` harness tests under `crates/e2e/tests/` remain separate
+and are not part of a suite run.
 
 ## Manifest
 

@@ -295,11 +295,23 @@ impl Ledger {
         })
     }
 
-    /// Resume gate: identity and ordered selection must both be unchanged. Called before
-    /// any child is launched.
+    /// Resume gate: identity and ordered selection must both be unchanged, and the
+    /// recorded identity must be content-bound. Called before any child is launched.
     pub fn check_resume(&self, identity: &RunIdentity, selection: &[String]) -> SuiteResult<()> {
         let stored: RunIdentity = serde_json::from_value(self.state.identity.clone())
             .map_err(|error| format!("cannot resume: stored identity is unreadable ({error})"))?;
+        for (label, unresolved) in [
+            ("recorded", stored.unresolved()),
+            ("current", identity.unresolved()),
+        ] {
+            if !unresolved.is_empty() {
+                return Err(format!(
+                    "refusing resume: the {label} identity has unresolved components ({}); a run \
+                     that could not bind an input cannot prove the input is unchanged",
+                    unresolved.join(", ")
+                ));
+            }
+        }
         let differences = stored.differences(identity);
         if !differences.is_empty() {
             return Err(format!(
@@ -533,12 +545,14 @@ mod tests {
             "reference_commit": "c",
             "reference_tree": "t",
             "reference_archive_sha256": "z",
-            "host": {"available": false, "commit": null, "branch": null, "dirty": null, "note": null},
-            "client": {"available": false, "commit": null, "branch": null, "dirty": null, "note": null},
+            "host": {"available": true, "commit": "h", "branch": "b", "dirty": false, "content_sha256": "hc", "note": null},
+            "client": {"available": true, "commit": "k", "branch": null, "dirty": false, "content_sha256": "kc", "note": null},
             "binaries": {},
             "profile": {
                 "profile": "local-274", "revision": null, "host": null, "port": null,
-                "engine": null, "cache": null, "catalog": "/catalog", "vault": null,
+                "engine": null, "cache": null,
+                "catalog": {"target": "/catalog", "sha256": "cat", "bytes": 2, "files": 1, "note": null},
+                "vault": {"target": "/vault", "sha256": "vv", "bytes": 2, "files": 1, "note": null},
                 "lowmem": true, "mainland": false, "jobs": 1
             },
             "settings": {

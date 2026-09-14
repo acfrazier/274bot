@@ -152,7 +152,7 @@
    "runner": "core",
    "live": "script_aio_teleport",
    "scenario": "aio_teleport",
-   "core_case": "AioTeleport",
+   "core_case": "aio_teleport",
    "pair_case": null,
    "options": [
     "teleportName/progressive",
@@ -196,7 +196,7 @@
    "runner": "core",
    "live": "script_aio_teleport_falador",
    "scenario": "aio_teleport_falador",
-   "core_case": "AioTeleportFalador",
+   "core_case": "aio_teleport_falador",
    "pair_case": null,
    "options": [
     "teleportName/progressive",
@@ -230,7 +230,7 @@
    "runner": "core",
    "live": "script_aio_teleport_no_staff",
    "scenario": "aio_teleport_no_staff",
-   "core_case": "AioTeleportNoStaff",
+   "core_case": "aio_teleport_no_staff",
    "pair_case": null,
    "options": [
     "teleportName/progressive",
@@ -264,7 +264,7 @@
    "runner": "core",
    "live": "script_chicken_killer",
    "scenario": "chicken_killer",
-   "core_case": "ChickenKiller",
+   "core_case": "chicken_killer",
    "pair_case": null,
    "options": [
     "seed chicken/feather",
@@ -307,7 +307,7 @@
    "runner": "core",
    "live": "script_chicken_killer_bank",
    "scenario": "chicken_killer_bank",
-   "core_case": "ChickenKillerBank",
+   "core_case": "chicken_killer_bank",
    "pair_case": null,
    "options": [
     "seed chicken/feather",
@@ -371,7 +371,7 @@
    "runner": "core",
    "live": "script_chaos_druid",
    "scenario": "chaos_druid",
-   "core_case": "ChaosDruid",
+   "core_case": "chaos_druid",
    "pair_case": null,
    "options": [
     "location/drop/loot"
@@ -408,7 +408,7 @@
    "runner": "core",
    "live": "script_chaos_druid_tower",
    "scenario": "chaos_druid_tower",
-   "core_case": "ChaosDruidTower",
+   "core_case": "chaos_druid_tower",
    "pair_case": null,
    "options": [
     "location/drop/loot"
@@ -441,7 +441,7 @@
    "runner": "core",
    "live": "script_chaos_druid_yanille",
    "scenario": "chaos_druid_yanille",
-   "core_case": "ChaosDruidYanille",
+   "core_case": "chaos_druid_yanille",
    "pair_case": null,
    "options": [
     "location/drop/loot"
@@ -474,7 +474,7 @@
    "runner": "core",
    "live": "script_chaos_druid_bank",
    "scenario": "chaos_druid_bank",
-   "core_case": "ChaosDruidBank",
+   "core_case": "chaos_druid_bank",
    "pair_case": null,
    "options": [
     "location/drop/loot"
@@ -604,7 +604,7 @@
    "runner": "core",
    "live": "script_moss_giant",
    "scenario": "moss_giant",
-   "core_case": "MossGiant",
+   "core_case": "moss_giant",
    "pair_case": null,
    "options": [
     "dart/location/bank"
@@ -646,7 +646,7 @@
    "runner": "core",
    "live": "script_moss_giant_bank",
    "scenario": "moss_giant_bank",
-   "core_case": "MossGiantBank",
+   "core_case": "moss_giant_bank",
    "pair_case": null,
    "options": [
     "dart/location/bank"
@@ -679,7 +679,7 @@
    "runner": "core",
    "live": "script_green_dragon",
    "scenario": "green_dragon",
-   "core_case": "GreenDragon",
+   "core_case": "green_dragon",
    "pair_case": null,
    "options": [
     "combat style/special/potions",
@@ -731,7 +731,7 @@
    "runner": "core",
    "live": "script_green_dragon_special",
    "scenario": "green_dragon_special",
-   "core_case": "GreenDragonSpecial",
+   "core_case": "green_dragon_special",
    "pair_case": null,
    "options": [
     "combat style/special/potions",
@@ -765,7 +765,7 @@
    "runner": "core",
    "live": "script_green_dragon_potions",
    "scenario": "green_dragon_potions",
-   "core_case": "GreenDragonPotions",
+   "core_case": "green_dragon_potions",
    "pair_case": null,
    "options": [
     "combat style/special/potions",
@@ -799,7 +799,7 @@
    "runner": "core",
    "live": "script_green_dragon_bank",
    "scenario": "green_dragon_bank",
-   "core_case": "GreenDragonBank",
+   "core_case": "green_dragon_bank",
    "pair_case": null,
    "options": [
     "combat style/special/potions",
@@ -833,7 +833,7 @@
    "runner": "core",
    "live": "script_green_dragon_tele",
    "scenario": "green_dragon_tele",
-   "core_case": "GreenDragonTele",
+   "core_case": "green_dragon_tele",
    "pair_case": null,
    "options": [
     "combat style/special/potions",
@@ -867,7 +867,7 @@
    "runner": "core",
    "live": "script_fire_giant",
    "scenario": "fire_giant",
-   "core_case": "FireGiant",
+   "core_case": "fire_giant",
    "pair_case": null,
    "options": [
     "approach/bank"
@@ -910,7 +910,7 @@
    "runner": "core",
    "live": "script_fire_giant_approach",
    "scenario": "fire_giant_approach",
-   "core_case": "FireGiantApproach",
+   "core_case": "fire_giant_approach",
    "pair_case": null,
    "options": [
     "approach/bank"
@@ -943,7 +943,7 @@
    "runner": "core",
    "live": "script_fire_giant_bank",
    "scenario": "fire_giant_bank",
-   "core_case": "FireGiantBank",
+   "core_case": "fire_giant_bank",
    "pair_case": null,
    "options": [
     "approach/bank"
@@ -976,7 +976,7 @@
    "runner": "core",
    "live": "script_ardy_fighter",
    "scenario": "ardy_fighter",
-   "core_case": "ArdyFighter",
+   "core_case": "ardy_fighter",
    "pair_case": null,
    "options": [
     "restock/food",
@@ -1014,7 +1014,7 @@
    "runner": "core",
    "live": "script_ardy_fighter_bank",
    "scenario": "ardy_fighter_bank",
-   "core_case": "ArdyFighterBank",
+   "core_case": "ardy_fighter_bank",
    "pair_case": null,
    "options": [
     "restock/food",
@@ -1043,7 +1043,7 @@
    "runner": "core",
    "live": "script_thiever",
    "scenario": "thiever",
-   "core_case": "Thiever",
+   "core_case": "thiever",
    "pair_case": null,
    "options": [
     "target/food/bank"
@@ -1071,7 +1071,7 @@
    "runner": "core",
    "live": "script_auto_fighter",
    "scenario": "auto_fighter",
-   "core_case": "AutoFighter",
+   "core_case": "auto_fighter",
    "pair_case": null,
    "options": [
     "combat style/special",
@@ -1122,7 +1122,7 @@
    "runner": "core",
    "live": "script_auto_fighter_mage",
    "scenario": "auto_fighter_mage",
-   "core_case": "AutoFighterMage",
+   "core_case": "auto_fighter_mage",
    "pair_case": null,
    "options": [
     "combat style/special",
@@ -1156,7 +1156,7 @@
    "runner": "core",
    "live": "script_auto_fighter_range",
    "scenario": "auto_fighter_range",
-   "core_case": "AutoFighterRange",
+   "core_case": "auto_fighter_range",
    "pair_case": null,
    "options": [
     "combat style/special",
@@ -1190,7 +1190,7 @@
    "runner": "core",
    "live": "script_auto_fighter_bank",
    "scenario": "auto_fighter_bank",
-   "core_case": "AutoFighterBank",
+   "core_case": "auto_fighter_bank",
    "pair_case": null,
    "options": [
     "reward banking"
@@ -1236,7 +1236,7 @@
    "runner": "core",
    "live": "script_ardy_thiever",
    "scenario": "ardy_thiever",
-   "core_case": "ArdyThiever",
+   "core_case": "ardy_thiever",
    "pair_case": null,
    "options": [
     "target/knight/fight",
@@ -1273,7 +1273,7 @@
    "runner": "core",
    "live": "script_ardy_thiever_fight",
    "scenario": "ardy_thiever_fight",
-   "core_case": "ArdyThieverFight",
+   "core_case": "ardy_thiever_fight",
    "pair_case": null,
    "options": [
     "target/knight/fight",
@@ -1307,7 +1307,7 @@
    "runner": "core",
    "live": "script_ardy_thiever_knight",
    "scenario": "ardy_thiever_knight",
-   "core_case": "ArdyThieverKnight",
+   "core_case": "ardy_thiever_knight",
    "pair_case": null,
    "options": [
     "target/knight/fight",
@@ -1341,7 +1341,7 @@
    "runner": "core",
    "live": "script_ardy_cakes",
    "scenario": "ardy_cakes",
-   "core_case": "ArdyCakes",
+   "core_case": "ardy_cakes",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -1374,7 +1374,7 @@
    "runner": "core",
    "live": "script_ardy_cakes_fight",
    "scenario": "ardy_cakes_fight",
-   "core_case": "ArdyCakesFight",
+   "core_case": "ardy_cakes_fight",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -1405,7 +1405,7 @@
    "runner": "core",
    "live": "script_gnome_chop",
    "scenario": "gnome_chop",
-   "core_case": "GnomeChop",
+   "core_case": "gnome_chop",
    "pair_case": null,
    "options": [
     "tree/axe/fletch/burn"
@@ -1441,7 +1441,7 @@
    "runner": "core",
    "live": "script_gnome_fletch_short",
    "scenario": "gnome_fletch_short",
-   "core_case": "GnomeFletchShort",
+   "core_case": "gnome_fletch_short",
    "pair_case": null,
    "options": [
     "tree/axe/fletch/burn"
@@ -1474,7 +1474,7 @@
    "runner": "core",
    "live": "script_gnome_fletch_long",
    "scenario": "gnome_fletch_long",
-   "core_case": "GnomeFletchLong",
+   "core_case": "gnome_fletch_long",
    "pair_case": null,
    "options": [
     "tree/axe/fletch/burn"
@@ -1507,7 +1507,7 @@
    "runner": "core",
    "live": "script_coal_trucks",
    "scenario": "coal_trucks",
-   "core_case": "CoalTrucks",
+   "core_case": "coal_trucks",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -1545,7 +1545,7 @@
    "runner": "core",
    "live": "script_rune_crafter",
    "scenario": "rune_crafter",
-   "core_case": "RuneCrafter",
+   "core_case": "rune_crafter",
    "pair_case": null,
    "options": [
     "rune type/altar/bank"
@@ -1587,7 +1587,7 @@
    "runner": "core",
    "live": "script_rune_crafter_earth",
    "scenario": "rune_crafter_earth",
-   "core_case": "RuneCrafterEarth",
+   "core_case": "rune_crafter_earth",
    "pair_case": null,
    "options": [
     "rune type/altar/bank"
@@ -1621,7 +1621,7 @@
    "live": "script_nature_crafter_air",
    "scenario": "nature_crafter_air",
    "core_case": null,
-   "pair_case": "Air",
+   "pair_case": "air",
    "options": [
     "two actual actors",
     "partner names/trade bootstrap"
@@ -1672,7 +1672,7 @@
    "runner": "core",
    "live": "script_cook_bot",
    "scenario": "cook_bot",
-   "core_case": "CookBot",
+   "core_case": "cook_bot",
    "pair_case": null,
    "options": [
     "fish",
@@ -1708,7 +1708,7 @@
    "runner": "core",
    "live": "script_cook_bot_lobster",
    "scenario": "cook_bot_lobster",
-   "core_case": "CookBotLobster",
+   "core_case": "cook_bot_lobster",
    "pair_case": null,
    "options": [
     "fish",
@@ -1742,7 +1742,7 @@
    "runner": "core",
    "live": "script_bank_fletcher",
    "scenario": "bank_fletcher",
-   "core_case": "BankFletcher",
+   "core_case": "bank_fletcher",
    "pair_case": null,
    "options": [
     "product/knife/string/headless branches"
@@ -1782,7 +1782,7 @@
    "runner": "core",
    "live": "script_bank_fletcher_shafts",
    "scenario": "bank_fletcher_shafts",
-   "core_case": "BankFletcherShafts",
+   "core_case": "bank_fletcher_shafts",
    "pair_case": null,
    "options": [
     "product/knife/string/headless branches"
@@ -1810,7 +1810,7 @@
    "runner": "core",
    "live": "script_bank_fletcher_headless",
    "scenario": "bank_fletcher_headless",
-   "core_case": "BankFletcherHeadless",
+   "core_case": "bank_fletcher_headless",
    "pair_case": null,
    "options": [
     "product/knife/string/headless branches"
@@ -1838,7 +1838,7 @@
    "runner": "core",
    "live": "script_bank_fletcher_string",
    "scenario": "bank_fletcher_string",
-   "core_case": "BankFletcherString",
+   "core_case": "bank_fletcher_string",
    "pair_case": null,
    "options": [
     "product/knife/string/headless branches"
@@ -1866,7 +1866,7 @@
    "runner": "core",
    "live": "script_bank_fletcher_cut_string",
    "scenario": "bank_fletcher_cut_string",
-   "core_case": "BankFletcherCutString",
+   "core_case": "bank_fletcher_cut_string",
    "pair_case": null,
    "options": [
     "product/knife/string/headless branches"
@@ -1894,7 +1894,7 @@
    "runner": "core",
    "live": "script_dart_fletcher",
    "scenario": "dart_fletcher",
-   "core_case": "DartFletcher",
+   "core_case": "dart_fletcher",
    "pair_case": null,
    "options": [
     "bronze/iron",
@@ -1937,7 +1937,7 @@
    "runner": "core",
    "live": "script_dart_fletcher_iron",
    "scenario": "dart_fletcher_iron",
-   "core_case": "DartFletcherIron",
+   "core_case": "dart_fletcher_iron",
    "pair_case": null,
    "options": [
     "bronze/iron",
@@ -1971,7 +1971,7 @@
    "runner": "core",
    "live": "script_herblore_secondaries",
    "scenario": "herblore_secondaries",
-   "core_case": "HerbloreSecondaries",
+   "core_case": "herblore_secondaries",
    "pair_case": null,
    "options": [
     "secondary/egg/newt branches"
@@ -2017,7 +2017,7 @@
    "runner": "core",
    "live": "script_herblore_secondaries_newt",
    "scenario": "herblore_secondaries_newt",
-   "core_case": "HerbloreSecondariesNewt",
+   "core_case": "herblore_secondaries_newt",
    "pair_case": null,
    "options": [
     "secondary/egg/newt branches"
@@ -2054,7 +2054,7 @@
    "runner": "core",
    "live": "script_herb_cleaner",
    "scenario": "herb_cleaner",
-   "core_case": "HerbCleaner",
+   "core_case": "herb_cleaner",
    "pair_case": null,
    "options": [
     "default/named herb filters",
@@ -2092,7 +2092,7 @@
    "runner": "core",
    "live": "script_herb_cleaner_named",
    "scenario": "herb_cleaner_named",
-   "core_case": "HerbCleanerNamed",
+   "core_case": "herb_cleaner_named",
    "pair_case": null,
    "options": [
     "default/named herb filters",
@@ -2121,7 +2121,7 @@
    "runner": "core",
    "live": "script_potion_maker",
    "scenario": "potion_maker",
-   "core_case": "PotionMaker",
+   "core_case": "potion_maker",
    "pair_case": null,
    "options": [
     "recipe/default/named"
@@ -2156,7 +2156,7 @@
    "runner": "core",
    "live": "script_potion_maker_named",
    "scenario": "potion_maker_named",
-   "core_case": "PotionMakerNamed",
+   "core_case": "potion_maker_named",
    "pair_case": null,
    "options": [
     "recipe/default/named"
@@ -2189,7 +2189,7 @@
    "runner": "core",
    "live": "script_bone_burier",
    "scenario": "bone_burier",
-   "core_case": "BoneBurier",
+   "core_case": "bone_burier",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -2227,7 +2227,7 @@
    "runner": "core",
    "live": "script_smelter_bot",
    "scenario": "smelter_bot",
-   "core_case": "SmelterBot",
+   "core_case": "smelter_bot",
    "pair_case": null,
    "options": [
     "bar/ore",
@@ -2270,7 +2270,7 @@
    "runner": "core",
    "live": "script_smelter_bot_steel",
    "scenario": "smelter_bot_steel",
-   "core_case": "SmelterBotSteel",
+   "core_case": "smelter_bot_steel",
    "pair_case": null,
    "options": [
     "bar/ore",
@@ -2304,7 +2304,7 @@
    "runner": "core",
    "live": "script_superheater",
    "scenario": "superheater",
-   "core_case": "Superheater",
+   "core_case": "superheater",
    "pair_case": null,
    "options": [
     "bar selection"
@@ -2342,7 +2342,7 @@
    "runner": "core",
    "live": "script_superheater_steel",
    "scenario": "superheater_steel",
-   "core_case": "SuperheaterSteel",
+   "core_case": "superheater_steel",
    "pair_case": null,
    "options": [
     "bar selection"
@@ -2370,7 +2370,7 @@
    "runner": "core",
    "live": "script_superheater_fire_battlestaff",
    "scenario": "superheater_fire_battlestaff",
-   "core_case": "SuperheaterFireBattlestaff",
+   "core_case": "superheater_fire_battlestaff",
    "pair_case": null,
    "options": [
     "staff selection"
@@ -2410,7 +2410,7 @@
    "runner": "core",
    "live": "script_alcher_defaults",
    "scenario": "alcher_defaults",
-   "core_case": "AlcherDefaults",
+   "core_case": "alcher_defaults",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2478,7 +2478,7 @@
    "runner": "core",
    "live": "script_alcher",
    "scenario": "alcher",
-   "core_case": "Alcher",
+   "core_case": "alcher",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2514,7 +2514,7 @@
    "runner": "core",
    "live": "script_alcher_custom",
    "scenario": "alcher_custom",
-   "core_case": "AlcherCustom",
+   "core_case": "alcher_custom",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2550,7 +2550,7 @@
    "runner": "core",
    "live": "script_alcher_custom_alias",
    "scenario": "alcher_custom_alias",
-   "core_case": "AlcherCustomAlias",
+   "core_case": "alcher_custom_alias",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2586,7 +2586,7 @@
    "runner": "core",
    "live": "script_alcher_custom_name",
    "scenario": "alcher_custom_name",
-   "core_case": "AlcherCustomName",
+   "core_case": "alcher_custom_name",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2622,7 +2622,7 @@
    "runner": "core",
    "live": "script_alcher_ordered",
    "scenario": "alcher_ordered",
-   "core_case": "AlcherOrdered",
+   "core_case": "alcher_ordered",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2658,7 +2658,7 @@
    "runner": "core",
    "live": "script_alcher_large_batch",
    "scenario": "alcher_large_batch",
-   "core_case": "AlcherLargeBatch",
+   "core_case": "alcher_large_batch",
    "pair_case": null,
    "options": [
     "spell=High default",
@@ -2694,7 +2694,7 @@
    "runner": "core",
    "live": "script_smithing_bot",
    "scenario": "smithing_bot",
-   "core_case": "SmithingBot",
+   "core_case": "smithing_bot",
    "pair_case": null,
    "options": [
     "Adamantite/Runite (frozen 964 options)"
@@ -2736,7 +2736,7 @@
    "runner": "core",
    "live": "script_smithing_bot_platebody",
    "scenario": "smithing_bot_platebody",
-   "core_case": "SmithingBotPlatebody",
+   "core_case": "smithing_bot_platebody",
    "pair_case": null,
    "options": [
     "Adamantite/Runite (frozen 964 options)"
@@ -2769,7 +2769,7 @@
    "runner": "core",
    "live": "script_flax_picker",
    "scenario": "flax_picker",
-   "core_case": "FlaxPicker",
+   "core_case": "flax_picker",
    "pair_case": null,
    "options": [
     "location/quantity",
@@ -2803,7 +2803,7 @@
    "runner": "core",
    "live": "script_flax_spinner",
    "scenario": "flax_spinner",
-   "core_case": "FlaxSpinner",
+   "core_case": "flax_spinner",
    "pair_case": null,
    "options": [
     "partner/spin/return settings if native support is added"
@@ -2836,7 +2836,7 @@
    "runner": "core",
    "live": "script_flax_aio",
    "scenario": "flax_aio",
-   "core_case": "FlaxAio",
+   "core_case": "flax_aio",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -2877,7 +2877,7 @@
    "runner": "core",
    "live": "script_flax_aio_pick",
    "scenario": "flax_aio_pick",
-   "core_case": "FlaxAioPick",
+   "core_case": "flax_aio_pick",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -2908,7 +2908,7 @@
    "runner": "core",
    "live": "script_flax_aio_spin",
    "scenario": "flax_aio_spin",
-   "core_case": "FlaxAioSpin",
+   "core_case": "flax_aio_spin",
    "pair_case": null,
    "options": [],
    "unsupported": [
@@ -2939,7 +2939,7 @@
    "runner": "core",
    "live": "script_gem_cutter",
    "scenario": "gem_cutter",
-   "core_case": "GemCutter",
+   "core_case": "gem_cutter",
    "pair_case": null,
    "options": [
     "gem/default/named"
@@ -2974,7 +2974,7 @@
    "runner": "core",
    "live": "script_gem_cutter_named",
    "scenario": "gem_cutter_named",
-   "core_case": "GemCutterNamed",
+   "core_case": "gem_cutter_named",
    "pair_case": null,
    "options": [
     "gem/default/named"
@@ -3007,7 +3007,7 @@
    "runner": "core",
    "live": "script_gnome_course",
    "scenario": "gnome_course",
-   "core_case": "GnomeCourse",
+   "core_case": "gnome_course",
    "pair_case": null,
    "options": [
     "course/radius"
@@ -3042,7 +3042,7 @@
    "runner": "core",
    "live": "script_gnome_course_radius",
    "scenario": "gnome_course_radius",
-   "core_case": "GnomeCourseRadius",
+   "core_case": "gnome_course_radius",
    "pair_case": null,
    "options": [
     "course/radius"
@@ -3075,7 +3075,7 @@
    "runner": "core",
    "live": "script_wildy_agility",
    "scenario": "wildy_agility",
-   "core_case": "WildyAgility",
+   "core_case": "wildy_agility",
    "pair_case": null,
    "options": [
     "named food startup",
@@ -3112,7 +3112,7 @@
    "live": "script_mule_crafter_air",
    "scenario": "mule_crafter_air",
    "core_case": null,
-   "pair_case": "Mule",
+   "pair_case": "mule",
    "options": [
     "two actual actors",
     "role-specific partner names",
@@ -3179,7 +3179,7 @@
    "runner": "core",
    "live": "script_shop_buyout",
    "scenario": "shop_buyout",
-   "core_case": "ShopBuyout",
+   "core_case": "shop_buyout",
    "pair_case": null,
    "options": [
     "shop selection/Aubury branch"
@@ -3218,7 +3218,7 @@
    "runner": "core",
    "live": "script_shop_buyout_aubury",
    "scenario": "shop_buyout_aubury",
-   "core_case": "ShopBuyoutAubury",
+   "core_case": "shop_buyout_aubury",
    "pair_case": null,
    "options": [
     "shop selection/Aubury branch"
@@ -3255,7 +3255,7 @@
    "runner": "core",
    "live": "script_door_opener",
    "scenario": "door_opener",
-   "core_case": "DoorOpener",
+   "core_case": "door_opener",
    "pair_case": null,
    "options": [
     "door/gate branch"
@@ -3290,7 +3290,7 @@
    "runner": "core",
    "live": "script_door_opener_gate",
    "scenario": "door_opener_gate",
-   "core_case": "DoorOpenerGate",
+   "core_case": "door_opener_gate",
    "pair_case": null,
    "options": [
     "door/gate branch"
@@ -3323,7 +3323,7 @@
    "runner": "core",
    "live": "script_tanner_bot",
    "scenario": "tanner_bot",
-   "core_case": "TannerBot",
+   "core_case": "tanner_bot",
    "pair_case": null,
    "options": [
     "leather/hard-leather branch"
@@ -3358,7 +3358,7 @@
    "runner": "core",
    "live": "script_tanner_bot_hard",
    "scenario": "tanner_bot_hard",
-   "core_case": "TannerBotHard",
+   "core_case": "tanner_bot_hard",
    "pair_case": null,
    "options": [
     "leather/hard-leather branch"
@@ -3391,7 +3391,7 @@
    "runner": "core",
    "live": "script_hill_giant",
    "scenario": "hill_giant",
-   "core_case": "HillGiant",
+   "core_case": "hill_giant",
    "pair_case": null,
    "options": [
     "combat/drop/bank"
@@ -3433,7 +3433,7 @@
    "runner": "core",
    "live": "script_hill_giant_bank",
    "scenario": "hill_giant_bank",
-   "core_case": "HillGiantBank",
+   "core_case": "hill_giant_bank",
    "pair_case": null,
    "options": [
     "combat/drop/bank"
@@ -3473,7 +3473,7 @@
    "runner": "core",
    "live": "script_vial_filler",
    "scenario": "vial_filler",
-   "core_case": "VialFiller",
+   "core_case": "vial_filler",
    "pair_case": null,
    "options": [
     "bank/source branch"
@@ -3515,7 +3515,7 @@
    "runner": "core",
    "live": "script_vial_filler_east",
    "scenario": "vial_filler_east",
-   "core_case": "VialFillerEast",
+   "core_case": "vial_filler_east",
    "pair_case": null,
    "options": [
     "bank/source branch"
@@ -3548,7 +3548,7 @@
    "runner": "core",
    "live": "script_leather_crafter",
    "scenario": "leather_crafter",
-   "core_case": "LeatherCrafter",
+   "core_case": "leather_crafter",
    "pair_case": null,
    "options": [
     "leather/hard-body branch",
@@ -3586,7 +3586,7 @@
    "runner": "core",
    "live": "script_leather_crafter_hard_body",
    "scenario": "leather_crafter_hard_body",
-   "core_case": "LeatherCrafterHardBody",
+   "core_case": "leather_crafter_hard_body",
    "pair_case": null,
    "options": [
     "leather/hard-body branch",
@@ -3615,7 +3615,7 @@
    "runner": "core",
    "live": "script_firemaker",
    "scenario": "firemaker",
-   "core_case": "Firemaker",
+   "core_case": "firemaker",
    "pair_case": null,
    "options": [
     "log/fire-spot",
@@ -3651,7 +3651,7 @@
    "runner": "core",
    "live": "script_firemaker_oak",
    "scenario": "firemaker_oak",
-   "core_case": "FiremakerOak",
+   "core_case": "firemaker_oak",
    "pair_case": null,
    "options": [
     "log/fire-spot",
@@ -3686,7 +3686,7 @@
    "live": "script_flax_runner",
    "scenario": "flax_runner",
    "core_case": null,
-   "pair_case": "Flax",
+   "pair_case": "flax",
    "options": [
     "two actual actors",
     "Runner/Spinner roles",

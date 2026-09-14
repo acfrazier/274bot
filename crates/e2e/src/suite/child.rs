@@ -5,16 +5,23 @@
 //! native profile/input configuration. It never builds its own scenario engine and never
 //! runs a foreign runtime.
 //!
-//! Ownership: every child is started in its own process group, its whole tree is
-//! terminated on budget expiry or interrupt, and cleanup is bounded (`SIGTERM`, a short
-//! grace, then `SIGKILL`). A process tree that cannot be reaped inside that bound is
-//! reported as a harness failure instead of being ignored.
+//! Ownership: the child is started in its own process group and wrapped in an RAII guard,
+//! so every exit path — success, `?` error, panic — terminates and reaps the whole tree.
+//! Cleanup is bounded at each step (`SIGTERM`, a grace, `SIGKILL`), the wait is
+//! deadline-aware, and the output pipes are drained with a deadline rather than an
+//! unbounded `join`: a descendant that inherits the pipes after the direct child exits
+//! cannot hang the suite. A tree that cannot be reaped inside the bound is reported as a
+//! harness failure instead of being ignored.
+//!
+//! Platform: bounded process-group ownership uses unix process groups and signals. On
+//! other platforms [`run`] fails closed instead of launching a child it cannot own.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,6 +38,14 @@ pub const CLEANUP_KILL_WAIT: Duration = Duration::from_secs(5);
 pub const LOG_CAP_BYTES: u64 = 64 * 1024 * 1024;
 /// Bound on the in-memory tail used for receipt parsing.
 pub const TAIL_CAP_BYTES: usize = 1024 * 1024;
+/// Bound on one output line held while looking for its newline. A longer line is
+/// emitted wrapped (with a marker) instead of being buffered without limit.
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
+/// Deadline for draining the child's pipes after the direct child has exited. A
+/// descendant can inherit the pipe write ends, so this is a bound, not a join.
+pub const PIPE_DRAIN: Duration = Duration::from_secs(5);
+/// Additional drain bound granted after the leftover process group is force-killed.
+pub const PIPE_DRAIN_AFTER_KILL: Duration = Duration::from_secs(2);
 /// Poll interval for the wait loop.
 const POLL: Duration = Duration::from_millis(50);
 
@@ -63,12 +78,10 @@ pub fn install_signal_handler() {
     }
 }
 
+/// On non-unix platforms the suite installs no signal handler and [`run`] fails closed:
+/// without a console-control handler an interrupt would leave the child running.
 #[cfg(not(unix))]
-pub fn install_signal_handler() {
-    // No handler: on Windows the console control handler would need an extra crate, and
-    // a Ctrl-C there terminates the suite without a ledger update. The child still runs
-    // in its own process group (`CREATE_NEW_PROCESS_GROUP`).
-}
+pub fn install_signal_handler() {}
 
 /// The explicit native profile/input configuration for a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +96,8 @@ pub struct NativeConfig {
     pub vault: Option<PathBuf>,
     pub lowmem: bool,
     pub mainland: bool,
-    /// Direct native executables. When absent the manifest's cargo template is used.
+    /// Direct native executables. When absent the manifest's cargo template is resolved to
+    /// a built artifact and hashed (see [`NativeConfig::binary`]).
     pub exec_core: Option<PathBuf>,
     pub exec_pair: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
@@ -177,26 +191,34 @@ impl NativeConfig {
         Ok(())
     }
 
-    /// The executable identity recorded for a runner kind. A direct executable is hashed;
-    /// the cargo template records the command instead of inventing a file hash.
+    /// The executable identity recorded for a runner kind.
+    ///
+    /// A direct executable is hashed. Without one the manifest's cargo template is
+    /// *resolved* to the artifact a build produced (`target/{debug,release}[/examples]/
+    /// <bin>`), which is hashed too: `cargo run` at evaluation time could rebuild different
+    /// bytes under the same command, so an unresolved command string is never accepted as
+    /// a runnable identity. The executor is built once before the ledger is written.
     pub fn binary(
         &self,
         runner: RunnerKind,
         manifest: &SuiteManifest,
+        repo_root: Option<&Path>,
     ) -> SuiteResult<BinaryIdentity> {
-        let direct = match runner {
-            RunnerKind::Core => self.exec_core.as_ref(),
-            RunnerKind::Pair => self.exec_pair.as_ref(),
+        let (direct, template, flag) = match runner {
+            RunnerKind::Core => (
+                self.exec_core.as_ref(),
+                &manifest.defaults.exec.core,
+                "--exec-core",
+            ),
+            RunnerKind::Pair => (
+                self.exec_pair.as_ref(),
+                &manifest.defaults.exec.pair,
+                "--exec-pair",
+            ),
         };
         match direct {
             Some(path) => BinaryIdentity::direct(path),
-            None => {
-                let template = match runner {
-                    RunnerKind::Core => &manifest.defaults.exec.core,
-                    RunnerKind::Pair => &manifest.defaults.exec.pair,
-                };
-                Ok(BinaryIdentity::cargo(&template.program, &template.args))
-            }
+            None => BinaryIdentity::resolve_template(template, repo_root, flag),
         }
     }
 
@@ -323,12 +345,21 @@ pub struct ChildRun {
 }
 
 /// Launch one child, own its process tree, and return its bounded result.
+#[cfg(unix)]
 pub fn run(
     spec: &ChildSpec,
     budget: Duration,
     log_path: &Path,
     verbose: bool,
 ) -> SuiteResult<ChildRun> {
+    if spec.command.is_empty() {
+        return Err(format!("{}: empty command", spec.label));
+    }
+    // Fallible setup happens *before* the spawn: a log that cannot be opened must not
+    // leave a launched child behind.
+    let log = Arc::new(Mutex::new(LogWriter::open(log_path)?));
+    let shared = Arc::new(SharedOutput::default());
+
     let mut command = Command::new(&spec.command[0]);
     command.args(&spec.command[1..]);
     command.stdout(Stdio::piped());
@@ -347,28 +378,26 @@ pub fn run(
     own_process_group(&mut command);
 
     let started = Instant::now();
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| format!("{}: cannot launch {}: {error}", spec.label, spec.command[0]))?;
-    let pid = child.id();
+    let mut owned = OwnedChild::new(child, spec.label.clone());
 
-    let log = Arc::new(Mutex::new(LogWriter::open(log_path)?));
-    let tail = Arc::new(Mutex::new(TailBuffer::default()));
     let mut readers = Vec::new();
-    if let Some(stdout) = child.stdout.take() {
+    if let Some(stdout) = owned.child.stdout.take() {
         readers.push(spawn_reader(
             stdout,
             Arc::clone(&log),
-            Arc::clone(&tail),
+            Arc::clone(&shared),
             verbose,
             spec.label.clone(),
         ));
     }
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = owned.child.stderr.take() {
         readers.push(spawn_reader(
             stderr,
             Arc::clone(&log),
-            Arc::clone(&tail),
+            Arc::clone(&shared),
             verbose,
             spec.label.clone(),
         ));
@@ -378,38 +407,76 @@ pub fn run(
     let mut timed_out = false;
     let mut interrupted = false;
     let mut cleanup = CleanupSummary::default();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
+    let mut status: Option<ExitStatus> = None;
+    loop {
+        match owned.try_wait() {
+            Ok(Some(exit)) => {
+                owned.mark_reaped();
+                status = Some(exit);
+                break;
+            }
             Ok(None) => {}
             Err(error) => {
+                // The RAII guard reaps the tree on this return path.
                 return Err(format!("{}: wait failed: {error}", spec.label));
             }
         }
         if interrupt_requested() {
             interrupted = true;
-            cleanup = terminate_tree(pid, spec);
-            break child.wait().ok();
+            cleanup = owned.terminate();
+            break;
         }
         if Instant::now() >= deadline {
             timed_out = true;
-            cleanup = terminate_tree(pid, spec);
-            break child.wait().ok();
+            cleanup = owned.terminate();
+            break;
         }
         std::thread::sleep(POLL);
-    };
-
-    for reader in readers {
-        let _ = reader.join();
     }
-    log.lock().unwrap().flush().ok();
-    let log_truncated = log.lock().unwrap().truncated;
-    let output_tail = tail.lock().unwrap().text();
+    let pid = owned.pid;
+    let status = owned.status.or(status);
+    drop(owned);
+
+    // Deadline-aware drain. A descendant that inherited stdout/stderr keeps the pipe open
+    // after the direct child exits, so this waits a bound, then force-kills whatever is
+    // left in the group to close the write ends, then gives up and detaches: an unbounded
+    // join is never taken.
+    let drained = drain_readers(&shared, readers.len(), PIPE_DRAIN);
+    if !drained {
+        let leftover = signal_tree(pid, force_signal());
+        let note = if leftover {
+            format!(
+                "{}: output pipes were still open after {:?} (a descendant held them); \
+                 the leftover process group was force-killed",
+                spec.label, PIPE_DRAIN
+            )
+        } else {
+            format!(
+                "{}: output pipes were still open after {:?}",
+                spec.label, PIPE_DRAIN
+            )
+        };
+        let _ = drain_readers(&shared, readers.len(), PIPE_DRAIN_AFTER_KILL);
+        if cleanup.note.is_empty() {
+            cleanup.note = note;
+        } else {
+            cleanup.note = format!("{}; {note}", cleanup.note);
+        }
+    }
+    let output_tail = shared.tail.lock().unwrap().text();
+    let log_truncated = log.lock().map(|l| l.truncated()).unwrap_or(false)
+        || shared.wrapped_lines.load(Ordering::SeqCst) > 0;
+    if let Ok(mut writer) = log.try_lock() {
+        let _ = writer.flush();
+    }
 
     let (exit_code, signal) = match status {
         Some(status) => classify_exit(status),
         None => (None, None),
     };
+    if cleanup.note.is_empty() && !timed_out && !interrupted {
+        cleanup.note = "child exited on its own".into();
+    }
     Ok(ChildRun {
         exit_code,
         signal,
@@ -422,53 +489,153 @@ pub fn run(
     })
 }
 
-/// Terminate the child's whole process group with a bounded escalation.
-fn terminate_tree(pid: u32, spec: &ChildSpec) -> CleanupSummary {
-    let mut summary = CleanupSummary {
-        killed_signal: Some(termination_signal()),
-        escalated_to_sigkill: false,
-        reaped: false,
-        note: String::new(),
-    };
-    if !signal_tree(pid, termination_signal()) {
-        summary.note = "process group was already gone when the suite terminated it".into();
-        summary.reaped = true;
-        return summary;
-    }
-    if !wait_for_exit(pid, CLEANUP_GRACE) {
-        summary.escalated_to_sigkill = true;
-        if signal_tree(pid, force_signal()) {
-            summary.note = format!(
-                "{} did not exit within {:?}; forced kill",
-                spec.label, CLEANUP_GRACE
-            );
-        } else {
-            summary.note = format!("{}: forced kill found no process group", spec.label);
-        }
-        summary.reaped = wait_for_exit(pid, CLEANUP_KILL_WAIT);
-    } else {
-        summary.reaped = true;
-    }
-    if !summary.reaped && summary.note.is_empty() {
-        summary.note = format!(
-            "{} could not be reaped within {:?}",
-            spec.label,
-            CLEANUP_GRACE + CLEANUP_KILL_WAIT
-        );
-    }
-    summary
+/// Non-unix platforms have no process-group signals here, so the suite refuses to launch
+/// a child rather than claim ownership it cannot enforce.
+#[cfg(not(unix))]
+pub fn run(
+    spec: &ChildSpec,
+    _budget: Duration,
+    _log_path: &Path,
+    _verbose: bool,
+) -> SuiteResult<ChildRun> {
+    Err(format!(
+        "{}: owned child execution needs unix process groups and signals; this platform is \
+         fail-closed (no bounded process-tree ownership), so the suite refuses to launch",
+        spec.label
+    ))
 }
 
-/// Poll the process group until it is gone (or the bound lapses).
-fn wait_for_exit(pid: u32, bound: Duration) -> bool {
+/// Wait for the reader threads to reach EOF, bounded. Returns whether they all finished.
+fn drain_readers(shared: &SharedOutput, count: usize, bound: Duration) -> bool {
     let deadline = Instant::now() + bound;
     while Instant::now() < deadline {
-        if !process_group_alive(pid) {
+        if shared.readers_done.load(Ordering::SeqCst) >= count {
             return true;
         }
-        std::thread::sleep(POLL);
+        std::thread::sleep(Duration::from_millis(10));
     }
-    !process_group_alive(pid)
+    shared.readers_done.load(Ordering::SeqCst) >= count
+}
+
+/// Output shared by the two reader threads and the parent.
+#[derive(Default)]
+struct SharedOutput {
+    tail: Mutex<TailBuffer>,
+    readers_done: AtomicUsize,
+    wrapped_lines: AtomicUsize,
+}
+
+/// The owned direct child. Dropping the guard terminates and reaps the tree, so an early
+/// `?` return or a panic cannot leak a process.
+struct OwnedChild {
+    child: Child,
+    pid: u32,
+    label: String,
+    reaped: bool,
+    /// The direct child's exit status once it has been reaped (the bounded cleanup keeps
+    /// it, so a forced kill still reports its signal).
+    status: Option<ExitStatus>,
+}
+
+impl OwnedChild {
+    fn new(child: Child, label: String) -> Self {
+        let pid = child.id();
+        OwnedChild {
+            child,
+            pid,
+            label,
+            reaped: false,
+            status: None,
+        }
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    fn mark_reaped(&mut self) {
+        self.reaped = true;
+    }
+
+    /// Terminate the whole group with a bounded escalation, reaping the direct child when
+    /// it exits inside the bound.
+    fn terminate(&mut self) -> CleanupSummary {
+        let mut summary = CleanupSummary {
+            killed_signal: Some(termination_signal()),
+            escalated_to_sigkill: false,
+            reaped: false,
+            note: String::new(),
+        };
+        if !signal_tree(self.pid, termination_signal()) {
+            summary.note = "process group was already gone when the suite terminated it".into();
+            summary.reaped = self.reap_bounded(CLEANUP_KILL_WAIT);
+            return summary;
+        }
+        if !self.reap_bounded(CLEANUP_GRACE) {
+            summary.escalated_to_sigkill = true;
+            if signal_tree(self.pid, force_signal()) {
+                summary.note = format!(
+                    "{} did not exit within {:?}; forced kill",
+                    self.label, CLEANUP_GRACE
+                );
+            } else {
+                summary.note = format!("{}: forced kill found no process group", self.label);
+            }
+            summary.reaped = self.reap_bounded(CLEANUP_KILL_WAIT);
+        } else {
+            summary.reaped = true;
+        }
+        if !summary.reaped && summary.note.is_empty() {
+            summary.note = format!(
+                "{} could not be reaped within {:?}",
+                self.label,
+                CLEANUP_GRACE + CLEANUP_KILL_WAIT
+            );
+        }
+        summary
+    }
+
+    /// Poll the direct child (bounded), so cleanup never blocks on an unbounded `wait`.
+    fn reap_bounded(&mut self, bound: Duration) -> bool {
+        let deadline = Instant::now() + bound;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.reaped = true;
+                    self.status = Some(status);
+                    return true;
+                }
+                Ok(None) => {}
+                Err(_) => return false,
+            }
+            if Instant::now() >= deadline {
+                return !self.group_alive();
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    fn group_alive(&self) -> bool {
+        process_group_alive(self.pid)
+    }
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        // Any exit path that is not the normal reaped one still reaps the tree.
+        let _ = signal_tree(self.pid, force_signal());
+        let deadline = Instant::now() + CLEANUP_KILL_WAIT;
+        while Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(POLL),
+                Err(_) => return,
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -476,19 +643,9 @@ fn termination_signal() -> i32 {
     libc::SIGTERM
 }
 
-#[cfg(not(unix))]
-fn termination_signal() -> i32 {
-    15
-}
-
 #[cfg(unix)]
 fn force_signal() -> i32 {
     libc::SIGKILL
-}
-
-#[cfg(not(unix))]
-fn force_signal() -> i32 {
-    9
 }
 
 #[cfg(unix)]
@@ -497,75 +654,105 @@ fn own_process_group(command: &mut Command) {
     command.process_group(0);
 }
 
-#[cfg(windows)]
-fn own_process_group(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP);
-}
-
 #[cfg(unix)]
 fn signal_tree(pid: u32, signal: i32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     unsafe { libc::killpg(pid as libc::pid_t, signal) == 0 }
 }
 
-#[cfg(windows)]
-fn signal_tree(pid: u32, _signal: i32) -> bool {
-    Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 #[cfg(unix)]
 fn process_group_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
     unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 }
 }
 
-#[cfg(windows)]
-fn process_group_alive(pid: u32) -> bool {
-    Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}")])
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
-}
-
 #[cfg(unix)]
-fn classify_exit(status: std::process::ExitStatus) -> (Option<i32>, Option<i32>) {
+fn classify_exit(status: ExitStatus) -> (Option<i32>, Option<i32>) {
     use std::os::unix::process::ExitStatusExt;
     (status.code(), status.signal())
 }
 
-#[cfg(not(unix))]
-fn classify_exit(status: std::process::ExitStatus) -> (Option<i32>, Option<i32>) {
-    (status.code(), None)
-}
-
-fn spawn_reader<R: std::io::Read + Send + 'static>(
+fn spawn_reader<R: Read + Send + 'static>(
     stream: R,
     log: Arc<Mutex<LogWriter>>,
-    tail: Arc<Mutex<TailBuffer>>,
+    shared: Arc<SharedOutput>,
     verbose: bool,
     label: String,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let reader = BufReader::new(stream);
-        for line in reader.split(b'\n') {
-            let Ok(line) = line else { break };
-            if verbose {
-                eprintln!("[{}] {}", label, String::from_utf8_lossy(&line));
+        let mut stream = stream;
+        let mut buf = [0u8; 8 * 1024];
+        let mut line: Vec<u8> = Vec::with_capacity(256);
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => break,
+                Ok(read) => {
+                    let mut rest = &buf[..read];
+                    while let Some(index) = rest.iter().position(|byte| *byte == b'\n') {
+                        line.extend_from_slice(&rest[..index]);
+                        emit(&log, &shared, verbose, &label, &line, false);
+                        line.clear();
+                        rest = &rest[index + 1..];
+                    }
+                    if !rest.is_empty() {
+                        line.extend_from_slice(rest);
+                        if line.len() >= MAX_LINE_BYTES {
+                            // Bounded: an unterminated over-long line is emitted as a
+                            // marked wrap instead of being buffered without limit. The
+                            // marker keeps a torn receipt from being parsed as one.
+                            emit(&log, &shared, verbose, &label, &line, true);
+                            line.clear();
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
-            log.lock().unwrap().write_line(&line);
-            tail.lock().unwrap().push(&line);
         }
+        if !line.is_empty() {
+            emit(&log, &shared, verbose, &label, &line, false);
+        }
+        shared.readers_done.fetch_add(1, Ordering::SeqCst);
+        // `log` drops here (the last clone for this reader), flushing through Drop.
     })
 }
 
-/// Bounded log file writer: past the cap it records that it stopped.
+fn emit(
+    log: &Arc<Mutex<LogWriter>>,
+    shared: &Arc<SharedOutput>,
+    verbose: bool,
+    label: &str,
+    line: &[u8],
+    wrapped: bool,
+) {
+    if wrapped {
+        shared.wrapped_lines.fetch_add(1, Ordering::SeqCst);
+        eprintln!(
+            "[{label}] output line exceeded {MAX_LINE_BYTES} bytes without a newline; emitted wrapped"
+        );
+    }
+    if verbose {
+        let text = String::from_utf8_lossy(line);
+        if wrapped {
+            eprintln!("[{label}] (wrapped) {text}");
+        } else {
+            eprintln!("[{label}] {text}");
+        }
+    }
+    let mut writer = log.lock().unwrap();
+    if wrapped {
+        writer.write_line(b"[suite] wrapped line follows");
+    }
+    writer.write_line(line);
+    shared.tail.lock().unwrap().push(line);
+}
+
+/// Bounded log file writer: past the cap it records that it stopped. Flushes on drop, so
+/// a detached reader cannot leave the log unflushed.
 struct LogWriter {
     file: std::fs::File,
     written: u64,
@@ -587,6 +774,10 @@ impl LogWriter {
         })
     }
 
+    fn truncated(&self) -> bool {
+        self.truncated
+    }
+
     fn write_line(&mut self, line: &[u8]) {
         if self.truncated {
             return;
@@ -603,6 +794,12 @@ impl LogWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.file.flush()
+    }
+}
+
+impl Drop for LogWriter {
+    fn drop(&mut self) {
+        let _ = self.file.flush();
     }
 }
 
