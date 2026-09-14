@@ -12776,6 +12776,8 @@ const TINDERBOX_ID: i32 = 590;
 struct NativeSeed {
     unnoted_id: i32,
     debug_alias: &'static str,
+    /// Alias of the certificate object when this seed is bulk-noted.
+    note_alias: Option<&'static str>,
     quantity: i32,
     note_id: Option<i32>,
 }
@@ -12819,7 +12821,8 @@ fn native_bank_seed(
                 cheat(c, "~clearinv");
                 cheat(c, &format!("setstat {skill} {stat}"));
                 for seed in &seeds {
-                    cheat(c, &format!("give {} {}", seed.debug_alias, seed.quantity));
+                    let alias = seed.note_alias.unwrap_or(seed.debug_alias);
+                    cheat(c, &format!("give {alias} {}", seed.quantity));
                 }
                 cheat(c, &tele_args(bank.level, bank.x, bank.z));
                 true
@@ -12838,8 +12841,7 @@ fn native_bank_seed(
 }
 
 fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Step {
-    let first_id = seeds[0].unnoted_id;
-    let first_quantity = seeds[0].quantity;
+    let first = seeds[0];
     Step {
         name,
         kind: StepKind::Repeat {
@@ -12875,8 +12877,8 @@ fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Step {
         },
         wait: Wait {
             arm: Proof::BankItemId {
-                id: first_id,
-                count: first_quantity,
+                id: first.unnoted_id,
+                count: first.quantity,
             },
             budget_ticks: 200,
         },
@@ -13754,6 +13756,11 @@ fn smithing_bot_variant(
         id: SMITHING_STAT,
         min: 1,
     };
+    let bar_quantity = if product_id == BRONZE_PLATEBODY_ID {
+        30
+    } else {
+        28
+    };
     let bank = VARROCK_WEST_BANK;
     let mut steps = script_live_seed_steps();
     steps.push(native_bank_seed(
@@ -13763,13 +13770,15 @@ fn smithing_bot_variant(
             NativeSeed {
                 unnoted_id: HAMMER_ID,
                 debug_alias: "hammer",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: BRONZE_BAR_ID,
                 debug_alias: "bronze_bar",
-                quantity: 28,
+                note_alias: Some("bronze_bar_cert"),
+                quantity: bar_quantity,
                 note_id: Some(BRONZE_BAR_CERT_ID),
             },
         ],
@@ -13785,10 +13794,17 @@ fn smithing_bot_variant(
             },
         ),
         (
-            "confirm no seeded bars in pack before Start",
-            Proof::ItemIdAtMost {
-                id: BRONZE_BAR_ID,
-                count: 0,
+            "confirm the exact noted bar seed in pack before deposit",
+            Proof::ItemId {
+                id: BRONZE_BAR_CERT_ID,
+                count: bar_quantity,
+            },
+        ),
+        (
+            "confirm the hammer seed in pack before deposit",
+            Proof::ItemId {
+                id: HAMMER_ID,
+                count: 1,
             },
         ),
         (
@@ -13821,24 +13837,51 @@ fn smithing_bot_variant(
             NativeSeed {
                 unnoted_id: HAMMER_ID,
                 debug_alias: "hammer",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: BRONZE_BAR_ID,
                 debug_alias: "bronze_bar",
-                quantity: 28,
+                note_alias: Some("bronze_bar_cert"),
+                quantity: bar_quantity,
                 note_id: Some(BRONZE_BAR_CERT_ID),
             },
         ],
     ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge the hammer seed bank",
-        Proof::BankItemId {
-            id: HAMMER_ID,
-            count: 1,
-        },
-    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the hammer seed bank",
+            Proof::BankItemId {
+                id: HAMMER_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge the exact bronze bar seed bank",
+            Proof::BankItemId {
+                id: BRONZE_BAR_ID,
+                count: bar_quantity,
+            },
+        ),
+        (
+            "confirm the hammer seed was removed from pack",
+            Proof::ItemIdAtMost {
+                id: HAMMER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm the noted bar seed was removed from pack",
+            Proof::ItemIdAtMost {
+                id: BRONZE_BAR_CERT_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
@@ -13953,18 +13996,21 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: NEEDLE_ID,
                 debug_alias: "needle",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: THREAD_ID,
                 debug_alias: "thread",
+                note_alias: None,
                 quantity: 100,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
+                note_alias: Some("leather_cert"),
                 quantity: 28,
                 note_id: Some(leather_note),
             },
@@ -13981,24 +14027,24 @@ fn leather_crafter_variant(
             },
         ),
         (
-            "confirm no seeded leather in pack before Start",
-            Proof::ItemIdAtMost {
-                id: leather_id,
-                count: 0,
+            "confirm the exact noted leather seed in pack before deposit",
+            Proof::ItemId {
+                id: leather_note,
+                count: 28,
             },
         ),
         (
-            "confirm no seeded needle in pack before Start",
-            Proof::ItemIdAtMost {
+            "confirm the needle seed in pack before deposit",
+            Proof::ItemId {
                 id: NEEDLE_ID,
-                count: 0,
+                count: 1,
             },
         ),
         (
-            "confirm no seeded thread in pack before Start",
-            Proof::ItemIdAtMost {
+            "confirm the thread seed in pack before deposit",
+            Proof::ItemId {
                 id: THREAD_ID,
-                count: 0,
+                count: 100,
             },
         ),
         (
@@ -14031,23 +14077,72 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: NEEDLE_ID,
                 debug_alias: "needle",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: THREAD_ID,
                 debug_alias: "thread",
+                note_alias: None,
                 quantity: 100,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
+                note_alias: Some("leather_cert"),
                 quantity: 28,
                 note_id: Some(leather_note),
             },
         ],
     ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact leather seed bank",
+            Proof::BankItemId {
+                id: leather_id,
+                count: 28,
+            },
+        ),
+        (
+            "acknowledge the needle seed bank",
+            Proof::BankItemId {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge the thread seed bank",
+            Proof::BankItemId {
+                id: THREAD_ID,
+                count: 100,
+            },
+        ),
+        (
+            "confirm noted leather removal",
+            Proof::ItemIdAtMost {
+                id: leather_note,
+                count: 0,
+            },
+        ),
+        (
+            "confirm needle removal",
+            Proof::ItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm thread removal",
+            Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
@@ -14149,12 +14244,18 @@ fn firemaker_variant(
             NativeSeed {
                 unnoted_id: TINDERBOX_ID,
                 debug_alias: "tinderbox",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: log_id,
                 debug_alias: log_alias,
+                note_alias: Some(if log_alias == "logs" {
+                    "logs_cert"
+                } else {
+                    "oak_logs_cert"
+                }),
                 quantity: 28,
                 note_id: Some(log_note),
             },
@@ -14171,17 +14272,17 @@ fn firemaker_variant(
             },
         ),
         (
-            "confirm no seeded logs in pack before Start",
-            Proof::ItemIdAtMost {
-                id: log_id,
-                count: 0,
+            "confirm the exact noted log seed in pack before deposit",
+            Proof::ItemId {
+                id: log_note,
+                count: 28,
             },
         ),
         (
-            "confirm no seeded tinderbox in pack before Start",
-            Proof::ItemIdAtMost {
+            "confirm the tinderbox seed in pack before deposit",
+            Proof::ItemId {
                 id: TINDERBOX_ID,
-                count: 0,
+                count: 1,
             },
         ),
         (
@@ -14207,17 +14308,55 @@ fn firemaker_variant(
             NativeSeed {
                 unnoted_id: TINDERBOX_ID,
                 debug_alias: "tinderbox",
+                note_alias: None,
                 quantity: 1,
                 note_id: None,
             },
             NativeSeed {
                 unnoted_id: log_id,
                 debug_alias: log_alias,
+                note_alias: Some(if log_alias == "logs" {
+                    "logs_cert"
+                } else {
+                    "oak_logs_cert"
+                }),
                 quantity: 28,
                 note_id: Some(log_note),
             },
         ],
     ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact log seed bank",
+            Proof::BankItemId {
+                id: log_id,
+                count: 28,
+            },
+        ),
+        (
+            "acknowledge the tinderbox seed bank",
+            Proof::BankItemId {
+                id: TINDERBOX_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm noted log removal",
+            Proof::ItemIdAtMost {
+                id: log_note,
+                count: 0,
+            },
+        ),
+        (
+            "confirm tinderbox removal",
+            Proof::ItemIdAtMost {
+                id: TINDERBOX_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
