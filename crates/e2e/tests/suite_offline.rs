@@ -210,7 +210,7 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(
         stdout.contains(&format!(
-            "{} --profile local-289 --catalog {} --nav-paints on --live script_thiever",
+            "{} --profile local-289 --catalog {} --lowmem --nav-paints on --live script_thiever",
             canonical(FIXTURE),
             catalog(&tmp).display()
         )),
@@ -324,7 +324,7 @@ fn a_run_without_an_explicit_executable_launches_the_resolved_artifact() {
     assert!(dry.status.success(), "{}", text(&dry.stderr));
     assert!(
         stdout.contains(&format!(
-            "{} --profile local-289 --catalog {} --nav-paints on --live script_thiever",
+            "{} --profile local-289 --catalog {} --lowmem --nav-paints on --live script_thiever",
             resolved_canonical,
             catalog(&tmp).display()
         )),
