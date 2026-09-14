@@ -88,6 +88,20 @@ globalThis.LoopingBot = class LoopingBot {
         };
     }
 };
+globalThis.__rs2b0t_dispatch_native_events = (evs) => {
+    const inst = globalThis.__rs_bot;
+    const subs = inst && inst._subs;
+    if (!subs || !evs) return;
+    for (let i = 0; i < evs.length; i++) {
+        const e = evs[i];
+        const cbs = subs[e.type];
+        if (!cbs) continue;
+        const payload = e.payload;
+        for (let j = 0; j < cbs.length; j++) {
+            try { cbs[j](payload); } catch (_) {}
+        }
+    }
+};
 globalThis.TaskBot = class TaskBot extends globalThis.LoopingBot {
     constructor() {
         super();

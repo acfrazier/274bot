@@ -10,6 +10,8 @@ pub mod declared_abi;
 pub mod host_js;
 pub mod identity;
 #[cfg(feature = "load")]
+mod events;
+#[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
 #[cfg(feature = "load")]

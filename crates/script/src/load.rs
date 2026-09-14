@@ -3407,6 +3407,112 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             .map_err(|e| format!("settings bag: {e}"))
     }
 
+    fn native_event_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        ev: &crate::events::NativeEvent,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let wrapped = v8::Object::new(scope);
+        let type_name = js_string(scope, ev.type_name())?;
+        set(scope, wrapped, "type", type_name)?;
+        let payload = v8::Object::new(scope);
+        match ev {
+            crate::events::NativeEvent::SkillXp {
+                skill,
+                name,
+                xp,
+                delta,
+            } => {
+                let skill_v = num(scope, *skill as f64);
+                set(scope, payload, "skill", skill_v)?;
+                let name_v = js_string(scope, name)?;
+                set(scope, payload, "name", name_v)?;
+                let xp_v = num(scope, *xp as f64);
+                set(scope, payload, "xp", xp_v)?;
+                let delta_v = num(scope, *delta as f64);
+                set(scope, payload, "delta", delta_v)?;
+            }
+            crate::events::NativeEvent::InventoryChanged {
+                slot,
+                id,
+                name,
+                count,
+                previous_id,
+                previous_count,
+            } => {
+                let slot_v = num(scope, *slot as f64);
+                set(scope, payload, "slot", slot_v)?;
+                let id_v = num(scope, *id as f64);
+                set(scope, payload, "id", id_v)?;
+                match name {
+                    Some(n) => {
+                        let name_v = js_string(scope, n)?;
+                        set(scope, payload, "name", name_v)?;
+                    }
+                    None => {
+                        let none = v8::null(scope).into();
+                        set(scope, payload, "name", none)?;
+                    }
+                }
+                let count_v = num(scope, *count as f64);
+                set(scope, payload, "count", count_v)?;
+                let prev_id = num(scope, *previous_id as f64);
+                set(scope, payload, "previousId", prev_id)?;
+                let prev_count = num(scope, *previous_count as f64);
+                set(scope, payload, "previousCount", prev_count)?;
+            }
+        }
+        set(scope, wrapped, "payload", payload.into())?;
+        Ok(wrapped.into())
+    }
+
+    fn dispatch_native_events(
+        runtime: &mut Runtime,
+        events: &[crate::events::NativeEvent],
+    ) -> Result<(), String> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        {
+            let context = runtime.deno_runtime().main_context();
+            let mut scope = runtime.deno_runtime().handle_scope();
+            let global = context.open(&mut scope).global(&mut scope);
+            let arr = v8::Array::new(&mut scope, events.len() as i32);
+            for (i, ev) in events.iter().enumerate() {
+                let obj = native_event_object(&mut scope, ev)?;
+                arr.set_index(&mut scope, i as u32, obj)
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
+            let key = js_string(&mut scope, "__rs2b0t_native_event_batch")?;
+            global
+                .set(&mut scope, key, arr.into())
+                .ok_or_else(|| "v8 set batch failed".to_string())?;
+        }
+        runtime
+            .eval::<()>(
+                "(() => { const d = globalThis.__rs2b0t_dispatch_native_events; const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; if (typeof d === 'function') d(b); })()",
+            )
+            .map_err(|e| format!("{e}"))
+    }
+
+    fn deliver_pending_native_events(
+        runtime: &mut Runtime,
+        pending_events: &mut Vec<crate::events::NativeEvent>,
+        out: &Sender<ThreadMsg>,
+        host_hold: bool,
+    ) {
+        if pending_events.is_empty() {
+            return;
+        }
+        let events = std::mem::take(pending_events);
+        if let Err(e) = dispatch_native_events(runtime, &events) {
+            let _ = out.send(ThreadMsg::Log(format!("native events: {e}")));
+        }
+        if host_hold {
+            let _ = runtime
+                .eval::<()>("if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []");
+        }
+    }
+
     fn js_string<'s>(
         scope: &mut v8::HandleScope<'s>,
         s: &str,
@@ -4073,6 +4179,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
         // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
         let mut host_hold = false;
+        let mut event_producer = crate::events::NativeEventProducer::new();
+        let mut pending_events: Vec<crate::events::NativeEvent> = Vec::new();
         // One reusable encode buffer for this V8 isolate: interact batch
         // and paint frames share it (`reset` between messages).
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
@@ -4138,6 +4246,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                            } else {
+                                let observed = event_producer.observe(&snap);
+                                if let Some(diag) = observed.diagnostic {
+                                    let _ = out.send(ThreadMsg::Log(diag));
+                                }
+                                if !observed.events.is_empty() {
+                                    pending_events.extend(observed.events);
+                                }
                             }
                         }
                         Err(e) => {
@@ -4167,6 +4283,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         continue;
                     }
                     let start = Instant::now();
+                    deliver_pending_native_events(
+                        &mut runtime,
+                        &mut pending_events,
+                        &out,
+                        host_hold,
+                    );
                     // Guardian hold: skip `loop()` AND skip resolving
                     // parked conds (time waits too) — the wait stays parked
                     // until the hold lifts. Still call `onPaint` so status
@@ -4392,11 +4514,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::fire::on_reset();
                     crate::trade::on_reset();
                     crate::drive_partner_trade::on_reset();
+                    event_producer.reset();
+                    pending_events.clear();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                     clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Pause => {
                     paused = true;
+                    let _ = event_producer.set_paused(true);
                     crate::periodic_bank::on_pause();
                     crate::bank_open::on_pause();
                     crate::cake_stall::on_pause();
@@ -4413,6 +4538,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 }
                 IsolateCmd::Resume => {
                     paused = false;
+                    let resumed = event_producer.set_paused(false);
+                    if let Some(diag) = resumed.diagnostic {
+                        let _ = out.send(ThreadMsg::Log(diag));
+                    }
+                    if !resumed.events.is_empty() {
+                        pending_events.extend(resumed.events);
+                    }
                     crate::periodic_bank::on_resume();
                     crate::bank_open::on_resume();
                     crate::cake_stall::on_resume();
