@@ -12591,6 +12591,15 @@ export default class T extends LoopingBot {
         c.npc_count += 1;
     }
 
+    /// Active positive type-1 combat hit on the local player (value 5, type 1).
+    fn plant_positive_hit(c: &mut Client) {
+        let until = c.loop_cycle + 70;
+        let lp = c.local_player.as_mut().expect("local player");
+        lp.entity.damage_values[0] = 5;
+        lp.entity.damage_types[0] = 1;
+        lp.entity.damage_cycles[0] = until;
+    }
+
     /// Advance every packet family and rebuild the **persistent**
     /// snapshot (one call per game tick, so `snap.tick()` climbs).
     fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
@@ -14015,6 +14024,7 @@ export default class T extends LoopingBot {
 
         let mut c = guardian_client();
         plant_attacking_npc(&mut c, 0, "Swarm");
+        plant_positive_hit(&mut c);
         let mut g = Guardian::new();
         let mut drv = GuardRec::default();
         let settings = ProfileSettings::default();
