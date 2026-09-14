@@ -11,9 +11,10 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::BotTarget;
+use nav::canlight;
 use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
-use nav::pack::{decode_reach_sidecar, sha256_hex};
+use nav::pack::{decode_canlight_sidecar, decode_reach_sidecar, sha256_hex};
 use nav::world::NavWorld;
 
 use crate::cache::CacheAvailability;
@@ -446,6 +447,7 @@ pub struct ServerProfile {
     nav_load: NavLoadCounters,
     world: SharedWorld,
     reach: Option<Arc<[u64]>>,
+    canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
     vault_path: PathBuf,
@@ -457,6 +459,7 @@ struct LoadedNav {
     identity: Option<NavManifest>,
     world: Option<Arc<NavWorld>>,
     reach: Option<Arc<[u64]>>,
+    canlight: Option<Arc<[u64]>>,
     counters: NavLoadCounters,
 }
 
@@ -703,6 +706,7 @@ impl ProfileSelection {
             nav_load: loaded.counters,
             world: SharedWorld(loaded.world),
             reach: loaded.reach,
+            canlight: loaded.canlight,
             nav: loaded.availability,
             content_dir: self.content_dir.clone(),
             vault_path: self.vault_path.clone(),
@@ -750,6 +754,7 @@ impl ProfileSelection {
                 identity: None,
                 world: None,
                 reach: None,
+                canlight: None,
                 counters,
             });
         }
@@ -772,6 +777,7 @@ impl ProfileSelection {
                     nav_sha256: identity.nav_sha256.clone(),
                     flags_sha256: identity.flags_sha256.clone(),
                     reach_sha256: identity.reach_sha256.clone(),
+                    canlight_sha256: identity.canlight_sha256.clone(),
                 }
             }
             NavOrigin::External { .. } => {
@@ -793,12 +799,14 @@ impl ProfileSelection {
                             nav_sha256: nav_hash,
                             flags_sha256: None,
                             reach_sha256: None,
+                            canlight_sha256: None,
                         };
                         return Ok(LoadedNav {
                             availability: NavAvailability::Legacy274,
                             identity: Some(identity),
                             world: Some(world),
                             reach: None,
+                            canlight: None,
                             counters,
                         });
                     }
@@ -829,11 +837,32 @@ impl ProfileSelection {
         } else {
             None
         };
+        let canlight = if origin.is_bundled() {
+            let Some(policy_hex) = origin
+                .bundled_identity()
+                .and_then(|row| row.canlight_identity.as_deref())
+            else {
+                return Err("bundled navigation canlight identity is missing".into());
+            };
+            if identity.canlight_sha256.is_none() {
+                return Err("bundled navigation canlight identity is missing".into());
+            }
+            Some(load_bundled_canlight(
+                pack_path,
+                &world,
+                &identity.nav_sha256,
+                policy_hex,
+                &mut counters,
+            )?)
+        } else {
+            None
+        };
         Ok(LoadedNav {
             availability: NavAvailability::Bound,
             identity: Some(identity),
             world: Some(world),
             reach,
+            canlight,
             counters,
         })
     }
@@ -891,6 +920,11 @@ impl ServerProfile {
     /// path, which keeps its one-time `bake_reach`.
     pub fn reach(&self) -> Option<Arc<[u64]>> {
         self.reach.clone()
+    }
+    /// Bundled static canlight bitset decoded at bind. `None` on the external
+    /// / legacy path (Fire fail-closed; no runtime bake).
+    pub fn canlight(&self) -> Option<Arc<[u64]>> {
+        self.canlight.clone()
     }
     pub fn content_dir(&self) -> &Path {
         &self.content_dir
@@ -981,6 +1015,60 @@ fn load_bundled_reach(
         return Err(format!(
             "bundled navigation {} geometry does not match pack",
             reach_path.display()
+        ));
+    }
+    Ok(Arc::from(side.bits))
+}
+
+fn load_bundled_canlight(
+    pack_path: &Path,
+    world: &NavWorld,
+    nav_sha256: &str,
+    canlight_identity: &str,
+    counters: &mut NavLoadCounters,
+) -> Result<Arc<[u64]>, String> {
+    let canlight_path = pack_path.with_extension("navcanlight");
+    if !canlight_path.exists() {
+        return Err(format!(
+            "bundled navigation {} is missing",
+            canlight_path.display()
+        ));
+    }
+    let bytes = std::fs::read(&canlight_path)
+        .map_err(|e| format!("bundled navigation {}: {e}", canlight_path.display()))?;
+    counters.canlight_reads = 1;
+    let side = decode_canlight_sidecar(&bytes).map_err(|e| match e {
+        nav::pack::PackError::BadMagic => {
+            format!("bundled navigation {}: bad magic", canlight_path.display())
+        }
+        nav::pack::PackError::BadVersion(v) => format!(
+            "bundled navigation {}: unsupported version {v}",
+            canlight_path.display()
+        ),
+        nav::pack::PackError::Truncated => {
+            format!("bundled navigation {}: truncated", canlight_path.display())
+        }
+        other => format!("bundled navigation {}: {other}", canlight_path.display()),
+    })?;
+    let expected = canlight::expected_header_binding(nav_sha256, canlight_identity)
+        .map_err(|e| format!("bundled navigation {} binding {e}", canlight_path.display()))?;
+    if side.binding != expected {
+        return Err(format!(
+            "bundled navigation {} binding does not match pack and policy identity",
+            canlight_path.display()
+        ));
+    }
+    let c = &world.collision;
+    let words = c.walk.len().div_ceil(64);
+    if side.origin != c.origin
+        || side.width != c.width
+        || side.height != c.height
+        || side.word_count != words
+        || side.bits.len() != words
+    {
+        return Err(format!(
+            "bundled navigation {} geometry does not match pack",
+            canlight_path.display()
         ));
     }
     Ok(Arc::from(side.bits))

@@ -67,6 +67,8 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("navigation flags {}: {e}", flags_path.display()))?;
     let reach_path = nav_path.with_extension("navreach");
     let reach_bytes = std::fs::read(&reach_path).ok();
+    let canlight_path = nav_path.with_extension("navcanlight");
+    let canlight_bytes = std::fs::read(&canlight_path).ok();
     let nav_manifest: NavManifest = read_json(&nav_manifest_path(nav_path))?;
     nav_manifest.verify(
         revision,
@@ -74,6 +76,7 @@ fn run() -> Result<(), String> {
         &nav_bytes,
         Some(&flags_bytes),
         reach_bytes.as_deref(),
+        canlight_bytes.as_deref(),
     )?;
 
     let config_bytes =

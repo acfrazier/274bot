@@ -33,7 +33,11 @@
 //! bitset is a second sidecar, not on the v8 pack wire: magic `b"274R"`,
 //! version 1, the same origin/width/height header, an explicit word count,
 //! a 32-byte pack-identity binding, then `u64le` words
-//! ([`encode_reach_sidecar`]/[`decode_reach_sidecar`]). After the edges,
+//! ([`encode_reach_sidecar`]/[`decode_reach_sidecar`]). The static canlight
+//! bitset is a third sidecar, same header dialect: magic `b"274L"`, version 1
+//! ([`encode_canlight_sidecar`]/[`decode_canlight_sidecar`]); its 32-byte
+//! binding is pack identity concatenated with canlight policy identity, not
+//! pack SHA alone. After the edges,
 //! v8 appends the content-derived bank stand table: count u32le, then per
 //! stand a length-prefixed name, the `x/z/level` tile i32le, and the
 //! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
@@ -88,6 +92,10 @@ const MAGIC_FLAGS: &[u8; 4] = b"274F";
 const VERSION_REACH: u8 = 1;
 /// Paint-reach sidecar magic.
 const MAGIC_REACH: &[u8; 4] = b"274R";
+/// Static canlight sidecar format version.
+const VERSION_CANLIGHT: u8 = 1;
+/// Static canlight sidecar magic.
+const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
 /// Pack format identity as it appears in bundled navigation identities: the
 /// file magic followed by the format version (`274V8` for the current wire).
 /// A format improvement changes this identity and therefore invalidates
@@ -533,6 +541,20 @@ pub fn sha256_hex(bytes: &[u8; 32]) -> String {
     out
 }
 
+/// Parse a 64-char lowercase-or-mixed SHA-256 hex digest into 32 bytes.
+pub fn sha256_from_hex(hex: &str) -> Result<[u8; 32], String> {
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("is not a SHA-256 hex digest".into());
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+        let slot = [chunk[0], chunk[1]];
+        let text = std::str::from_utf8(&slot).map_err(|_| "is not a SHA-256 hex digest")?;
+        out[i] = u8::from_str_radix(text, 16).map_err(|_| "is not a SHA-256 hex digest")?;
+    }
+    Ok(out)
+}
+
 /// Serialize a paint-reach bitset: magic `b"274R"`, version 1, the same
 /// origin/width/height header as the pack, explicit word count, the 32-byte
 /// pack SHA-256 binding, then `word_count` little-endian `u64` words.
@@ -543,9 +565,67 @@ pub fn encode_reach_sidecar(
     bits: &[u64],
     binding: &[u8; 32],
 ) -> Vec<u8> {
+    encode_bitset_sidecar(
+        MAGIC_REACH,
+        VERSION_REACH,
+        origin,
+        width,
+        height,
+        bits,
+        binding,
+    )
+}
+
+/// Deserialize a paint-reach sidecar, validating magic, version, grid
+/// header, word count and that the trailing payload is exactly that many
+/// `u64le` words. Binding bytes are not interpreted here — the caller
+/// compares them to the pack identity.
+pub fn decode_reach_sidecar(bytes: &[u8]) -> Result<ReachSidecar, PackError> {
+    decode_bitset_sidecar(bytes, MAGIC_REACH, VERSION_REACH)
+}
+
+/// Decoded static canlight sidecar. Same geometry as [`ReachSidecar`]; the
+/// binding is pack+policy identity, not pack SHA alone.
+pub type CanlightSidecar = ReachSidecar;
+
+/// Serialize a static canlight bitset: magic `b"274L"`, version 1, the same
+/// header dialect as [`encode_reach_sidecar`].
+pub fn encode_canlight_sidecar(
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    bits: &[u64],
+    binding: &[u8; 32],
+) -> Vec<u8> {
+    encode_bitset_sidecar(
+        MAGIC_CANLIGHT,
+        VERSION_CANLIGHT,
+        origin,
+        width,
+        height,
+        bits,
+        binding,
+    )
+}
+
+/// Deserialize a static canlight sidecar. Binding bytes are not interpreted
+/// here — the caller compares them to pack+policy identity.
+pub fn decode_canlight_sidecar(bytes: &[u8]) -> Result<CanlightSidecar, PackError> {
+    decode_bitset_sidecar(bytes, MAGIC_CANLIGHT, VERSION_CANLIGHT)
+}
+
+fn encode_bitset_sidecar(
+    magic: &[u8; 4],
+    version: u8,
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    bits: &[u64],
+    binding: &[u8; 32],
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + 4 + 32 + bits.len() * 8);
-    out.extend_from_slice(MAGIC_REACH);
-    out.push(VERSION_REACH);
+    out.extend_from_slice(magic);
+    out.push(version);
     for v in [origin.x, origin.z, origin.level] {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -559,21 +639,21 @@ pub fn encode_reach_sidecar(
     out
 }
 
-/// Deserialize a paint-reach sidecar, validating magic, version, grid
-/// header, word count and that the trailing payload is exactly that many
-/// `u64le` words. Binding bytes are not interpreted here — the caller
-/// compares them to the pack identity.
-pub fn decode_reach_sidecar(bytes: &[u8]) -> Result<ReachSidecar, PackError> {
+fn decode_bitset_sidecar(
+    bytes: &[u8],
+    expected_magic: &[u8; 4],
+    expected_version: u8,
+) -> Result<ReachSidecar, PackError> {
     let mut r = Cursor::new(bytes);
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic).map_err(|_| PackError::Truncated)?;
-    if &magic != MAGIC_REACH {
+    if &magic != expected_magic {
         return Err(PackError::BadMagic);
     }
     let mut version = [0u8; 1];
     r.read_exact(&mut version)
         .map_err(|_| PackError::Truncated)?;
-    if version[0] != VERSION_REACH {
+    if version[0] != expected_version {
         return Err(PackError::BadVersion(version[0]));
     }
     let origin = WorldTile {
@@ -1403,11 +1483,11 @@ mod tests {
     use std::io::{Cursor, Read};
 
     use super::{
-        decode, decode_flags_sidecar, decode_grid, decode_reach_sidecar, derive_banks, encode,
-        encode_flags_sidecar, encode_grid, encode_reach_sidecar, merge_squares, parse_door_config,
-        parse_door_config_ids, parse_door_open_ids, parse_mapsquare_text, parse_passable_locs,
-        sha256_hex, walkable_dots, BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE,
-        VERSION,
+        decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
+        derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_grid,
+        encode_reach_sidecar, merge_squares, parse_door_config, parse_door_config_ids,
+        parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, sha256_hex, walkable_dots,
+        BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
     };
     use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
     use crate::grid::StepGrid;
@@ -1763,6 +1843,49 @@ mod tests {
         assert_eq!((da.width, da.height), (db.width, db.height));
         assert_eq!(da.bits, db.bits);
         assert_ne!(da.binding, db.binding);
+    }
+
+    #[test]
+    fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let bits = vec![0x0102_0304_0506_0708u64];
+        let binding = [0xCDu8; 32];
+        let bytes = encode_canlight_sidecar(origin, 2, 1, &bits, &binding);
+        assert_eq!(&bytes[..4], b"274L");
+        let side = decode_canlight_sidecar(&bytes).unwrap();
+        assert_eq!(side.origin, origin);
+        assert_eq!((side.width, side.height, side.word_count), (2, 1, 1));
+        assert_eq!(side.binding, binding);
+        assert_eq!(side.bits, bits);
+        assert!(matches!(
+            decode_canlight_sidecar(b"XXXX"),
+            Err(PackError::BadMagic)
+        ));
+        let mut bad_ver = bytes.clone();
+        bad_ver[4] = 2;
+        assert!(matches!(
+            decode_canlight_sidecar(&bad_ver),
+            Err(PackError::BadVersion(2))
+        ));
+        assert!(matches!(
+            decode_canlight_sidecar(&bytes[..10]),
+            Err(PackError::Truncated)
+        ));
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(matches!(
+            decode_canlight_sidecar(&extra),
+            Err(PackError::Truncated)
+        ));
+        let reach = encode_reach_sidecar(origin, 2, 1, &bits, &binding);
+        assert!(matches!(
+            decode_canlight_sidecar(&reach),
+            Err(PackError::BadMagic)
+        ));
     }
 
     #[test]

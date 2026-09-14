@@ -65,24 +65,49 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
     let dir = Fixture::new();
     fixture_cache(&dir.0);
     let cache = CacheManifest::capture(289, &dir.0).unwrap();
-    let manifest = NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None).unwrap();
+    let manifest = NavManifest::capture(289, &cache, b"pack", Some(b"flags"), None, None).unwrap();
     manifest
-        .verify(289, &cache, b"pack", Some(b"flags"), None)
+        .verify(289, &cache, b"pack", Some(b"flags"), None, None)
         .unwrap();
     assert!(manifest
-        .verify(274, &cache, b"pack", Some(b"flags"), None)
+        .verify(274, &cache, b"pack", Some(b"flags"), None, None)
         .is_err());
     assert!(manifest
-        .verify(289, &cache, b"other", Some(b"flags"), None)
+        .verify(289, &cache, b"other", Some(b"flags"), None, None)
         .is_err());
-    assert!(manifest.verify(289, &cache, b"pack", None, None).is_err());
+    assert!(manifest
+        .verify(289, &cache, b"pack", None, None, None)
+        .is_err());
     let with_reach =
-        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), Some(b"reach")).unwrap();
+        NavManifest::capture(289, &cache, b"pack", Some(b"flags"), Some(b"reach"), None).unwrap();
     assert!(with_reach.reach_sha256.is_some());
     assert!(with_reach
-        .verify(289, &cache, b"pack", Some(b"flags"), None)
+        .verify(289, &cache, b"pack", Some(b"flags"), None, None)
         .is_err());
     with_reach
-        .verify(289, &cache, b"pack", Some(b"flags"), Some(b"reach"))
+        .verify(289, &cache, b"pack", Some(b"flags"), Some(b"reach"), None)
+        .unwrap();
+    let with_canlight = NavManifest::capture(
+        289,
+        &cache,
+        b"pack",
+        Some(b"flags"),
+        Some(b"reach"),
+        Some(b"canlight"),
+    )
+    .unwrap();
+    assert!(with_canlight.canlight_sha256.is_some());
+    assert!(with_canlight
+        .verify(289, &cache, b"pack", Some(b"flags"), Some(b"reach"), None)
+        .is_err());
+    with_canlight
+        .verify(
+            289,
+            &cache,
+            b"pack",
+            Some(b"flags"),
+            Some(b"reach"),
+            Some(b"canlight"),
+        )
         .unwrap();
 }
