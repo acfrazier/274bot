@@ -789,66 +789,37 @@ fn witness_mismatch(
     }
 }
 
-/// Duel PASS must be a real native witness: two distinct reciprocal actors,
-/// post-Start observations, and a FirstCombat/ResetAndFurther claim that the
-/// serialized qualification fields and predicates actually support. A queued
-/// challenge, equipped weapon, script start or a forged claim string is not
-/// qualification. FirstCombat does not require reset/further combat.
+/// Duel PASS must be a real native witness: decode `DuelPairWitness` with the
+/// fields those types require, then call `qualify_supported` /
+/// `qualify_full_cycle`. Missing or type-invalid safety fields fail closed.
+/// FirstCombat does not require reset/further combat.
 fn duel_witness_mismatch(pair: &TerminalReceipt) -> Option<String> {
+    use host_play::paired_core::{DuelClaim, DuelPairWitness};
+
     let Some(Value::Object(map)) = &pair.payload else {
         return Some("PAIRED_CORE Duel witness carries no JSON object".into());
     };
     let body = map.get("witness").and_then(Value::as_object).unwrap_or(map);
-    let Some(a) = body.get("a").and_then(Value::as_object) else {
+    if body.get("a").is_none() {
         return Some("PAIRED_CORE Duel witness is missing actor a".into());
-    };
-    let Some(b) = body.get("b").and_then(Value::as_object) else {
+    }
+    if body.get("b").is_none() {
         return Some("PAIRED_CORE Duel witness is missing actor b".into());
-    };
-    let Some(a_account) = slot_actor(a, "account").filter(|name| !name.is_empty()) else {
-        return Some("PAIRED_CORE Duel witness actors carry no account".into());
-    };
-    let Some(b_account) = slot_actor(b, "account").filter(|name| !name.is_empty()) else {
-        return Some("PAIRED_CORE Duel witness actors carry no account".into());
-    };
-    if actor_eq(a_account, b_account) {
-        return Some("PAIRED_CORE Duel witness actors are not distinct".into());
     }
-    let a_expected = slot_actor(a, "expected_player").unwrap_or(a_account);
-    let b_expected = slot_actor(b, "expected_player").unwrap_or(b_account);
-    let Some(a_partner) = slot_actor(a, "partner") else {
-        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
+    let witness: DuelPairWitness = match serde_json::from_value(serde_json::json!({
+        "a": body.get("a"),
+        "b": body.get("b"),
+    })) {
+        Ok(witness) => witness,
+        Err(err) => {
+            return Some(format!(
+                "PAIRED_CORE Duel witness is not a native DuelPairWitness: {err}"
+            ))
+        }
     };
-    let Some(b_partner) = slot_actor(b, "partner") else {
-        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
-    };
-    if !actor_eq(a_partner, b_expected) || !actor_eq(b_partner, a_expected) {
-        return Some("PAIRED_CORE Duel witness partners are not the minted counterparts".into());
-    }
-    if slot_u64(a, "post_start") == 0 || slot_u64(b, "post_start") == 0 {
-        return Some("PAIRED_CORE Duel witness has no post-Start observations".into());
-    }
-    if slot_bool(a, "mixed_identity") || slot_bool(b, "mixed_identity") {
-        return Some("PAIRED_CORE Duel witness mixed identities".into());
-    }
-    if slot_bool(a, "saw_wrong_partner") || slot_bool(b, "saw_wrong_partner") {
-        return Some("PAIRED_CORE Duel witness observed the wrong opponent".into());
-    }
     let claim = body.get("claim").and_then(Value::as_str);
     let supported = body.get("supported").and_then(Value::as_str);
     let full = body.get("full").and_then(Value::as_str);
-    let first_combat = slot_bool(a, "saw_offer")
-        && slot_bool(b, "saw_offer")
-        && slot_bool(a, "saw_confirm")
-        && slot_bool(b, "saw_confirm")
-        && slot_bool(a, "saw_pen")
-        && slot_bool(b, "saw_pen")
-        && slot_bool(a, "saw_combat")
-        && slot_bool(b, "saw_combat")
-        && (slot_i64(a, "melee_xp_from_script") > 0 || slot_i64(b, "melee_xp_from_script") > 0);
-    let reset_and_further = first_combat
-        && (slot_bool(a, "saw_win_or_lobby_return") || slot_bool(b, "saw_win_or_lobby_return"))
-        && (slot_bool(a, "further_combat") || slot_bool(b, "further_combat"));
     match claim {
         Some("first-combat") => {
             if supported != Some("first-combat") || full.is_some() {
@@ -857,12 +828,15 @@ fn duel_witness_mismatch(pair: &TerminalReceipt) -> Option<String> {
                         .into(),
                 );
             }
-            if !first_combat {
-                return Some(
-                    "PAIRED_CORE Duel first-combat claim is not backed by offer/confirm/pen/combat observations".into(),
-                );
+            match witness.qualify_supported() {
+                Ok(DuelClaim::FirstCombat) => None,
+                Ok(other) => Some(format!(
+                    "PAIRED_CORE Duel first-combat claim is not backed by native qualification ({other:?})"
+                )),
+                Err(reason) => Some(format!(
+                    "PAIRED_CORE Duel first-combat claim is not backed by native qualification: {reason}"
+                )),
             }
-            None
         }
         Some("reset-and-further") => {
             if full != Some("reset-and-further") || supported != Some("first-combat") {
@@ -871,12 +845,15 @@ fn duel_witness_mismatch(pair: &TerminalReceipt) -> Option<String> {
                         .into(),
                 );
             }
-            if !reset_and_further {
-                return Some(
-                    "PAIRED_CORE Duel reset-and-further claim is not backed by reset and further combat".into(),
-                );
+            match witness.qualify_full_cycle() {
+                Ok(DuelClaim::ResetAndFurther) => None,
+                Ok(other) => Some(format!(
+                    "PAIRED_CORE Duel reset-and-further claim is not backed by native qualification ({other:?})"
+                )),
+                Err(reason) => Some(format!(
+                    "PAIRED_CORE Duel reset-and-further claim is not backed by reset and further combat: {reason}"
+                )),
             }
-            None
         }
         Some(other) => Some(format!(
             "PAIRED_CORE Duel claim {other:?} is not first-combat or reset-and-further"
@@ -889,25 +866,6 @@ fn duel_witness_mismatch(pair: &TerminalReceipt) -> Option<String> {
 
 fn slot_actor<'a>(slot: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
     slot.get(key).and_then(Value::as_str)
-}
-
-fn slot_bool(slot: &serde_json::Map<String, Value>, key: &str) -> bool {
-    slot.get(key).and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn slot_u64(slot: &serde_json::Map<String, Value>, key: &str) -> u64 {
-    slot.get(key)
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            slot.get(key)
-                .and_then(Value::as_i64)
-                .map(|n| n.max(0) as u64)
-        })
-        .unwrap_or(0)
-}
-
-fn slot_i64(slot: &serde_json::Map<String, Value>, key: &str) -> i64 {
-    slot.get(key).and_then(Value::as_i64).unwrap_or(0)
 }
 
 fn actor_eq(left: &str, right: &str) -> bool {
@@ -2577,7 +2535,135 @@ CATALOG_CORE: script_thiever {\"case\":\"thiever\",\"post_start_observations\":2
         ) {
             Verdict::SharedFailure { reason, .. } => {
                 assert!(
-                    reason.contains("offer/confirm/pen/combat") || reason.contains("not backed"),
+                    reason.contains("offer/confirm/pen/combat")
+                        || reason.contains("not backed")
+                        || reason.contains("in-combat"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut seeded_offer = first.clone();
+        seeded_offer["a"]["baseline"]["duel_offer_open"] = serde_json::json!(true);
+        let seeded_offer_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {seeded_offer}\n"
+        ));
+        match validate(
+            &case,
+            &seeded_offer_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("seeded modal") || reason.contains("baseline"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut seeded_confirm = first.clone();
+        seeded_confirm["a"]["baseline"]["duel_confirm_open"] = serde_json::json!(true);
+        let seeded_confirm_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {seeded_confirm}\n"
+        ));
+        match validate(
+            &case,
+            &seeded_confirm_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("seeded modal") || reason.contains("baseline"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut missing_identity = first.clone();
+        missing_identity["a"]
+            .as_object_mut()
+            .expect("actor a")
+            .remove("mixed_identity");
+        let missing_identity_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {missing_identity}\n"
+        ));
+        match validate(
+            &case,
+            &missing_identity_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("mixed_identity"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut invalid_identity = first.clone();
+        invalid_identity["a"]["mixed_identity"] = serde_json::json!("yes");
+        let invalid_identity_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {invalid_identity}\n"
+        ));
+        match validate(
+            &case,
+            &invalid_identity_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("mixed_identity") || reason.contains("invalid type"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut missing_partner = first.clone();
+        missing_partner["b"]
+            .as_object_mut()
+            .expect("actor b")
+            .remove("saw_wrong_partner");
+        let missing_partner_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {missing_partner}\n"
+        ));
+        match validate(
+            &case,
+            &missing_partner_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("saw_wrong_partner"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let mut invalid_partner = first.clone();
+        invalid_partner["b"]["saw_wrong_partner"] = serde_json::json!(1);
+        let invalid_partner_receipts = parse(&format!(
+            "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+             PAIRED_CORE: script_duel_arena {invalid_partner}\n"
+        ));
+        match validate(
+            &case,
+            &invalid_partner_receipts,
+            Some(0),
+            &duel_actor_captures("alice", "bob"),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("saw_wrong_partner") || reason.contains("invalid type"),
                     "{reason}"
                 )
             }
