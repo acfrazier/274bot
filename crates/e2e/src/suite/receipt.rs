@@ -28,6 +28,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::identity::ExternalSource;
 use super::manifest::{CaptureSpec, CaseEntry, RunnerKind};
 use super::SuiteResult;
 
@@ -35,6 +36,8 @@ pub const PASS_PREFIX: &str = "PASS: live ";
 pub const FAIL_PREFIX: &str = "FAIL: live ";
 pub const CORE_PREFIX: &str = "CATALOG_CORE: ";
 pub const PAIR_PREFIX: &str = "PAIRED_CORE: ";
+/// The dedicated external loader smoke's own witness line (`host_play::external_loader::RECEIPT_PREFIX`).
+pub const EXTERNAL_PREFIX: &str = "EXTERNAL_LOADER: ";
 pub const SHOT_PREFIX: &str = "[panel] shot ";
 /// `scene_state` a capture must have been taken at (the client's in-world state).
 pub const INGAME_SCENE_STATE: i32 = 2;
@@ -77,6 +80,12 @@ pub fn wire_case(scenario: &str, runner: RunnerKind) -> SuiteResult<String> {
                 .map_err(|error| format!("{scenario}: {error}"))?;
             serde_json::to_value(case).map_err(|error| format!("{scenario}: {error}"))?
         }
+        // The loader smoke has no host enum at all: deriving an identity for it would invent one.
+        RunnerKind::External => {
+            return Err(format!(
+                "{scenario}: the external loader smoke has no catalog/pair witness identity"
+            ))
+        }
     };
     value
         .as_str()
@@ -88,7 +97,22 @@ pub fn wire_case(scenario: &str, runner: RunnerKind) -> SuiteResult<String> {
 /// declares a terminal shot — the panel's terminal-shot contract for that label. The panel
 /// holds a PASS until the shot is written (`hold_terminal_shot`), so a PASS without the
 /// capture is a harness failure, not a pass.
+///
+/// The external loader smoke has no scenario to ask: its case declares the producer's own
+/// terminal-shot label, and a row that declares anything else (or nothing) falls back to the
+/// mandatory producer label rather than relaxing the contract.
 pub fn declared_capture(case: &CaseEntry) -> Option<CaptureSpec> {
+    if case.runner() == RunnerKind::External {
+        return Some(match &case.capture {
+            Some(capture) if capture.label == host_play::external_loader::TERMINAL_SHOT => {
+                capture.clone()
+            }
+            _ => CaptureSpec {
+                label: host_play::external_loader::TERMINAL_SHOT.to_string(),
+                required: true,
+            },
+        });
+    }
     if let Some(capture) = &case.capture {
         return Some(capture.clone());
     }
@@ -113,6 +137,9 @@ pub struct ParsedReceipts {
     pub scenario_fail: Option<TerminalReceipt>,
     pub core: Option<TerminalReceipt>,
     pub pair: Option<TerminalReceipt>,
+    /// The external loader smoke's own witness (`EXTERNAL_LOADER:`), a distinct contract from
+    /// the scenario/CoreCase receipts above.
+    pub external: Option<TerminalReceipt>,
     pub duplicates: Vec<String>,
     pub malformed: Vec<String>,
     pub shot_lines: Vec<String>,
@@ -151,6 +178,8 @@ pub fn parse(output: &str) -> ParsedReceipts {
             Slot::Core
         } else if line.starts_with(PAIR_PREFIX) {
             Slot::Pair
+        } else if line.starts_with(EXTERNAL_PREFIX) {
+            Slot::External
         } else {
             continue;
         };
@@ -159,6 +188,7 @@ pub fn parse(output: &str) -> ParsedReceipts {
             Slot::ScenarioFail => &line[FAIL_PREFIX.len()..],
             Slot::Core => &line[CORE_PREFIX.len()..],
             Slot::Pair => &line[PAIR_PREFIX.len()..],
+            Slot::External => &line[EXTERNAL_PREFIX.len()..],
         };
         let (name, payload_text) = match rest.split_once(' ') {
             Some((name, text)) => (name.trim().to_string(), text.trim()),
@@ -187,6 +217,7 @@ pub fn parse(output: &str) -> ParsedReceipts {
             Slot::ScenarioFail => &mut receipts.scenario_fail,
             Slot::Core => &mut receipts.core,
             Slot::Pair => &mut receipts.pair,
+            Slot::External => &mut receipts.external,
         };
         if let Some(existing) = target {
             receipts.duplicates.push(format!(
@@ -211,6 +242,7 @@ enum Slot {
     ScenarioFail,
     Core,
     Pair,
+    External,
 }
 
 /// A capture pair written for this run, with the structural evidence the panel's shot
@@ -462,12 +494,15 @@ impl Verdict {
 /// Validate one child's result against the case contract.
 ///
 /// `exit_code` is `None` when the child was killed by the suite (timeout/interrupt); those
-/// paths never reach validation. `captures` are the captures attributed to *this* case.
+/// paths never reach validation. `captures` are the captures attributed to *this* case, and
+/// `external` is the bound external loader source — `Some` only for the loader smoke, which has
+/// its own receipt contract and never a `CoreCase`/`PairCase` witness.
 pub fn validate(
     case: &CaseEntry,
     receipts: &ParsedReceipts,
     exit_code: Option<i32>,
     captures: &[CaptureRecord],
+    external: Option<&ExternalSource>,
 ) -> Verdict {
     let shared = |kind: &'static str, reason: String| Verdict::SharedFailure { kind, reason };
     let live = case.live.as_deref().unwrap_or_default();
@@ -485,6 +520,19 @@ pub fn validate(
             format!(
                 "child reported a shared harness failure: {}",
                 receipts.shared_signals.join(", ")
+            ),
+        );
+    }
+    if case.runner() == RunnerKind::External {
+        // A different contract: the loader smoke prints its own record, not a scenario receipt.
+        return validate_external(case, receipts, exit_code, captures, external);
+    }
+    if receipts.external.is_some() {
+        return shared(
+            "receipt",
+            format!(
+                "{live} printed an EXTERNAL_LOADER witness; only the dedicated external loader \
+                 smoke prints one"
             ),
         );
     }
@@ -596,8 +644,8 @@ pub fn validate(
         }
     };
     let declared = match case.runner() {
-        RunnerKind::Core => case.core_case.as_deref().unwrap_or_default(),
         RunnerKind::Pair => case.pair_case.as_deref().unwrap_or_default(),
+        _ => case.core_case.as_deref().unwrap_or_default(),
     };
     if !declared.is_empty() && declared != expected_case {
         return shared(
@@ -638,6 +686,16 @@ pub fn validate(
                     format!("{live} is a pair case but printed a CATALOG_CORE witness"),
                 );
             }
+        }
+        // The external loader smoke returns above; reaching here means a case was presented as
+        // an external row and as a catalog case at once, which is refused rather than guessed.
+        RunnerKind::External => {
+            return shared(
+                "receipt",
+                format!(
+                    "{live} is an external loader case but reached the catalog witness contract"
+                ),
+            )
         }
     }
 
@@ -767,6 +825,519 @@ fn capture_verdict(case: &CaseEntry, captures: &[CaptureRecord]) -> Verdict {
     }
 }
 
+/// The dedicated external loader smoke's terminal contract.
+///
+/// The producer prints its own machine-readable record instead of a scenario receipt, and the
+/// terminal `PASS`/`FAIL` line carries the *same* payload as the `EXTERNAL_LOADER:` witness
+/// (`live_line = record_ext()` in the panel), so the suite compares the two rather than trusting
+/// either alone. Every field that establishes the native contract is derived from the production
+/// constants and the bound input identity: an exit code, a bare `PASS` string, a fixture-only
+/// counter or an earlier prerequisite capture is never success.
+fn validate_external(
+    case: &CaseEntry,
+    receipts: &ParsedReceipts,
+    exit_code: Option<i32>,
+    captures: &[CaptureRecord],
+    external: Option<&ExternalSource>,
+) -> Verdict {
+    let shared = |reason: String| Verdict::SharedFailure {
+        kind: "receipt",
+        reason,
+    };
+    let live = case.live.as_deref().unwrap_or_default();
+    if receipts.scenario_pass.is_some() && receipts.scenario_fail.is_some() {
+        return shared(format!(
+            "{live} printed both a PASS and a FAIL terminal receipt ({} / {})",
+            receipts
+                .scenario_pass
+                .as_ref()
+                .map(summarize)
+                .unwrap_or_default(),
+            receipts
+                .scenario_fail
+                .as_ref()
+                .map(summarize)
+                .unwrap_or_default(),
+        ));
+    }
+    let Some(witness) = &receipts.external else {
+        return shared(format!(
+            "no EXTERNAL_LOADER witness for {live} (exit {})",
+            exit_text(exit_code)
+        ));
+    };
+    if witness.name != live {
+        return shared(format!(
+            "EXTERNAL_LOADER witness names {:?}, expected {live:?}",
+            witness.name
+        ));
+    }
+    let Some(payload) = witness
+        .payload
+        .as_ref()
+        .filter(|payload| payload.is_object())
+    else {
+        return shared(format!(
+            "{live} EXTERNAL_LOADER witness is not a JSON object"
+        ));
+    };
+    if receipts.core.is_some() || receipts.pair.is_some() {
+        return shared(format!(
+            "{live} is the external loader smoke but printed a CATALOG_CORE/PAIRED_CORE witness"
+        ));
+    }
+    match (
+        receipts.scenario_pass.as_ref(),
+        receipts.scenario_fail.as_ref(),
+    ) {
+        (None, None) => shared(format!(
+            "no terminal external receipt for {live} (exit {})",
+            exit_text(exit_code)
+        )),
+        (Some(pass), None) => {
+            if exit_code != Some(0) {
+                return shared(format!(
+                    "{live} printed a PASS receipt but exited {}",
+                    exit_text(exit_code)
+                ));
+            }
+            match pass.payload.as_ref().filter(|payload| payload.is_object()) {
+                Some(line) if line == payload => {}
+                Some(_) => {
+                    return shared(format!(
+                        "{live} PASS payload and EXTERNAL_LOADER witness disagree"
+                    ))
+                }
+                None => return shared(format!("{live} PASS evidence is not a JSON object")),
+            }
+            let account = match qualified_external_account(payload, external) {
+                Ok(account) => account,
+                Err(reason) => return shared(format!("{live} {reason}")),
+            };
+            external_capture_verdict(case, captures, &account)
+        }
+        (None, Some(fail)) => {
+            if exit_code == Some(0) {
+                return shared(format!("{live} printed a FAIL receipt but exited 0"));
+            }
+            match fail.payload.as_ref().filter(|payload| payload.is_object()) {
+                Some(line) if line == payload => {}
+                Some(_) => {
+                    return shared(format!(
+                        "{live} FAIL payload and EXTERNAL_LOADER witness disagree"
+                    ))
+                }
+                None => return shared(format!("{live} FAIL receipt is not a JSON object")),
+            }
+            match external_failure_detail(payload) {
+                Ok(detail) => Verdict::CaseFailure { reason: detail },
+                Err(reason) => shared(format!("{live} {reason}")),
+            }
+        }
+        // The dual-terminal case returned above.
+        (Some(_), Some(_)) => unreachable!("checked above"),
+    }
+}
+
+/// The exit code as a receipt line prints it.
+fn exit_text(exit_code: Option<i32>) -> String {
+    exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "n/a".into())
+}
+
+/// The serde wire form of a producer enum value. The receipt carries the real enum, so the
+/// expected token is derived from that enum instead of hard-coding a spelling that could drift.
+fn wire<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn require(condition: bool, message: impl Into<String>) -> Result<(), String> {
+    if condition {
+        Ok(())
+    } else {
+        Err(message.into())
+    }
+}
+
+/// A producer hash field: a lowercase SHA-256 hex digest (`{:x}` of 32 bytes). An arbitrary or
+/// mis-cased string is not a hash, and a receipt that carries one is refused.
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// The qualified external receipt, validated field by field against the production constants
+/// and the bound source identity. Returns the run's account, which the capture must also name.
+fn qualified_external_account(
+    payload: &Value,
+    external: Option<&ExternalSource>,
+) -> Result<String, String> {
+    use host_play::external_loader::{
+        Operation, Stage, BONES_COUNT, MIN_DISTINCT_BURIALS, SCRIPT_NAME, START_DEADLINE,
+        STOP_DEADLINE,
+    };
+    let Some(external) = external else {
+        return Err(
+            "bound no external loader source; the suite cannot validate the receipt's source identity"
+                .into(),
+        );
+    };
+    let expected_stage = wire(&Stage::Qualified);
+    let stage = payload
+        .get("stage")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    require(
+        stage == expected_stage,
+        format!("reports external stage {stage:?}, expected {expected_stage:?}"),
+    )?;
+    require(
+        matches!(payload.get("failure_reason"), None | Some(Value::Null)),
+        "qualified external receipt carries a failure reason",
+    )?;
+    require(
+        matches!(payload.get("cleanup_outcome"), None | Some(Value::Null)),
+        "qualified external receipt carries a cleanup outcome",
+    )?;
+    require(
+        payload.get("capture_requested").and_then(Value::as_bool) == Some(true),
+        "qualified external receipt does not confirm the terminal capture request",
+    )?;
+    let capture = wire(&Operation::Capture);
+    require(
+        payload.get("requested_operation").and_then(Value::as_str) == Some(capture.as_str()),
+        format!(
+            "qualified external receipt last requested {:?}, expected {capture:?}",
+            payload.get("requested_operation")
+        ),
+    )?;
+    require(
+        payload.get("completed_operation").and_then(Value::as_str) == Some(capture.as_str()),
+        format!(
+            "qualified external receipt last completed {:?}, expected {capture:?}",
+            payload.get("completed_operation")
+        ),
+    )?;
+
+    let script = payload
+        .get("script")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "qualified external receipt carries no script record".to_string())?;
+    require(
+        script.get("name").and_then(Value::as_str) == Some(SCRIPT_NAME),
+        format!(
+            "external receipt registered script {:?}, expected {SCRIPT_NAME:?}",
+            script.get("name")
+        ),
+    )?;
+    require(
+        script.get("version").and_then(Value::as_str)
+            == Some(host_play::external_loader::SCRIPT_VERSION),
+        format!(
+            "external receipt script version {:?}, expected {:?}",
+            script.get("version"),
+            host_play::external_loader::SCRIPT_VERSION
+        ),
+    )?;
+    require(
+        script.get("sha256").and_then(Value::as_str) == Some(external.sha256.as_str()),
+        format!(
+            "external receipt script sha256 {:?} is not the bound source sha {}",
+            script.get("sha256"),
+            external.sha256
+        ),
+    )?;
+    // `compiled_sha` is the loaded raw File card's *cache key* — the origin raw-source digest,
+    // not a compiled-artifact hash — and the producer overwrites it with the reloaded card's key
+    // when the changed reload lands (`note_reload_changed`). The surviving load-time identity in
+    // a qualified record is therefore `script.sha256`: the raw source the watch was configured
+    // with, checked against the bound input just above. The loaded-card key itself is checked
+    // against the reloaded key once the changed-reload identities below are read.
+    for key in ["sha256", "compiled_sha"] {
+        let value = script.get(key).and_then(Value::as_str).unwrap_or_default();
+        require(
+            is_sha256(value),
+            format!("external receipt {key} {value:?} is not a lowercase SHA-256 digest"),
+        )?;
+    }
+    require(
+        script
+            .get("identity_key")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty()),
+        "external receipt carries no card identity for the loaded script",
+    )?;
+    require(
+        payload.get("registration_count").and_then(Value::as_u64) == Some(1),
+        format!(
+            "external receipt registration count {:?}, expected 1",
+            payload.get("registration_count")
+        ),
+    )?;
+    require(
+        payload
+            .get("registration_count_after_reload")
+            .and_then(Value::as_u64)
+            == Some(1),
+        format!(
+            "external receipt registration count after reload {:?}, expected 1",
+            payload.get("registration_count_after_reload")
+        ),
+    )?;
+
+    let gate = payload
+        .get("scene_gate")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "qualified external receipt carries no scene gate".to_string())?;
+    require(
+        gate.get("ingame").and_then(Value::as_bool) == Some(true)
+            && gate.get("scene_state").and_then(Value::as_i64) == Some(INGAME_SCENE_STATE as i64),
+        format!(
+            "external receipt scene gate is {gate:?}, expected in game at scene {INGAME_SCENE_STATE}"
+        ),
+    )?;
+
+    let counters = |name: &str| {
+        payload
+            .get(name)
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("qualified external receipt carries no {name} counters"))
+    };
+    let initial = counters("initial")?;
+    let last = counters("final")?;
+    let initial_bones = initial
+        .get("bones")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let final_bones = last
+        .get("bones")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    // The prerequisite is the fixture's own 25 carried bones, not merely "some" starting count.
+    require(
+        initial_bones == BONES_COUNT as i64,
+        format!(
+            "external receipt started with {initial_bones} bones, expected the {BONES_COUNT} bone \
+             fixture"
+        ),
+    )?;
+    require(
+        final_bones < initial_bones,
+        format!("external receipt did not consume bones ({final_bones} of {initial_bones})"),
+    )?;
+    let initial_xp = initial
+        .get("prayer_xp")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let final_xp = last
+        .get("prayer_xp")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    require(
+        final_xp > initial_xp,
+        format!("external receipt gained no Prayer xp ({final_xp} of {initial_xp})"),
+    )?;
+    let burials = last
+        .get("distinct_burial_logs")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    require(
+        burials >= MIN_DISTINCT_BURIALS as u64,
+        format!("external receipt observed {burials} distinct burials, expected {MIN_DISTINCT_BURIALS}+"),
+    )?;
+    // The producer keeps the raw and distinct burial counters on the same value; a receipt whose
+    // counters disagree with each other is not a coherent record of that run.
+    require(
+        last.get("burial_logs").and_then(Value::as_u64) == Some(burials),
+        format!(
+            "external receipt burial counters disagree ({} raw, {burials} distinct)",
+            last.get("burial_logs").unwrap_or(&Value::Null)
+        ),
+    )?;
+
+    let start_deadline = START_DEADLINE.as_millis() as u64;
+    let stop_deadline = STOP_DEADLINE.as_millis() as u64;
+    require(
+        payload.get("start_deadline_ms").and_then(Value::as_u64) == Some(start_deadline),
+        format!(
+            "external receipt start deadline {:?}, expected {start_deadline}",
+            payload.get("start_deadline_ms")
+        ),
+    )?;
+    require(
+        payload.get("stop_deadline_ms").and_then(Value::as_u64) == Some(stop_deadline),
+        format!(
+            "external receipt Stop deadline {:?}, expected {stop_deadline}",
+            payload.get("stop_deadline_ms")
+        ),
+    )?;
+    let elapsed = payload
+        .get("stop_elapsed_ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "qualified external receipt carries no Stop elapsed time".to_string())?;
+    require(
+        elapsed < stop_deadline,
+        format!("external receipt Stop took {elapsed}ms, past the {stop_deadline}ms deadline"),
+    )?;
+    require(
+        payload.get("reload_unchanged").and_then(Value::as_str)
+            == Some(host_play::external_loader::NOTHING_CHANGED),
+        format!(
+            "external receipt unchanged reload reported {:?}, expected {:?}",
+            payload.get("reload_unchanged"),
+            host_play::external_loader::NOTHING_CHANGED
+        ),
+    )?;
+    let source_after = payload
+        .get("source_sha_after")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "qualified external receipt carries no changed-reload source hash".to_string()
+        })?;
+    let compiled_after = payload
+        .get("compiled_sha_after")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "qualified external receipt carries no changed-reload compiled hash".to_string()
+        })?;
+    for (name, value) in [
+        ("source_sha_after", source_after),
+        ("compiled_sha_after", compiled_after),
+    ] {
+        require(
+            is_sha256(value),
+            format!("external receipt {name} {value:?} is not a lowercase SHA-256 digest"),
+        )?;
+    }
+    // The changed reload is the producer's harmless whitespace transform of the bound input
+    // (`apply_harmless_whitespace` on its owned copy), so both post-reload identities must be the
+    // digest the suite computed from exactly those bytes, and agree with each other.
+    require(
+        source_after == external.harmless_whitespace_sha256,
+        format!(
+            "external receipt changed-reload source hash {source_after:?} is not the harmless \
+             whitespace digest {} of the bound input",
+            external.harmless_whitespace_sha256
+        ),
+    )?;
+    require(
+        compiled_after == source_after,
+        "external receipt changed-reload source and loaded-card hashes disagree",
+    )?;
+    // The key the producer carries under `compiled_sha` is the *reloaded* card's key (the changed
+    // reload overwrites it), so it must be that same transform digest of the bound input — an
+    // arbitrary, stale or merely non-empty value is refused. The load-time key the watch was
+    // configured with is `script.sha256` (never overwritten), checked against the bound input
+    // above; the producer does not serialize the before key separately.
+    require(
+        script.get("compiled_sha").and_then(Value::as_str) == Some(compiled_after),
+        format!(
+            "external receipt loaded-card cache key {:?} is not the reloaded card key \
+             {compiled_after} of the harmless whitespace transform of the bound input",
+            script.get("compiled_sha")
+        ),
+    )?;
+    require(
+        payload.get("auto_start").and_then(Value::as_bool) == Some(false),
+        "external loader auto-started; load must select without Start",
+    )?;
+    payload
+        .get("account")
+        .and_then(Value::as_str)
+        .filter(|account| !account.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "qualified external receipt carries no account".to_string())
+}
+
+/// The stage/request/completion/reason/cleanup a failed external receipt preserves.
+fn external_failure_detail(payload: &Value) -> Result<String, String> {
+    use host_play::external_loader::Stage;
+    let expected = wire(&Stage::Failed);
+    let stage = payload
+        .get("stage")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "external FAIL receipt carries no stage".to_string())?;
+    require(
+        stage == expected,
+        format!("external receipt stage {stage:?}, expected the failed stage {expected:?}"),
+    )?;
+    let reason = payload
+        .get("failure_reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .ok_or_else(|| "external FAIL receipt carries no failure reason".to_string())?;
+    let field = |name: &str| {
+        payload
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("-")
+            .to_string()
+    };
+    Ok(format!(
+        "external loader failed at stage {stage}: {reason} (requested {}, completed {}, cleanup {})",
+        field("requested_operation"),
+        field("completed_operation"),
+        field("cleanup_outcome"),
+    ))
+}
+
+/// The external capture contract: the structural terminal-shot evidence every case requires,
+/// bound to the account that owned the run.
+///
+/// The producer writes the terminal capture from the owned actor's own snapshot
+/// (`actor_snapshot_json`), so its sidecar names that actor. A capture whose sidecar names
+/// another actor, or none, is not this case's terminal evidence. A structurally complete,
+/// actor-bound capture still stays `pending_visual_review`: a human reads it back.
+fn external_capture_verdict(
+    case: &CaseEntry,
+    captures: &[CaptureRecord],
+    account: &str,
+) -> Verdict {
+    let verdict = capture_verdict(case, captures);
+    let Verdict::PendingVisualReview { captures } = verdict else {
+        return verdict;
+    };
+    let Some(spec) = declared_capture(case) else {
+        return Verdict::PendingVisualReview { captures };
+    };
+    for record in captures
+        .iter()
+        .filter(|record| record.matches_label(&spec.label))
+    {
+        match record.sidecar_actor.as_deref() {
+            Some(actor) if actor == account => {}
+            Some(actor) => {
+                return Verdict::SharedFailure {
+                    kind: "capture",
+                    reason: format!(
+                        "{}: the terminal capture names actor {actor:?}, expected the receipt's \
+                         account {account:?}",
+                        record.json
+                    ),
+                }
+            }
+            None => {
+                return Verdict::SharedFailure {
+                    kind: "capture",
+                    reason: format!(
+                        "{}: the terminal capture carries no actor binding",
+                        record.json
+                    ),
+                }
+            }
+        }
+    }
+    Verdict::PendingVisualReview { captures }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -778,6 +1349,491 @@ mod tests {
 
     fn core_case(id: &str) -> CaseEntry {
         manifest().case(id).expect("case").clone()
+    }
+
+    /// The core/pair entry point the scenario tests use: none of them launches the loader smoke,
+    /// so no external source is bound.
+    fn validate(
+        case: &CaseEntry,
+        receipts: &ParsedReceipts,
+        exit_code: Option<i32>,
+        captures: &[CaptureRecord],
+    ) -> Verdict {
+        super::validate(case, receipts, exit_code, captures, None)
+    }
+
+    fn external_case() -> CaseEntry {
+        manifest()
+            .case("external_loader")
+            .expect("external loader row")
+            .clone()
+    }
+
+    /// A real SHA-256 digest of `seed`, as the run and the producer write them. The validator
+    /// refuses anything that is not a lowercase digest, so the tests bind real ones.
+    fn digest(seed: &str) -> String {
+        super::super::identity::sha256(seed.as_bytes())
+    }
+
+    /// The digest the producer's harmless whitespace reload of the bound input produces.
+    fn whitespace_digest() -> String {
+        digest("harmless whitespace transform")
+    }
+
+    fn bound_source(sha: &str) -> ExternalSource {
+        ExternalSource {
+            path: "/tmp/ExampleBot.ts".into(),
+            sha256: sha.into(),
+            bytes: 1,
+            default_fixture: true,
+            frozen_sha256: host_play::external_loader::FROZEN_SHA256.into(),
+            frozen_match: sha == host_play::external_loader::FROZEN_SHA256,
+            harmless_whitespace_sha256: whitespace_digest(),
+        }
+    }
+
+    /// A real qualified external receipt: the producer's own state machine drives the record, so
+    /// the test cannot drift from the receipt it will read. The bound raw source is the loaded
+    /// card's origin cache key, and the harmless whitespace transform is what both post-reload
+    /// identities move to.
+    fn qualified_external_receipt(account: &str, source_sha: &str) -> Value {
+        use host_play::external_loader::{
+            ExternalWatch, Operation, BONES_COUNT, NOTHING_CHANGED, SCRIPT_NAME,
+        };
+        let watch = ExternalWatch::default();
+        let now = std::time::Instant::now();
+        let owned = Path::new("/tmp/274bot-external-1-ExampleBot.ts");
+        let identity = "file:/tmp/274bot-external-1-ExampleBot.ts";
+        watch.configure(account, owned.to_path_buf(), source_sha.to_string());
+        watch.note_scene(true, 2);
+        watch.note_inventory(now, account, BONES_COUNT, 0);
+        watch.note_prereq_passed();
+        watch.note_load(1, SCRIPT_NAME, owned, identity, source_sha, true, false);
+        watch.begin_start(now).expect("Start");
+        let burials: Vec<String> = (1..=10)
+            .map(|i| format!("buried bones (#{i}, +{i} prayer xp total)"))
+            .collect();
+        watch.note_logs(now, account, &burials);
+        watch.note_inventory(now, account, 12, 45);
+        assert_eq!(
+            watch.requested_operation(),
+            Some(Operation::Stop),
+            "the producer's own burials/XP/inventory gate must have advanced to Stop"
+        );
+        watch.note_logs(
+            now,
+            account,
+            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+        );
+        watch.note_stop(now, true, false);
+        watch.note_reload_unchanged(NOTHING_CHANGED);
+        let after = whitespace_digest();
+        watch.note_reload_changed(
+            1, true, false, owned, identity, source_sha, &after, source_sha, &after, true, false,
+        );
+        watch.note_capture_requested();
+        (*watch.qualify().expect("qualified")).clone()
+    }
+
+    /// The producer's real failure record: a prerequisite failure before the load.
+    fn failed_external_receipt(account: &str) -> Value {
+        use host_play::external_loader::ExternalWatch;
+        let watch = ExternalWatch::default();
+        watch.configure(
+            account,
+            Path::new("/tmp/274bot-external-1-ExampleBot.ts").to_path_buf(),
+            host_play::external_loader::FROZEN_SHA256.into(),
+        );
+        watch.note_prereq_failed("fixture did not reach scene 2");
+        watch.evidence()
+    }
+
+    /// A structurally complete terminal capture of the loaded actor, under the producer's own
+    /// label and with the actor binding the panel writes into the sidecar.
+    fn terminal_capture(actor: &str) -> CaptureRecord {
+        let mut record = capture_record();
+        record.label = format!(
+            "2026-09-14T00-00-02_{}",
+            scenario::shot::safe_label(host_play::external_loader::TERMINAL_SHOT)
+        );
+        record.sidecar_actor = Some(actor.into());
+        record
+    }
+
+    /// The prerequisite capture is a different label and never the terminal evidence.
+    fn prereq_capture() -> CaptureRecord {
+        let mut record = capture_record();
+        record.label = format!(
+            "2026-09-14T00-00-01_{}",
+            scenario::shot::safe_label(host_play::external_loader::PREREQ_SHOT)
+        );
+        record.sidecar_actor = Some("alice".into());
+        record
+    }
+
+    fn external_output(receipt: &Value, terminal: &str) -> String {
+        format!(
+            "EXTERNAL_LOADER: script_external_loader {receipt}\n\
+             {terminal}: live script_external_loader {receipt}\n"
+        )
+    }
+
+    #[test]
+    fn a_qualified_external_receipt_with_its_terminal_capture_is_pending_visual_review() {
+        let case = external_case();
+        let sha = host_play::external_loader::FROZEN_SHA256;
+        let receipt = qualified_external_receipt("alice", sha);
+        let receipts = parse(&external_output(&receipt, "PASS"));
+        assert_eq!(
+            receipts
+                .external
+                .as_ref()
+                .map(|witness| witness.name.as_str()),
+            Some("script_external_loader")
+        );
+        let verdict = super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[terminal_capture("alice")],
+            Some(&bound_source(sha)),
+        );
+        assert!(
+            matches!(verdict, Verdict::PendingVisualReview { .. }),
+            "{verdict:?}"
+        );
+        // Existence and structure are not visual approval: the verdict is never a bare pass.
+        assert!(!matches!(verdict, Verdict::Passed));
+
+        // The prerequisite capture is written too (the fixture's own proof) and is not the
+        // contracted evidence; both together still resolve to the terminal capture.
+        let verdict = super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[prereq_capture(), terminal_capture("alice")],
+            Some(&bound_source(sha)),
+        );
+        match verdict {
+            Verdict::PendingVisualReview { captures } => {
+                assert_eq!(captures.len(), 2, "both captures stay recorded as evidence");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_external_case_needs_its_own_witness_not_a_bare_pass() {
+        let case = external_case();
+        let sha = host_play::external_loader::FROZEN_SHA256;
+        let receipt = qualified_external_receipt("alice", sha);
+        let source = bound_source(sha);
+
+        // A bare PASS string, and a PASS without the EXTERNAL_LOADER witness, are not a result.
+        for output in [
+            "PASS\n".to_string(),
+            format!("PASS: live script_external_loader {receipt}\n"),
+            format!("EXTERNAL_LOADER: script_thiever {receipt}\nFAIL: live script_external_loader {receipt}\n"),
+        ] {
+            let receipts = parse(&output);
+            let verdict = super::validate(
+                &case,
+                &receipts,
+                Some(1),
+                &[terminal_capture("alice")],
+                Some(&source),
+            );
+            assert!(
+                matches!(verdict, Verdict::SharedFailure { .. }),
+                "{output} -> {verdict:?}"
+            );
+        }
+
+        // A witness that names another live name is rejected.
+        let receipts = parse(&format!(
+            "EXTERNAL_LOADER: script_bone_burier {receipt}\nPASS: live script_external_loader {receipt}\n"
+        ));
+        match super::validate(&case, &receipts, Some(0), &[], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("expected \"script_external_loader\""),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn contradictory_or_incomplete_external_receipts_are_rejected_field_by_field() {
+        let case = external_case();
+        let sha = host_play::external_loader::FROZEN_SHA256;
+        let receipt = qualified_external_receipt("alice", sha);
+        let source = bound_source(sha);
+        let capture = terminal_capture("alice");
+
+        // The terminal line and the witness must be the same record.
+        let mut other = receipt.clone();
+        other["capture_requested"] = serde_json::json!(false);
+        let receipts = parse(&format!(
+            "EXTERNAL_LOADER: script_external_loader {receipt}\nPASS: live script_external_loader {other}\n"
+        ));
+        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("disagree"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A qualified record that does not confirm the capture request, is not the qualified
+        // stage, or reports another source is refused field by field.
+        for (mutate, needle) in [
+            ("capture_requested", "capture request"),
+            ("stage", "expected \"qualified\""),
+            ("registration_count_after_reload", "after reload"),
+            ("auto_start", "auto-started"),
+            ("stop_elapsed_ms", "Stop took"),
+            ("reload_unchanged", "unchanged reload"),
+            ("initial_bones", "25 bone fixture"),
+            ("card_key", "not the reloaded card key"),
+            ("stale_card_key", "not the reloaded card key"),
+            ("source_after", "harmless whitespace digest"),
+            ("compiled_after", "hashes disagree"),
+            ("burial_counters", "counters disagree"),
+        ] {
+            let mut broken = receipt.clone();
+            match mutate {
+                "capture_requested" => broken["capture_requested"] = serde_json::json!(false),
+                "stage" => broken["stage"] = serde_json::json!("capture"),
+                "registration_count_after_reload" => {
+                    broken["registration_count_after_reload"] = serde_json::json!(2)
+                }
+                "auto_start" => broken["auto_start"] = serde_json::json!(true),
+                "stop_elapsed_ms" => broken["stop_elapsed_ms"] = serde_json::json!(10_000),
+                "reload_unchanged" => {
+                    broken["reload_unchanged"] = serde_json::json!("something else")
+                }
+                "initial_bones" => broken["initial"]["bones"] = serde_json::json!(10),
+                "card_key" => {
+                    broken["script"]["compiled_sha"] = serde_json::json!(digest("another source"))
+                }
+                "stale_card_key" => {
+                    // The load-time card key (the bound raw source digest) is not the loaded-card
+                    // key of a qualified record: the changed reload moved it, so claiming the
+                    // load-time digest means the reload's identity never moved.
+                    broken["script"]["compiled_sha"] =
+                        serde_json::json!(host_play::external_loader::FROZEN_SHA256)
+                }
+                "source_after" => {
+                    broken["source_sha_after"] = serde_json::json!(digest("another source"))
+                }
+                "compiled_after" => {
+                    broken["compiled_sha_after"] = serde_json::json!(digest("another source"))
+                }
+                "burial_counters" => broken["final"]["burial_logs"] = serde_json::json!(9),
+                other => panic!("unhandled mutation {other}"),
+            }
+            let receipts = parse(&external_output(&broken, "PASS"));
+            match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+                Verdict::SharedFailure { reason, .. } => {
+                    assert!(reason.contains(needle), "{mutate}: {reason}")
+                }
+                other => panic!("{mutate} -> {other:?}"),
+            }
+        }
+
+        // A hash field that is not a digest at all is refused, whatever it claims.
+        let mut arbitrary = receipt.clone();
+        arbitrary["source_sha_after"] = serde_json::json!("not-a-hash");
+        let receipts = parse(&external_output(&arbitrary, "PASS"));
+        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("lowercase SHA-256 digest"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // The receipt's source hash is the *bound* input, not whatever the child claims.
+        let mut unbound = receipt.clone();
+        unbound["script"]["sha256"] = serde_json::json!("not-the-bound-source");
+        let receipts = parse(&external_output(&unbound, "PASS"));
+        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("not the bound source sha"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // No bound source at all is a suite bug, and it is refused rather than skipped.
+        let receipts = parse(&external_output(&receipt, "PASS"));
+        match super::validate(&case, &receipts, Some(0), &[capture], None) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(
+                    reason.contains("bound no external loader source"),
+                    "{reason}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A PASS that exited nonzero, and a core witness on an external case, are shared
+        // failures: the run must not read either as success.
+        let receipts = parse(&external_output(&receipt, "PASS"));
+        assert!(matches!(
+            super::validate(&case, &receipts, Some(1), &[], Some(&source)),
+            Verdict::SharedFailure { .. }
+        ));
+        let receipts = parse(&format!(
+            "PASS: live script_external_loader {receipt}\n\
+             EXTERNAL_LOADER: script_external_loader {receipt}\n\
+             CATALOG_CORE: script_external_loader {{\"case\":\"bone_burier\"}}\n"
+        ));
+        match super::validate(&case, &receipts, Some(0), &[], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("CATALOG_CORE"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_external_receipt_preserves_its_stage_request_completion_and_cleanup() {
+        let case = external_case();
+        let receipt = failed_external_receipt("alice");
+        let receipts = parse(&external_output(&receipt, "FAIL"));
+        match super::validate(
+            &case,
+            &receipts,
+            Some(1),
+            &[],
+            Some(&bound_source(host_play::external_loader::FROZEN_SHA256)),
+        ) {
+            Verdict::CaseFailure { reason } => {
+                assert!(reason.contains("failed at stage failed"), "{reason}");
+                assert!(reason.contains("fixture did not reach scene 2"), "{reason}");
+                assert!(reason.contains("requested prepare_fixture"), "{reason}");
+                assert!(reason.contains("completed -"), "{reason}");
+                assert!(reason.contains("cleanup -"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A FAIL receipt with exit 0 is contradictory, and a FAIL without a reason is refused.
+        let receipts = parse(&external_output(&receipt, "FAIL"));
+        assert!(matches!(
+            super::validate(
+                &case,
+                &receipts,
+                Some(0),
+                &[],
+                Some(&bound_source(host_play::external_loader::FROZEN_SHA256))
+            ),
+            Verdict::SharedFailure { .. }
+        ));
+        let mut silent = receipt.clone();
+        silent["failure_reason"] = serde_json::Value::Null;
+        let receipts = parse(&external_output(&silent, "FAIL"));
+        match super::validate(
+            &case,
+            &receipts,
+            Some(1),
+            &[],
+            Some(&bound_source(host_play::external_loader::FROZEN_SHA256)),
+        ) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("no failure reason"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_external_capture_must_be_the_terminal_shot_of_the_receipts_actor() {
+        let case = external_case();
+        let sha = host_play::external_loader::FROZEN_SHA256;
+        let receipt = qualified_external_receipt("alice", sha);
+        let receipts = parse(&external_output(&receipt, "PASS"));
+        let source = bound_source(sha);
+
+        // The prerequisite capture alone cannot discharge the contract.
+        match super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[prereq_capture()],
+            Some(&source),
+        ) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(reason.contains("external_loader terminal"), "{reason}");
+                assert!(reason.contains("not written by this case"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A capture of another actor is not this case's terminal evidence.
+        match super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            &[terminal_capture("bob")],
+            Some(&source),
+        ) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(reason.contains("names actor \"bob\""), "{reason}");
+                assert!(reason.contains("\"alice\""), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A sidecar without the producer's actor binding is refused too.
+        let mut unbound = terminal_capture("alice");
+        unbound.sidecar_actor = None;
+        match super::validate(&case, &receipts, Some(0), &[unbound], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("no actor binding"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A structurally broken PNG beside the right label is still not evidence.
+        let mut torn = terminal_capture("alice");
+        torn.png_magic = false;
+        torn.decoded = false;
+        torn.png_bytes = 4;
+        match super::validate(&case, &receipts, Some(0), &[torn], Some(&source)) {
+            Verdict::SharedFailure { reason, .. } => {
+                assert!(reason.contains("not a PNG"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // And no capture at all is the contracted-capture failure, never a pass.
+        match super::validate(&case, &receipts, Some(0), &[], Some(&source)) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "capture");
+                assert!(reason.contains("was not written by this case"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_core_case_may_not_present_the_external_witness() {
+        let case = core_case("thiever");
+        let receipts = parse(&format!(
+            "{}\
+             EXTERNAL_LOADER: script_thiever {{\"stage\":\"qualified\"}}\n",
+            panel_core_pass("script_thiever", "thiever")
+        ));
+        match validate(&case, &receipts, Some(0), &[capture_record()]) {
+            Verdict::SharedFailure { kind, reason } => {
+                assert_eq!(kind, "receipt");
+                assert!(reason.contains("EXTERNAL_LOADER"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// A real panel PASS line: the outer name is the live name (`script_*`), the inner
@@ -809,12 +1865,19 @@ mod tests {
         // The manifest's declared identities agree with the enum wire form.
         let manifest = manifest();
         for case in manifest.cases.iter().filter(|case| case.is_runnable()) {
+            if case.runner() == RunnerKind::External {
+                continue; // the loader smoke has no host-enum witness to derive
+            }
             let scenario = case.scenario.as_deref().unwrap();
             assert_eq!(
                 wire_case(scenario, case.runner()).unwrap(),
                 match case.runner() {
                     RunnerKind::Core => case.core_case.clone().unwrap(),
                     RunnerKind::Pair => case.pair_case.clone().unwrap(),
+                    // Filtered out above: the loader smoke has no host-enum witness identity.
+                    RunnerKind::External => {
+                        unreachable!("external rows continue before the witness identity check")
+                    }
                 },
                 "{scenario}"
             );

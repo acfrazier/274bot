@@ -39,6 +39,25 @@
 //!   infra            an infrastructure line, exit 1
 //!   panic            a panic line, exit 101
 //!
+//! External loader smoke modes (the dedicated `EXTERNAL_LOADER` contract, driven by the
+//! producer's own `host_play::external_loader::ExternalWatch` state machine so the printed
+//! receipt is the real one):
+//!   external-pass        qualified receipt + `EXTERNAL_LOADER` + `PASS` + the terminal capture
+//!                        under the producer's own label, sidecar naming the actor, exit 0
+//!   external-fail        the producer's failed receipt + `EXTERNAL_LOADER` + `FAIL`, exit 1
+//!   external-no-witness  `PASS` carrying the external record with no `EXTERNAL_LOADER` line
+//!   external-inconsistent  witness and `PASS` payload disagree
+//!   external-incomplete  both lines carry a record that does not confirm the capture request
+//!   external-prereq-only  only the prerequisite capture is written (a different label)
+//!   external-no-capture  no capture at all
+//!   external-bad-capture  a torn PNG with an off-scene sidecar under the terminal label
+//!
+//! The external modes hash the raw source they were given (the suite passes `--external-ts`),
+//! refuse anything that is not the producer's frozen fixture, and write the reload identities
+//! as the real digest of those bytes plus the producer's trailing newline. The 25-bone
+//! prerequisite, the distinct-burial/XP/inventory gate and the Stop record are the producer's
+//! own transitions, not synthetic counters.
+//!
 //! `--ignore-stop` is the platform's "do not die on a polite request": unix ignores
 //! `SIGTERM`, Windows ignores the console `CTRL_C`/`CTRL_BREAK` events. The suite's forced
 //! stop (journalled `SIGKILL`, Windows job termination) is what ends such a child.
@@ -76,6 +95,9 @@ struct Args {
     sleep_ms: u64,
     ignore_stop: bool,
     report_args: Option<PathBuf>,
+    /// The raw TypeScript source the suite bound (absolute). Absent, the fixture reads the same
+    /// tracked default fixture the panel does.
+    external_ts: Option<PathBuf>,
 }
 
 impl Args {
@@ -104,6 +126,7 @@ fn parse() -> Args {
         sleep_ms: 0,
         ignore_stop: false,
         report_args: None,
+        external_ts: None,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -125,6 +148,9 @@ fn parse() -> Args {
             // stop so only the suite's forced stop can end this process.
             "--ignore-stop" | "--ignore-sigterm" => args.ignore_stop = true,
             "--report-args" => args.report_args = take(&mut i).map(PathBuf::from),
+            // The typed source override the suite hands a real `external_watch`; the fixture
+            // resolves it with the producer's own function, exactly like the panel does.
+            "--external-ts" => args.external_ts = take(&mut i).map(PathBuf::from),
             // The suite hands the child the shared native profile flags; the fixture
             // records the ones it cares about and ignores the rest, exactly like a real
             // executable would resolve them from its own configuration.
@@ -244,6 +270,179 @@ fn witness(args: &Args) -> Option<(&'static str, String)> {
         .map(|wire| ("CATALOG_CORE", wire))
 }
 
+/// Drive the producer's own external loader state machine to its qualified record.
+///
+/// The fixture stands in for `external_watch`: it resolves the same raw source with the same
+/// producer function, refuses anything but the frozen fixture, verifies and copies those bytes to
+/// its own temporary path (never the input), and walks the real watch through its own transitions
+/// — 25-bone prerequisite, load/select without Start, the burials/XP/inventory gate, Stop,
+/// unchanged reload, then the harmless whitespace reload. The receipt it prints is the producer's
+/// serialization, and the reload identities are the real digests of the bound bytes.
+fn external_qualify(args: &Args) -> Result<(serde_json::Value, String, PathBuf), String> {
+    use host_play::external_loader::{
+        source_sha256, ExternalWatch, BONES_COUNT, FROZEN_SHA256, NOTHING_CHANGED, SCRIPT_NAME,
+    };
+    let source = host_play::external_loader::resolve_source(args.external_ts.as_deref())?;
+    let bytes = std::fs::read(&source)
+        .map_err(|error| format!("external loader source {}: {error}", source.display()))?;
+    let sha256 = source_sha256(&bytes);
+    if sha256 != FROZEN_SHA256 {
+        return Err(format!(
+            "external loader source sha {sha256} does not match frozen {FROZEN_SHA256}"
+        ));
+    }
+    let mut whitespace = bytes.clone();
+    whitespace.push(b'\n');
+    let after = source_sha256(&whitespace);
+    let owned = std::env::temp_dir().join(format!(
+        "274bot-fixture-external-{}-ExampleBot.ts",
+        std::process::id()
+    ));
+    std::fs::write(&owned, &bytes)
+        .map_err(|error| format!("external loader owned copy {}: {error}", owned.display()))?;
+    let identity = format!("file:{}", owned.display());
+    let account =
+        std::env::var("E2E_SUITE_FIXTURE_ACCOUNT").unwrap_or_else(|_| "fixture".to_string());
+    let watch = ExternalWatch::default();
+    let now = std::time::Instant::now();
+    watch.configure(account.clone(), owned.clone(), sha256.clone());
+    watch.note_scene(true, 2);
+    watch.note_inventory(now, &account, BONES_COUNT, 0);
+    watch.note_prereq_passed();
+    watch.note_load(1, SCRIPT_NAME, &owned, &identity, &sha256, true, false);
+    watch.begin_start(now)?;
+    let burials: Vec<String> = (1..=19)
+        .map(|i| format!("buried bones (#{i}, +{i} prayer xp total)"))
+        .collect();
+    watch.note_logs(now, &account, &burials);
+    watch.note_inventory(now, &account, 12, 20);
+    watch.request_stop(now);
+    watch.note_logs(
+        now,
+        &account,
+        &["BoneBurier stopped — 19 buried, +20 prayer xp".into()],
+    );
+    watch.note_stop(now, true, false);
+    watch.note_reload_unchanged(NOTHING_CHANGED);
+    watch.note_reload_changed(
+        1, true, false, &owned, &identity, &sha256, &after, &sha256, &after, true, false,
+    );
+    watch.note_capture_requested();
+    let receipt = watch.qualify()?;
+    Ok(((*receipt).clone(), account, owned))
+}
+
+/// The producer's failed record: the prerequisite never reached the scene gate.
+fn external_failed(args: &Args) -> Result<serde_json::Value, String> {
+    use host_play::external_loader::ExternalWatch;
+    let source = host_play::external_loader::resolve_source(args.external_ts.as_deref())?;
+    let watch = ExternalWatch::default();
+    let account =
+        std::env::var("E2E_SUITE_FIXTURE_ACCOUNT").unwrap_or_else(|_| "fixture".to_string());
+    watch.configure(
+        account,
+        source,
+        host_play::external_loader::FROZEN_SHA256.into(),
+    );
+    watch.note_prereq_failed("fixture did not reach the scene gate");
+    Ok(watch.evidence())
+}
+
+/// Write a capture under `label` with the actor binding the panel records for the external
+/// terminal shot. `valid` selects a real PNG and an in-game sidecar.
+fn write_actor_capture(label: &str, actor: &str, seconds: u32, valid: bool) -> Option<PathBuf> {
+    let root = capture_root()?;
+    let dir = root.join(format!("fixture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let stem = format!("2026-09-14T00-00-{seconds:02}_{}", safe_label(label));
+    let png = dir.join(format!("{stem}.png"));
+    let bytes: Vec<u8> = if valid {
+        TINY_PNG.to_vec()
+    } else {
+        b"not a png at all".to_vec()
+    };
+    std::fs::write(&png, bytes).ok()?;
+    let sidecar = if valid {
+        format!("{{\"ingame\":true,\"scene_state\":2,\"actor\":\"{actor}\"}}")
+    } else {
+        "{\"ingame\":false,\"scene_state\":1}".to_string()
+    };
+    std::fs::write(dir.join(format!("{stem}.json")), sidecar).ok()?;
+    Some(png)
+}
+
+/// The external loader smoke's terminal lines: the witness the panel prints plus its terminal
+/// decision, or a deliberately incomplete/inconsistent pair for the suite's refusal tests.
+fn external_mode(args: &Args) -> i32 {
+    use host_play::external_loader::TERMINAL_SHOT;
+    let live = args.live_name();
+    let mode = args.mode.as_str();
+    if mode == "external-fail" {
+        let receipt = match external_failed(args) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                eprintln!("FAIL: external_watch: {error}");
+                return 1;
+            }
+        };
+        eprintln!("EXTERNAL_LOADER: {live} {receipt}");
+        eprintln!("FAIL: live {live} {receipt}");
+        return 1;
+    }
+    let (receipt, account, _owned) = match external_qualify(args) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("FAIL: external_watch: {error}");
+            return 1;
+        }
+    };
+    let mut witness = receipt.clone();
+    let mut terminal = receipt.clone();
+    match mode {
+        "external-pass" => {
+            if let Some(path) = write_actor_capture(TERMINAL_SHOT, &account, 2, true) {
+                println!("[panel] shot {TERMINAL_SHOT} -> {}", path.display());
+            }
+        }
+        "external-prereq-only" => {
+            // Only the prerequisite capture is written: a different label, never the contract.
+            if let Some(path) =
+                write_actor_capture(host_play::external_loader::PREREQ_SHOT, &account, 1, true)
+            {
+                println!(
+                    "[panel] shot {} -> {}",
+                    host_play::external_loader::PREREQ_SHOT,
+                    path.display()
+                );
+            }
+        }
+        "external-no-capture" => {}
+        "external-bad-capture" => {
+            if let Some(path) = write_actor_capture(TERMINAL_SHOT, &account, 2, false) {
+                println!("[panel] shot {TERMINAL_SHOT} -> {}", path.display());
+            }
+        }
+        "external-inconsistent" => {
+            // The witness is the qualified record; the terminal line contradicts it.
+            terminal["capture_requested"] = serde_json::json!(false);
+        }
+        "external-incomplete" => {
+            // Both lines carry a record that does not confirm the capture request.
+            witness["capture_requested"] = serde_json::json!(false);
+            terminal["capture_requested"] = serde_json::json!(false);
+        }
+        other => {
+            eprintln!("fixture: unhandled external mode {other:?}");
+            return 2;
+        }
+    }
+    if mode != "external-no-witness" {
+        println!("EXTERNAL_LOADER: {live} {witness}");
+    }
+    println!("PASS: live {live} {terminal}");
+    0
+}
+
 fn main() {
     let args = parse();
     record_launch(&args);
@@ -263,6 +462,11 @@ fn main() {
     }
     let live = args.live_name();
     let scenario = args.scenario();
+    if args.mode.starts_with("external-") {
+        // The loader smoke's own contract: the producer's real state machine and receipt.
+        let _ = std::io::stdout().flush();
+        std::process::exit(external_mode(&args));
+    }
     let shot_label = args.shot.clone().or_else(|| declared_shot(&scenario));
     println!("live {live}: running step 1/2");
     let _ = std::io::stdout().flush();

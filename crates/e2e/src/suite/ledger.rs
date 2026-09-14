@@ -124,6 +124,10 @@ pub struct ReceiptSummary {
     pub scenario: Option<String>,
     pub catalog_core: Option<String>,
     pub paired_core: Option<String>,
+    /// The loader smoke's own witness line (`EXTERNAL_LOADER: …`), a distinct contract from the
+    /// catalog/pair witnesses above.
+    #[serde(default)]
+    pub external: Option<String>,
     pub shot_lines: usize,
 }
 

@@ -13,7 +13,7 @@ use std::time::Duration;
 use super::child::{self, ChildSpec, NativeConfig};
 use super::identity::{self, ProfileIdentity, SettingsIdentity};
 use super::ledger::{AttemptEnd, AttemptStatus, CleanupSummary, Ledger, ReceiptSummary, Summary};
-use super::manifest::{CaseEntry, SuiteManifest};
+use super::manifest::{CaseEntry, RunnerKind, SuiteManifest};
 use super::receipt::{self, Verdict};
 use super::select::{self, Level, SelectRequest, Selection};
 use super::{SuiteResult, EMBEDDED_MANIFEST};
@@ -40,12 +40,16 @@ config (dry-run and run):
   --vault PATH --lowmem --mainland
   --nav-paints on|off            headed diagnostic paints (default on)
   --exec-core PATH --exec-pair PATH        direct native executables
+  --exec-external PATH          direct external_watch executable (loader smoke)
+  --external-ts ABS             raw TypeScript input for the loader smoke
   --cwd DIR                     working directory for the children
   --child-arg ARG               extra argument appended to every child (repeatable)
 
 `--lowmem` is the default and matches the profile's own setting; `--highmem` is refused
 because the panel executables expose no memory flag. `--mainland` is passed to a child as
-`BOT_MAINLAND=1`, never as a flag.
+`BOT_MAINLAND=1`, never as a flag. `--external-ts` must be absolute (the panel refuses a
+relative raw source) and is bound by path and content when the loader smoke is selected;
+a core/pair-only selection never resolves it.
 
 run:
   --run-dir DIR                 durable run directory (required; must be fresh)
@@ -98,6 +102,8 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
         nav_paints: true,
         exec_core: None,
         exec_pair: None,
+        exec_external: None,
+        external_ts: None,
         cwd: None,
         extra_args: Vec::new(),
     };
@@ -179,6 +185,22 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
             "--mainland" => config.mainland = true,
             "--exec-core" => config.exec_core = Some(PathBuf::from(value("--exec-core")?)),
             "--exec-pair" => config.exec_pair = Some(PathBuf::from(value("--exec-pair")?)),
+            "--exec-external" => {
+                config.exec_external = Some(PathBuf::from(value("--exec-external")?))
+            }
+            "--external-ts" => {
+                let raw = value("--external-ts")?;
+                let path = PathBuf::from(&raw);
+                // The same rule the panel applies to its own flag: a relative raw source would be
+                // resolved against the child's working directory, which the suite cannot bind.
+                if !path.is_absolute() {
+                    return Err(format!(
+                        "--external-ts {raw} is relative; the panel refuses a relative raw source, \
+                         so pass an absolute path"
+                    ));
+                }
+                config.external_ts = Some(path);
+            }
             "--cwd" => config.cwd = Some(PathBuf::from(value("--cwd")?)),
             "--child-arg" => config.extra_args.push(value("--child-arg")?),
             other if other.starts_with('-') => return Err(format!("unknown flag {other}")),
@@ -371,6 +393,27 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
     })
 }
 
+/// Bind the external loader source when — and only when — the selection launches the loader smoke.
+///
+/// An ordinary core/pair selection never resolves the external fixture: a run with no external
+/// case must not fail because an external resource is missing, and its identity must not carry an
+/// input it never read. When the loader smoke *is* selected, the source is bound by path and by
+/// content, so a same-path byte change refuses a resume before any spawn.
+fn bind_external(
+    manifest: &SuiteManifest,
+    selection: &Selection,
+    config: &NativeConfig,
+) -> SuiteResult<Option<identity::ExternalSource>> {
+    let launches_external = selection
+        .runnable(manifest)
+        .iter()
+        .any(|case| case.runner() == RunnerKind::External);
+    if !launches_external {
+        return Ok(None);
+    }
+    identity::ExternalSource::resolve(config.external_ts.as_deref()).map(Some)
+}
+
 fn list(args: &Args) -> SuiteResult<()> {
     let manifest = load_manifest(args)?;
     let selection = select_cases(args, &manifest)?;
@@ -424,6 +467,11 @@ fn list(args: &Args) -> SuiteResult<()> {
                     "pair {} ({})",
                     case.scenario.as_deref().unwrap_or("-"),
                     case.pair_case.as_deref().unwrap_or("-")
+                ),
+                super::manifest::RunnerKind::External => format!(
+                    "external {} ({})",
+                    case.live.as_deref().unwrap_or("-"),
+                    host_play::external_loader::TERMINAL_SHOT
                 ),
             },
             super::manifest::CaseKind::Reference => {
@@ -480,6 +528,13 @@ fn dry_run(args: &Args) -> SuiteResult<()> {
     } else {
         BTreeMap::new()
     };
+    // A plan whose external source cannot be bound refuses as well: the printed line names a path
+    // the run would reject, so it must not be presented as a plan.
+    if print_commands && unresolved.is_none() {
+        if let Err(error) = bind_external(&manifest, &selection, &args.config) {
+            unresolved = Some(error);
+        }
+    }
     let planned: Vec<(&CaseEntry, Result<Vec<String>, String>)> = selection
         .cases
         .iter()
@@ -590,6 +645,9 @@ fn run(args: &Args) -> SuiteResult<i32> {
     )?;
 
     let cwd = args.config.launch_cwd(repo.as_deref())?;
+    // Bound only for a selection that launches the loader smoke: an ordinary core/pair run must
+    // not resolve (or require) an external resource it never reads.
+    let external = bind_external(&manifest, &selection, &args.config)?;
     let settings = SettingsIdentity {
         level: selection.level.map(|level| level.as_str().to_string()),
         only: selection.only.clone(),
@@ -608,6 +666,7 @@ fn run(args: &Args) -> SuiteResult<i32> {
         client_root: client.clone(),
         binaries: binaries.clone(),
         profile,
+        external: external.clone(),
         settings,
         selection: &selection.cases,
     });
@@ -652,6 +711,9 @@ fn run(args: &Args) -> SuiteResult<i32> {
         selection.why
     );
     println!("identity: {}", identity::summary_value(&manifest_identity));
+    if let Some(source) = &external {
+        println!("external loader source: {}", source.summary());
+    }
     if !selection.unavailable.is_empty() {
         println!(
             "{} selected case(s) have no native adapter and will be recorded unavailable",
@@ -713,6 +775,19 @@ fn run(args: &Args) -> SuiteResult<i32> {
             "runner": case.runner().as_str(),
             "core_case": case.core_case,
             "pair_case": case.pair_case,
+            // The loader smoke's bound input, recorded on the case row as well as in the run
+            // identity: what this case read, and whether it is the producer's frozen fixture.
+            "external": match (case.runner(), &external) {
+                (RunnerKind::External, Some(source)) => serde_json::json!({
+                    "path": source.path,
+                    "sha256": source.sha256,
+                    "bytes": source.bytes,
+                    "default_fixture": source.default_fixture,
+                    "frozen_match": source.frozen_match,
+                    "harmless_whitespace_sha256": source.harmless_whitespace_sha256,
+                }),
+                _ => serde_json::Value::Null,
+            },
             "reference_cases": case.reference_cases.iter().map(|reference| serde_json::json!({
                 "id": reference.id,
                 "status": format!("{:?}", reference.status).to_lowercase(),
@@ -752,6 +827,10 @@ fn run(args: &Args) -> SuiteResult<i32> {
                 .map(|receipt| receipt.line.clone()),
             catalog_core: receipts.core.as_ref().map(|receipt| receipt.line.clone()),
             paired_core: receipts.pair.as_ref().map(|receipt| receipt.line.clone()),
+            external: receipts
+                .external
+                .as_ref()
+                .map(|receipt| receipt.line.clone()),
             shot_lines: receipts.shot_lines.len(),
         });
 
@@ -801,7 +880,7 @@ fn run(args: &Args) -> SuiteResult<i32> {
             // failure that stops the run instead of launching the next case.
             (AttemptStatus::CleanupFailed, reason, true)
         } else {
-            match receipt::validate(case, &receipts, run.exit_code, &captures) {
+            match receipt::validate(case, &receipts, run.exit_code, &captures, external.as_ref()) {
                 Verdict::Passed => (AttemptStatus::Passed, String::new(), false),
                 Verdict::PendingVisualReview { captures: recorded } => (
                     AttemptStatus::PendingVisualReview,
@@ -841,6 +920,8 @@ fn run(args: &Args) -> SuiteResult<i32> {
                 "+catalog_core"
             } else if receipts.pair.is_some() {
                 "+paired_core"
+            } else if receipts.external.is_some() {
+                "+external_loader"
             } else {
                 ""
             }

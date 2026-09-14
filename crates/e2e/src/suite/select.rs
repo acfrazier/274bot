@@ -12,7 +12,7 @@
 //! no native adapter, or one declared unavailable, is recorded with its explicit
 //! reason and is not substituted by anything else.
 
-use super::manifest::{CaseEntry, CaseKind, CaseStatus, SuiteManifest};
+use super::manifest::{CaseEntry, CaseKind, CaseStatus, RunnerKind, SuiteManifest};
 use super::SuiteResult;
 use std::collections::BTreeSet;
 
@@ -482,6 +482,44 @@ mod tests {
         let selection = run(Level::Quick, &["does-not-exist".to_string()], None);
         assert!(selection.cases.is_empty());
         assert!(selection.why.contains("matched no case"));
+    }
+
+    /// The frozen `external-script-test` loader reference reaches the *dedicated* external
+    /// adapter (`external_loader`, runner `external`), not only the catalog `bone_burier` core
+    /// row that historically adapted the same reference. The association is declared on the
+    /// adapter itself, so `--only` selection cannot land on the wrong runner alone.
+    #[test]
+    fn the_loader_reference_selects_the_dedicated_external_adapter() {
+        let selection = run(Level::Quick, &["external-script-test".to_string()], None);
+        assert!(
+            selection.cases.contains(&"external_loader".to_string()),
+            "the loader reference must reach the dedicated adapter: {:?}",
+            selection.cases
+        );
+        assert!(
+            selection.cases.contains(&"bone_burier".to_string()),
+            "the catalog core row keeps its historical association: {:?}",
+            selection.cases
+        );
+
+        // The row the reference reaches is the external adapter, and the catalog row keeps its
+        // own core contract: the loader reference is not mapped solely to the wrong runner.
+        let manifest = manifest();
+        let adapter = manifest
+            .case("external_loader")
+            .expect("the dedicated external adapter row");
+        assert_eq!(adapter.runner(), RunnerKind::External);
+        assert!(adapter.matches_only("external-script-test"));
+        assert!(
+            adapter
+                .reference_cases
+                .iter()
+                .any(|reference| reference.id == "external-script-test"),
+            "the adapter declares the loader reference directly"
+        );
+        let catalog = manifest.case("bone_burier").expect("the bone_burier row");
+        assert_eq!(catalog.runner(), RunnerKind::Core);
+        assert!(catalog.matches_only("external-script-test"));
     }
 
     #[test]

@@ -92,6 +92,9 @@ fn suite(tmp: &Path, run_dir: &Path, extra: &[&str], env: &[(&str, &str)]) -> Ou
         .args(["--profile", "local-289"])
         .arg("--exec-core")
         .arg(FIXTURE)
+        // The loader smoke's own runner: the same disposable child stands in for `external_watch`.
+        .arg("--exec-external")
+        .arg(FIXTURE)
         .arg("--run-dir")
         .arg(run_dir)
         .env("E2E_SUITE_FIXTURE_LOG", tmp.join("launches.log"));
@@ -195,6 +198,8 @@ fn dry_run_prints_the_real_native_command_and_never_touches_a_run_directory() {
         .args(["--level", "full", "--catalog"])
         .arg(catalog(&tmp))
         .args(["--profile", "local-289", "--exec-core"])
+        .arg(FIXTURE)
+        .arg("--exec-external")
         .arg(FIXTURE)
         .arg("--run-dir")
         .arg(&run_dir)
@@ -1660,4 +1665,352 @@ fn dry_run_refuses_an_inherited_native_deadline_override() {
     let stderr = text(&out.stderr);
     assert!(stderr.contains("BUDGET_S"), "{stderr}");
     assert_eq!(launches(&tmp).len(), 0, "dry-run launches nothing");
+}
+
+/// The loader smoke's raw source, copied out of the tracked fixture so a test can change the
+/// bytes at the same path without touching the producer's file.
+fn external_source_copy(tmp: &Path) -> PathBuf {
+    let tracked = host_play::external_loader::default_frozen_source();
+    let copy = tmp.join("catalog-external/ExampleBot.ts");
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::copy(&tracked, &copy).unwrap();
+    copy
+}
+
+/// The external loader smoke is executed through the dedicated runner, and its result is the
+/// producer's own receipt plus the terminal capture — never a bare PASS.
+#[test]
+fn the_external_loader_smoke_is_retained_as_pending_visual_review() {
+    let tmp = temp_dir("external-pass");
+    let run_dir = tmp.join("run");
+    let source = external_source_copy(&tmp);
+    let source_path = source.display().to_string();
+    let report = tmp.join("argv.txt");
+    let report_arg = report.display().to_string();
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &source_path,
+            "--child-arg",
+            "--report-args",
+            "--child-arg",
+            &report_arg,
+            "--child-arg",
+            "--mode",
+            "--child-arg",
+            "external-pass",
+        ],
+        &[("E2E_SUITE_FIXTURE_ACCOUNT", "alice")],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_OK),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    // The child received the typed source override and the case's own live name.
+    let argv = std::fs::read_to_string(&report).unwrap();
+    assert!(
+        argv.contains(&format!("--external-ts\n{source_path}\n")),
+        "{argv}"
+    );
+    assert!(argv.contains("--live\nscript_external_loader\n"), "{argv}");
+
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let attempt = ledger
+        .attempt("fixture_external")
+        .expect("attempt recorded");
+    assert_eq!(attempt.status, AttemptStatus::PendingVisualReview);
+    assert_eq!(attempt.exit_code, Some(0));
+    let receipt = attempt
+        .receipts
+        .as_ref()
+        .and_then(|receipts| receipts.external.as_deref())
+        .expect("the external witness line is recorded");
+    assert!(
+        receipt.starts_with("EXTERNAL_LOADER: script_external_loader {"),
+        "{receipt}"
+    );
+    assert!(
+        receipt.contains(host_play::external_loader::FROZEN_SHA256),
+        "the receipt carries the bound raw source digest: {receipt}"
+    );
+    assert!(
+        attempt
+            .completed_operation
+            .as_deref()
+            .is_some_and(|line| line.contains("+external_loader")),
+        "{:?}",
+        attempt.completed_operation
+    );
+    assert_eq!(
+        attempt.captures.len(),
+        1,
+        "the terminal capture is attributed"
+    );
+    assert!(
+        attempt.captures[0]
+            .label
+            .contains("external_loader_terminal"),
+        "{:?}",
+        attempt.captures[0]
+    );
+    assert!(attempt.captures[0].complete(), "{:?}", attempt.captures[0]);
+
+    // The run identity binds the source it hashed, and the case row records the same input.
+    let bound = &ledger.state.identity["external"];
+    assert_eq!(bound["path"], serde_json::json!(canonical(&source)));
+    assert_eq!(
+        bound["sha256"],
+        serde_json::json!(host_play::external_loader::FROZEN_SHA256)
+    );
+    assert_eq!(bound["default_fixture"], serde_json::json!(false));
+    assert_eq!(bound["frozen_match"], serde_json::json!(true));
+    assert_eq!(
+        attempt.case_identity["external"]["path"],
+        serde_json::json!(canonical(&source))
+    );
+
+    // The run is not a qualification: the capture still needs a human readback.
+    assert!(!text(&out.stdout).contains("PASS: live script_external_loader"));
+}
+
+/// A same-path byte change in the bound raw source refuses a resume before any spawn, and a raw
+/// `--child-arg --external-ts` cannot re-bind the typed source at all.
+#[test]
+fn an_external_source_change_or_a_raw_rebind_refuses_before_any_spawn() {
+    let tmp = temp_dir("external-resume");
+    let run_dir = tmp.join("run");
+    let source = external_source_copy(&tmp);
+    let source_path = source.display().to_string();
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &source_path,
+            "--child-arg",
+            "--mode",
+            "--child-arg",
+            "external-pass",
+        ],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(EXIT_OK), "{}", text(&out.stderr));
+    assert_eq!(launches(&tmp).len(), 1);
+
+    // Same path, different bytes: the bound content changed.
+    std::fs::write(&source, "// not the bot\n").unwrap();
+    let changed = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &source_path,
+            "--resume",
+        ],
+        &[],
+    );
+    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
+    let stderr = text(&changed.stderr);
+    assert!(
+        stderr.contains("refusing resume") && stderr.contains("external loader source"),
+        "{stderr}"
+    );
+    assert_eq!(
+        launches(&tmp).len(),
+        1,
+        "nothing was launched after the refusal"
+    );
+
+    // The same bytes at a different path are a different bound input.
+    let other = tmp.join("elsewhere/ExampleBot.ts");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::copy(host_play::external_loader::default_frozen_source(), &other).unwrap();
+    let other_path = other.display().to_string();
+    let moved = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &other_path,
+            "--resume",
+        ],
+        &[],
+    );
+    assert_eq!(moved.status.code(), Some(EXIT_USAGE));
+    assert!(
+        text(&moved.stderr).contains("refusing resume"),
+        "{}",
+        text(&moved.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+
+    // A raw extra argument may not re-bind the typed source.
+    let evasive = suite(
+        &tmp,
+        &tmp.join("evasive-run"),
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &other_path,
+            "--child-arg",
+            "--external-ts",
+            "--child-arg",
+            "/tmp/other.ts",
+        ],
+        &[],
+    );
+    assert_eq!(evasive.status.code(), Some(EXIT_USAGE));
+    assert!(
+        text(&evasive.stderr).contains("--external-ts"),
+        "{}",
+        text(&evasive.stderr)
+    );
+    assert_eq!(launches(&tmp).len(), 1);
+}
+
+/// A relative `--external-ts` is refused up front, like the panel refuses its own flag.
+#[test]
+fn a_relative_external_source_is_refused() {
+    let tmp = temp_dir("external-relative");
+    let out = suite_command(&tmp)
+        .args(["dry-run", "--manifest"])
+        .arg(fixture_manifest())
+        .args(["--only", "fixture_external", "--catalog"])
+        .arg(catalog(&tmp))
+        .args(["--profile", "local-289", "--external-ts", "ExampleBot.ts"])
+        .output()
+        .expect("the suite binary runs");
+    assert_eq!(out.status.code(), Some(EXIT_USAGE));
+    assert!(
+        text(&out.stderr).contains("relative"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+/// Every dishonest external proof shape is refused: a missing witness, a contradictory or
+/// incomplete record, a prerequisite-only capture, no capture, and a torn terminal capture.
+#[test]
+fn dishonest_external_proof_shapes_are_refused() {
+    for (mode, status, needle) in [
+        (
+            "external-no-witness",
+            AttemptStatus::SharedFailure,
+            "no EXTERNAL_LOADER witness",
+        ),
+        (
+            "external-inconsistent",
+            AttemptStatus::SharedFailure,
+            "disagree",
+        ),
+        (
+            "external-incomplete",
+            AttemptStatus::SharedFailure,
+            "capture request",
+        ),
+        (
+            "external-prereq-only",
+            AttemptStatus::SharedFailure,
+            "not written by this case",
+        ),
+        (
+            "external-no-capture",
+            AttemptStatus::SharedFailure,
+            "was not written by this case",
+        ),
+        (
+            "external-bad-capture",
+            AttemptStatus::SharedFailure,
+            "not a PNG",
+        ),
+        (
+            "external-fail",
+            AttemptStatus::Failed,
+            "failed at stage failed",
+        ),
+    ] {
+        let tmp = temp_dir(&format!("external-{mode}"));
+        let run_dir = tmp.join("run");
+        let source = external_source_copy(&tmp);
+        let source_path = source.display().to_string();
+        let out = suite(
+            &tmp,
+            &run_dir,
+            &[
+                "--only",
+                "fixture_external",
+                "--external-ts",
+                &source_path,
+                "--child-arg",
+                "--mode",
+                "--child-arg",
+                mode,
+            ],
+            &[],
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(EXIT_FAILURE),
+            "{mode} must not qualify: {}",
+            text(&out.stdout)
+        );
+        let ledger = Ledger::resume(&run_dir).unwrap();
+        let attempt = ledger
+            .attempt("fixture_external")
+            .unwrap_or_else(|| panic!("{mode}: attempt recorded"));
+        assert_eq!(attempt.status, status, "{mode}: {}", attempt.reason);
+        assert!(
+            attempt.reason.contains(needle),
+            "{mode}: expected {needle:?} in {:?}",
+            attempt.reason
+        );
+    }
+
+    // A failed case keeps its own stage/request/completion record instead of a bare "failed".
+    let tmp = temp_dir("external-fail-detail");
+    let run_dir = tmp.join("run");
+    let source = external_source_copy(&tmp);
+    let source_path = source.display().to_string();
+    let out = suite(
+        &tmp,
+        &run_dir,
+        &[
+            "--only",
+            "fixture_external",
+            "--external-ts",
+            &source_path,
+            "--child-arg",
+            "--mode",
+            "--child-arg",
+            "external-fail",
+        ],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(EXIT_FAILURE));
+    let ledger = Ledger::resume(&run_dir).unwrap();
+    let reason = &ledger
+        .attempt("fixture_external")
+        .expect("attempt recorded")
+        .reason;
+    assert!(reason.contains("requested prepare_fixture"), "{reason}");
+    assert!(
+        reason.contains("fixture did not reach the scene gate"),
+        "{reason}"
+    );
 }

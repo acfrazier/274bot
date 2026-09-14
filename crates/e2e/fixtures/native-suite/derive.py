@@ -19,6 +19,7 @@ historical evidence, never a native PASS.
 """
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -366,6 +367,27 @@ def scenario_names(path):
     return re.findall(r'"([a-z0-9_]+)"', block)
 
 
+def external_constants(path):
+    """The producer's own external loader constants.
+
+    The dedicated loader smoke is not a scenario catalog row: its live name, live scenario
+    token and terminal-shot label come from `host_play::external_loader`, exactly as a catalog
+    row's live name comes from `scenario::names()`. The frozen fixture digest is read from the
+    same module *and* checked against the tracked file, so a manifest can never declare a source
+    the producer would refuse.
+    """
+    src = path.read_text()
+    def constant(name):
+        match = re.search(rf'pub const {name}: &str = "([^"]*)"', src)
+        if match is None:
+            raise SystemExit(f"external loader constant {name} not found in {path}")
+        return match.group(1)
+    return OrderedDict(
+        (name, constant(name)) for name in
+        ("LIVE_NAME", "LIVE_SCENARIO", "RECEIPT_PREFIX", "TERMINAL_SHOT", "PREREQ_SHOT", "FROZEN_SHA256")
+    )
+
+
 def covered_scripts(reference_cases, script):
     return [c["id"] for c in reference_cases if script in c["scripts"]]
 
@@ -502,6 +524,64 @@ def main():
                     add_row(script, script_key, variant, runner=spec["runner"], refs=[], options=spec["options"],
                             unsupported=spec["unsupported"], budget=spec["budget"], unavailable=None, primary=False)
 
+    # The dedicated external raw TypeScript loader smoke. It is *not* a scenario catalog row: its
+    # live name, live scenario and terminal-shot label come from `host_play::external_loader`, and
+    # it adapts the frozen `external-script-test` loader smoke directly. The catalog `bone_burier`
+    # row keeps its own core-witness contract; the historical association stays recorded there as
+    # an unsupported gap *and* here as the row that actually runs the loader reference.
+    external = external_constants(ns.workspace_root / "crates/host-play/src/external_loader.rs")
+    fixture = ns.workspace_root / "crates/host-play/fixtures/ExampleBot.ts"
+    if hashlib.sha256(fixture.read_bytes()).hexdigest() != external["FROZEN_SHA256"]:
+        raise SystemExit(f"the tracked external fixture {fixture} does not match FROZEN_SHA256")
+    if external["LIVE_SCENARIO"] in live_names:
+        raise SystemExit(f"{external['LIVE_SCENARIO']}: the loader smoke must not be a catalog scenario")
+    if any(row["id"] == external["LIVE_SCENARIO"] for row in rows):
+        raise SystemExit(f"duplicate case id: {external['LIVE_SCENARIO']}")
+    loader_refs = reference_rows(["external-script-test"])
+    loader_status = "unvetted"
+    for status in ("broken", "vetted", "documented"):
+        if any(ref["status"] == status for ref in loader_refs):
+            loader_status = status
+            break
+    loader_row = OrderedDict([
+        ("id", external["LIVE_SCENARIO"]),
+        ("kind", "native"),
+        # Not a catalog script case: the smoke loads a raw `.ts` fixture, so it declares no
+        # `script`/`script_key` and `--only BoneBurier` keeps selecting the catalog row only.
+        ("script", None),
+        ("script_key", None),
+        ("primary", False),
+        # The frozen reference case is `manual` (hosted/manual upstream); this native adapter is
+        # automated, so the row is selectable rather than hidden behind a manual flag.
+        ("status", loader_status),
+        ("manual", False),
+        ("budget_min", loader_refs[0]["budget_min"] if loader_refs else DEFAULT_BUDGET_MIN),
+        ("runner", "external"),
+        ("live", external["LIVE_NAME"]),
+        ("scenario", external["LIVE_SCENARIO"]),
+        ("core_case", None),
+        ("pair_case", None),
+        ("options", ["raw TypeScript fixture (default: crates/host-play/fixtures/ExampleBot.ts)",
+                     "typed --external-ts absolute override"]),
+        ("unsupported", []),
+        ("covers", {"scripts": [], "subsystems": [], "paths": [
+            "crates/host-play/src/external_loader.rs",
+            "crates/host-play/fixtures/ExampleBot.ts",
+            "crates/panel/examples/external_watch.rs",
+        ]}),
+        ("capture", {"label": external["TERMINAL_SHOT"], "required": True}),
+        ("variants", []),
+        ("reference_cases", loader_refs),
+        ("note", f"dedicated {external['RECEIPT_PREFIX']} loader smoke: register once, select without "
+                 f"auto-start, observe the burials/Prayer/inventory gate inside the producer's own "
+                 f"deadlines, Stop, reload identity and one {external['TERMINAL_SHOT']!r} capture. The "
+                 f"prerequisite {external['PREREQ_SHOT']!r} capture is a different shot and never "
+                 f"satisfies it; visual approval stays a human readback. The catalog `bone_burier` "
+                 f"core witness is unchanged and does not carry this contract."),
+    ])
+    anchor = next((index for index, row in enumerate(rows) if row["id"] == "bone_burier"), len(rows) - 1)
+    rows.insert(anchor + 1, loader_row)
+
     # Native cases with no primary row yet (ClimbingBoots has none).
     for spec in MAPPING:
         if spec["script"] not in intended and not spec["unavailable"]:
@@ -515,6 +595,17 @@ def main():
     missing = [s for s in intended if s not in primaries]
     if missing:
         raise SystemExit(f"intended scripts without a primary row: {missing}")
+
+    # The frozen loader reference must reach the adapter that actually runs it: the dedicated
+    # row carries the direct association (the catalog `bone_burier` row keeps its own contract
+    # and the historical note, and is not the smoke's adapter).
+    loader_reached = [
+        row["id"] for row in rows
+        if row["kind"] == "native"
+        and any(ref["id"] == "external-script-test" for ref in row.get("reference_cases", []))
+    ]
+    if external["LIVE_SCENARIO"] not in loader_reached:
+        raise SystemExit("the external loader row does not carry the external-script-test reference")
 
     # Remaining reference cases stay visible with an explicit reason.
     for c in reference_cases:
@@ -580,6 +671,11 @@ def main():
                 ("pair", OrderedDict([("program", "cargo"),
                                       ("args", ["run", "--quiet", "-p", "panel", "--example", "pair_watch",
                                                 "--"])])),
+                # The dedicated loader smoke's own entrypoint: `catalog_watch` never produces an
+                # EXTERNAL_LOADER receipt, so the row must not borrow the core template.
+                ("external", OrderedDict([("program", "cargo"),
+                                          ("args", ["run", "--quiet", "-p", "panel", "--example",
+                                                    "external_watch", "--"])])),
             ])),
             # Desired run options and whether the current native adapters can select them.
             # An unsupported desire is declared pending adapter work, never claimed done.
@@ -602,6 +698,15 @@ def main():
                     ("pending", "no CLI flag requests a capture yet; terminal shots are produced only when the "
                                 "scenario's own settings ask for one. A case declaring `capture` below is validated "
                                 "strictly; the tracked cases declare none until that adapter work lands."),
+                ])),
+                ("external_ts", OrderedDict([
+                    ("desired", "typed absolute override"),
+                    ("supported", True),
+                    ("note", "the dedicated loader smoke row binds its raw source by path and content: the "
+                             "tracked default fixture when `--external-ts ABS` is absent, the named absolute "
+                             "file when it is given. The field name in the receipt is the loaded card's "
+                             "origin cache key, which for a raw file is the raw source digest. A "
+                             "core/pair-only selection never resolves that resource."),
                 ])),
                 ("memory", OrderedDict([
                     ("desired", "profile_default_lowmem"),
@@ -637,6 +742,11 @@ def main():
     print("statuses:", dict(Counter(r["status"] for r in runnable)))
     quick = [r["id"] for r in runnable if r["status"] == "vetted" and not r["manual"]]
     print(f"quick (vetted, non-manual, runnable): {len(quick)} -> {quick}")
+    print(
+        f"external loader smoke: id {external['LIVE_SCENARIO']}, live {external['LIVE_NAME']}, "
+        f"receipt {external['RECEIPT_PREFIX']}, capture {external['TERMINAL_SHOT']!r}, "
+        f"reference external-script-test"
+    )
     print(f"intended scripts: {len(intended)}")
     return 0
 
