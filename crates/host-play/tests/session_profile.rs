@@ -726,7 +726,7 @@ fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
 }
 
 fn fixture_canlight_policy() -> [u8; 32] {
-    nav::canlight::policy_digest(289, b"fixture-bank-zones")
+    nav::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64])
 }
 
 fn tiny_v8_canlight(pack: &[u8]) -> (Vec<u8>, String) {
@@ -1140,7 +1140,11 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     let (canlight_bytes, _old_identity) = tiny_v8_canlight(&bytes);
     std::fs::write(root.join("274bot.navcanlight"), &canlight_bytes).unwrap();
     let canlight_sha256 = nav::manifest::hash_bytes(&canlight_bytes);
-    let new_policy = nav::pack::sha256_hex(&nav::canlight::policy_digest(289, b"new-bank-zones"));
+    let new_policy = nav::pack::sha256_hex(&nav::canlight::identity_digest(
+        289,
+        b"new-bank-zones",
+        &[0u64],
+    ));
     let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
     let table = [BundledNavIdentity {
         revision: 289,

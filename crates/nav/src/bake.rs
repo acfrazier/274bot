@@ -276,9 +276,10 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &pack_digest,
     );
     let revision_for_policy = request.revision.unwrap_or(274);
-    let policy = canlight::policy_digest(revision_for_policy, &bank_zones_bytes);
-    let canlight_identity = sha256_hex(&policy);
-    let canlight_binding = canlight::header_binding(&pack_digest, &policy);
+    let canlight_identity_digest =
+        canlight::identity_digest(revision_for_policy, &bank_zones_bytes, &canlight_bits);
+    let canlight_identity = sha256_hex(&canlight_identity_digest);
+    let canlight_binding = canlight::header_binding(&pack_digest, &canlight_identity_digest);
     let canlight_bytes = encode_canlight_sidecar(
         collision.origin,
         collision.width,
