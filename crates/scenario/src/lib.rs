@@ -12782,6 +12782,26 @@ struct NativeSeed {
     note_id: Option<i32>,
 }
 
+fn native_seed_definition_valid(objs: &[client::config::ObjType], seed: NativeSeed) -> bool {
+    let Some(base) = objs.get(seed.unnoted_id as usize) else {
+        return false;
+    };
+    if base.id != seed.unnoted_id || base.certlink != -1 {
+        return false;
+    }
+    if let Some(note_id) = seed.note_id {
+        let Some(note) = objs.get(note_id as usize) else {
+            return false;
+        };
+        note.id == note_id
+            && note.stackable
+            && note.certlink == seed.unnoted_id
+            && note.certtemplate >= 0
+    } else {
+        base.stackable || seed.quantity <= 1
+    }
+}
+
 fn native_bank_seed(
     name: &'static str,
     bank: WorldTile,
@@ -12797,24 +12817,7 @@ fn native_bank_seed(
                 // sending a command. A missing or contradictory certificate
                 // definition must fail closed, never become a name-only seed.
                 for seed in &seeds {
-                    let Some(base) = c.cache.objs.get(seed.unnoted_id as usize) else {
-                        return false;
-                    };
-                    if base.id != seed.unnoted_id || base.certlink != -1 {
-                        return false;
-                    }
-                    if let Some(note_id) = seed.note_id {
-                        let Some(note) = c.cache.objs.get(note_id as usize) else {
-                            return false;
-                        };
-                        if note.id != note_id
-                            || !note.stackable
-                            || note.certlink != seed.unnoted_id
-                            || note.certtemplate < 0
-                        {
-                            return false;
-                        }
-                    } else if !base.stackable && seed.quantity > 1 {
+                    if !native_seed_definition_valid(&c.cache.objs, *seed) {
                         return false;
                     }
                 }
@@ -12840,49 +12843,50 @@ fn native_bank_seed(
     }
 }
 
-fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Step {
-    let first = seeds[0];
-    Step {
-        name,
-        kind: StepKind::Repeat {
-            send: Box::new(move |c, snapshot| {
-                if seeds.iter().all(|seed| {
-                    let bank_id = seed.unnoted_id;
+fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> {
+    seeds
+        .into_iter()
+        .map(|seed| Step {
+            name,
+            kind: StepKind::Repeat {
+                send: Box::new(move |c, snapshot| {
                     let inv_id = seed.note_id.unwrap_or(seed.unnoted_id);
-                    Proof::BankItemId {
-                        id: bank_id,
+                    if (Proof::BankItemId {
+                        id: seed.unnoted_id,
                         count: seed.quantity,
-                    }
+                    })
                     .check(snapshot, None)
-                        && Proof::ItemIdAtMost {
+                        && (Proof::ItemIdAtMost {
                             id: inv_id,
                             count: 0,
-                        }
+                        })
                         .check(snapshot, None)
-                }) {
-                    return true;
-                }
-                let mut ix = Interactions::new(snapshot, c);
-                let mut sent = false;
-                for item in snapshot.bank_side() {
-                    if let Some(op) = bank_deposit_all_op(&item.actions) {
-                        sent |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                            SendResult::Sent { .. }
-                        );
+                    {
+                        return true;
                     }
-                }
-                sent
-            }),
-        },
-        wait: Wait {
-            arm: Proof::BankItemId {
-                id: first.unnoted_id,
-                count: first.quantity,
+                    let mut ix = Interactions::new(snapshot, c);
+                    snapshot
+                        .bank_side()
+                        .into_iter()
+                        .filter(|item| item.def.id == seed.unnoted_id)
+                        .filter_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
+                        .any(|(item, op)| {
+                            matches!(
+                                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                                SendResult::Sent { .. }
+                            )
+                        })
+                }),
             },
-            budget_ticks: 200,
-        },
-    }
+            wait: Wait {
+                arm: Proof::BankItemId {
+                    id: seed.unnoted_id,
+                    count: seed.quantity,
+                },
+                budget_ticks: 200,
+            },
+        })
+        .collect()
 }
 const LUMBRIDGE_BANK: WorldTile = WorldTile {
     x: 3092,
@@ -13777,7 +13781,7 @@ fn smithing_bot_variant(
             NativeSeed {
                 unnoted_id: BRONZE_BAR_ID,
                 debug_alias: "bronze_bar",
-                note_alias: Some("bronze_bar_cert"),
+                note_alias: Some("cert_bronze_bar"),
                 quantity: bar_quantity,
                 note_id: Some(BRONZE_BAR_CERT_ID),
             },
@@ -13808,6 +13812,20 @@ fn smithing_bot_variant(
             },
         ),
         (
+            "bound the noted bar seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: BRONZE_BAR_CERT_ID,
+                count: bar_quantity,
+            },
+        ),
+        (
+            "bound the hammer seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: HAMMER_ID,
+                count: 1,
+            },
+        ),
+        (
             "confirm no seeded product in pack before Start",
             Proof::ItemIdAtMost {
                 id: product_id,
@@ -13831,7 +13849,7 @@ fn smithing_bot_variant(
             count: 0,
         },
     ));
-    steps.push(native_bank_deposit(
+    steps.extend(native_bank_deposit(
         "deposit the hammer and native note seed through the bank window",
         vec![
             NativeSeed {
@@ -13844,7 +13862,7 @@ fn smithing_bot_variant(
             NativeSeed {
                 unnoted_id: BRONZE_BAR_ID,
                 debug_alias: "bronze_bar",
-                note_alias: Some("bronze_bar_cert"),
+                note_alias: Some("cert_bronze_bar"),
                 quantity: bar_quantity,
                 note_id: Some(BRONZE_BAR_CERT_ID),
             },
@@ -13877,6 +13895,20 @@ fn smithing_bot_variant(
             Proof::ItemIdAtMost {
                 id: BRONZE_BAR_CERT_ID,
                 count: 0,
+            },
+        ),
+        (
+            "bound the hammer seed bank count",
+            Proof::BankItemIdAtMost {
+                id: HAMMER_ID,
+                count: 1,
+            },
+        ),
+        (
+            "bound the bronze bar seed bank count",
+            Proof::BankItemIdAtMost {
+                id: BRONZE_BAR_ID,
+                count: bar_quantity,
             },
         ),
     ] {
@@ -14010,7 +14042,11 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
-                note_alias: Some("leather_cert"),
+                note_alias: Some(if leather_alias == "leather" {
+                    "cert_leather"
+                } else {
+                    "cert_hard_leather"
+                }),
                 quantity: 28,
                 note_id: Some(leather_note),
             },
@@ -14048,6 +14084,27 @@ fn leather_crafter_variant(
             },
         ),
         (
+            "bound the noted leather seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: leather_note,
+                count: 28,
+            },
+        ),
+        (
+            "bound the needle seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "bound the thread seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 100,
+            },
+        ),
+        (
             "confirm no seeded product in pack before Start",
             Proof::ItemIdAtMost {
                 id: product_id,
@@ -14071,7 +14128,7 @@ fn leather_crafter_variant(
             count: 0,
         },
     ));
-    steps.push(native_bank_deposit(
+    steps.extend(native_bank_deposit(
         "deposit the native leather seed through the bank window",
         vec![
             NativeSeed {
@@ -14091,7 +14148,11 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
-                note_alias: Some("leather_cert"),
+                note_alias: Some(if leather_alias == "leather" {
+                    "cert_leather"
+                } else {
+                    "cert_hard_leather"
+                }),
                 quantity: 28,
                 note_id: Some(leather_note),
             },
@@ -14138,6 +14199,27 @@ fn leather_crafter_variant(
             Proof::ItemIdAtMost {
                 id: THREAD_ID,
                 count: 0,
+            },
+        ),
+        (
+            "bound the leather seed bank count",
+            Proof::BankItemIdAtMost {
+                id: leather_id,
+                count: 28,
+            },
+        ),
+        (
+            "bound the needle seed bank count",
+            Proof::BankItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "bound the thread seed bank count",
+            Proof::BankItemIdAtMost {
+                id: THREAD_ID,
+                count: 100,
             },
         ),
     ] {
@@ -14252,9 +14334,9 @@ fn firemaker_variant(
                 unnoted_id: log_id,
                 debug_alias: log_alias,
                 note_alias: Some(if log_alias == "logs" {
-                    "logs_cert"
+                    "cert_logs"
                 } else {
-                    "oak_logs_cert"
+                    "cert_oak_logs"
                 }),
                 quantity: 28,
                 note_id: Some(log_note),
@@ -14286,6 +14368,20 @@ fn firemaker_variant(
             },
         ),
         (
+            "bound the noted log seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: log_note,
+                count: 28,
+            },
+        ),
+        (
+            "bound the tinderbox seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: TINDERBOX_ID,
+                count: 1,
+            },
+        ),
+        (
             "confirm no seeded wrong logs in pack before Start",
             Proof::ItemIdAtMost {
                 id: wrong_id,
@@ -14302,7 +14398,7 @@ fn firemaker_variant(
             count: 0,
         },
     ));
-    steps.push(native_bank_deposit(
+    steps.extend(native_bank_deposit(
         "deposit the tinderbox and native note log seed through the bank window",
         vec![
             NativeSeed {
@@ -14316,9 +14412,9 @@ fn firemaker_variant(
                 unnoted_id: log_id,
                 debug_alias: log_alias,
                 note_alias: Some(if log_alias == "logs" {
-                    "logs_cert"
+                    "cert_logs"
                 } else {
-                    "oak_logs_cert"
+                    "cert_oak_logs"
                 }),
                 quantity: 28,
                 note_id: Some(log_note),
@@ -14352,6 +14448,20 @@ fn firemaker_variant(
             Proof::ItemIdAtMost {
                 id: TINDERBOX_ID,
                 count: 0,
+            },
+        ),
+        (
+            "bound the log seed bank count",
+            Proof::BankItemIdAtMost {
+                id: log_id,
+                count: 28,
+            },
+        ),
+        (
+            "bound the tinderbox seed bank count",
+            Proof::BankItemIdAtMost {
+                id: TINDERBOX_ID,
+                count: 1,
             },
         ),
     ] {
@@ -15448,6 +15558,38 @@ mod tests {
         assert_eq!(budget_s_from(Some("nope")), None);
         assert_eq!(budget_s_from(Some("300")), Some(Duration::from_secs(300)));
         assert_eq!(budget_s_from(Some(" 60 ")), Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn native_seed_validation_requires_real_base_and_certificate_definitions() {
+        let mut objs = vec![client::config::ObjType::default(); 3];
+        objs[1].id = 1;
+        objs[1].stackable = false;
+        objs[2].id = 2;
+        objs[2].stackable = true;
+        objs[2].certlink = 1;
+        objs[2].certtemplate = 0;
+        let seed = NativeSeed {
+            unnoted_id: 1,
+            debug_alias: "base",
+            note_alias: Some("cert_base"),
+            quantity: 28,
+            note_id: Some(2),
+        };
+        assert!(native_seed_definition_valid(&objs, seed));
+
+        objs[2].certlink = 0;
+        assert!(!native_seed_definition_valid(&objs, seed));
+        objs[2].certlink = 1;
+        objs[2].certtemplate = -1;
+        assert!(!native_seed_definition_valid(&objs, seed));
+        assert!(!native_seed_definition_valid(
+            &objs,
+            NativeSeed {
+                note_id: None,
+                ..seed
+            }
+        ));
     }
 
     #[test]
