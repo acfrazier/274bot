@@ -56,7 +56,12 @@ pub struct PaintOverlay {
     /// Applet-space dirty rect this frame, if any.
     canvas_dirty: Option<[i32; 4]>,
     last_ops: Vec<CanvasOp>,
+    last_dirty: Option<[i32; 4]>,
     canvas_gpu: Option<CanvasGpu>,
+    #[cfg(test)]
+    rasterize_calls: u32,
+    #[cfg(test)]
+    upload_calls: u32,
 }
 
 impl PaintOverlay {
@@ -69,7 +74,12 @@ impl PaintOverlay {
             canvas_dest: None,
             canvas_dirty: None,
             last_ops: Vec::new(),
+            last_dirty: None,
             canvas_gpu: None,
+            #[cfg(test)]
+            rasterize_calls: 0,
+            #[cfg(test)]
+            upload_calls: 0,
         }
     }
 
@@ -79,8 +89,24 @@ impl PaintOverlay {
             gpu.unregister_texture(cached.tex_id);
         }
         self.last_ops.clear();
+        self.last_dirty = None;
         self.canvas_dest = None;
         self.canvas_dirty = None;
+    }
+
+    #[cfg(test)]
+    pub fn canvas_gpu_alive(&self) -> bool {
+        self.canvas_gpu.is_some()
+    }
+
+    #[cfg(test)]
+    pub fn rasterize_calls(&self) -> u32 {
+        self.rasterize_calls
+    }
+
+    #[cfg(test)]
+    pub fn upload_calls(&self) -> u32 {
+        self.upload_calls
     }
 
     /// Draw the focused slot's paint over the Game Image. `min`/`size`
@@ -114,32 +140,59 @@ impl PaintOverlay {
             return None;
         }
 
-        if !canvas_ops.is_empty() {
-            if let Some(dirty) = canvas::dirty_bounds(canvas_ops) {
-                self.canvas_dirty = Some([dirty.x, dirty.y, dirty.w, dirty.h]);
-                let dest = canvas::map_applet_rect(min, size, dirty.x, dirty.y, dirty.w, dirty.h);
+        if canvas_ops.is_empty() {
+            if let Some(gpu) = gpu {
+                self.release_canvas(gpu);
+            } else {
+                self.last_ops.clear();
+                self.last_dirty = None;
+            }
+        } else {
+            let ops_unchanged = self.last_ops.as_slice() == canvas_ops;
+            let dirty = if ops_unchanged {
+                self.last_dirty
+            } else {
+                canvas::dirty_bounds(canvas_ops).map(|d| {
+                    let arr = [d.x, d.y, d.w, d.h];
+                    self.last_dirty = Some(arr);
+                    arr
+                })
+            };
+            if let Some([dx, dy, dw, dh]) = dirty {
+                self.canvas_dirty = Some([dx, dy, dw, dh]);
+                let dest = canvas::map_applet_rect(min, size, dx, dy, dw, dh);
                 self.canvas_dest = Some(dest);
                 if let Some(gpu) = gpu {
-                    if let Some(raster) = canvas::rasterize(canvas_ops) {
-                        self.sync_canvas_texture(gpu, &raster, canvas_ops);
-                        if let Some(cached) = &self.canvas_gpu {
-                            let dl = ui.get_window_draw_list();
-                            dl.add_image(
-                                cached.tex_id,
-                                [dest[0], dest[1]],
-                                [dest[0] + dest[2], dest[1] + dest[3]],
-                                [0.0, 0.0],
-                                [1.0, 1.0],
-                                [1.0, 1.0, 1.0, 1.0],
-                            );
+                    let reuse_tex = ops_unchanged && self.canvas_gpu.is_some();
+                    if !reuse_tex {
+                        if let Some(raster) = canvas::rasterize(canvas_ops) {
+                            #[cfg(test)]
+                            {
+                                self.rasterize_calls = self.rasterize_calls.saturating_add(1);
+                            }
+                            self.sync_canvas_texture(gpu, &raster, canvas_ops);
                         }
                     }
+                    if let Some(cached) = &self.canvas_gpu {
+                        let dl = ui.get_window_draw_list();
+                        dl.add_image(
+                            cached.tex_id,
+                            [dest[0], dest[1]],
+                            [dest[0] + dest[2], dest[1] + dest[3]],
+                            [0.0, 0.0],
+                            [1.0, 1.0],
+                            [1.0, 1.0, 1.0, 1.0],
+                        );
+                    }
+                } else if !ops_unchanged {
+                    self.last_ops = canvas_ops.to_vec();
                 }
+            } else if let Some(gpu) = gpu {
+                self.release_canvas(gpu);
+            } else {
+                self.last_ops.clear();
+                self.last_dirty = None;
             }
-        } else if let Some(gpu) = gpu {
-            self.release_canvas(gpu);
-        } else {
-            self.last_ops.clear();
         }
 
         let Some(paint) = structured else {
@@ -270,6 +323,10 @@ impl PaintOverlay {
                 depth_or_array_layers: 1,
             },
         );
+        #[cfg(test)]
+        {
+            self.upload_calls = self.upload_calls.saturating_add(1);
+        }
         let _ = &cached.view;
     }
 }
@@ -599,7 +656,7 @@ mod tests {
         script::canvas::begin();
         script::canvas::set_style("font", "12px monospace");
         let text = "BoneBurier (external)  buried 0";
-        let width = script::canvas::measure_text(text);
+        let width = script::canvas::measure_text(text).unwrap();
         script::canvas::set_style("fillStyle", "rgba(0, 0, 0, 0.6)");
         script::canvas::fill_rect(6.0, 6.0, width + 12.0, 24.0);
         script::canvas::set_style("fillStyle", "#ffb15b");
@@ -618,5 +675,156 @@ mod tests {
             painted > 50,
             "glyphs and rect must land in the dirty pixmap"
         );
+    }
+
+    struct RecordingGpu {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        registered: Vec<u64>,
+        unregistered: Vec<u64>,
+    }
+
+    impl RecordingGpu {
+        fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+            Self {
+                device,
+                queue,
+                registered: Vec::new(),
+                unregistered: Vec::new(),
+            }
+        }
+    }
+
+    impl crate::game_view::FrameGpu for RecordingGpu {
+        fn device(&self) -> &wgpu::Device {
+            &self.device
+        }
+        fn queue(&self) -> &wgpu::Queue {
+            &self.queue
+        }
+        fn register_texture(
+            &mut self,
+            _texture: &wgpu::Texture,
+            _view: &wgpu::TextureView,
+        ) -> dear_imgui_rs::TextureId {
+            let id = self.registered.len() as u64 + 1;
+            self.registered.push(id);
+            dear_imgui_rs::TextureId::new(id)
+        }
+        fn unregister_texture(&mut self, tex_id: dear_imgui_rs::TextureId) {
+            self.unregistered.push(tex_id.id());
+        }
+    }
+
+    fn headless_gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("274 paint canvas test"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
+        }))
+        .ok()
+    }
+
+    fn gpu_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        gpu: &mut RecordingGpu,
+        p: &ScriptPaint,
+        min: [f32; 2],
+        size: [f32; 2],
+    ) {
+        prepare_frame(ctx);
+        {
+            let ui = ctx.frame();
+            overlay.frame(ui, Some(gpu), Some(p), min, size);
+        }
+        ctx.render();
+    }
+
+    #[test]
+    fn canvas_gpu_cache_skips_unchanged_and_releases() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let mut gpu = RecordingGpu::new(device, queue);
+        let p = canvas_banner();
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert_eq!(overlay.rasterize_calls(), 1);
+        assert_eq!(overlay.upload_calls(), 1);
+        assert_eq!(gpu.registered.len(), 1);
+        assert!(overlay.canvas_gpu_alive());
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert_eq!(
+            overlay.rasterize_calls(),
+            1,
+            "identical ops must not reraster"
+        );
+        assert_eq!(overlay.upload_calls(), 1, "identical ops must not reupload");
+        assert!(gpu.unregistered.is_empty());
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [0.0, 0.0],
+            [382.5, 251.5],
+        );
+        assert_eq!(
+            overlay.rasterize_calls(),
+            1,
+            "scale change remaps dest without reraster"
+        );
+        let dest = overlay.canvas_dest.expect("scaled dest");
+        assert!((dest[2] - 200.0).abs() < 0.01);
+        overlay.release_canvas(&mut gpu);
+        assert!(!overlay.canvas_gpu_alive());
+        assert_eq!(gpu.unregistered.len(), 1);
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert_eq!(overlay.rasterize_calls(), 2);
+        let empty = paint(None, &[]);
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &empty,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert!(!overlay.canvas_gpu_alive());
+        assert_eq!(gpu.unregistered.len(), 2);
     }
 }
