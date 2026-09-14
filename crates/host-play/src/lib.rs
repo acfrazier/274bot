@@ -9967,6 +9967,10 @@ export default class T extends LoopingBot {
     #[test]
     fn dispatch_inv_button_bank_side_refuses_stale_wrong_closed_and_invalid_op() {
         let mut c = bank_client();
+        c.handle_packet(
+            ServerProt::UPDATE_INV_FULL,
+            &mut Packet::new(vec![2, 89, 0]),
+        );
         let mut snap = GameSnapshot::new();
         snap.rebuild(&c);
         let side = snap
@@ -9975,6 +9979,20 @@ export default class T extends LoopingBot {
             .find(|item| item.def.id == 1)
             .expect("bank-side id 1");
         let gen = snap.bank_session_generation();
+        assert!(
+            snap.bank_loaded(),
+            "identity rejections must exercise a loaded bank"
+        );
+        assert_eq!(
+            dispatch_inv_button(
+                &snap,
+                inv_button_req(1, side.slot, side.component_id, 1, gen)
+            )
+            .menus
+            .len(),
+            1,
+            "the valid bank-side row must dispatch before checking rejected variants"
+        );
         assert!(
             dispatch_inv_button(
                 &snap,
@@ -10058,85 +10076,9 @@ export default class T extends LoopingBot {
             .find(|item| item.def.id == 1)
             .expect("bank-side id 1");
         assert_eq!(side.component_id, 701);
-        let bytes = script::isolate_fb::encode_snapshot(&script::isolate_fb::SnapshotInput {
-            tick: 1,
-            here: None,
-            ingame: true,
-            inv: &[],
-            inv_size: 28,
-            stats: &[],
-            booths: &[],
-            nearest_booth: None,
-            banks: &[],
-            bank: &[],
-            bank_side: &[script::isolate_fb::ItemRowInput {
-                name: Some("lobster"),
-                count: 1,
-                id: 1,
-                ops: &["Deposit All".to_string()],
-                noted: false,
-                cert: -1,
-                component_id: side.component_id,
-                slot: side.slot,
-            }],
-            bank_open: true,
-            bank_loaded: true,
-            bank_generation: 1,
-            count_dialog_open: false,
-            withdraw_x_result_seq: 0,
-            withdraw_x_result: false,
-            hold: false,
-            ours: false,
-            npcs: &[],
-            withdraw_load_result_seq: 0,
-            withdraw_load_result: false,
-            bank_op_result_seq: 0,
-            bank_op_result: false,
-            locs: &[],
-            players: &[],
-            ground: &[],
-            equipment: &[],
-            chat_open: false,
-            chat_continue: false,
-            chat_text: None,
-            chat_options: &[],
-            side_tab: 0,
-            varps: &[],
-            combat_styles: &[],
-            run_energy: 0,
-            run_enabled: false,
-            retaliate_enabled: false,
-            my_name: None,
-            in_combat: false,
-            animating: false,
-            main_modal_id: 3205,
-            chat_modal_id: -1,
-            make_products: &[],
-            side_tab_ifaces: &[],
-            spell_buttons: &[],
-            chat_lines: &[],
-            bank_note_on: -1,
-            bank_note_off: -1,
-            scene_state: 2,
-            weight: 0,
-            camera_yaw: 0,
-            camera_pitch: 0,
-            teleports_enabled: false,
-            self_slot: 0,
-            trade_offer_open: false,
-            trade_confirm_open: false,
-            trade_partner: None,
-            trade_mine: &[],
-            trade_theirs: &[],
-            trade_side: &[],
-            trade_accept_id: -1,
-            trade_decline_id: -1,
-            shop_open: false,
-            shop_stock: &[],
-            reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
-            attacked_by_player: false,
-            widgets: &[],
-        });
+        let (bytes, _) = script_snapshot_fb(
+            None, false, 1, None, true, None, Some(&snap), None, None, false, false, false,
+        );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("posted snap");
         let posted = view.bank_side();
         assert_eq!(posted.len(), 1);
