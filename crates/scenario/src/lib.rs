@@ -12762,6 +12762,7 @@ const FIREMAKING_STAT: i32 = 11;
 const STAFF_OF_AIR_ID: i32 = 1381;
 const STAFF_OF_WATER_ID: i32 = 1383;
 const HAMMER_ID: i32 = 2347;
+const BRONZE_BAR_CERT_ID: i32 = 2350;
 const BRONZE_DAGGER_ID: i32 = 1205;
 const BRONZE_PLATEBODY_ID: i32 = 1117;
 const NEEDLE_ID: i32 = 1733;
@@ -12770,6 +12771,117 @@ const LEATHER_GLOVES_ID: i32 = 1059;
 const HARDLEATHER_BODY_ID: i32 = 1131;
 const OAK_LOGS_ID: i32 = 1521;
 const TINDERBOX_ID: i32 = 590;
+
+#[derive(Clone, Copy)]
+struct NativeSeed {
+    unnoted_id: i32,
+    debug_alias: &'static str,
+    quantity: i32,
+    note_id: Option<i32>,
+}
+
+fn native_bank_seed(
+    name: &'static str,
+    bank: WorldTile,
+    seeds: Vec<NativeSeed>,
+    skill: &'static str,
+    stat: i32,
+) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                // Resolve every fixture against the loaded cache before
+                // sending a command. A missing or contradictory certificate
+                // definition must fail closed, never become a name-only seed.
+                for seed in &seeds {
+                    let Some(base) = c.cache.objs.get(seed.unnoted_id as usize) else {
+                        return false;
+                    };
+                    if base.id != seed.unnoted_id || base.certlink != -1 {
+                        return false;
+                    }
+                    if let Some(note_id) = seed.note_id {
+                        let Some(note) = c.cache.objs.get(note_id as usize) else {
+                            return false;
+                        };
+                        if note.id != note_id
+                            || !note.stackable
+                            || note.certlink != seed.unnoted_id
+                            || note.certtemplate < 0
+                        {
+                            return false;
+                        }
+                    } else if !base.stackable && seed.quantity > 1 {
+                        return false;
+                    }
+                }
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat {skill} {stat}"));
+                for seed in &seeds {
+                    cheat(c, &format!("give {} {}", seed.debug_alias, seed.quantity));
+                }
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    }
+}
+
+fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Step {
+    let first_id = seeds[0].unnoted_id;
+    let first_quantity = seeds[0].quantity;
+    Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(move |c, snapshot| {
+                if seeds.iter().all(|seed| {
+                    let bank_id = seed.unnoted_id;
+                    let inv_id = seed.note_id.unwrap_or(seed.unnoted_id);
+                    Proof::BankItemId {
+                        id: bank_id,
+                        count: seed.quantity,
+                    }
+                    .check(snapshot, None)
+                        && Proof::ItemIdAtMost {
+                            id: inv_id,
+                            count: 0,
+                        }
+                        .check(snapshot, None)
+                }) {
+                    return true;
+                }
+                let mut ix = Interactions::new(snapshot, c);
+                let mut sent = false;
+                for item in snapshot.bank_side() {
+                    if let Some(op) = bank_deposit_all_op(&item.actions) {
+                        sent |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+                sent
+            }),
+        },
+        wait: Wait {
+            arm: Proof::BankItemId {
+                id: first_id,
+                count: first_quantity,
+            },
+            budget_ticks: 200,
+        },
+    }
+}
 const LUMBRIDGE_BANK: WorldTile = WorldTile {
     x: 3092,
     z: 3245,
@@ -13644,28 +13756,26 @@ fn smithing_bot_variant(
     };
     let bank = VARROCK_WEST_BANK;
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "seed Smithing, banked hammer/bars, and tele to Varrock West before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~clearinv");
-                cheat(c, &format!("setstat smithing {smithing}"));
-                cheat(c, "givebank hammer 1");
-                cheat(c, "givebank bronze_bar 28");
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 8,
+    steps.push(native_bank_seed(
+        "seed Smithing, banked hammer/bars, and tele to Varrock West before Start",
+        bank,
+        vec![
+            NativeSeed {
+                unnoted_id: HAMMER_ID,
+                debug_alias: "hammer",
+                quantity: 1,
+                note_id: None,
             },
-            budget_ticks: 200,
-        },
-    });
+            NativeSeed {
+                unnoted_id: BRONZE_BAR_ID,
+                debug_alias: "bronze_bar",
+                quantity: 28,
+                note_id: Some(BRONZE_BAR_CERT_ID),
+            },
+        ],
+        "smithing",
+        smithing,
+    ));
     for (step_name, arm) in [
         (
             "confirm Smithing before Start",
@@ -13700,10 +13810,27 @@ fn smithing_bot_variant(
     }
     steps.push(tanner_open_seed_bank(
         "open and acknowledge the bar seed bank",
-        Proof::BankItemId {
+        Proof::BankItemIdAtMost {
             id: BRONZE_BAR_ID,
-            count: 28,
+            count: 0,
         },
+    ));
+    steps.push(native_bank_deposit(
+        "deposit the hammer and native note seed through the bank window",
+        vec![
+            NativeSeed {
+                unnoted_id: HAMMER_ID,
+                debug_alias: "hammer",
+                quantity: 1,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: BRONZE_BAR_ID,
+                debug_alias: "bronze_bar",
+                quantity: 28,
+                note_id: Some(BRONZE_BAR_CERT_ID),
+            },
+        ],
     ));
     steps.push(bank_fletcher_watch(
         "acknowledge the hammer seed bank",
@@ -13814,29 +13941,37 @@ fn leather_crafter_variant(
     };
     let bank = AL_KHARID_BANK;
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "seed Crafting, banked needle/thread/leather, and tele to Al-Kharid before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~clearinv");
-                cheat(c, &format!("setstat crafting {crafting}"));
-                cheat(c, "givebank needle 1");
-                cheat(c, "givebank thread 100");
-                cheat(c, &format!("givebank {leather_alias} 28"));
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 8,
+    let leather_note = if leather_alias == "leather" {
+        1742
+    } else {
+        1744
+    };
+    steps.push(native_bank_seed(
+        "seed Crafting, banked needle/thread/leather, and tele to Al-Kharid before Start",
+        bank,
+        vec![
+            NativeSeed {
+                unnoted_id: NEEDLE_ID,
+                debug_alias: "needle",
+                quantity: 1,
+                note_id: None,
             },
-            budget_ticks: 200,
-        },
-    });
+            NativeSeed {
+                unnoted_id: THREAD_ID,
+                debug_alias: "thread",
+                quantity: 100,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: leather_id,
+                debug_alias: leather_alias,
+                quantity: 28,
+                note_id: Some(leather_note),
+            },
+        ],
+        "crafting",
+        crafting,
+    ));
     for (step_name, arm) in [
         (
             "confirm Crafting before Start",
@@ -13885,10 +14020,33 @@ fn leather_crafter_variant(
     }
     steps.push(tanner_open_seed_bank(
         "open and acknowledge the leather seed bank",
-        Proof::BankItemId {
+        Proof::BankItemIdAtMost {
             id: leather_id,
-            count: 28,
+            count: 0,
         },
+    ));
+    steps.push(native_bank_deposit(
+        "deposit the native leather seed through the bank window",
+        vec![
+            NativeSeed {
+                unnoted_id: NEEDLE_ID,
+                debug_alias: "needle",
+                quantity: 1,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: THREAD_ID,
+                debug_alias: "thread",
+                quantity: 100,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: leather_id,
+                debug_alias: leather_alias,
+                quantity: 28,
+                note_id: Some(leather_note),
+            },
+        ],
     ));
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
@@ -13983,28 +14141,27 @@ fn firemaker_variant(
     };
     let bank = VARROCK_EAST_BANK;
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "seed Firemaking, banked tinderbox/logs, and tele to Varrock East before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~clearinv");
-                cheat(c, &format!("setstat firemaking {firemaking}"));
-                cheat(c, "givebank tinderbox 1");
-                cheat(c, &format!("givebank {log_alias} 28"));
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 8,
+    let log_note = if log_alias == "logs" { 1512 } else { 1522 };
+    steps.push(native_bank_seed(
+        "seed Firemaking, banked tinderbox/logs, and tele to Varrock East before Start",
+        bank,
+        vec![
+            NativeSeed {
+                unnoted_id: TINDERBOX_ID,
+                debug_alias: "tinderbox",
+                quantity: 1,
+                note_id: None,
             },
-            budget_ticks: 200,
-        },
-    });
+            NativeSeed {
+                unnoted_id: log_id,
+                debug_alias: log_alias,
+                quantity: 28,
+                note_id: Some(log_note),
+            },
+        ],
+        "firemaking",
+        firemaking,
+    ));
     for (step_name, arm) in [
         (
             "confirm Firemaking before Start",
@@ -14039,10 +14196,27 @@ fn firemaker_variant(
     }
     steps.push(tanner_open_seed_bank(
         "open and acknowledge the log seed bank",
-        Proof::BankItemId {
+        Proof::BankItemIdAtMost {
             id: log_id,
-            count: 28,
+            count: 0,
         },
+    ));
+    steps.push(native_bank_deposit(
+        "deposit the tinderbox and native note log seed through the bank window",
+        vec![
+            NativeSeed {
+                unnoted_id: TINDERBOX_ID,
+                debug_alias: "tinderbox",
+                quantity: 1,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: log_id,
+                debug_alias: log_alias,
+                quantity: 28,
+                note_id: Some(log_note),
+            },
+        ],
     ));
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
