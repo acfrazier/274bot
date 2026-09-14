@@ -240,12 +240,14 @@ fn stash_pair_starts(
     shape: script::LoadShape,
     schema: &[script::SettingDef],
     siblings: Vec<(String, String)>,
+    watch: &host_play::paired_core::PairWatch,
 ) -> Result<(), String> {
     if names.len() != 2 {
         return Err("pair core watch supports exactly two driven slots".into());
     }
     let a_bag = host_play::paired_core::pair_settings(case, schema, 0, &names[0], &names[1])?;
     let b_bag = host_play::paired_core::pair_settings(case, schema, 1, &names[1], &names[0])?;
+    watch.install_prepared_settings(&names[0], a_bag.clone(), &names[1], b_bag.clone())?;
     *pending.lock().unwrap() = vec![
         PendingCatalogStart {
             slot: names[0].clone(),
@@ -2484,6 +2486,9 @@ impl Session {
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
                 if let Some(case) = pair_case {
+                    let watch = self
+                        .paired_core_watch()
+                        .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
                     stash_pair_starts(
                         &self.pending_script,
                         &names,
@@ -2492,6 +2497,7 @@ impl Session {
                         card.shape,
                         &card.settings_schema,
                         siblings,
+                        &watch,
                     )?;
                 } else {
                     stash_pending_starts(
@@ -2527,6 +2533,9 @@ impl Session {
                 );
                 let siblings = self.sibling_modules_for_card(&card)?;
                 if let Some(case) = pair_case {
+                    let watch = self
+                        .paired_core_watch()
+                        .ok_or_else(|| "pair core watch handle unavailable".to_string())?;
                     stash_pair_starts(
                         &self.pending_script,
                         &names,
@@ -2535,6 +2544,7 @@ impl Session {
                         card.shape,
                         &card.settings_schema,
                         siblings,
+                        &watch,
                     )?;
                 } else {
                     stash_pending_starts(
@@ -3127,6 +3137,16 @@ impl Session {
     fn focused_slot(&self) -> Option<&SlotIo> {
         let name = self.focused_name()?;
         self.slots.get(&name)
+    }
+
+    /// Switch focus only onto an already-live slot. Capture sequencing uses
+    /// this instead of [`Self::select`] so a missing actor cannot spawn.
+    pub fn focus_existing(&mut self, name: &str) -> Result<(), String> {
+        if !self.slots.contains_key(name) {
+            return Err(format!("pair capture actor {name} is not a live slot"));
+        }
+        self.apply_focus(name);
+        Ok(())
     }
 
     /// Switch the focused profile. A parked vault name is spawned on first

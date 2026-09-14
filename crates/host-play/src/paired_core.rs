@@ -2285,6 +2285,7 @@ pub struct PairWatch {
 
 struct SlotReady {
     account: String,
+    settings: Map<String, Value>,
     latest_air: Option<AirObservation>,
     latest_flax: Option<FlaxObservation>,
 }
@@ -2331,16 +2332,46 @@ impl PairWatch {
             case,
             a: Box::new(SlotReady {
                 account: a,
+                settings: Map::new(),
                 latest_air: None,
                 latest_flax: None,
             }),
             b: Box::new(SlotReady {
                 account: b,
+                settings: Map::new(),
                 latest_air: None,
                 latest_flax: None,
             }),
         };
         self.active.store(true, Ordering::Release);
+    }
+
+    /// Carry the actual per-slot bags constructed for Start through the
+    /// owned watch so freeze/receipt do not invent empty settings.
+    pub fn install_prepared_settings(
+        &self,
+        account_a: &str,
+        bag_a: Map<String, Value>,
+        account_b: &str,
+        bag_b: Map<String, Value>,
+    ) -> Result<(), String> {
+        let mut state = self.inner.lock().unwrap();
+        match &mut *state {
+            PairWatchState::Ready { a, b, .. }
+                if a.account == account_a && b.account == account_b =>
+            {
+                prepared_settings_match(account_a, account_b, &bag_a)?;
+                prepared_settings_match(account_b, account_a, &bag_b)?;
+                a.settings = bag_a;
+                b.settings = bag_b;
+                Ok(())
+            }
+            PairWatchState::Ready { a, b, .. } => Err(format!(
+                "pair settings slots {account_a:?}/{account_b:?} are not configured accounts {:?}/{:?}",
+                a.account, b.account
+            )),
+            _ => Err("pair settings can only be installed on a configured ready pair".into()),
+        }
     }
 
     pub fn clear(&self) {
@@ -2663,6 +2694,11 @@ fn slot_prepared(case: PairCase, first: bool, slot: &SlotReady) -> bool {
 }
 
 fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRuntimeWitness, String> {
+    if a.settings.is_empty() != b.settings.is_empty() {
+        return Err("pair settings must be prepared for both slots or neither".into());
+    }
+    let a_settings = freeze_slot_settings(a, &b.account)?;
+    let b_settings = freeze_slot_settings(b, &a.account)?;
     match case {
         PairCase::Air => {
             let Some(a_obs) = a.latest_air.clone() else {
@@ -2679,7 +2715,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     a.account.clone(),
                     a.account.clone(),
                     b.account.clone(),
-                    Map::new(),
+                    a_settings,
                     a_obs,
                 ),
                 runner: AirSlotRecord::new(
@@ -2687,7 +2723,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b.account.clone(),
                     b.account.clone(),
                     a.account.clone(),
-                    Map::new(),
+                    b_settings,
                     b_obs,
                 ),
             }))
@@ -2707,7 +2743,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     a.account.clone(),
                     a.account.clone(),
                     b.account.clone(),
-                    Map::new(),
+                    a_settings,
                     a_obs,
                 ),
                 mule: MuleSlotRecord::new(
@@ -2715,7 +2751,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b.account.clone(),
                     b.account.clone(),
                     a.account.clone(),
-                    Map::new(),
+                    b_settings,
                     b_obs,
                 ),
             }))
@@ -2735,7 +2771,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     a.account.clone(),
                     a.account.clone(),
                     b.account.clone(),
-                    Map::new(),
+                    a_settings,
                     a_obs,
                 ),
                 spinner: FlaxSlotRecord::new(
@@ -2743,7 +2779,7 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
                     b.account.clone(),
                     b.account.clone(),
                     a.account.clone(),
-                    Map::new(),
+                    b_settings,
                     b_obs,
                 ),
             }))
@@ -2751,6 +2787,28 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
         PairCase::Duel => {
             Err("headed pair core does not accept Duel; Duel stays on the existing harness".into())
         }
+    }
+}
+
+fn freeze_slot_settings(slot: &SlotReady, partner: &str) -> Result<Map<String, Value>, String> {
+    prepared_settings_match(&slot.account, partner, &slot.settings)?;
+    Ok(slot.settings.clone())
+}
+
+fn prepared_settings_match(
+    account: &str,
+    partner: &str,
+    bag: &Map<String, Value>,
+) -> Result<(), String> {
+    if bag.is_empty() {
+        return Ok(());
+    }
+    match bag.get("partner").and_then(Value::as_str) {
+        Some(name) if account_identity_eq(name, partner) => Ok(()),
+        Some(name) => Err(format!(
+            "pair settings partner {name:?} is not the reciprocal account {partner:?}"
+        )),
+        None => Err(format!("pair settings for {account} are missing partner")),
     }
 }
 

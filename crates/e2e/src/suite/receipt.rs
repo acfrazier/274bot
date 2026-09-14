@@ -711,6 +711,9 @@ fn evidence_scenario(receipt: &TerminalReceipt) -> Option<&str> {
 }
 
 fn failure_detail(fail: &TerminalReceipt, receipts: &ParsedReceipts) -> String {
+    if let Some(detail) = receipts.pair.as_ref().and_then(pair_qualification_detail) {
+        return detail;
+    }
     if let Some(Value::Object(map)) = &fail.payload {
         if let Some(message) = map.get("message").and_then(Value::as_str) {
             if !message.is_empty() {
@@ -725,6 +728,26 @@ fn failure_detail(fail: &TerminalReceipt, receipts: &ParsedReceipts) -> String {
         return format!("{} (see capture log)", fail.line);
     }
     fail.line.clone()
+}
+
+/// Actual pair qualification/error from the PAIRED_CORE witness. The FAIL
+/// live line keeps the scenario JSON contract, which can say outcome PASS
+/// for a passed prerequisite while the pair itself failed.
+fn pair_qualification_detail(pair: &TerminalReceipt) -> Option<String> {
+    let Value::Object(map) = pair.payload.as_ref()? else {
+        return None;
+    };
+    if let Some(error) = map.get("error").and_then(Value::as_str) {
+        if !error.is_empty() {
+            return Some(error.to_string());
+        }
+    }
+    if let Some(qualification) = map.get("qualification").and_then(Value::as_str) {
+        if !qualification.is_empty() {
+            return Some(qualification.to_string());
+        }
+    }
+    None
 }
 
 fn witness_mismatch(
@@ -2114,6 +2137,33 @@ CATALOG_CORE: script_thiever {\"case\":\"thiever\",\"post_start_observations\":2
         match validate(&case, &receipts, Some(1), &[]) {
             Verdict::CaseFailure { reason } => {
                 assert!(reason.contains("no Coins gained"), "{reason}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pair_failure_uses_qualification_not_prerequisite_outcome_pass() {
+        let case = core_case("nature_crafter_air");
+        let receipts = parse(
+            "PAIRED_CORE: script_nature_crafter_air {\"phase\":\"running\",\"witness\":{\"case\":\"air\",\"master\":{\"settings\":{}},\"runner\":{\"settings\":{}}},\"qualification\":\"pair core did not qualify before the headed deadline: one-sided confirmation: both actors never observed the offer phase with the partner\"}\n\
+             FAIL: live script_nature_crafter_air {\"scenario\":\"nature_crafter_air\",\"outcome\":\"PASS\",\"predicate\":\"stat(16)>=0\",\"ticks\":2}\n",
+        );
+        assert!(
+            receipts.scenario_fail.is_some(),
+            "scenario FAIL record is retained"
+        );
+        assert!(receipts.pair.is_some(), "PAIRED_CORE record is retained");
+        match validate(&case, &receipts, Some(1), &[]) {
+            Verdict::CaseFailure { reason } => {
+                assert!(
+                    reason.contains("one-sided confirmation"),
+                    "pair qualification must be reported: {reason}"
+                );
+                assert!(
+                    !reason.contains("outcome PASS"),
+                    "prerequisite scenario PASS must not mask the pair error: {reason}"
+                );
             }
             other => panic!("{other:?}"),
         }

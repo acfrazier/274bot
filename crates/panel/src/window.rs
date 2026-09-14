@@ -75,14 +75,24 @@ pub enum ShotStatus {
     Failed(String),
 }
 
+/// One labeled capture request. Pair terminal shots carry the actor that
+/// must be the selected visible main actor before this job is promoted
+/// into whole-window readback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShotRequest {
+    pub label: String,
+    pub snapshot_json: String,
+    pub actor: Option<String>,
+}
+
 /// Whole-window capture coordination between the scenario sink (slot
 /// thread), the UI body (per-frame drain), the render pass (readback),
 /// and the panel frame (file write).
 #[derive(Default)]
 pub struct ShotState {
-    /// `(label, snapshot_json)` requests pushed by the scenario sink,
-    /// drained by the UI body.
-    pub requests: Vec<(String, String)>,
+    /// Requests pushed by the scenario sink / pair terminal path, drained
+    /// by the UI body.
+    pub requests: Vec<ShotRequest>,
     /// The UI body's per-frame drain: what the next render pass captures.
     pub wanted: Vec<(String, String)>,
     /// Captures completed by the render pass, consumed by the UI body.
@@ -95,16 +105,97 @@ pub struct ShotState {
 
 impl ShotState {
     pub fn enqueue(&mut self, label: String, snapshot_json: String) {
-        self.written.retain(|written| written != &label);
-        self.failed.retain(|(failed, _)| failed != &label);
-        self.requests.push((label, snapshot_json));
+        self.enqueue_request(ShotRequest {
+            label,
+            snapshot_json,
+            actor: None,
+        });
     }
 
+    pub fn enqueue_for_actor(&mut self, label: String, snapshot_json: String, actor: String) {
+        self.enqueue_request(ShotRequest {
+            label,
+            snapshot_json,
+            actor: Some(actor),
+        });
+    }
+
+    fn enqueue_request(&mut self, request: ShotRequest) {
+        self.written.retain(|written| written != &request.label);
+        self.failed.retain(|(failed, _)| failed != &request.label);
+        self.requests.push(request);
+    }
+
+    /// Promote untagged jobs. Actor-tagged pair jobs stay queued until
+    /// [`Self::promote_ready`] sees that actor selected and presented.
     pub fn promote_requests(&mut self) -> usize {
+        self.promote_ready(None, None)
+    }
+
+    /// Promote at most one actor-tagged job, and only when that actor is
+    /// both focused and already presented in the game view. Untagged jobs
+    /// promote together only when no actor-tagged job is pending, so two
+    /// pair actors never share one unready whole-window readback.
+    pub fn promote_ready(&mut self, focused: Option<&str>, presented: Option<&str>) -> usize {
         let requests = mem::take(&mut self.requests);
-        let count = requests.len();
-        self.wanted.extend(requests);
+        let has_actor = requests.iter().any(|request| request.actor.is_some());
+        let mut count = 0;
+        let mut kept = Vec::new();
+        let mut promoted_actor = false;
+        for request in requests {
+            match request.actor.as_deref() {
+                None if !has_actor => {
+                    self.wanted.push((request.label, request.snapshot_json));
+                    count += 1;
+                }
+                None => kept.push(request),
+                Some(actor)
+                    if !promoted_actor && focused == Some(actor) && presented == Some(actor) =>
+                {
+                    self.wanted.push((request.label, request.snapshot_json));
+                    count += 1;
+                    promoted_actor = true;
+                }
+                Some(_) => kept.push(request),
+            }
+        }
+        self.requests = kept;
         count
+    }
+
+    /// First actor-tagged job still waiting to be promoted.
+    pub fn pending_actor_request(&self) -> Option<&ShotRequest> {
+        self.requests.iter().find(|request| request.actor.is_some())
+    }
+
+    pub fn capture_in_flight(&self) -> bool {
+        !self.wanted.is_empty() || !self.done.is_empty()
+    }
+
+    /// Replace the sidecar on a still-queued actor job so the readback
+    /// carries the current scene2 snapshot, not the JSON frozen at enqueue.
+    pub fn refresh_actor_sidecar(&mut self, actor: &str, snapshot_json: String) {
+        if let Some(request) = self
+            .requests
+            .iter_mut()
+            .find(|request| request.actor.as_deref() == Some(actor))
+        {
+            request.snapshot_json = snapshot_json;
+        }
+    }
+
+    /// Drop pending work for `labels` and retain a terminal failure so a
+    /// later unready buffer cannot write after the drain/error.
+    pub fn fail_labels(&mut self, labels: &[String], error: &str) {
+        self.requests
+            .retain(|request| !labels.iter().any(|label| label == &request.label));
+        self.wanted
+            .retain(|(label, _)| !labels.iter().any(|wanted| wanted == label));
+        self.done
+            .retain(|capture| !labels.iter().any(|label| label == &capture.label));
+        for label in labels {
+            self.mark_failed(label, error);
+        }
     }
 
     pub fn mark_written(&mut self, label: &str) {
@@ -136,7 +227,7 @@ impl ShotState {
         if self
             .requests
             .iter()
-            .any(|(requested, _)| requested == label)
+            .any(|requested| requested.label == label)
         {
             return ShotStatus::Requested;
         }
@@ -1356,6 +1447,69 @@ mod tests {
         assert_eq!(
             shots.status("other"),
             ShotStatus::Failed("readback did not complete".into())
+        );
+    }
+
+    #[test]
+    fn promote_ready_keeps_unready_and_second_actor_queued() {
+        let mut shots = ShotState::default();
+        shots.enqueue_for_actor(
+            "air-alice".into(),
+            "{\"actor\":\"alice\"}".into(),
+            "alice".into(),
+        );
+        shots.enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into());
+
+        assert_eq!(shots.promote_ready(Some("alice"), None), 0);
+        assert_eq!(
+            shots.requests.len(),
+            2,
+            "unready selected buffer is not captured"
+        );
+        assert!(shots.wanted.is_empty());
+
+        assert_eq!(shots.promote_ready(Some("alice"), Some("bob")), 0);
+        assert_eq!(
+            shots.requests.len(),
+            2,
+            "a presented buffer that is not the focused actor is not associated"
+        );
+
+        assert_eq!(shots.promote_ready(Some("alice"), Some("alice")), 1);
+        assert_eq!(shots.wanted.len(), 1);
+        assert_eq!(shots.wanted[0].0, "air-alice");
+        assert_eq!(shots.wanted[0].1, "{\"actor\":\"alice\"}");
+        assert_eq!(shots.requests.len(), 1);
+        assert_eq!(shots.requests[0].actor.as_deref(), Some("bob"));
+        assert_eq!(shots.status("air-alice"), ShotStatus::ReadbackPending);
+        assert_eq!(shots.status("air-bob"), ShotStatus::Requested);
+
+        shots.wanted.clear();
+        shots.mark_written("air-alice");
+        assert_eq!(shots.promote_ready(Some("bob"), Some("bob")), 1);
+        assert_eq!(shots.wanted[0].0, "air-bob");
+        assert!(shots.requests.is_empty());
+    }
+
+    #[test]
+    fn fail_labels_drops_queued_actors_and_keeps_the_error() {
+        let mut shots = ShotState::default();
+        shots.enqueue_for_actor("air-alice".into(), "{}".into(), "alice".into());
+        shots.enqueue_for_actor("air-bob".into(), "{}".into(), "bob".into());
+        shots.promote_ready(Some("alice"), Some("alice"));
+        shots.fail_labels(
+            &["air-alice".into(), "air-bob".into()],
+            "terminal shot was not written within 10s",
+        );
+        assert!(shots.requests.is_empty());
+        assert!(shots.wanted.is_empty());
+        assert_eq!(
+            shots.status("air-alice"),
+            ShotStatus::Failed("terminal shot was not written within 10s".into())
+        );
+        assert_eq!(
+            shots.status("air-bob"),
+            ShotStatus::Failed("terminal shot was not written within 10s".into())
         );
     }
 

@@ -378,3 +378,52 @@ fn pair_settings_inject_native_display_partners_from_login_keys() {
         .begin_shared_start(login_a, login_b)
         .expect("exact login slot keys still share Start after partner screen-name injection");
 }
+
+#[test]
+fn freeze_pair_carries_installed_bags_and_rejects_wrong_partners() {
+    let login_a = "livev40xor_0";
+    let login_b = "livev40xor_1";
+    let bag_a = pair_settings(PairCase::Air, &[], 0, login_a, login_b).unwrap();
+    let bag_b = pair_settings(PairCase::Air, &[], 1, login_b, login_a).unwrap();
+    assert_eq!(bag_a.get("mode").and_then(|v| v.as_str()), Some("Master"));
+    assert_eq!(bag_b.get("mode").and_then(|v| v.as_str()), Some("Runner"));
+
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Air, login_a, login_b);
+    watch
+        .install_prepared_settings(login_a, bag_a.clone(), login_b, bag_b.clone())
+        .unwrap();
+    watch.observe_air(login_a, air_ready("Livev40xor 0", AirRole::Master), false);
+    watch.observe_air(login_b, air_ready("Livev40xor 1", AirRole::Runner), false);
+    watch.begin_shared_start(login_a, login_b).unwrap();
+
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["master"]["settings"]["mode"], "Master");
+    assert_eq!(evidence["witness"]["runner"]["settings"]["mode"], "Runner");
+    assert_eq!(
+        evidence["witness"]["master"]["settings"]["partner"],
+        bag_a["partner"]
+    );
+    assert_eq!(
+        evidence["witness"]["runner"]["settings"]["partner"],
+        bag_b["partner"]
+    );
+    assert_ne!(
+        evidence["witness"]["master"]["settings"],
+        serde_json::json!({})
+    );
+
+    let wrong = PairWatch::default();
+    wrong.configure(PairCase::Air, login_a, login_b);
+    let mut swapped_a = bag_a.clone();
+    swapped_a.insert("partner".into(), bag_a["partner"].clone());
+    let mut swapped_b = bag_b.clone();
+    swapped_b.insert("partner".into(), bag_a["partner"].clone());
+    let error = wrong
+        .install_prepared_settings(login_a, swapped_a, login_b, swapped_b)
+        .unwrap_err();
+    assert!(
+        error.contains("reciprocal account"),
+        "same-side partner must be rejected: {error}"
+    );
+}
