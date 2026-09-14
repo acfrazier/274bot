@@ -429,6 +429,16 @@ impl Session {
         self.script_reload(self.manual_pending_binds_current())
     }
 
+    pub fn script_reload_confirmation_pending(&self) -> bool {
+        self.manual_pending_binds_current()
+    }
+
+    /// Discard the prepared candidate without touching any execution.
+    pub fn cancel_reload(&mut self) {
+        self.clear_pending_reload();
+        self.error = None;
+    }
+
     pub fn script_reload(&mut self, commit: bool) -> ReloadOutcome {
         let Some((source, lookup)) = self.current_reload_target() else {
             return ReloadOutcome::Failed("no script to reload".into());
@@ -1765,6 +1775,48 @@ mod tests {
                 "expected Applied {{ restarted: {restarted}, failed: {failed} }}, got {other:?}"
             ),
         }
+    }
+
+    #[test]
+    fn cancel_reload_preserves_running_and_paused_executions() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let path = write_bot(&dir, "shared.ts", BOT_TS);
+        s.load_js(&path);
+        start_file_on(&mut s, "alice", &path);
+        start_file_on(&mut s, "bob", &path);
+        s.play.as_ref().unwrap().script_pause("bob");
+        let generations = s.generations_for(&["alice".into(), "bob".into()]);
+        let old_js =
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js
+                .clone();
+        warn_shared_reload(&mut s, &path);
+        assert!(s.script_reload_confirmation_pending());
+        s.cancel_reload();
+        assert!(!s.script_reload_confirmation_pending());
+        assert_eq!(
+            s.generations_for(&["alice".into(), "bob".into()]),
+            generations
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Paused
+        );
+        assert_eq!(
+            s.js.get(script::ScriptSource::File, &path.to_string_lossy())
+                .unwrap()
+                .js,
+            old_js
+        );
+        // A later click must prepare and warn again, never reuse cancelled consent.
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        s.play.as_ref().unwrap().script_stop("alice");
+        s.play.as_ref().unwrap().script_stop("bob");
     }
 
     #[test]

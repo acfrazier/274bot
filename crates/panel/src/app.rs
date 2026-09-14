@@ -2573,10 +2573,18 @@ fn script_section(ui: &Ui, session: &mut Session) {
     if !stack {
         gap_line(ui);
     }
-    if ui.button_with_size("Reload", [w, 0.0]) {
+    let confirming = session.script_reload_confirmation_pending();
+    if ui.button_with_size(if confirming { "Confirm" } else { "Reload" }, [w, 0.0]) {
         let _ = session.script_reload_clicked();
     }
-    ui.set_item_tooltip("hash source and supported siblings; unchanged skips transpile");
+    ui.set_item_tooltip(if confirming {
+        "confirm reload: restart listed running bots and stop listed paused bots"
+    } else {
+        "hash source and supported siblings; unchanged skips transpile"
+    });
+    if confirming && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+        session.cancel_reload();
+    }
 
     let (sw, sstack) = button_row_layout(ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
@@ -2845,8 +2853,16 @@ fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
 
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    if ui.button_with_size("Refresh catalog", [w, 0.0]) {
+    let label = if session.catalog_refresh_confirm {
+        "Confirm catalog reload"
+    } else {
+        "Refresh catalog"
+    };
+    if ui.button_with_size(label, [w, 0.0]) {
         session.refresh_catalog();
+    }
+    if session.catalog_refresh_confirm && ui.button_with_size("Cancel reload", [w, 0.0]) {
+        session.cancel_reload();
     }
     ui.spacing();
     if script::rs2b0t_import_deferred() {
