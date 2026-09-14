@@ -1435,7 +1435,9 @@ impl Session {
             let idle = matches!(state, script::RunState::Idle);
             let mut stop_invoked = false;
             if !idle && !matches!(state, script::RunState::Stopping) {
-                self.script_stop();
+                if let Some(play) = self.play.as_ref() {
+                    play.script_stop(&account);
+                }
                 stop_invoked = true;
             }
             watch.note_cleanup_progress(now, idle, stop_invoked);

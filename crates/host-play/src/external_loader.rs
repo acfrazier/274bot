@@ -320,15 +320,21 @@ impl ExternalWatch {
     }
 
     pub fn needs_terminal_hold(&self) -> bool {
-        matches!(
-            self.inner.lock().unwrap().stage,
-            Stage::Capture | Stage::Qualified | Stage::Failed
-        )
+        let state = self.inner.lock().unwrap();
+        matches!(state.stage, Stage::Capture | Stage::Qualified)
+            || (state.stage == Stage::Failed && state.cleanup_outcome.is_some())
+    }
+
+    pub fn cleanup_pending(&self) -> bool {
+        let state = self.inner.lock().unwrap();
+        state.stage == Stage::Failed && state.cleanup_outcome.is_none()
     }
 
     pub fn terminal_capture_due(&self) -> bool {
         let state = self.inner.lock().unwrap();
-        matches!(state.stage, Stage::Capture | Stage::Failed) && !state.capture_requested
+        (state.stage == Stage::Capture
+            || (state.stage == Stage::Failed && state.cleanup_outcome.is_some()))
+            && !state.capture_requested
     }
 
     pub fn source_path(&self) -> PathBuf {
@@ -1002,6 +1008,42 @@ fn receipt_locked(state: &WatchState) -> Value {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn failed_execution_holds_terminal_capture_until_cleanup_finishes_or_times_out() {
+        for timeout in [false, true] {
+            let watch = ExternalWatch::default();
+            let now = Instant::now();
+            drive_to_run(&watch, now);
+            watch.fail("original proof failure");
+            watch.note_cleanup_progress(Instant::now(), false, true);
+            assert!(watch.cleanup_pending());
+            assert!(!watch.terminal_capture_due());
+            assert!(!watch.needs_terminal_hold());
+            assert!(watch.evidence()["cleanup_outcome"].is_null());
+            assert_eq!(watch.evidence()["requested_operation"], "observe_burials");
+
+            let done = Instant::now()
+                + if timeout {
+                    STOP_DEADLINE
+                } else {
+                    Duration::ZERO
+                };
+            watch.note_cleanup_progress(done, !timeout, false);
+            assert!(!watch.cleanup_pending());
+            assert!(watch.terminal_capture_due());
+            assert!(watch.needs_terminal_hold());
+            assert_eq!(watch.failure().as_deref(), Some("original proof failure"));
+            assert_eq!(
+                watch.evidence()["cleanup_outcome"],
+                if timeout { "stop_timeout" } else { "stopped" }
+            );
+            assert!(
+                watch.qualify().is_err(),
+                "cleanup never changes the failed proof"
+            );
+        }
+    }
 
     fn ready(watch: &ExternalWatch) {
         let now = Instant::now();

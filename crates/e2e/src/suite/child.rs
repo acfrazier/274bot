@@ -825,6 +825,11 @@ impl OwnedChild {
         };
         if !self.ownership.request_graceful(self.pid) {
             summary.note = self.ownership.graceful_missing_note();
+        } else {
+            #[cfg(windows)]
+            {
+                summary.note = "sent CTRL_BREAK to the owned Windows console group".into();
+            }
         }
         if !self.wait_tree(CLEANUP_GRACE) {
             summary.escalated_to_sigkill = true;
@@ -1351,6 +1356,12 @@ impl TailBuffer {
 mod tests {
     use super::*;
 
+    const CATALOG_PATH: &str = if cfg!(windows) {
+        r"C:\catalog"
+    } else {
+        "/catalog"
+    };
+
     fn config() -> NativeConfig {
         NativeConfig {
             profile: "local-274".into(),
@@ -1359,7 +1370,7 @@ mod tests {
             port: Some(43594),
             engine: None,
             cache: None,
-            catalog: PathBuf::from("/catalog"),
+            catalog: PathBuf::from(CATALOG_PATH),
             vault: None,
             lowmem: true,
             mainland: false,
@@ -1399,7 +1410,7 @@ mod tests {
                 "--port",
                 "43594",
                 "--catalog",
-                "/catalog",
+                CATALOG_PATH,
             ]
         );
         let (options, rest) =
@@ -1409,7 +1420,7 @@ mod tests {
             "the panel's live parser would reject these: {rest:?}"
         );
         assert_eq!(options.profile.as_deref(), Some("local-274"));
-        assert_eq!(options.catalog_root, Some(PathBuf::from("/catalog")));
+        assert_eq!(options.catalog_root, Some(PathBuf::from(CATALOG_PATH)));
         assert_eq!(options.port, Some(43594));
         assert!(
             config().validate().is_err(),
