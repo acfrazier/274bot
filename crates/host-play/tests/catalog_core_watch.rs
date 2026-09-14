@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use host_play::catalog_core::{CoreCase, CoreWatch, CoreWatchStatus, Observation};
+use host_play::catalog_core::{
+    firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
+    OAK_LOGS_ID, TINDERBOX_ID, VARROCK_EAST_BANK,
+};
 
 fn thiever_observation() -> Observation {
     let mut observation = Observation {
@@ -107,5 +110,74 @@ fn start_uses_the_last_published_pre_start_observation() {
     assert!(
         evidence["baseline"]["items"]["Coins"].is_null(),
         "the post-Start coin must not leak into the frozen baseline"
+    );
+}
+
+fn fire_observation(tick: u32, logs: i32, xp: i32, bank_open: bool) -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(VARROCK_EAST_BANK),
+        tick,
+        bank_open,
+        bank_loaded: bank_open,
+        bank_generation: u64::from(bank_open),
+        ..Observation::default()
+    };
+    observation.item_ids.insert(OAK_LOGS_ID, logs);
+    observation.item_ids.insert(TINDERBOX_ID, 1);
+    observation.xp.insert("firemaking".into(), xp);
+    observation
+}
+
+fn fire_observation_with_plot(tick: u32, logs: i32, xp: i32, bank_open: bool) -> Observation {
+    let mut observation = fire_observation(tick, logs, xp, bank_open);
+    observation.loc_facts.push(BoundedLoc {
+        id: 0,
+        x: 3250,
+        z: 3420,
+        level: 0,
+        name: Some("Fire".into()),
+        open: false,
+    });
+    observation
+}
+
+#[test]
+fn firemaker_does_not_reuse_stale_xp_or_old_fire_after_partial_restock() {
+    let spec = firemaker_spec(CoreCase::FiremakerOak).unwrap();
+    let baseline = fire_observation(1, 0, 1_000, false);
+    let mut cycle = FiremakerCycle::default();
+
+    cycle.observe(spec, &baseline, &fire_observation(2, 1, 1_000, false));
+    cycle.observe(
+        spec,
+        &baseline,
+        &fire_observation_with_plot(3, 0, 1_015, false),
+    );
+    let mut deposited = fire_observation(4, 0, 2_000, true);
+    deposited.bank_ids.insert(OAK_LOGS_ID, 28);
+    cycle.observe(spec, &baseline, &deposited);
+
+    let mut restocked = fire_observation(5, 1, 2_000, true);
+    restocked.bank_generation = 1;
+    restocked.bank_ids.insert(OAK_LOGS_ID, 27);
+    cycle.observe(spec, &baseline, &restocked);
+
+    let mut returned_without_new_burn = fire_observation_with_plot(6, 1, 2_000, false);
+    returned_without_new_burn.bank_generation = 2;
+    cycle.observe(spec, &baseline, &returned_without_new_burn);
+    assert!(
+        !cycle.qualified(),
+        "close plus stale fire/XP must not qualify"
+    );
+
+    let mut actual_burn = fire_observation_with_plot(7, 0, 2_015, false);
+    actual_burn.bank_generation = 2;
+    cycle.observe(spec, &baseline, &actual_burn);
+    assert!(
+        cycle.qualified(),
+        "a post-restock log loss and XP gain qualifies"
     );
 }
