@@ -18,8 +18,16 @@
 //!   fail             FAIL with a case message, exit 1
 //!   zero-no-receipt  progress output only, exit 0
 //!   slow-pass        like `pass` after `--sleep-ms`
-//!   hang             never exits (budget/cleanup coverage); `--ignore-sigterm` to make
-//!                    the suite escalate to a forced kill
+//!   hang             never exits (budget/cleanup coverage); `--ignore-stop` to make the
+//!                    suite escalate to its forced stop
+//!   descendant       spawn a copy of itself (`--mode hang`) with its own stdio, record its
+//!                    pid in `E2E_SUITE_DESCENDANT_PID`, exit 0: a descendant that outlives
+//!                    the direct child and that nothing can see through the pipes
+//!   descendant-pipe  the same, but the descendant inherits this process's stdio, so the
+//!                    suite's pipes stay open after the direct child exits
+//!   descendant-ignore-stop  the same with a descendant that ignores the graceful stop, so
+//!                    only the suite's forced stop can end it
+//!   escape-pipe      (unix) leave the suite's process group while holding the pipes
 //!   malformed        PASS with a non-JSON payload
 //!   duplicate        two PASS receipts
 //!   dual-terminal    PASS and FAIL in one run
@@ -31,15 +39,21 @@
 //!   infra            an infrastructure line, exit 1
 //!   panic            a panic line, exit 101
 //!
+//! `--ignore-stop` is the platform's "do not die on a polite request": unix ignores
+//! `SIGTERM`, Windows ignores the console `CTRL_C`/`CTRL_BREAK` events. The suite's forced
+//! stop (journalled `SIGKILL`, Windows job termination) is what ends such a child.
+//!
 //! Environment: `E2E_SUITE_FIXTURE_LOG` appends one line per launch (resume/no-duplicate
 //! launch coverage), `274BOT_SMOKE_DIR` is the capture root the suite points at the run,
-//! and `E2E_SUITE_FIXTURE_CORE` / `E2E_SUITE_FIXTURE_PAIR` name the witness identity the
+//! `E2E_SUITE_DESCENDANT_PID` names the file a `descendant*` mode records its child's pid
+//! in, and `E2E_SUITE_FIXTURE_CORE` / `E2E_SUITE_FIXTURE_PAIR` name the witness identity the
 //! fixture should print — the stand-in for the identity a real adapter derives from its
 //! own configuration, since the suite hands a real child only
 //! `--profile ... --catalog ... --live <name>`.
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
 /// A real 1x1 RGBA PNG. The suite decodes the capture for real; a signature alone is not
@@ -60,7 +74,7 @@ struct Args {
     pair: Option<String>,
     shot: Option<String>,
     sleep_ms: u64,
-    ignore_sigterm: bool,
+    ignore_stop: bool,
     report_args: Option<PathBuf>,
 }
 
@@ -88,7 +102,7 @@ fn parse() -> Args {
         pair: None,
         shot: None,
         sleep_ms: 0,
-        ignore_sigterm: false,
+        ignore_stop: false,
         report_args: None,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -107,7 +121,9 @@ fn parse() -> Args {
             "--sleep-ms" => {
                 args.sleep_ms = take(&mut i).and_then(|v| v.parse().ok()).unwrap_or(0);
             }
-            "--ignore-sigterm" => args.ignore_sigterm = true,
+            // Both spellings name the same platform-specific action: ignore the graceful
+            // stop so only the suite's forced stop can end this process.
+            "--ignore-stop" | "--ignore-sigterm" => args.ignore_stop = true,
             "--report-args" => args.report_args = take(&mut i).map(PathBuf::from),
             // The suite hands the child the shared native profile flags; the fixture
             // records the ones it cares about and ignores the rest, exactly like a real
@@ -239,11 +255,8 @@ fn main() {
         let rest = std::env::args().skip(1).collect::<Vec<_>>().join("\n");
         let _ = std::fs::write(path, format!("cwd={cwd}\nargv0={argv0}\n{rest}"));
     }
-    if args.ignore_sigterm {
-        #[cfg(unix)]
-        unsafe {
-            libc::signal(libc::SIGTERM, libc::SIG_IGN);
-        }
+    if args.ignore_stop {
+        ignore_graceful_stop();
     }
     if args.sleep_ms > 0 && args.mode != "hang" {
         std::thread::sleep(Duration::from_millis(args.sleep_ms));
@@ -281,6 +294,30 @@ fn main() {
                 let _ = child.kill();
                 let _ = child.wait();
                 panic!("record escaped fixture pid: {error}");
+            }
+        }
+        "descendant" | "descendant-pipe" | "descendant-ignore-stop" => {
+            let pid_file = std::env::var_os("E2E_SUITE_DESCENDANT_PID")
+                .expect("the suite names the file the descendant pid is recorded in");
+            let exe = std::env::current_exe().expect("the fixture binary path");
+            let mut command = std::process::Command::new(exe);
+            command.args(["--mode", "hang"]);
+            if args.mode == "descendant-ignore-stop" {
+                command.arg("--ignore-stop");
+            }
+            if args.mode != "descendant-pipe" {
+                // A descendant with its own stdio: nothing here can see it through the
+                // pipes, which is exactly the case the suite has to catch by ownership.
+                command
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+            }
+            let mut child = command.spawn().expect("spawn the descendant fixture");
+            if let Err(error) = std::fs::write(&pid_file, child.id().to_string()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("record descendant fixture pid: {error}");
             }
         }
         "hang" => loop {
@@ -370,4 +407,30 @@ fn main() {
         }
     }
     let _ = std::io::stdout().flush();
+}
+
+/// Ignore the graceful stop the suite sends first, on either platform, so the suite's
+/// escalation to its forced stop is what ends this process. Unix ignores `SIGTERM`; Windows
+/// answers the console `CTRL_C`/`CTRL_BREAK` events with "handled" and keeps running.
+fn ignore_graceful_stop() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGTERM, libc::SIG_IGN);
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{FALSE, TRUE};
+        use windows_sys::Win32::System::Console::{
+            SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
+        };
+        unsafe extern "system" fn ignore(ctrltype: u32) -> i32 {
+            match ctrltype {
+                CTRL_C_EVENT | CTRL_BREAK_EVENT => TRUE,
+                _ => FALSE,
+            }
+        }
+        unsafe {
+            SetConsoleCtrlHandler(Some(ignore), TRUE);
+        }
+    }
 }
