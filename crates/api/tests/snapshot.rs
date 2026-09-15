@@ -2121,6 +2121,186 @@ fn trade_view_reads_offer_confirm_and_containers() {
     assert_eq!(snap.trade().partner.as_deref(), Some("Smithy Bob"));
 }
 
+/// Native trade controls are a rectangle and a separate, non-clickable text
+/// sibling in both canonical revisions. The text must not be mistaken for the
+/// target, and controls from a hidden/wrong modal must stay unavailable.
+#[test]
+fn trade_controls_resolve_real_sibling_buttons_only() {
+    let mut c = client_with_npc();
+    set_iface(
+        &mut c,
+        3323,
+        IfType {
+            id: 3323,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![3420, 3421, 3422, 3423, 3999]),
+            ..Default::default()
+        },
+    );
+    for (id, button_type) in [
+        (3420, ButtonType::BUTTON_OK),
+        (3422, ButtonType::BUTTON_CLOSE),
+    ] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_RECT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                button_type,
+                ..Default::default()
+            },
+        );
+    }
+    for (id, text) in [(3421, "Accept"), (3423, "Decline")] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 3323,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    // A button carrying its own label is the broken shape and is ignored.
+    set_iface(
+        &mut c,
+        3999,
+        IfType {
+            id: 3999,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_RECT,
+            button_text: "Accept".into(),
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3999,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+
+    c.main_modal_id = 3323;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(
+        (
+            snap.trade().accept_component_id,
+            snap.trade().decline_component_id
+        ),
+        (3420, 3422)
+    );
+
+    // Hidden controls are not actionable.
+    set_iface_mut(
+        &mut c,
+        3421,
+        IfTypeMut {
+            hide: true,
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::IF_SETTEXT);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(snap.trade().accept_component_id, -1);
+    assert_eq!(snap.trade().decline_component_id, 3422);
+
+    // The confirmation root is distinct; an offer-screen sibling is not used.
+    set_iface(
+        &mut c,
+        3443,
+        IfType {
+            id: 3443,
+            layer_id: 3443,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![3546, 3547, 3548, 3549]),
+            ..Default::default()
+        },
+    );
+    for (id, button_type) in [
+        (3546, ButtonType::BUTTON_OK),
+        (3548, ButtonType::BUTTON_CLOSE),
+    ] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 3443,
+                r#type: ComponentType::TYPE_RECT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                button_type,
+                ..Default::default()
+            },
+        );
+    }
+    for (id, text) in [(3547, "Accept"), (3549, "Decline")] {
+        set_iface(
+            &mut c,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 3443,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut c,
+            id,
+            IfTypeMut {
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    c.main_modal_id = 3443;
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(
+        (
+            snap.trade().accept_component_id,
+            snap.trade().decline_component_id
+        ),
+        (3546, 3548)
+    );
+
+    c.main_modal_id = 9999;
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(snap.trade().accept_component_id, -1);
+    assert_eq!(snap.trade().decline_component_id, -1);
+}
+
 /// Packed shop interfaces from the local client jag: the main modal root with
 /// its stock TYPE_INV (3824 → 3900, Buy 1/5/10) and the side interface root
 /// with the player pack TYPE_INV (3822 → 3823, Sell 1/5/10) must survive

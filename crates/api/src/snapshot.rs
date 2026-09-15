@@ -3425,16 +3425,26 @@ fn trade_partner(client: &Client) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// The Accept / Decline buttons on the open trade root (`TRADEMAIN` or
-/// `TRADECONFIRM`), discovered by walking the modal tree.
+/// The Accept / Decline controls on the open trade root (`TRADEMAIN` or
+/// `TRADECONFIRM`), discovered by walking the modal tree. The packed native
+/// interfaces put the label in a non-clickable TYPE_TEXT sibling next to the
+/// actual button, so the label itself must never be published as the target.
 fn trade_controls(client: &Client) -> (i32, i32) {
     let root = match client.main_modal_id {
         TRADECONFIRM => TRADECONFIRM,
         TRADEMAIN => TRADEMAIN,
         _ => return (-1, -1),
     };
-    let mut accept_id = -1;
-    let mut decline_id = -1;
+    let accept_id = trade_control_id(client, root, "Accept", ButtonType::BUTTON_OK);
+    let decline_id = trade_control_id(client, root, "Decline", ButtonType::BUTTON_CLOSE);
+    (accept_id, decline_id)
+}
+
+/// Resolve one native trade control from its label sibling. This deliberately
+/// requires the label and button to share a packed parent's child list: a
+/// random button elsewhere in the modal (or text copied onto a button) is not
+/// a valid identity.
+fn trade_control_id(client: &Client, root: i32, label: &str, button_type: i32) -> i32 {
     let mut queue = vec![root];
     let mut head = 0;
     while head < queue.len() {
@@ -3443,21 +3453,30 @@ fn trade_controls(client: &Client) -> (i32, i32) {
         let Some(com) = client.if_(id as usize) else {
             continue;
         };
-        if com.button_type != 0 {
-            let label = if !com.text.trim().is_empty() {
-                com.text.trim()
-            } else {
-                com.button_text.trim()
+        let children = com.children.as_deref().unwrap_or(&[]);
+        for (index, child_id) in children.iter().enumerate() {
+            let Some(label_com) = client.if_(*child_id as usize) else {
+                continue;
             };
-            if label.eq_ignore_ascii_case("accept") {
-                accept_id = id;
-            } else if label.eq_ignore_ascii_case("decline") {
-                decline_id = id;
+            if label_com.r#type != ComponentType::TYPE_TEXT
+                || label_com.hide
+                || !label_com.text.trim().eq_ignore_ascii_case(label)
+            {
+                continue;
+            }
+            let sibling = children
+                .iter()
+                .enumerate()
+                .filter(|(sibling_index, _)| *sibling_index != index)
+                .filter_map(|(_, sibling_id)| client.if_(*sibling_id as usize))
+                .find(|candidate| !candidate.hide && candidate.button_type == button_type);
+            if let Some(candidate) = sibling {
+                return candidate.id;
             }
         }
-        queue.extend(children_of(&com));
+        queue.extend(children.iter().copied());
     }
-    (accept_id, decline_id)
+    -1
 }
 
 /// The TYPE_TEXT contents of a modal tree, in walk order (m8aq
