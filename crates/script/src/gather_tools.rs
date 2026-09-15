@@ -62,17 +62,6 @@ pub fn can_wield_tool(name: &str, attack: i32) -> bool {
 
 // --- step helpers --------------------------------------------------------------
 
-/// JS truthiness for JSON values (missing values are falsy).
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null | Value::Bool(false) => false,
-        Value::Bool(true) => true,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
-}
-
 fn i64_field(payload: &Value, key: &str, default: i64) -> i64 {
     payload.get(key).and_then(Value::as_i64).unwrap_or(default)
 }
@@ -231,7 +220,9 @@ fn can_wield_step(payload: &Value) -> Value {
 
 /// `hasAllTools`: `.every` over the requirements, in order, with the existing
 /// tiered error and short circuit. Native never sees the `reqs` array; it
-/// asks for one field of the current index, then one callback.
+/// asks for one field of the current index, then one callback. A sparse hole
+/// advances; an explicit falsy slot fails. Name truthiness is a JS boolean so
+/// the live `r.name` is not serialized; the shim re-reads it at the probe.
 fn has_all_step(payload: &Value) -> Value {
     let mode = payload
         .get("mode")
@@ -243,6 +234,9 @@ fn has_all_step(payload: &Value) -> Value {
     let req_len = i64_field(payload, "req_len", 0).max(0);
     if index >= req_len {
         return done(Value::Bool(true));
+    }
+    if bool_field(payload, "hole").unwrap_or(false) {
+        return json!({"kind": "advance", "index": index + 1});
     }
     let Some(present) = bool_field(payload, "present") else {
         return read(index, "present");
@@ -261,21 +255,23 @@ fn has_all_step(payload: &Value) -> Value {
     if !has_key(payload, "has_name") {
         return read(index, "name");
     }
-    let name = payload.get("name").unwrap_or(&Value::Null);
-    if !truthy(name) {
+    if !bool_field(payload, "name_ok").unwrap_or(false) {
         return done(Value::Bool(false));
     }
     if !inventory && !skill_fn {
         return done(Value::Bool(false));
     }
     match bool_field(payload, "ok") {
-        None => probe(index, if inventory { "inv" } else { "skill" }, name.clone()),
+        None => {
+            json!({"kind": "probe", "index": index, "what": if inventory { "inv" } else { "skill" }})
+        }
         Some(false) => done(Value::Bool(false)),
         Some(true) => json!({"kind": "advance", "index": index + 1}),
     }
 }
 
 /// `hasToolReq(available, req)`: JS-truthiness of `req && req.name && available(req.name)`.
+/// Native decides the short-circuit; the shim re-reads `req.name` at the probe.
 fn has_req_step(payload: &Value) -> Value {
     let Some(present) = bool_field(payload, "present") else {
         return read(-1, "present");
@@ -286,13 +282,12 @@ fn has_req_step(payload: &Value) -> Value {
     if !has_key(payload, "has_name") {
         return read(-1, "name");
     }
-    let name = payload.get("name").unwrap_or(&Value::Null);
-    if !truthy(name) {
+    if !bool_field(payload, "name_ok").unwrap_or(false) {
         return done(Value::Bool(false));
     }
     match bool_field(payload, "ok") {
         Some(ok) => done(Value::Bool(ok)),
-        None => probe(-1, "available", name.clone()),
+        None => json!({"kind": "probe", "index": -1, "what": "available"}),
     }
 }
 
@@ -565,14 +560,14 @@ mod tests {
         assert_eq!(
             dispatch(&json!({
                 "op": "has_all", "mode": "inventory", "index": 0, "req_len": 2,
-                "present": true, "has_kind": true, "has_name": true, "name": "Tinderbox",
+                "present": true, "has_kind": true, "has_name": true, "name_ok": true,
             })),
-            json!({"kind": "probe", "index": 0, "what": "inv", "name": "Tinderbox"})
+            json!({"kind": "probe", "index": 0, "what": "inv"})
         );
         assert_eq!(
             dispatch(&json!({
                 "op": "has_all", "mode": "inventory", "index": 0, "req_len": 2,
-                "present": true, "has_kind": true, "has_name": true, "name": "Tinderbox",
+                "present": true, "has_kind": true, "has_name": true, "name_ok": true,
                 "ok": false,
             })),
             json!({"kind": "done", "value": false}),
@@ -581,7 +576,7 @@ mod tests {
         assert_eq!(
             dispatch(&json!({
                 "op": "has_all", "mode": "inventory", "index": 0, "req_len": 2,
-                "present": true, "has_kind": true, "has_name": true, "name": "Tinderbox",
+                "present": true, "has_kind": true, "has_name": true, "name_ok": true,
                 "ok": true,
             })),
             json!({"kind": "advance", "index": 1})
@@ -596,7 +591,15 @@ mod tests {
         assert_eq!(
             dispatch(&json!({
                 "op": "has_all", "mode": "inventory", "index": 0, "req_len": 2,
-                "present": true, "has_kind": true, "has_name": true, "name": "",
+                "hole": true,
+            })),
+            json!({"kind": "advance", "index": 1}),
+            "a sparse hole advances without failing"
+        );
+        assert_eq!(
+            dispatch(&json!({
+                "op": "has_all", "mode": "inventory", "index": 0, "req_len": 2,
+                "present": true, "has_kind": true, "has_name": true, "name_ok": false,
             })),
             json!({"kind": "done", "value": false})
         );
@@ -614,12 +617,12 @@ mod tests {
     fn has_all_skill_mode_needs_a_skill_callback_and_truthy_results() {
         let base = json!({
             "op": "has_all", "mode": "skill", "index": 0, "req_len": 1,
-            "present": true, "has_name": true, "name": "Tinderbox",
+            "present": true, "has_name": true, "name_ok": true,
         });
         assert_eq!(
             dispatch(&json!({
                 "op": "has_all", "mode": "skill", "index": 0, "req_len": 1,
-                "present": true, "has_name": true, "name": "Tinderbox",
+                "present": true, "has_name": true, "name_ok": true,
                 "skill_fn": false,
             })),
             json!({"kind": "done", "value": false})
@@ -628,7 +631,7 @@ mod tests {
         probe_payload["skill_fn"] = json!(true);
         assert_eq!(
             dispatch(&probe_payload),
-            json!({"kind": "probe", "index": 0, "what": "skill", "name": "Tinderbox"})
+            json!({"kind": "probe", "index": 0, "what": "skill"})
         );
         let mut ok = base.clone();
         ok["skill_fn"] = json!(true);
@@ -655,25 +658,27 @@ mod tests {
             json!({"kind": "read", "index": -1, "what": "name"})
         );
         assert_eq!(
-            dispatch(&json!({"op": "has_req", "present": true, "has_name": true, "name": ""})),
+            dispatch(
+                &json!({"op": "has_req", "present": true, "has_name": true, "name_ok": false})
+            ),
             json!({"kind": "done", "value": false})
         );
         assert_eq!(
             dispatch(&json!({
-                "op": "has_req", "present": true, "has_name": true, "name": "Tinderbox",
+                "op": "has_req", "present": true, "has_name": true, "name_ok": true,
             })),
-            json!({"kind": "probe", "index": -1, "what": "available", "name": "Tinderbox"})
+            json!({"kind": "probe", "index": -1, "what": "available"})
         );
         assert_eq!(
             dispatch(&json!({
-                "op": "has_req", "present": true, "has_name": true, "name": "Tinderbox",
+                "op": "has_req", "present": true, "has_name": true, "name_ok": true,
                 "ok": true,
             })),
             json!({"kind": "done", "value": true})
         );
         assert_eq!(
             dispatch(&json!({
-                "op": "has_req", "present": true, "has_name": true, "name": "Tinderbox",
+                "op": "has_req", "present": true, "has_name": true, "name_ok": true,
                 "ok": false,
             })),
             json!({"kind": "done", "value": false})
