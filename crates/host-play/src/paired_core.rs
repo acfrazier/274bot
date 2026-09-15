@@ -740,8 +740,8 @@ pub fn flax_prepared_current(
             }
         }
         FlaxRole::Spinner => {
-            if observation.crafting < 1 {
-                return Err("spinner baseline Crafting must be at least 1".into());
+            if observation.crafting < 10 {
+                return Err("spinner baseline Crafting must be at least 10".into());
             }
             if !near(observation.tile, FLAX_MEET, 8) && !near(observation.tile, FLAX_WHEEL, 8) {
                 return Err(format!(
