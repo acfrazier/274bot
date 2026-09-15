@@ -2270,7 +2270,14 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
     let mut root = c.if_(3323).unwrap().clone();
     root.children = Some(vec![3999, 3420, 3421, 3423, 3442]);
     set_iface(&mut c, 3323, root);
-    set_iface_mut(&mut c, 3420, IfTypeMut::default());
+    set_iface_mut(
+        &mut c,
+        3420,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
     let mut accept = c.if_(3420).unwrap().clone();
     accept.r#type = ComponentType::TYPE_TEXT;
     set_iface(&mut c, 3420, accept);
