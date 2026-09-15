@@ -208,9 +208,11 @@ const VT_REACH_CANLIGHT: VOffsetT = 28;
 const VT_STI_INDEX: VOffsetT = 4;
 const VT_STI_ID: VOffsetT = 6;
 
-// ChatLine: { seq, text }
+// ChatLine: { seq, text, type, username }
 const VT_CL_SEQ: VOffsetT = 4;
 const VT_CL_TEXT: VOffsetT = 6;
+const VT_CL_TYPE: VOffsetT = 8;
+const VT_CL_USERNAME: VOffsetT = 10;
 
 // SceneEntity: { index, id, name, x, z, level, distance, health,
 //               max_health, in_combat, animating, actions }
@@ -425,6 +427,8 @@ pub struct SideTabIfaceInput {
 pub struct ChatLineInput<'a> {
     pub seq: i32,
     pub text: &'a str,
+    pub type_: i32,
+    pub username: Option<&'a str>,
 }
 
 #[derive(Clone, Copy)]
@@ -2023,7 +2027,7 @@ pub struct SnapshotFingerprint {
     pub make_products: Vec<MakeProductFp>,
     pub side_tab_ifaces: Vec<SideTabIfaceInput>,
     pub spell_buttons: Vec<CombatStyleFp>,
-    pub chat_lines: Vec<(i32, String)>,
+    pub chat_lines: Vec<(i32, String, i32, Option<String>)>,
     pub bank_note_on: i32,
     pub bank_note_off: i32,
     pub scene_state: i32,
@@ -2204,7 +2208,14 @@ impl SnapshotFingerprint {
             chat_lines: input
                 .chat_lines
                 .iter()
-                .map(|l| (l.seq, l.text.to_string()))
+                .map(|l| {
+                    (
+                        l.seq,
+                        l.text.to_string(),
+                        l.type_,
+                        l.username.map(str::to_string),
+                    )
+                })
                 .collect(),
             bank_note_on: input.bank_note_on,
             bank_note_off: input.bank_note_off,
@@ -3337,9 +3348,14 @@ fn chat_line_off<'b>(
     l: &ChatLineInput<'_>,
 ) -> WIPOffset<ChatLineReader<'b>> {
     let text_off = b.create_string(l.text);
+    let username_off = l.username.map(|name| b.create_string(name));
     let tab = b.start_table();
     b.push_slot_always(VT_CL_SEQ, l.seq);
     b.push_slot_always(VT_CL_TEXT, text_off);
+    b.push_slot_always(VT_CL_TYPE, l.type_);
+    if let Some(off) = username_off {
+        b.push_slot_always(VT_CL_USERNAME, off);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3666,6 +3682,12 @@ impl ChatLineReader<'_> {
     pub fn text(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CL_TEXT, None) }.unwrap_or("")
     }
+    pub fn type_(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CL_TYPE, None) }.unwrap_or(0)
+    }
+    pub fn username(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CL_USERNAME, None) }
+    }
 }
 
 impl Verifiable for ChatLineReader<'_> {
@@ -3673,6 +3695,8 @@ impl Verifiable for ChatLineReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("seq", VT_CL_SEQ, false)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CL_TEXT, false)?
+            .visit_field::<i32>("type", VT_CL_TYPE, false)?
+            .visit_field::<ForwardsUOffset<&str>>("username", VT_CL_USERNAME, false)?
             .finish();
         Ok(())
     }

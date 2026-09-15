@@ -490,9 +490,8 @@ fn isolate_forwards_this_log() {
 }
 
 // Task 12 fix 3 — `LoopingBot.on` stores IPC subscriptions; `chat.message`
-// fires when posted `chat_text` changes. Unknown names subscribe and never
-// fire; `on` itself does not throw (Thiever/ChickenKiller add ContinueDialog
-// after `this.on`).
+// is selected by the Rust-posted ring-head sequence and carries the native
+// type/username projection. Unknown names subscribe and never fire.
 #[test]
 fn isolate_looping_bot_on_does_not_throw_and_taskbot_still_adds() {
     let src = r#"
@@ -519,27 +518,56 @@ export default class T extends TaskBot {
 }
 
 #[test]
-fn isolate_looping_bot_on_fires_chat_message_when_chat_text_changes() {
+fn isolate_chat_message_projects_native_identity_and_sequence() {
     let src = r#"
 export default class T extends LoopingBot {
     onStart() {
-        this.on('chat.message', (e) => { globalThis.__chat = e.text; });
+        globalThis.__chat = [];
+        this.on('chat.message', (e) => {
+            globalThis.__chat.push({type: e.type, username: e.username, text: e.text});
+        });
     }
     loop() {}
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let lines = [script::isolate_fb::ChatLineInput {
+        seq: 11,
+        text: "wishes to trade with you.",
+        type_: 4,
+        username: Some("Partner"),
+    }];
     let mut snap = base_snapshot();
-    snap.chat_text = Some("You have been stunned.");
+    snap.chat_lines = &lines;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
-    let text = iso.probe("__chat").unwrap();
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(1));
+    assert_eq!(iso.probe("__chat[0]").unwrap()["type"], 4);
+    assert_eq!(iso.probe("__chat[0]").unwrap()["username"], "Partner");
     assert_eq!(
-        text.as_str(),
-        Some("You have been stunned."),
-        "chat.message fires with posted chat_text"
+        iso.probe("__chat[0]").unwrap()["text"],
+        "wishes to trade with you."
     );
+
+    // Same body, new native sequence is a new event; same sequence is not.
+    let repeat = [script::isolate_fb::ChatLineInput {
+        seq: 12,
+        text: "wishes to trade with you.",
+        type_: 4,
+        username: Some("Partner"),
+    }];
+    snap.chat_lines = &repeat;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
+
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__chat.length").unwrap().as_i64(), Some(2));
     iso.join();
 }
 
@@ -4667,6 +4695,8 @@ export default class T extends LoopingBot {
     let lines = [script::isolate_fb::ChatLineInput {
         seq: 3,
         text: "I can't reach that!",
+        type_: 0,
+        username: None,
     }];
     let mut snap = base_snapshot();
     snap.chat_lines = &lines;
