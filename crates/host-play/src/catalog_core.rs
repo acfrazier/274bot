@@ -6129,7 +6129,13 @@ pub struct ShopBuyoutCycle {
     pub reopened: Option<Observation>,
     pub further: bool,
     last_tick: Option<u32>,
-    bought_quantity: i32,
+    /// Peak carried product after the first purchase, until deposit. Deposit
+    /// must bank this earned load, not the first 10/5/1 inventory delta.
+    pub earned_quantity: i32,
+    /// Product count on the first loaded bank session of this trip while the
+    /// pack still held that product. None if that first loaded bank already
+    /// had an empty pack: fail closed rather than invent a pre-deposit count.
+    pub trip_bank_product: Option<i32>,
 }
 
 pub struct ShopBuyoutSpec {
@@ -6187,6 +6193,13 @@ fn shop_bought_id(
     found
 }
 
+/// First-purchase replay: equal shop stock, carried product, and coins.
+fn shop_same_purchase(left: &Observation, right: &Observation, id: i32) -> bool {
+    left.item_id(id) == right.item_id(id)
+        && left.item_id(COINS_ID) == right.item_id(COINS_ID)
+        && left.shop_stock == right.shop_stock
+}
+
 impl ShopBuyoutCycle {
     pub fn observe(&mut self, spec: ShopBuyoutSpec, baseline: &Observation, now: &Observation) {
         let ShopBuyoutSpec {
@@ -6194,7 +6207,10 @@ impl ShopBuyoutCycle {
             stand_radius,
             restock,
         } = spec;
-        if now.tick <= self.last_tick.unwrap_or(baseline.tick) {
+        // Inv/shop/bank packets can publish later frames in the same game tick.
+        // Reject only backwards ticks; identical no-delta replays must still
+        // fail the stage predicates below rather than this cadence gate.
+        if now.tick < self.last_tick.unwrap_or(baseline.tick) {
             return;
         }
         self.last_tick = Some(now.tick);
@@ -6208,53 +6224,69 @@ impl ShopBuyoutCycle {
         }
         if let Some(opened) = &self.opened {
             if self.bought.is_none() {
-                if let Some((id, quantity)) = shop_bought_id(opened, now, stand, stand_radius) {
+                if let Some((id, _)) = shop_bought_id(opened, now, stand, stand_radius) {
                     self.bought_id = Some(id);
-                    self.bought_quantity = quantity;
+                    self.earned_quantity = now.item_id(id);
                     self.bought = Some(now.clone());
                 }
             }
         }
-        let had_deposited = self.deposited.is_some();
         if let Some(id) = self.bought_id {
+            if self.deposited.is_none() {
+                self.earned_quantity = self.earned_quantity.max(now.item_id(id));
+            }
+            // First loaded bank of this trip: latch the product count only
+            // while the pack still holds the earned product.
+            if self.trip_bank_product.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation > baseline.bank_generation
+                && near(now.tile, restock, 8)
+                && now.item_id(id) > 0
+            {
+                self.trip_bank_product = Some(now.bank_item_id(id));
+            }
             if self.deposited.is_none()
                 && now.bank_open
                 && now.bank_loaded
                 && now.bank_generation > baseline.bank_generation
                 && near(now.tile, restock, 8)
                 && now.item_id(id) == 0
-                && now.bank_item_id(id) - baseline.bank_item_id(id) >= self.bought_quantity
+                && self.earned_quantity >= 1
+                && self
+                    .trip_bank_product
+                    .is_some_and(|before| now.bank_item_id(id) >= before + self.earned_quantity)
                 && now.item_id(COINS_ID) >= 1
             {
                 self.deposited = Some(now.clone());
             }
         }
-        // The bank may already retain enough coins for the next trip. Record
-        // that separately from an actual withdrawal; the later purchase is
-        // still required to prove the retained funds were used.
-        if had_deposited {
-            if let Some(deposited) = &self.deposited {
-                if self.restocked.is_none()
-                    && now.bank_open
-                    && now.bank_loaded
-                    && now.bank_generation == deposited.bank_generation
-                    && ((now.item_id(COINS_ID) == deposited.item_id(COINS_ID)
-                        && now.bank_item_id(COINS_ID) == deposited.bank_item_id(COINS_ID)
-                        && now.item_id(COINS_ID) >= 1)
-                        || (now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
-                            && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)))
+        // Retained funding is recordable on the deposit observation when
+        // carried and bank coins did not move, so a later open-bank tick is
+        // not required. A real withdrawal in the same session overwrites as
+        // TopUp so retained coins are not mislabeled as withdrawn.
+        if let Some(deposited) = &self.deposited {
+            if now.bank_open && now.bank_loaded && now.bank_generation == deposited.bank_generation
+            {
+                let carried_now = now.item_id(COINS_ID);
+                let carried_then = deposited.item_id(COINS_ID);
+                let bank_now = now.bank_item_id(COINS_ID);
+                let bank_then = deposited.bank_item_id(COINS_ID);
+                if carried_now > carried_then && bank_now < bank_then {
+                    self.funding = Some(ShopFunding::TopUp {
+                        carried_before: carried_then,
+                        carried_after: carried_now,
+                        bank_before: bank_then,
+                        bank_after: bank_now,
+                    });
+                    self.restocked = Some(now.clone());
+                } else if self.funding.is_none()
+                    && carried_now == carried_then
+                    && bank_now == bank_then
+                    && carried_now >= 1
                 {
-                    self.funding = Some(if now.item_id(COINS_ID) == deposited.item_id(COINS_ID) {
-                        ShopFunding::Retained {
-                            carried_coins: now.item_id(COINS_ID),
-                        }
-                    } else {
-                        ShopFunding::TopUp {
-                            carried_before: deposited.item_id(COINS_ID),
-                            carried_after: now.item_id(COINS_ID),
-                            bank_before: deposited.bank_item_id(COINS_ID),
-                            bank_after: now.bank_item_id(COINS_ID),
-                        }
+                    self.funding = Some(ShopFunding::Retained {
+                        carried_coins: carried_now,
                     });
                     self.restocked = Some(now.clone());
                 }
@@ -6276,7 +6308,13 @@ impl ShopBuyoutCycle {
             self.reopened = Some(now.clone());
         }
         if let Some(reopened) = &self.reopened {
+            let stale = match (self.bought.as_ref(), self.bought_id) {
+                (Some(bought), Some(id)) => shop_same_purchase(bought, now, id),
+                _ => false,
+            };
             self.further |= self.funding.is_some()
+                && now.tick > reopened.tick
+                && !stale
                 && shop_bought_id(reopened, now, stand, stand_radius).is_some();
         }
     }
