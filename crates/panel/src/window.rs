@@ -688,32 +688,23 @@ impl AppWindow {
             }
             wgpu::CurrentSurfaceTexture::Occluded => {
                 // Presentation is blocked, but a promoted capture can still
-                // rasterize the current UI into the existing (or a one-off)
-                // COPY_SRC offscreen target. Unpromoted jobs stay queued;
-                // no pending wanted means skip so occlusion does not start
-                // a second always-on framebuffer or a present.
-                if shots.lock().unwrap().wanted.is_empty() {
-                    return Ok(());
-                }
-                let one_off = self
-                    .offscreen
-                    .is_none()
-                    .then(|| make_offscreen(&self.device, &self.surface_desc));
-                let target = one_off
-                    .as_ref()
-                    .or(self.offscreen.as_ref())
-                    .expect("occluded capture has an offscreen target");
-                submit_ui_frame(
+                // rasterize the current UI into a COPY_SRC target and
+                // complete without a present. Unpromoted jobs stay queued.
+                let submission = submit_acquired_frame(
                     &self.device,
                     &self.queue,
                     &mut self.imgui.renderer,
                     draw_data,
                     self.clear_color,
-                    self.surface_desc.format,
-                    target,
-                    None,
+                    &self.surface_desc,
+                    self.offscreen.as_ref(),
+                    AcquiredFrame::Occluded,
                     shots,
                 )?;
+                // No image to present: the staged readbacks complete here.
+                if let FrameSubmission::Submitted(readbacks) = submission {
+                    complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
+                }
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -721,32 +712,24 @@ impl AppWindow {
             }
         };
 
-        if let Some(offscreen) = &self.offscreen {
-            submit_ui_frame(
-                &self.device,
-                &self.queue,
-                &mut self.imgui.renderer,
-                draw_data,
-                self.clear_color,
-                self.surface_desc.format,
-                offscreen,
-                Some(&frame.texture),
-                shots,
-            )?;
-        } else {
-            submit_ui_frame(
-                &self.device,
-                &self.queue,
-                &mut self.imgui.renderer,
-                draw_data,
-                self.clear_color,
-                self.surface_desc.format,
-                &frame.texture,
-                None,
-                shots,
-            )?;
-        }
+        let submission = submit_acquired_frame(
+            &self.device,
+            &self.queue,
+            &mut self.imgui.renderer,
+            draw_data,
+            self.clear_color,
+            &self.surface_desc,
+            self.offscreen.as_ref(),
+            AcquiredFrame::Presentable(&frame.texture),
+            shots,
+        )?;
+        // Submit → present → map, in that order: mapping/failed-capture
+        // bookkeeping stays after the present, so a slow capture map never
+        // holds the drawable (the original visible-frame ordering).
         frame.present();
+        if let FrameSubmission::Submitted(readbacks) = submission {
+            complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
+        }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
         }
@@ -777,21 +760,113 @@ fn record_readback_outcomes(
     shots.done.extend(captures);
 }
 
-/// Rasterize the current UI into `target`, drain promoted `wanted` shots
-/// from that same texture, and optionally blit onto a presentable
-/// destination. Does not present. Occluded capture passes `present_dest =
-/// None` so a fresh frame can be read without a swapchain image.
+/// One frame's acquired surface state, normalized from
+/// [`wgpu::CurrentSurfaceTexture`] so both draw paths share one production
+/// entry point: [`AcquiredFrame::Presentable`] for `Success`/`Suboptimal`,
+/// [`AcquiredFrame::Occluded`] for a surface that cannot present.
+enum AcquiredFrame<'a> {
+    /// A presentable swapchain image: the UI blits onto it, and the caller
+    /// presents it after submission.
+    Presentable(&'a wgpu::Texture),
+    /// The surface is occluded: no image exists this frame, so a promoted
+    /// capture rasterizes offscreen and nothing is blitted or presented.
+    Occluded,
+}
+
+/// What one acquired frame recorded. `Skipped` is the occluded no-op (no
+/// promoted capture): no target allocated, no draw, no readback, no
+/// present. `Submitted` carries the staged readbacks that
+/// [`complete_readbacks`] maps once the caller has presented — or, with no
+/// image to present, immediately.
+enum FrameSubmission {
+    Skipped,
+    Submitted(Vec<ShotReadback>),
+}
+
+/// Production draw/capture path for one acquired frame: rasterizes the
+/// current UI draw data (this frame's composition, never a copy of a
+/// previous one) into `target`, stages the promoted shots from that same
+/// texture, and blits onto the presentable image when the frame has one —
+/// all in a single submission.
+///
+/// Target selection: the persistent offscreen when the backend keeps one
+/// (the blit then carries the frame to the surface); otherwise the acquired
+/// image itself; otherwise — occluded, with nothing presentable — a one-off
+/// offscreen allocated here and dropped with this frame, so `COPY_SRC`
+/// backends never keep a second always-on framebuffer.
+///
+/// Mapping the staged bytes is deliberately not part of this function: the
+/// caller presents first and then calls [`complete_readbacks`], so a slow
+/// capture map never holds the drawable. An occluded frame passes no
+/// present image, never blits, and never presents; with nothing promoted it
+/// returns [`FrameSubmission::Skipped`] before any allocation, draw, or
+/// readback.
+fn submit_acquired_frame(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    draw_data: &mut imgui::DrawData,
+    clear_color: wgpu::Color,
+    desc: &wgpu::SurfaceConfiguration,
+    offscreen: Option<&wgpu::Texture>,
+    acquired: AcquiredFrame<'_>,
+    shots: &Mutex<ShotState>,
+) -> Result<FrameSubmission, PanelError> {
+    let present_dest = match acquired {
+        AcquiredFrame::Presentable(image) => Some(image),
+        AcquiredFrame::Occluded => None,
+    };
+
+    // The promoted-wanted check runs before any GPU work: an occluded frame
+    // with nothing promoted allocates no target and stages no readback
+    // (unpromoted jobs stay queued for the next visible frame).
+    if present_dest.is_none() && shots.lock().unwrap().wanted.is_empty() {
+        return Ok(FrameSubmission::Skipped);
+    }
+
+    let one_off;
+    let target: &wgpu::Texture = match offscreen {
+        Some(existing) => existing,
+        None => match present_dest {
+            Some(image) => image,
+            None => {
+                one_off = make_offscreen(device, desc);
+                &one_off
+            }
+        },
+    };
+    // An offscreen target reaches the surface only through the blit; a
+    // surface that is its own target needs none.
+    let blit_dest = present_dest.filter(|_| offscreen.is_some());
+
+    let readbacks = submit_ui_frame(
+        device,
+        queue,
+        renderer,
+        draw_data,
+        clear_color,
+        target,
+        blit_dest,
+        shots,
+    )?;
+    Ok(FrameSubmission::Submitted(readbacks))
+}
+
+/// Rasterize `draw_data` into `target`, drain the promoted `wanted` shots
+/// into `copy_texture_to_buffer` staging buffers recorded in that same
+/// encoder, optionally blit `target` onto a presentable destination, and
+/// submit. Returns the staged readbacks for [`complete_readbacks`] and
+/// never blocks on the mapped bytes.
 fn submit_ui_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &mut imgui_wgpu::WgpuRenderer,
     draw_data: &mut imgui::DrawData,
     clear_color: wgpu::Color,
-    format: wgpu::TextureFormat,
     target: &wgpu::Texture,
     present_dest: Option<&wgpu::Texture>,
     shots: &Mutex<ShotState>,
-) -> Result<(), PanelError> {
+) -> Result<Vec<ShotReadback>, PanelError> {
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Render Encoder"),
@@ -840,15 +915,28 @@ fn submit_ui_frame(
         blit_texture(&mut encoder, target, dest);
     }
     queue.submit(Some(encoder.finish()));
-    if !readbacks.is_empty() {
-        let attempted = readbacks
-            .iter()
-            .map(|readback| readback.label.clone())
-            .collect::<Vec<_>>();
-        let captures = map_readbacks(device, format, readbacks);
-        record_readback_outcomes(&mut shots.lock().unwrap(), &attempted, captures);
+    Ok(readbacks)
+}
+
+/// Map the staged readbacks and record their outcomes (a failed map still
+/// lands in the ledger as a capture failure). Runs after the caller
+/// presented the frame, so the blocking map and write-back never hold the
+/// drawable; device errors stay fail-closed at the render call site.
+fn complete_readbacks(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    readbacks: Vec<ShotReadback>,
+    shots: &Mutex<ShotState>,
+) {
+    if readbacks.is_empty() {
+        return;
     }
-    Ok(())
+    let attempted = readbacks
+        .iter()
+        .map(|readback| readback.label.clone())
+        .collect::<Vec<_>>();
+    let captures = map_readbacks(device, format, readbacks);
+    record_readback_outcomes(&mut shots.lock().unwrap(), &attempted, captures);
 }
 
 fn blit_texture(encoder: &mut wgpu::CommandEncoder, src: &wgpu::Texture, dest: &wgpu::Texture) {
@@ -1617,6 +1705,15 @@ mod tests {
         b: 0.0,
         a: 1.0,
     };
+    /// The known imgui primitive in the capture regressions: one filled rect
+    /// over capture pixels `(8, 8)..(40, 40)` in fully saturated red. The
+    /// saturated 0.0/1.0 components survive the imgui gamma path unchanged
+    /// (it is the identity at both ends), so the expected bytes hold for a
+    /// linear and an sRGB render target alike — which is why the assertions
+    /// stay on this primitive and the clear color, not on antialiased edges,
+    /// the window background, or other mid-tone pixels.
+    const RECT_PX: (u32, u32, u32, u32) = (8, 8, 40, 40);
+    const RECT_FILL: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 
     fn test_texture(
         device: &wgpu::Device,
@@ -1690,11 +1787,14 @@ mod tests {
             .rgba
     }
 
+    /// A real imgui renderer on the headless adapter. Only a missing
+    /// adapter may skip a GPU assertion; a renderer that cannot initialize
+    /// on an adapter that does exist is a failure, not a silent pass.
     fn headless_capture_renderer(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-    ) -> Option<(imgui::Context, imgui_wgpu::WgpuRenderer)> {
+    ) -> (imgui::Context, imgui_wgpu::WgpuRenderer) {
         let mut context = imgui::Context::create();
         context
             .io_mut()
@@ -1703,102 +1803,196 @@ mod tests {
             imgui_wgpu::WgpuInitInfo::new(device.clone(), queue.clone(), format),
             &mut context,
         )
-        .ok()?;
-        Some((context, renderer))
+        .expect("WgpuRenderer init on a device whose adapter exists");
+        (context, renderer)
     }
 
-    /// Occluded / no-present acquisition with a promoted ready job must
-    /// rasterize a fresh frame into the offscreen target, complete the
-    /// capture, and leave a present probe untouched.
-    #[test]
-    fn occluded_ready_capture_renders_fresh_pixels_without_present() {
-        let Some((device, queue)) = headless_device() else {
-            return;
-        };
-        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
-        else {
-            return;
-        };
+    fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+        let start = ((y * width + x) * 4) as usize;
+        rgba[start..start + 4].try_into().expect("4-byte pixel")
+    }
 
-        let target = test_texture(
-            &device,
-            format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-        );
-        let present_probe = test_texture(
-            &device,
-            format,
-            wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
-        );
-        fill_solid(&queue, &target, MAGENTA);
-        fill_solid(&queue, &present_probe, RED);
+    /// One imgui frame whose only primitive is the known [`RECT_PX`] rect.
+    /// It is drawn on the foreground list, so its coordinates are capture
+    /// pixels with no window offset, and the frame is a real composition
+    /// (not just the clear color) for the readback to prove.
+    fn draw_known_rect(context: &mut imgui::Context) -> &mut imgui::DrawData {
+        let (x0, y0, x1, y1) = RECT_PX;
+        {
+            let ui = context.frame();
+            ui.get_foreground_draw_list()
+                .add_rect([x0 as f32, y0 as f32], [x1 as f32, y1 as f32], RECT_FILL)
+                .filled(true)
+                .build();
+        }
+        context.render()
+    }
 
+    /// The panel's production surface-config shape at the capture test size,
+    /// so an occluded one-off target is sized and formatted like the real
+    /// one.
+    fn test_surface_desc(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
+        wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            format,
+            width: OCCLUDED_TEST_PX,
+            height: OCCLUDED_TEST_PX,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        }
+    }
+
+    /// A promoted, ready-for-readback `flax_aio` job.
+    fn promoted_flax_shots() -> Mutex<ShotState> {
         let shots = Mutex::new(ShotState::default());
         {
             let mut shots = shots.lock().unwrap();
             shots.enqueue("flax_aio".into(), "{\"scene\":2}".into());
             assert_eq!(shots.promote_requests(), 1);
         }
+        shots
+    }
 
-        let _ui = context.frame();
-        let draw_data = context.render();
-        submit_ui_frame(
+    /// The production occluded route. `AcquiredFrame::Occluded` with a
+    /// promoted job and no persistent offscreen (a surface that is its own
+    /// capture source) must allocate the one-off target, rasterize this
+    /// frame's composition into it, and complete the capture — without a
+    /// blit or a present. That is the shape the panel's flax_aio FAIL ran:
+    /// the original early return (and the old helper, which mapped before
+    /// returning and could only draw into whatever target its caller had
+    /// already built) leaves `done` empty, so this fails on the pre-fix
+    /// behavior. The same call with a persistent offscreen must reuse it and
+    /// overwrite the stale prefill instead of allocating.
+    #[test]
+    fn occluded_acquisition_captures_composed_frame_without_present() {
+        let Some((device, queue)) = headless_device() else {
+            return; // no adapter: no GPU path to assert
+        };
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
+        let desc = test_surface_desc(format);
+        let (x0, y0, x1, y1) = RECT_PX;
+
+        let shots = promoted_flax_shots();
+        let draw_data = draw_known_rect(&mut context);
+        assert!(
+            draw_data.total_vtx_count() > 0,
+            "the regression needs a nonempty imgui draw primitive"
+        );
+        let submission = submit_acquired_frame(
             &device,
             &queue,
             &mut renderer,
             draw_data,
             GREEN_CLEAR,
-            format,
-            &target,
+            &desc,
             None,
+            AcquiredFrame::Occluded,
             &shots,
         )
-        .expect("occluded capture submit");
-
-        let shots = shots.lock().unwrap();
-        assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
-        assert_eq!(shots.done.len(), 1);
-        let capture = &shots.done[0];
-        assert_eq!(capture.label, "flax_aio");
-        assert_eq!(capture.snapshot_json, "{\"scene\":2}");
-        assert_eq!(capture.width, OCCLUDED_TEST_PX);
-        assert_eq!(capture.height, OCCLUDED_TEST_PX);
-        assert_eq!(
-            &capture.rgba[0..4],
-            &GREEN,
-            "readback must be the newly rendered clear, not the magenta prefill"
-        );
+        .expect("occluded acquisition submit");
+        let FrameSubmission::Submitted(readbacks) = submission else {
+            panic!("a promoted occluded capture must submit, not skip");
+        };
+        assert_eq!(readbacks.len(), 1, "one staging readback per promoted shot");
         assert!(
-            capture.rgba.chunks_exact(4).all(|px| px == GREEN),
-            "every pixel must come from this submit, not a prior framebuffer"
+            shots.lock().unwrap().done.is_empty(),
+            "the capture completes after submission, not inside it"
         );
+        complete_readbacks(&device, format, readbacks, &shots);
 
-        let probe = read_texture_rgba(&device, &queue, &present_probe, format);
-        assert_eq!(
-            &probe[0..4],
-            &RED,
-            "occluded capture must not blit onto a present destination"
+        {
+            let shots = shots.lock().unwrap();
+            assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
+            assert_eq!(shots.done.len(), 1);
+            let capture = &shots.done[0];
+            assert_eq!(capture.label, "flax_aio");
+            assert_eq!(capture.snapshot_json, "{\"scene\":2}");
+            assert_eq!(
+                (capture.width, capture.height),
+                (OCCLUDED_TEST_PX, OCCLUDED_TEST_PX),
+                "the one-off target takes the surface size"
+            );
+            assert_eq!(
+                pixel(&capture.rgba, capture.width, x0 + 4, y0 + 4),
+                RED,
+                "the imgui primitive is composited into the captured frame"
+            );
+            assert_eq!(
+                pixel(&capture.rgba, capture.width, x1 + 8, y1 + 8),
+                GREEN,
+                "outside the primitive the clear color still shows"
+            );
+        }
+
+        // Persistent offscreen: the same occluded call reuses that target
+        // (no second framebuffer) and its stale prefill is gone. Occluded
+        // frames carry no image, so nothing is blitted or presented either
+        // way; the visible regression below is what writes an image.
+        let persistent = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        fill_solid(&queue, &persistent, MAGENTA);
+        let shots = promoted_flax_shots();
+        let draw_data = draw_known_rect(&mut context);
+        let submission = submit_acquired_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            &desc,
+            Some(&persistent),
+            AcquiredFrame::Occluded,
+            &shots,
+        )
+        .expect("occluded acquisition submit onto the persistent offscreen");
+        let FrameSubmission::Submitted(readbacks) = submission else {
+            panic!("a promoted occluded capture must submit, not skip");
+        };
+        complete_readbacks(&device, format, readbacks, &shots);
+
+        {
+            let shots = shots.lock().unwrap();
+            assert_eq!(shots.done.len(), 1);
+            assert_eq!(
+                pixel(&shots.done[0].rgba, OCCLUDED_TEST_PX, x0 + 4, y0 + 4),
+                RED
+            );
+            assert_eq!(
+                pixel(&shots.done[0].rgba, OCCLUDED_TEST_PX, x1 + 8, y1 + 8),
+                GREEN
+            );
+        }
+        let reused = read_texture_rgba(&device, &queue, &persistent, format);
+        assert!(
+            !reused.chunks_exact(4).any(|px| px == MAGENTA),
+            "the reused target holds this frame, not the stale prefill"
         );
     }
 
-    /// No promoted wanted job: the render/readback helper must not invent
-    /// a capture from still-queued requests. AppWindow skips this helper
-    /// entirely when occluded with empty `wanted`.
+    /// Occluded with nothing promoted: the production route must allocate no
+    /// target, render nothing, and stage no readback — it returns `Skipped`
+    /// before any GPU work, so a still-queued actor job keeps its request.
+    /// The old path rendered (and cleared) its target first and only then
+    /// found `wanted` empty, which both checks below catch: the prefilled
+    /// target would be overwritten, and the out-of-range surface config
+    /// would raise a validation error from the one-off allocation.
     #[test]
-    fn occluded_submit_skips_capture_without_promoted_wanted() {
+    fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
         let Some((device, queue)) = headless_device() else {
             return;
         };
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
-        else {
-            return;
-        };
+        let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
 
         let target = test_texture(
             &device,
@@ -1808,6 +2002,12 @@ mod tests {
                 | wgpu::TextureUsages::COPY_DST,
         );
         fill_solid(&queue, &target, MAGENTA);
+
+        // Beyond every adapter's max texture dimension: if the skip path
+        // built the one-off target from this config, the error scope sees it.
+        let mut desc = test_surface_desc(format);
+        desc.width = u32::MAX;
+        desc.height = u32::MAX;
 
         let shots = Mutex::new(ShotState::default());
         shots.lock().unwrap().enqueue_for_actor(
@@ -1816,20 +2016,49 @@ mod tests {
             "bot".into(),
         );
 
-        let _ui = context.frame();
-        let draw_data = context.render();
-        submit_ui_frame(
+        let draw_data = draw_known_rect(&mut context);
+        let allocation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let submission = submit_acquired_frame(
             &device,
             &queue,
             &mut renderer,
             draw_data,
             GREEN_CLEAR,
-            format,
-            &target,
+            &desc,
             None,
+            AcquiredFrame::Occluded,
             &shots,
         )
-        .expect("occluded skip submit");
+        .expect("an occluded frame with nothing promoted is not an error");
+        let allocation_error = block_on(allocation_scope.pop());
+        assert!(
+            matches!(submission, FrameSubmission::Skipped),
+            "an occluded frame with nothing promoted records no GPU work"
+        );
+        assert!(
+            allocation_error.is_none(),
+            "the skipped frame must not allocate a capture target: {allocation_error:?}"
+        );
+
+        let draw_data = draw_known_rect(&mut context);
+        let submission = submit_acquired_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            &desc,
+            Some(&target),
+            AcquiredFrame::Occluded,
+            &shots,
+        )
+        .expect("an occluded frame with nothing promoted is not an error");
+        assert!(matches!(submission, FrameSubmission::Skipped));
+        let prefilled = read_texture_rgba(&device, &queue, &target, format);
+        assert!(
+            prefilled.chunks_exact(4).all(|px| px == MAGENTA),
+            "no render pass ran over the caller's target"
+        );
 
         let shots = shots.lock().unwrap();
         assert_eq!(shots.status("flax_aio"), ShotStatus::Requested);
@@ -1838,66 +2067,118 @@ mod tests {
         assert_eq!(shots.requests.len(), 1);
     }
 
-    /// Visible offscreen present path still blits the freshly rendered
-    /// frame and completes a promoted capture from that same target.
+    /// The visible path through the same production entry point: a
+    /// presentable image receives the blit of the freshly rendered offscreen
+    /// and the capture completes from that same target, with the blocking
+    /// map left outside the submit call (AppWindow presents in between,
+    /// which is the ordering this guards). A surface that is its own capture
+    /// source draws into the acquired image directly, with no blit.
     #[test]
-    fn visible_offscreen_path_blits_and_captures_fresh_pixels() {
+    fn visible_acquisition_captures_composed_frame_and_writes_the_image() {
         let Some((device, queue)) = headless_device() else {
             return;
         };
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
-        else {
-            return;
-        };
+        let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
+        let desc = test_surface_desc(format);
+        let (x0, y0, x1, y1) = RECT_PX;
 
-        let target = test_texture(
+        let offscreen = test_texture(
             &device,
             format,
             wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST,
         );
-        let present_dest = test_texture(
+        let image = test_texture(
             &device,
             format,
             wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
         );
-        fill_solid(&queue, &target, MAGENTA);
-        fill_solid(&queue, &present_dest, RED);
+        fill_solid(&queue, &offscreen, MAGENTA);
+        fill_solid(&queue, &image, RED);
 
-        let shots = Mutex::new(ShotState::default());
-        {
-            let mut shots = shots.lock().unwrap();
-            shots.enqueue("flax_aio".into(), "{\"scene\":2}".into());
-            assert_eq!(shots.promote_requests(), 1);
-        }
-
-        let _ui = context.frame();
-        let draw_data = context.render();
-        submit_ui_frame(
+        let shots = promoted_flax_shots();
+        let draw_data = draw_known_rect(&mut context);
+        let submission = submit_acquired_frame(
             &device,
             &queue,
             &mut renderer,
             draw_data,
             GREEN_CLEAR,
-            format,
-            &target,
-            Some(&present_dest),
+            &desc,
+            Some(&offscreen),
+            AcquiredFrame::Presentable(&image),
             &shots,
         )
-        .expect("visible present submit");
+        .expect("visible acquisition submit");
+        let FrameSubmission::Submitted(readbacks) = submission else {
+            panic!("a visible frame always submits");
+        };
+        assert!(
+            shots.lock().unwrap().done.is_empty(),
+            "the caller completes the readbacks after presenting"
+        );
+        complete_readbacks(&device, format, readbacks, &shots);
 
-        let shots = shots.lock().unwrap();
-        assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
-        assert_eq!(&shots.done[0].rgba[0..4], &GREEN);
+        {
+            let shots = shots.lock().unwrap();
+            assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
+            assert_eq!(shots.done.len(), 1);
+            assert_eq!(
+                pixel(&shots.done[0].rgba, OCCLUDED_TEST_PX, x0 + 4, y0 + 4),
+                RED
+            );
+            assert_eq!(
+                pixel(&shots.done[0].rgba, OCCLUDED_TEST_PX, x1 + 8, y1 + 8),
+                GREEN
+            );
+        }
 
-        let presented = read_texture_rgba(&device, &queue, &present_dest, format);
+        let presented = read_texture_rgba(&device, &queue, &image, format);
         assert_eq!(
-            &presented[0..4],
-            &GREEN,
-            "visible path must blit the just-rendered offscreen onto the present dest"
+            pixel(&presented, OCCLUDED_TEST_PX, x0 + 4, y0 + 4),
+            RED,
+            "the presentable image receives the composed frame's blit"
+        );
+        assert_eq!(pixel(&presented, OCCLUDED_TEST_PX, x1 + 8, y1 + 8), GREEN);
+
+        // No persistent offscreen: the acquired image is the render target
+        // and the capture source, so the frame lands on it without a blit.
+        let direct = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        fill_solid(&queue, &direct, MAGENTA);
+        let shots = promoted_flax_shots();
+        let draw_data = draw_known_rect(&mut context);
+        let submission = submit_acquired_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            &desc,
+            None,
+            AcquiredFrame::Presentable(&direct),
+            &shots,
+        )
+        .expect("visible acquisition submit onto the image");
+        let FrameSubmission::Submitted(readbacks) = submission else {
+            panic!("a visible frame always submits");
+        };
+        complete_readbacks(&device, format, readbacks, &shots);
+
+        let drawn = read_texture_rgba(&device, &queue, &direct, format);
+        assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x0 + 4, y0 + 4), RED);
+        assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x1 + 8, y1 + 8), GREEN);
+        assert!(
+            !drawn.chunks_exact(4).any(|px| px == MAGENTA),
+            "the acquired image holds this frame, not the stale prefill"
         );
     }
 
