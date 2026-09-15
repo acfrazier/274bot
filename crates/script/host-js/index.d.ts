@@ -297,4 +297,5 @@ export type InteractReq =
   | { op: 'wait-enqueued'}
   | { op: 'wait-settled'}
   | { op: 'recovery-anchor'; x: number; z: number; level: number}
-  | { op: 'recovery-anchor-none'};
+  | { op: 'recovery-anchor-none'}
+  | { op: 'key'; down: boolean; key: string; code?: string};
