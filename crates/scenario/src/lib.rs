@@ -11208,6 +11208,10 @@ fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
 }
 
 /// Select and acknowledge the native aggressive melee style after wielding.
+fn is_aggressive_combat_style(label: &str) -> bool {
+    label.to_ascii_lowercase().contains("aggressive")
+}
+
 fn select_strength_combat_style_step() -> Step {
     Step {
         name: "select and acknowledge native Strength combat style before Start",
@@ -11224,9 +11228,7 @@ fn select_strength_combat_style_step() -> Step {
                 let Some(style) =
                     api::query::widget_search::combat_style_labels(snapshot, root, 43)
                         .into_iter()
-                        .find(|style| {
-                            style.mode == 1 && style.label.eq_ignore_ascii_case("Aggressive")
-                        })
+                        .find(|style| style.mode == 1 && is_aggressive_combat_style(&style.label))
                 else {
                     return false;
                 };
@@ -22772,6 +22774,9 @@ mod tests {
 
     #[test]
     fn fightback_fixtures_acknowledge_strength_style_before_start() {
+        assert!(is_aggressive_combat_style("(Aggressive)"));
+        assert!(is_aggressive_combat_style("Aggressive"));
+        assert!(!is_aggressive_combat_style("(Accurate)"));
         for name in ["ardy_cakes_fight", "ardy_thiever_fight"] {
             let scenario = get(name).expect("FightBack fixture is registered");
             let style = scenario
