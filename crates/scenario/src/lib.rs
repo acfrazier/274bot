@@ -7445,6 +7445,7 @@ fn ardy_cakes_fight_scenario() -> Scenario {
         "wield and acknowledge Adamant scimitar before Start",
         COMBAT_SCIMITAR_ID,
     ));
+    steps.push(select_strength_combat_style_step());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         ("watch Thieving XP from Baker's stall after Start", first_xp),
@@ -7599,6 +7600,7 @@ fn ardy_thiever_fight_scenario() -> Scenario {
         "wield and acknowledge Adamant scimitar before Start",
         COMBAT_SCIMITAR_ID,
     ));
+    steps.push(select_strength_combat_style_step());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         ("watch Thieving XP after Start", first_xp),
@@ -11200,6 +11202,46 @@ fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
         },
         wait: Wait {
             arm: Proof::EquipmentId { id },
+            budget_ticks: 200,
+        },
+    }
+}
+
+/// Select and acknowledge the native aggressive melee style after wielding.
+fn select_strength_combat_style_step() -> Step {
+    Step {
+        name: "select and acknowledge native Strength combat style before Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, snapshot| {
+                let Some(root) = snapshot
+                    .side_tabs()
+                    .iter()
+                    .find(|tab| tab.index == 0 && tab.available)
+                    .map(|tab| tab.root_component_id)
+                else {
+                    return false;
+                };
+                let Some(style) =
+                    api::query::widget_search::combat_style_labels(snapshot, root, 43)
+                        .into_iter()
+                        .find(|style| {
+                            style.mode == 1 && style.label.eq_ignore_ascii_case("Aggressive")
+                        })
+                else {
+                    return false;
+                };
+                let ctx = ReadContext::new(snapshot);
+                let Some(widget) = ctx.component(style.component_id) else {
+                    return false;
+                };
+                matches!(
+                    Interactions::new(snapshot, c).press(widget),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Varp { id: 43, min: 1 },
             budget_ticks: 200,
         },
     }
@@ -22725,6 +22767,38 @@ mod tests {
                 panic!("the run never failed the preparation step ({step}/{total})")
             }
             RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+        }
+    }
+
+    #[test]
+    fn fightback_fixtures_acknowledge_strength_style_before_start() {
+        for name in ["ardy_cakes_fight", "ardy_thiever_fight"] {
+            let scenario = get(name).expect("FightBack fixture is registered");
+            let style = scenario
+                .steps
+                .iter()
+                .position(|step| {
+                    step.name
+                        .starts_with("select and acknowledge native Strength")
+                })
+                .expect("FightBack fixture selects the native Strength style");
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .expect("FightBack fixture has a StartScript step");
+            assert!(style < start, "{name}: style selection precedes Start");
+            assert_eq!(
+                scenario.steps[style].wait.arm,
+                Proof::Varp { id: 43, min: 1 }
+            );
+        }
+        for name in ["ardy_cakes", "ardy_thiever", "ardy_thiever_knight"] {
+            let scenario = get(name).expect("unaffected fixture is registered");
+            assert!(!scenario.steps.iter().any(|step| {
+                step.name
+                    .starts_with("select and acknowledge native Strength")
+            }));
         }
     }
 }
