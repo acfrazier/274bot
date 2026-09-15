@@ -497,14 +497,11 @@ impl BankOpenRuntime {
                             let selected = self.selected.take().expect("selected booth");
                             self.open(selected, obs)
                         }
+                        Some(_) if self.expired() => self.done(false, "timeout"),
                         Some(row) => match row.dest {
                             None => self.done(false, "unreachable"),
                             Some(dest) if self.last_approach_dest == Some(dest) => {
-                                if self.expired() {
-                                    self.done(false, "timeout")
-                                } else {
-                                    json!({"kind": "wait", "token": self.token})
-                                }
+                                json!({"kind": "wait", "token": self.token})
                             }
                             Some(dest) => self.walk_approach(dest, false),
                         },
@@ -860,6 +857,31 @@ mod tests {
         assert_eq!(again["radius"], 0);
         assert_eq!(again["z"], 3355);
         assert_eq!(runtime.deadline, original);
+    }
+
+    #[test]
+    fn changed_dest_after_approach_deadline_times_out_without_another_walk() {
+        let mut runtime = BankOpenRuntime::new();
+        let begin = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &obs(),
+        );
+        let token = begin["token"].as_u64().unwrap();
+        runtime.deadline = Some(runtime.now() - Duration::from_millis(1));
+        let mut observation = obs();
+        observation.approaches[0].dest = Some(Tile {
+            x: 3011,
+            z: 3355,
+            level: 0,
+        });
+        let result = runtime.next(token, &observation);
+        assert_eq!(result["kind"], "done");
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["reason"], "timeout");
     }
 
     #[test]
