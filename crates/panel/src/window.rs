@@ -703,6 +703,12 @@ impl AppWindow {
                 )?;
                 // No image to present: the staged readbacks complete here.
                 if let FrameSubmission::Submitted(readbacks) = submission {
+                    if !readbacks.is_empty() && std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+                        eprintln!(
+                            "[panel] capture offscreen readback submitted on occluded surface: {}",
+                            readbacks.len()
+                        );
+                    }
                     complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
                 }
                 return Ok(());
