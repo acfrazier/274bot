@@ -433,6 +433,65 @@ fn unnamed_banking_open_from_distance_walks_producer_dest() {
 }
 
 #[test]
+fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
+    let iso = LoadIsolate::spawn(BANKING_OPEN.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [loc_row(
+        2213,
+        Some("Bank booth"),
+        200,
+        100,
+        100,
+        &use_quickly,
+    )];
+    let mut snap = base_snapshot();
+    snap.here = Some(tile(100, 100));
+    snap.locs = &locs;
+    snap.nearest_booth = Some(NearestBoothInput {
+        x: 200,
+        z: 100,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
+    let approaching = [approach_row(2213, 200, 100, false, Some((199, 100)))];
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &approaching);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts().len(), 1);
+
+    snap.tick = 2;
+    snap.here = Some(tile(199, 100));
+    snap.locs = &locs;
+    let ready = [approach_row(2213, 200, 100, true, Some((199, 100)))];
+    post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &ready);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 200,
+            z: 100,
+            level: 0,
+            id: 2213,
+            name: None,
+            action: None,
+        }],
+        "unnamed continuation must reuse the selected id/tile without inventing name/action"
+    );
+
+    snap.tick = 3;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &ready);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    iso.join();
+}
+
+#[test]
 fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let use_quickly = ["Use-quickly".to_string()];
