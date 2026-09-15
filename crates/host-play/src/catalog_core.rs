@@ -6101,8 +6101,21 @@ impl AioTeleportCycle {
 }
 
 /// Posted shop stock down, matching inv up, coins down, then deposit except
-/// coins, withdraw coins, and a second buy. Queued if-button without stock
-/// movement fails.
+/// coins, retain or top up funding, and a second buy. Queued if-button without
+/// stock movement fails.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ShopFunding {
+    Retained {
+        carried_coins: i32,
+    },
+    TopUp {
+        carried_before: i32,
+        carried_after: i32,
+        bank_before: i32,
+        bank_after: i32,
+    },
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ShopBuyoutCycle {
     pub opened: Option<Observation>,
@@ -6110,6 +6123,8 @@ pub struct ShopBuyoutCycle {
     pub bought_id: Option<i32>,
     pub deposited: Option<Observation>,
     pub restocked: Option<Observation>,
+    /// Explicitly distinguishes already-retained coins from a bank withdrawal.
+    pub funding: Option<ShopFunding>,
     pub returned: bool,
     pub reopened: Option<Observation>,
     pub further: bool,
@@ -6178,6 +6193,7 @@ impl ShopBuyoutCycle {
                 }
             }
         }
+        let had_deposited = self.deposited.is_some();
         if let Some(id) = self.bought_id {
             if self.deposited.is_none()
                 && now.bank_open
@@ -6191,15 +6207,35 @@ impl ShopBuyoutCycle {
                 self.deposited = Some(now.clone());
             }
         }
-        if let Some(deposited) = &self.deposited {
-            if self.restocked.is_none()
-                && now.bank_open
-                && now.bank_loaded
-                && now.bank_generation == deposited.bank_generation
-                && now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
-                && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)
-            {
-                self.restocked = Some(now.clone());
+        // The bank may already retain enough coins for the next trip. Record
+        // that separately from an actual withdrawal; the later purchase is
+        // still required to prove the retained funds were used.
+        if had_deposited {
+            if let Some(deposited) = &self.deposited {
+                if self.restocked.is_none()
+                    && now.bank_open
+                    && now.bank_loaded
+                    && now.bank_generation == deposited.bank_generation
+                    && ((now.item_id(COINS_ID) == deposited.item_id(COINS_ID)
+                        && now.bank_item_id(COINS_ID) == deposited.bank_item_id(COINS_ID)
+                        && now.item_id(COINS_ID) >= 1)
+                        || (now.item_id(COINS_ID) > deposited.item_id(COINS_ID)
+                            && now.bank_item_id(COINS_ID) < deposited.bank_item_id(COINS_ID)))
+                {
+                    self.funding = Some(if now.item_id(COINS_ID) == deposited.item_id(COINS_ID) {
+                        ShopFunding::Retained {
+                            carried_coins: now.item_id(COINS_ID),
+                        }
+                    } else {
+                        ShopFunding::TopUp {
+                            carried_before: deposited.item_id(COINS_ID),
+                            carried_after: now.item_id(COINS_ID),
+                            bank_before: deposited.bank_item_id(COINS_ID),
+                            bank_after: now.bank_item_id(COINS_ID),
+                        }
+                    });
+                    self.restocked = Some(now.clone());
+                }
             }
         }
         if let Some(deposited) = &self.deposited {
@@ -6218,7 +6254,7 @@ impl ShopBuyoutCycle {
             self.reopened = Some(now.clone());
         }
         if let Some(reopened) = &self.reopened {
-            self.further |= shop_bought_id(reopened, now).is_some();
+            self.further |= self.funding.is_some() && shop_bought_id(reopened, now).is_some();
         }
     }
 
@@ -6228,6 +6264,7 @@ impl ShopBuyoutCycle {
             && self.bought.is_some()
             && self.deposited.is_some()
             && self.restocked.is_some()
+            && self.funding.is_some()
     }
 }
 

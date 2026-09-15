@@ -648,8 +648,9 @@ fn find_row<'a>(rows: &'a [Row], name: &str) -> Option<&'a Row> {
 
 fn count_of(rows: &[Row], name: &str) -> i32 {
     rows.iter()
-        .find(|row| row.name.eq_ignore_ascii_case(name))
-        .map_or(0, |row| row.count)
+        .filter(|row| row.name.eq_ignore_ascii_case(name))
+        .map(|row| row.count)
+        .sum()
 }
 
 /// The frozen 10/5/1 decomposition, capped at one tick's packet bound.
@@ -716,6 +717,19 @@ mod tests {
         assert!(find_row(&rows, "Feather").is_none());
         assert_eq!(count_of(&rows, "Vial"), 10);
         assert_eq!(count_of(&rows, "Feather"), 0);
+    }
+
+    #[test]
+    fn count_of_aggregates_separate_unstackable_slots_without_unrelated_rows() {
+        let rows = [
+            row("Vial", 10, 1),
+            row("Coins", 2000, 2),
+            row("vIaL", 5, 3),
+            row("Feather", 99, 4),
+        ];
+        assert_eq!(count_of(&rows, "VIAL"), 15);
+        assert_eq!(count_of(&rows, "Coins"), 2000);
+        assert_eq!(count_of(&rows, "Empty vial"), 0);
     }
 
     #[test]
