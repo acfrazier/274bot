@@ -12903,6 +12903,104 @@ export default class T extends LoopingBot {
     }
 
     #[test]
+    fn native_trade_controls_reach_script_accept_through_snapshot() {
+        for (root, button, hidden) in [(3323, 3420, false), (3443, 3546, false), (3323, 3420, true)]
+        {
+            let mut c = trade_offer_client();
+            c.main_modal_id = root;
+            c.set_iface(
+                root as usize,
+                IfType {
+                    id: root,
+                    layer_id: root,
+                    r#type: ComponentType::TYPE_LAYER,
+                    children: Some(vec![button, button + 1]),
+                    ..Default::default()
+                },
+            );
+            c.set_iface(
+                button as usize,
+                IfType {
+                    id: button,
+                    layer_id: root,
+                    r#type: ComponentType::TYPE_RECT,
+                    button_text: "Ok".into(),
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                button as usize,
+                IfTypeMut {
+                    button_type: 1,
+                    hide: hidden,
+                    ..Default::default()
+                },
+            );
+            c.set_iface(
+                (button + 1) as usize,
+                IfType {
+                    id: button + 1,
+                    layer_id: root,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+            c.set_iface_mut(
+                (button + 1) as usize,
+                IfTypeMut {
+                    text: "Accept".into(),
+                    ..Default::default()
+                },
+            );
+            c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.rebuild(&c);
+            let (bytes, _) = script_snapshot_fb(
+                None,
+                false,
+                1,
+                Some((3205, 3205, 0)),
+                true,
+                None,
+                Some(&snapshot),
+                None,
+                None,
+                false,
+                false,
+                false,
+            );
+            let iso = script::LoadIsolate::spawn(
+                r#"import { Trade } from '../../api/trade/Trade.js';
+                export default class T extends LoopingBot {
+                    async loop() {
+                        if (globalThis.__did) return;
+                        globalThis.__did = true;
+                        globalThis.__accepted = await Trade.accept();
+                    }
+                }"#
+                .into(),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            iso.post_snapshot(bytes);
+            iso.on_game_tick(1);
+            let accepted = iso.probe("globalThis.__accepted").unwrap();
+            let interactions = iso.drain_interacts();
+            iso.join();
+            assert_eq!(accepted, serde_json::Value::Bool(!hidden));
+            let expected = if hidden {
+                vec![]
+            } else {
+                vec![script::shim::InteractReq::IfButton {
+                    component_id: button,
+                }]
+            };
+            assert_eq!(interactions, expected);
+        }
+    }
+
+    #[test]
     fn script_snapshot_player_actions_preserve_native_slots() {
         fn emitted_actions(player_op: [Option<&str>; 5]) -> Vec<String> {
             let mut c = prepare_client(
