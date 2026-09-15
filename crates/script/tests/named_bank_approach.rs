@@ -1,9 +1,10 @@
-//! Named `Bank.openNearest` walks the selected loc with existing WalkNear
-//! radius 1, then posts the same named OpenBooth identity.
+//! Named `Bank.openNearest` walks the producer dest with WalkNear radius 0,
+//! then posts the same named OpenBooth identity when `can_operate`.
 
 use script::isolate_fb::{
-    BankStandInput, IsolateBuf, NearestBoothInput, ReachViewInput, SceneEntityInput,
-    SnapshotFingerprint, SnapshotInput, TileInput,
+    encode_snapshot_with_native, BankApproachInput, BankStandInput, IsolateBuf, NativeFactsInput,
+    NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
+    TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -12,15 +13,58 @@ fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
 
-fn post_snapshot_delta(
+fn post_snapshot_native(
+    iso: &LoadIsolate,
+    input: &SnapshotInput<'_>,
+    approaches: &[BankApproachInput],
+) {
+    iso.post_snapshot(encode_snapshot_with_native(
+        input,
+        NativeFactsInput {
+            bank_approaches: Some(approaches),
+            ..Default::default()
+        },
+    ));
+}
+
+fn post_snapshot_delta_native(
     iso: &LoadIsolate,
     encoder: &mut IsolateBuf,
     last: &mut Option<SnapshotFingerprint>,
     input: &SnapshotInput<'_>,
+    approaches: &[BankApproachInput],
 ) {
-    let (bytes, next) = encoder.encode_snapshot_delta(last.as_ref(), input, false);
+    let (bytes, next) = encoder.encode_snapshot_delta_with_native(
+        last.as_ref(),
+        input,
+        NativeFactsInput {
+            bank_approaches: Some(approaches),
+            ..Default::default()
+        },
+        false,
+    );
     *last = Some(next);
     iso.post_snapshot(bytes);
+}
+
+fn approach_row(
+    loc_id: i32,
+    x: i32,
+    z: i32,
+    can_operate: bool,
+    dest: Option<(i32, i32)>,
+) -> BankApproachInput {
+    BankApproachInput {
+        loc_id,
+        x,
+        z,
+        level: 0,
+        can_operate,
+        dest_ok: dest.is_some(),
+        dest_x: dest.map(|tile| tile.0).unwrap_or(0),
+        dest_z: dest.map(|tile| tile.1).unwrap_or(0),
+        dest_level: 0,
+    }
 }
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -203,14 +247,18 @@ fn named_open_booth() -> InteractReq {
     }
 }
 
-fn walk_near_selected() -> InteractReq {
+fn walk_near_dest() -> InteractReq {
     InteractReq::WalkNear {
         x: 3011,
-        z: 3354,
+        z: 3353,
         level: 0,
-        radius: 1,
+        radius: 0,
         allow_teleports: false,
     }
+}
+
+fn east_approach(can_operate: bool, dest: Option<(i32, i32)>) -> BankApproachInput {
+    approach_row(2213, 3011, 3354, can_operate, dest)
 }
 
 #[test]
@@ -220,18 +268,20 @@ fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_boo
     let locs = [east_booth(&use_quickly)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
     tick(&iso, 1);
     assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
     assert_eq!(
         iso.drain_interacts(),
-        vec![walk_near_selected()],
-        "Chebyshev 2 must WalkNear the selected loc, not a lone OpenBooth"
+        vec![walk_near_dest()],
+        "Chebyshev 2 must WalkNear producer dest radius 0, not a lone OpenBooth"
     );
 
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
-    post_snapshot_input(&iso, &snap);
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -248,7 +298,8 @@ fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
     let locs = [east_booth(&use_quickly)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
     iso.probe(
         r#"(() => {
             Object.defineProperties(globalThis.__rs2b0t_host.snapshot, {
@@ -261,7 +312,7 @@ fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
     .unwrap();
 
     tick(&iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![walk_near_selected()]);
+    assert_eq!(iso.drain_interacts(), vec![walk_near_dest()]);
     iso.join();
 }
 
@@ -280,12 +331,13 @@ fn named_open_nearest_from_chebyshev_1_queues_named_open_booth_only() {
     let mut snap = base_snapshot();
     snap.here = Some(tile(3011, 3353));
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
         vec![named_open_booth()],
-        "already-adjacent named open must not WalkNear"
+        "projected can_operate must not WalkNear"
     );
     iso.join();
 }
@@ -297,15 +349,16 @@ fn named_open_nearest_missing_loc_after_approach_sends_no_click() {
     let locs = [east_booth(&use_quickly)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
     tick(&iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![walk_near_selected()]);
+    assert_eq!(iso.drain_interacts(), vec![walk_near_dest()]);
 
     let empty: [SceneEntityInput; 0] = [];
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     snap.locs = &empty;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &approaching);
     tick(&iso, 2);
     assert!(
         iso.drain_interacts().is_empty(),
@@ -322,9 +375,10 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     let locs = [east_booth(&use_quickly)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
     tick(&iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![walk_near_selected()]);
+    assert_eq!(iso.drain_interacts(), vec![walk_near_dest()]);
 
     let replaced = [
         loc_row(9999, Some("Bank booth"), 3011, 3354, 1, &use_quickly),
@@ -333,7 +387,7 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     snap.locs = &replaced;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &approaching);
     tick(&iso, 2);
     assert!(
         iso.drain_interacts().is_empty(),
@@ -344,7 +398,7 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
 }
 
 #[test]
-fn unnamed_banking_open_from_distance_queues_open_booth_without_walk() {
+fn unnamed_banking_open_from_distance_walks_producer_dest() {
     let iso = LoadIsolate::spawn(BANKING_OPEN.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(tile(100, 100));
@@ -361,19 +415,19 @@ fn unnamed_banking_open_from_distance_queues_open_booth_without_walk() {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_snapshot_input(&iso, &snap);
+    let approaches = [approach_row(2213, 200, 100, false, Some((199, 100)))];
+    post_snapshot_native(&iso, &snap, &approaches);
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::OpenBooth {
-            x: 200,
+        vec![InteractReq::WalkNear {
+            x: 199,
             z: 100,
             level: 0,
-            id: 2213,
-            name: None,
-            action: None,
+            radius: 0,
+            allow_teleports: false,
         }],
-        "unnamed Banking.open stays click-only"
+        "unnamed Banking.open walks producer dest radius 0"
     );
     iso.join();
 }
@@ -393,7 +447,8 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     let mut snap = base_snapshot();
     snap.here = Some(tile(3011, 3353));
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 1);
     assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
     assert_eq!(iso.drain_interacts(), vec![named_open_booth()]);
@@ -402,7 +457,7 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 2);
     assert_eq!(iso.probe("__ok").unwrap(), true);
     assert!(
@@ -441,7 +496,8 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
 
     snap.tick = 2;
     snap.here = Some(tile(3013, 3355));
-    post_snapshot_input(&iso, &snap);
+    let ready = [approach_row(2213, 3013, 3354, true, Some((3013, 3355)))];
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -495,7 +551,8 @@ fn world_open_walks_with_native_verb_then_opens_observed_booth() {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_snapshot_input(&iso, &snap);
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -560,7 +617,8 @@ fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
     snap.locs = &initial_locs;
     let mut encoder = IsolateBuf::new();
     let mut last = None;
-    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &approaching);
     iso.probe("true").unwrap();
 
     let begin = iso
@@ -576,11 +634,13 @@ fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
     let token = begin["token"].as_u64().expect("bank-open token");
     assert_eq!(begin["kind"], "walk-near");
     assert_eq!(begin["x"], 3011);
-    assert_eq!(begin["z"], 3354);
+    assert_eq!(begin["z"], 3353);
+    assert_eq!(begin["radius"], 0);
 
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
-    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &ready);
     iso.probe("true").unwrap();
 
     let open = iso
@@ -648,7 +708,8 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_snapshot_input(&iso, &snap);
+    let ready = [approach_row(2213, 11, 10, true, Some((10, 10)))];
+    post_snapshot_native(&iso, &snap, &ready);
     iso.on_game_tick(1);
     iso.probe("true").unwrap();
     let requests = iso.drain_interacts();

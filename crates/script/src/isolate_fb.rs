@@ -175,6 +175,18 @@ const VT_SNAP_SHOP_PLAYER: VOffsetT = 158;
 const VT_SNAP_SHOP_PLAYER_AVAILABLE: VOffsetT = 160;
 const VT_SNAP_MAIN_MAKE: VOffsetT = 162;
 const VT_SNAP_MAIN_MAKE_AVAILABLE: VOffsetT = 164;
+const VT_SNAP_BANK_APPROACHES: VOffsetT = 166;
+
+// BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
+const VT_BA_LOC_ID: VOffsetT = 4;
+const VT_BA_X: VOffsetT = 6;
+const VT_BA_Z: VOffsetT = 8;
+const VT_BA_LEVEL: VOffsetT = 10;
+const VT_BA_CAN_OPERATE: VOffsetT = 12;
+const VT_BA_DEST_OK: VOffsetT = 14;
+const VT_BA_DEST_X: VOffsetT = 16;
+const VT_BA_DEST_Z: VOffsetT = 18;
+const VT_BA_DEST_LEVEL: VOffsetT = 20;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -593,6 +605,23 @@ pub struct NativeFactsInput<'a> {
     /// decoded this rebuild (anvil ops fail closed). `Some([])` = decoded
     /// and empty.
     pub main_make: Option<&'a [ItemRowInput<'a>]>,
+    /// Compact bank dest/readiness. `None` omits the field (delta keep /
+    /// tests without a model). `Some([])` is an explicit empty table.
+    pub bank_approaches: Option<&'a [BankApproachInput]>,
+}
+
+/// One native bank-booth dest + readiness row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BankApproachInput {
+    pub loc_id: i32,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub can_operate: bool,
+    pub dest_ok: bool,
+    pub dest_x: i32,
+    pub dest_z: i32,
+    pub dest_level: i32,
 }
 
 /// One native NPC projection in overlay-canvas pixels.
@@ -964,6 +993,68 @@ impl Verifiable for NearestBoothReader<'_> {
     }
 }
 
+/// One compact bank dest/readiness row as decoded.
+#[derive(Clone, Copy)]
+pub struct BankApproachReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for BankApproachReader<'a> {
+    type Inner = BankApproachReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl BankApproachReader<'_> {
+    pub fn loc_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_LOC_ID, None) }.unwrap_or(0)
+    }
+    pub fn x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_X, None) }.unwrap_or(0)
+    }
+    pub fn z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn can_operate(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_BA_CAN_OPERATE, None) }.unwrap_or(false)
+    }
+    pub fn dest_ok(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_BA_DEST_OK, None) }.unwrap_or(false)
+    }
+    pub fn dest_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_DEST_X, None) }.unwrap_or(0)
+    }
+    pub fn dest_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_DEST_Z, None) }.unwrap_or(0)
+    }
+    pub fn dest_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BA_DEST_LEVEL, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for BankApproachReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("loc_id", VT_BA_LOC_ID, false)?
+            .visit_field::<i32>("x", VT_BA_X, false)?
+            .visit_field::<i32>("z", VT_BA_Z, false)?
+            .visit_field::<i32>("level", VT_BA_LEVEL, false)?
+            .visit_field::<bool>("can_operate", VT_BA_CAN_OPERATE, false)?
+            .visit_field::<bool>("dest_ok", VT_BA_DEST_OK, false)?
+            .visit_field::<i32>("dest_x", VT_BA_DEST_X, false)?
+            .visit_field::<i32>("dest_z", VT_BA_DEST_Z, false)?
+            .visit_field::<i32>("dest_level", VT_BA_DEST_LEVEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// The PLAYER_INFO snapshot as decoded: read-only access to the same
 /// fields `script_snapshot_fb` encodes.
 pub struct SnapshotReader<'a> {
@@ -1191,6 +1282,11 @@ impl Verifiable for SnapshotReader<'_> {
                 false,
             )?
             .visit_field::<bool>("main_make_available", VT_SNAP_MAIN_MAKE_AVAILABLE, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BankApproachReader>>>>(
+                "bank_approaches",
+                VT_SNAP_BANK_APPROACHES,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1516,6 +1612,12 @@ impl SnapshotReader<'_> {
     }
     pub fn main_make_available(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_MAIN_MAKE_AVAILABLE, None) }.unwrap_or(false)
+    }
+    pub fn has_bank_approaches(&self) -> bool {
+        rows_present::<BankApproachReader>(&self.tab, VT_SNAP_BANK_APPROACHES)
+    }
+    pub fn bank_approaches(&self) -> Vec<BankApproachReader<'_>> {
+        rows::<BankApproachReader>(&self.tab, VT_SNAP_BANK_APPROACHES)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -2056,6 +2158,7 @@ pub struct SnapshotFingerprint {
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<Vec<(String, String)>>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
+    pub bank_approaches: Option<Vec<BankApproachInput>>,
 }
 
 impl SnapshotFingerprint {
@@ -2271,6 +2374,7 @@ impl SnapshotFingerprint {
                     .collect()
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
+            bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
         }
     }
 }
@@ -2356,6 +2460,7 @@ pub struct DeltaMask {
     pub retaliate_controls: bool,
     pub quest_statuses: bool,
     pub npc_boxes: bool,
+    pub bank_approaches: bool,
 }
 
 impl DeltaMask {
@@ -2436,6 +2541,7 @@ impl DeltaMask {
             retaliate_controls: true,
             quest_statuses: true,
             npc_boxes: true,
+            bank_approaches: true,
         }
     }
 
@@ -2526,6 +2632,7 @@ impl DeltaMask {
             retaliate_controls: next.retaliate_controls != last.retaliate_controls,
             quest_statuses: next.quest_statuses != last.quest_statuses,
             npc_boxes: next.npc_boxes != last.npc_boxes,
+            bank_approaches: next.bank_approaches != last.bank_approaches,
         }
     }
 }
@@ -2961,6 +3068,17 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let bank_approaches_off = if mask.bank_approaches {
+        native.bank_approaches.map(|rows| {
+            let offs = rows
+                .iter()
+                .map(|row| bank_approach_off(b, row))
+                .collect::<Vec<_>>();
+            b.create_vector(&offs)
+        })
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -3232,6 +3350,11 @@ fn encode_snapshot_masked_into(
             b.push_slot_always(VT_SNAP_NPC_BOXES, off);
         }
     }
+    if mask.bank_approaches {
+        if let Some(off) = bank_approaches_off {
+            b.push_slot_always(VT_SNAP_BANK_APPROACHES, off);
+        }
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -3241,6 +3364,23 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
     b.push_slot_always(VT_TILE_X, t.x);
     b.push_slot_always(VT_TILE_Z, t.z);
     b.push_slot_always(VT_TILE_LEVEL, t.level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn bank_approach_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &BankApproachInput,
+) -> WIPOffset<BankApproachReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_BA_LOC_ID, row.loc_id);
+    b.push_slot_always(VT_BA_X, row.x);
+    b.push_slot_always(VT_BA_Z, row.z);
+    b.push_slot_always(VT_BA_LEVEL, row.level);
+    b.push_slot_always(VT_BA_CAN_OPERATE, row.can_operate);
+    b.push_slot_always(VT_BA_DEST_OK, row.dest_ok);
+    b.push_slot_always(VT_BA_DEST_X, row.dest_x);
+    b.push_slot_always(VT_BA_DEST_Z, row.dest_z);
+    b.push_slot_always(VT_BA_DEST_LEVEL, row.dest_level);
     WIPOffset::new(b.end_table(tab).value())
 }
 

@@ -1645,13 +1645,13 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     let bank_tc = 0x4000_0000 + (bank_id << 14) + 1 + (2 << 7);
     s.client
         .world
-        .set_wall(0, 6, 5, 0, 0, 0, near_tc, 1 << 6, 0, 0, 0, 0);
+        .set_wall(0, 6, 5, 0, 0, 0, near_tc, 10, 0, 0, 0, 0);
     s.client
         .world
-        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 1 << 6, 0, 0, 0, 0);
+        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 10, 0, 0, 0, 0);
     s.client
         .world
-        .set_wall(0, 5, 6, 0, 0, 0, bank_tc, 1 << 6, 0, 0, 0, 0);
+        .set_wall(0, 5, 6, 0, 0, 0, bank_tc, 10, 0, 0, 0, 0);
     {
         let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
         while cache.locs.len() <= bank_id as usize {
@@ -1815,17 +1815,16 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     assert!(rec.actions.is_empty(), "none on the plane fails closed");
 }
 
-/// Out of reach: walk toward the booth instead of Use-quickly (live
-/// FAIL was `"I can't reach that!"` from op-ing with no walk).
+/// Out of reach: refuse Unreachable instead of Use-quickly or a signum walk.
 #[test]
-fn open_nearest_booth_walks_when_not_adjacent() {
+fn open_nearest_booth_refuses_when_not_operable() {
     let mut s = scene();
     s.client.local_player = Some(ClientPlayer::at(5, 5));
     let booth_id = 2213;
     let far_tc = 0x4000_0000 + (booth_id << 14) + 1 + (2 << 7);
     s.client
         .world
-        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 1 << 6, 0, 0, 0, 0);
+        .set_wall(0, 20, 5, 0, 0, 0, far_tc, 10, 0, 0, 0, 0);
     {
         let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
         while cache.locs.len() <= booth_id as usize {
@@ -1847,13 +1846,11 @@ fn open_nearest_booth_walks_when_not_adjacent() {
     {
         let mut ix = Interactions::new(&snap, &mut rec);
         match ix.open_nearest_booth() {
-            SendResult::Sent { command, .. } => {
-                assert!(
-                    matches!(command, WireCommand::Walk { .. }),
-                    "out-of-reach booth must walk, not op: {command:?}"
-                );
-            }
-            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+            SendResult::Refused {
+                reason: SendReason::Unreachable,
+                ..
+            } => {}
+            other => panic!("far booth must refuse Unreachable, got {other:?}"),
         }
     }
     assert!(
@@ -1862,9 +1859,59 @@ fn open_nearest_booth_walks_when_not_adjacent() {
         rec.menus
     );
     assert!(
-        !rec.moves.is_empty(),
-        "must try_move toward the booth when not adjacent"
+        rec.moves.is_empty(),
+        "API OpenBooth is op-only and must not walk"
     );
+}
+
+/// Diagonal Chebyshev-1 is not test_loc ready: refuse, no walk, no OPLOC.
+#[test]
+fn open_named_booth_diagonal_is_unreachable() {
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let booth_id = 2213;
+    let tc = 0x4000_0000 + (booth_id << 14) + 1 + (2 << 7);
+    s.client
+        .world
+        .set_wall(0, 6, 6, 0, 0, 0, tc, 10, 0, 0, 0, 0);
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        while cache.locs.len() <= booth_id as usize {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[booth_id as usize] = LocType {
+            id: booth_id,
+            name: "Bank booth".into(),
+            op: vec![None, Some("Use-quickly".into()), None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.open_named_booth_at(
+                WorldTile {
+                    x: 3206,
+                    z: 3206,
+                    level: 0,
+                },
+                booth_id,
+                "Bank booth",
+                "Use-quickly"
+            ),
+            SendResult::Refused {
+                reason: SendReason::Unreachable,
+                ..
+            }
+        ));
+    }
+    assert!(rec.menus.is_empty());
+    assert!(rec.moves.is_empty());
 }
 
 /// A ground-item target dispatches through the scene coords with the obj

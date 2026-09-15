@@ -2716,7 +2716,7 @@ fn with_script_snapshot_input<R>(
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
         MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput, QuestStatusInput,
         ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
-        VarpInput, WidgetTextInput,
+        VarpInput, WidgetTextInput, BankApproachInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3663,6 +3663,44 @@ fn with_script_snapshot_input<R>(
         attacked_by_player,
         widgets: &widgets,
     };
+    let bank_approach_store: Vec<BankApproachInput> = match (snapshot, here, flood.as_ref()) {
+        (Some(s), Some(tile), Some(flood)) => s
+            .locs()
+            .iter()
+            .filter_map(|loc| {
+                let name = loc.name.as_deref()?;
+                if !name
+                    .as_bytes()
+                    .windows(4)
+                    .any(|word| word.eq_ignore_ascii_case(b"bank"))
+                {
+                    return None;
+                }
+                let approach = api::query::loc_approach::booth_approach(
+                    loc,
+                    s.scene(),
+                    WorldTile {
+                        x: tile.x,
+                        z: tile.z,
+                        level: tile.level,
+                    },
+                    flood,
+                )?;
+                Some(BankApproachInput {
+                    loc_id: loc.id,
+                    x: loc.tile.x,
+                    z: loc.tile.z,
+                    level: loc.tile.level,
+                    can_operate: approach.can_operate,
+                    dest_ok: approach.dest.is_some(),
+                    dest_x: approach.dest.map(|t| t.x).unwrap_or(0),
+                    dest_z: approach.dest.map(|t| t.z).unwrap_or(0),
+                    dest_level: approach.dest.map(|t| t.level).unwrap_or(0),
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let native = NativeFactsInput {
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
@@ -3675,6 +3713,7 @@ fn with_script_snapshot_input<R>(
         npc_boxes,
         shop_player,
         main_make,
+        bank_approaches: Some(&bank_approach_store),
     };
     f(&input, native)
 }
@@ -13142,6 +13181,11 @@ export default class T extends LoopingBot {
         assert!(!view.attacked_by_player());
         assert!(view.has_widgets(), "keyframe carries widgets vector");
         assert!(view.widgets().is_empty());
+        assert!(
+            view.has_bank_approaches(),
+            "keyframe posts bank_approaches even when empty"
+        );
+        assert!(view.bank_approaches().is_empty());
 
         // No tile / no snapshot: fail-closed nulls and flags.
         let (bare_bytes, _) = script_snapshot_fb(
@@ -13153,6 +13197,72 @@ export default class T extends LoopingBot {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    #[test]
+    fn script_snapshot_fb_projects_authoritative_bank_approach() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.minusedlevel = 0;
+        c.local_player = Some(client::client::ClientPlayer::at(5, 5));
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.locs.extend(
+                (0..(2214usize.saturating_sub(cache.locs.len())))
+                    .map(|_| client::config::LocType::default()),
+            );
+            cache.locs[2213].id = 2213;
+            cache.locs[2213].name = "Bank booth".into();
+            cache.locs[2213].op = vec![None, Some("Use-quickly".into()), None, None, None];
+        }
+        let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
+        c.world
+            .set_wall(0, 6, 6, 0, 0, 0, booth_typecode, 10, 0, 0, 0, 0);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        assert!(view.has_bank_approaches());
+        let rows = view.bank_approaches();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].loc_id(), 2213);
+        assert_eq!((rows[0].x(), rows[0].z()), (3206, 3206));
+        assert!(!rows[0].can_operate(), "diagonal is not test_loc ready");
+        assert!(rows[0].dest_ok());
+        assert_ne!((rows[0].dest_x(), rows[0].dest_z()), (3206, 3206));
+        assert_ne!(
+            (rows[0].dest_x(), rows[0].dest_z()),
+            (3205, 3205),
+            "dest is not the signum stay-put tile"
+        );
     }
 
     #[test]

@@ -33,6 +33,14 @@ struct Booth {
     actions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApproachFact {
+    loc_id: i32,
+    tile: Tile,
+    can_operate: bool,
+    dest: Option<Tile>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Booth,
@@ -59,6 +67,7 @@ struct Observation {
     nearest_booth: Option<Booth>,
     locs: Vec<Booth>,
     has_booth_stands: bool,
+    approaches: Vec<ApproachFact>,
 }
 
 impl Observation {
@@ -72,6 +81,7 @@ impl Observation {
             nearest_booth: None,
             locs: Vec::new(),
             has_booth_stands: false,
+            approaches: Vec::new(),
         }
     }
 
@@ -119,6 +129,26 @@ impl Observation {
         if snap.has_locs() {
             self.locs = snap.locs().iter().filter_map(bank_candidate).collect();
         }
+        if snap.has_bank_approaches() {
+            self.approaches = snap
+                .bank_approaches()
+                .iter()
+                .map(|row| ApproachFact {
+                    loc_id: row.loc_id(),
+                    tile: Tile {
+                        x: row.x(),
+                        z: row.z(),
+                        level: row.level(),
+                    },
+                    can_operate: row.can_operate(),
+                    dest: row.dest_ok().then_some(Tile {
+                        x: row.dest_x(),
+                        z: row.dest_z(),
+                        level: row.dest_level(),
+                    }),
+                })
+                .collect();
+        }
     }
 }
 
@@ -164,6 +194,7 @@ struct BankOpenRuntime {
     wanted_action: Option<String>,
     open_generation: u64,
     deadline: Option<Instant>,
+    last_approach_dest: Option<Tile>,
 }
 
 impl BankOpenRuntime {
@@ -181,6 +212,7 @@ impl BankOpenRuntime {
             wanted_action: None,
             open_generation: 0,
             deadline: None,
+            last_approach_dest: None,
         }
     }
 
@@ -216,6 +248,7 @@ impl BankOpenRuntime {
         self.wanted_name = None;
         self.wanted_action = None;
         self.deadline = None;
+        self.last_approach_dest = None;
     }
 
     fn done(&mut self, ok: bool, reason: &str) -> Value {
@@ -230,7 +263,7 @@ impl BankOpenRuntime {
         json!({"kind": "wait", "token": self.token})
     }
 
-    fn walk_near(&mut self, phase: Phase, tile: Tile) -> Value {
+    fn walk_near(&mut self, phase: Phase, tile: Tile, radius: i32) -> Value {
         self.phase = phase;
         self.deadline = Some(self.now() + Duration::from_millis(WALK_BOUND_MS));
         json!({
@@ -239,7 +272,24 @@ impl BankOpenRuntime {
             "x": tile.x,
             "z": tile.z,
             "level": tile.level,
-            "radius": ACCESS_RADIUS,
+            "radius": radius,
+            "allow_teleports": false,
+        })
+    }
+
+    fn walk_approach(&mut self, dest: Tile, start_bound: bool) -> Value {
+        self.phase = Phase::WaitSelected;
+        if start_bound || self.deadline.is_none() {
+            self.deadline = Some(self.now() + Duration::from_millis(WALK_BOUND_MS));
+        }
+        self.last_approach_dest = Some(dest);
+        json!({
+            "kind": "walk-near",
+            "token": self.token,
+            "x": dest.x,
+            "z": dest.z,
+            "level": dest.level,
+            "radius": 0,
             "allow_teleports": false,
         })
     }
@@ -295,7 +345,7 @@ impl BankOpenRuntime {
             Mode::Booth => {
                 if let Some(stand) = stand {
                     if !near(obs.here, stand) {
-                        return self.walk_near(Phase::WaitStand, stand);
+                        return self.walk_near(Phase::WaitStand, stand, ACCESS_RADIUS);
                     }
                 }
                 self.select_and_open(obs)
@@ -304,16 +354,14 @@ impl BankOpenRuntime {
                 let Some(selected) = self.select_named(obs) else {
                     return self.done(false, "missing-booth");
                 };
-                if near(obs.here, selected.tile) {
-                    return self.open(selected, obs);
-                }
-                self.selected = Some(selected.clone());
-                self.walk_near(Phase::WaitSelected, selected.tile)
+                self.selected = Some(selected);
+                self.approach_or_open(obs)
             }
             Mode::NearestWorld => {
                 if let Some(booth) = obs.nearest_booth.clone() {
                     if near(obs.here, booth.tile) {
-                        return self.open(unnamed(booth), obs);
+                        self.selected = Some(unnamed(booth));
+                        return self.approach_or_open(obs);
                     }
                 }
                 if obs.here.is_none() || !obs.has_booth_stands {
@@ -360,7 +408,29 @@ impl BankOpenRuntime {
         let Some(selected) = selected.filter(|row| row.id >= 0) else {
             return self.done(false, "missing-booth");
         };
-        self.open(selected, obs)
+        self.selected = Some(selected);
+        self.approach_or_open(obs)
+    }
+
+    fn live_approach<'a>(&self, obs: &'a Observation) -> Option<&'a ApproachFact> {
+        let selected = self.selected.as_ref()?;
+        obs.approaches
+            .iter()
+            .find(|row| row.loc_id == selected.id && row.tile == selected.tile)
+    }
+
+    fn approach_or_open(&mut self, obs: &Observation) -> Value {
+        let Some(selected) = self.selected.clone() else {
+            return self.done(false, "missing-booth");
+        };
+        match self.live_approach(obs).cloned() {
+            None => self.done(false, "unreachable"),
+            Some(row) if row.can_operate => self.open(selected, obs),
+            Some(row) => match row.dest {
+                Some(dest) => self.walk_approach(dest, true),
+                None => self.done(false, "unreachable"),
+            },
+        }
     }
 
     fn selected_still_present(&self, obs: &Observation) -> bool {
@@ -417,17 +487,28 @@ impl BankOpenRuntime {
                     self.wait_ready()
                 }
             }
-            Phase::WaitSelected
-                if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|selected| near(obs.here, selected.tile)) =>
-            {
+            Phase::WaitSelected => {
                 if !self.selected_still_present(obs) {
                     self.done(false, "identity-lost")
                 } else {
-                    let selected = self.selected.take().expect("selected booth");
-                    self.open(selected, obs)
+                    match self.live_approach(obs).cloned() {
+                        None => self.done(false, "unreachable"),
+                        Some(row) if row.can_operate => {
+                            let selected = self.selected.take().expect("selected booth");
+                            self.open(selected, obs)
+                        }
+                        Some(row) => match row.dest {
+                            None => self.done(false, "unreachable"),
+                            Some(dest) if self.last_approach_dest == Some(dest) => {
+                                if self.expired() {
+                                    self.done(false, "timeout")
+                                } else {
+                                    json!({"kind": "wait", "token": self.token})
+                                }
+                            }
+                            Some(dest) => self.walk_approach(dest, false),
+                        },
+                    }
                 }
             }
             Phase::WaitNearest if obs.bank_open => {
@@ -440,7 +521,8 @@ impl BankOpenRuntime {
             Phase::WaitNearest => {
                 if let Some(booth) = obs.nearest_booth.clone() {
                     if near(obs.here, booth.tile) {
-                        return self.open(unnamed(booth), obs);
+                        self.selected = Some(unnamed(booth));
+                        return self.approach_or_open(obs);
                     }
                 }
                 if self.expired() {
@@ -449,7 +531,7 @@ impl BankOpenRuntime {
                     json!({"kind": "wait", "token": self.token})
                 }
             }
-            Phase::WaitReady | Phase::WaitFresh | Phase::WaitStand | Phase::WaitSelected => {
+            Phase::WaitReady | Phase::WaitFresh | Phase::WaitStand => {
                 if self.expired() {
                     self.done(false, "timeout")
                 } else {
@@ -610,6 +692,20 @@ mod tests {
                 actions: vec!["Use-quickly".into()],
             }],
             has_booth_stands: true,
+            approaches: vec![ApproachFact {
+                loc_id: 2213,
+                tile: Tile {
+                    x: 3011,
+                    z: 3354,
+                    level: 0,
+                },
+                can_operate: false,
+                dest: Some(Tile {
+                    x: 3011,
+                    z: 3353,
+                    level: 0,
+                }),
+            }],
         }
     }
 
@@ -658,5 +754,130 @@ mod tests {
         let stale = begin["token"].as_u64().unwrap();
         runtime.abort();
         assert_eq!(runtime.next(stale, &obs())["kind"], "aborted");
+    }
+
+    #[test]
+    fn named_approach_walks_radius_zero_dest_not_loc_tile() {
+        let mut runtime = BankOpenRuntime::new();
+        let begin = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &obs(),
+        );
+        assert_eq!(begin["kind"], "walk-near");
+        assert_eq!(begin["radius"], 0);
+        assert_eq!(begin["x"], 3011);
+        assert_eq!(begin["z"], 3353);
+    }
+
+    #[test]
+    fn ready_projected_can_operate_opens_without_walk() {
+        let mut observation = obs();
+        observation.here = Some(Tile {
+            x: 3011,
+            z: 3353,
+            level: 0,
+        });
+        observation.approaches[0].can_operate = true;
+        observation.approaches[0].dest = Some(Tile {
+            x: 3011,
+            z: 3353,
+            level: 0,
+        });
+        let mut runtime = BankOpenRuntime::new();
+        let begin = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &observation,
+        );
+        assert_eq!(begin["kind"], "open-booth");
+        assert_eq!(begin["id"], 2213);
+    }
+
+    #[test]
+    fn missing_model_and_empty_dest_fail_unreachable() {
+        let mut observation = obs();
+        observation.approaches.clear();
+        let mut runtime = BankOpenRuntime::new();
+        let missing = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &observation,
+        );
+        assert_eq!(missing["reason"], "unreachable");
+
+        observation.approaches = vec![ApproachFact {
+            loc_id: 2213,
+            tile: Tile {
+                x: 3011,
+                z: 3354,
+                level: 0,
+            },
+            can_operate: false,
+            dest: None,
+        }];
+        let empty = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &observation,
+        );
+        assert_eq!(empty["reason"], "unreachable");
+    }
+
+    #[test]
+    fn dest_change_rewalks_without_renewing_bound() {
+        let mut runtime = BankOpenRuntime::new();
+        let begin = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &obs(),
+        );
+        let token = begin["token"].as_u64().unwrap();
+        let original = runtime.deadline;
+        let mut observation = obs();
+        observation.approaches[0].dest = Some(Tile {
+            x: 3011,
+            z: 3355,
+            level: 0,
+        });
+        let again = runtime.next(token, &observation);
+        assert_eq!(again["kind"], "walk-near");
+        assert_eq!(again["radius"], 0);
+        assert_eq!(again["z"], 3355);
+        assert_eq!(runtime.deadline, original);
+    }
+
+    #[test]
+    fn pause_holds_and_stale_token_aborts() {
+        let mut runtime = BankOpenRuntime::new();
+        let begin = runtime.begin(
+            Mode::Nearest,
+            None,
+            false,
+            Some("Bank booth".into()),
+            Some("Use-quickly".into()),
+            &obs(),
+        );
+        let token = begin["token"].as_u64().unwrap();
+        runtime.set_freeze(true, false);
+        assert_eq!(runtime.next(token, &obs())["kind"], "wait");
+        runtime.set_freeze(false, false);
+        runtime.abort();
+        assert_eq!(runtime.next(token, &obs())["kind"], "aborted");
     }
 }

@@ -95,6 +95,20 @@ table NearestBooth {
   id: int;
 }
 
+// Compact native bank-booth dest + readiness for one loc identity.
+// Native helpers only; not a JS locator.
+table BankApproach {
+  loc_id: int;
+  x: int;
+  z: int;
+  level: int;
+  can_operate: bool;
+  dest_ok: bool;
+  dest_x: int;
+  dest_z: int;
+  dest_level: int;
+}
+
 // A packed bank stand the shim walks to / opens.
 table BankStand {
   name: string;
@@ -273,6 +287,9 @@ table Snapshot {
   // this rebuild" from "decoded and empty".
   main_make: [Row];
   main_make_available: bool = false;
+  // Compact bank dest/readiness. Omitted in a delta is not empty: the
+  // native helper keeps its last rows. An explicit empty vector clears.
+  bank_approaches: [BankApproach];
 }
 
 // One shim interact request, tagged by `op`:
