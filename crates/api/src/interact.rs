@@ -86,6 +86,24 @@ pub trait Driver {
     fn set_orbit_camera_yaw(&mut self, _yaw: i32) -> bool {
         false
     }
+    /// Local amount prompt (`Client.dialog_input_open`). Stubs have none.
+    fn count_dialog_open(&self) -> bool {
+        false
+    }
+    /// Social add/del/PM prompt, which `handle_chat_input` consumes before
+    /// the amount dialog. Stubs have none.
+    fn social_prompt_open(&self) -> bool {
+        false
+    }
+    /// Whether `GameShell::apply_key` can enqueue without wrapping over an
+    /// unread slot of the 128-entry ring. Stubs have no ring.
+    fn can_enqueue_key(&self) -> bool {
+        true
+    }
+    /// Existing GameShell key down/up. Default no-op for recorders.
+    fn apply_key(&mut self, _down: bool, _java_code: i32, _ch: i32) {}
+    /// Existing `Client::handle_chat_input` poll of the GameShell ring.
+    fn handle_chat_input(&mut self) {}
 }
 
 impl Driver for Client {
@@ -198,6 +216,27 @@ impl Driver for Client {
         self.orbit_camera_yaw = yaw;
         self.orbit_camera_yaw_velocity = 0;
         true
+    }
+
+    fn count_dialog_open(&self) -> bool {
+        self.dialog_input_open
+    }
+
+    fn social_prompt_open(&self) -> bool {
+        self.social_input_open
+    }
+
+    fn can_enqueue_key(&self) -> bool {
+        let next = (self.shell.key_queue_write + 1) & 0x7f;
+        next != self.shell.key_queue_read
+    }
+
+    fn apply_key(&mut self, down: bool, java_code: i32, ch: i32) {
+        self.shell.apply_key(down, java_code, ch);
+    }
+
+    fn handle_chat_input(&mut self) {
+        Client::handle_chat_input(self);
     }
 }
 
@@ -768,6 +807,33 @@ pub struct Interactions<'a> {
 impl<'a> Interactions<'a> {
     pub fn new(snapshot: &'a GameSnapshot, driver: &'a mut dyn Driver) -> Self {
         Interactions { snapshot, driver }
+    }
+
+    /// Canvas amount-prompt key through GameShell, then immediate
+    /// `handle_chat_input`, so Enter-then-digit and a closed/replaced
+    /// prompt cannot leak into chat and the 128-ring is never filled by a
+    /// 256-row batch. Digits and Enter only.
+    pub fn apply_amount_key(&mut self, down: bool, key: &str) -> bool {
+        let Some(kc) = client::client::lookup(key) else {
+            return false;
+        };
+        if !((48..=57).contains(&kc.ch) || kc.ch == 10) {
+            return false;
+        }
+        if !down {
+            self.driver.apply_key(false, kc.code, kc.ch);
+            return false;
+        }
+        if self.driver.social_prompt_open() || !self.driver.count_dialog_open() {
+            return false;
+        }
+        if !self.driver.can_enqueue_key() {
+            return false;
+        }
+        self.driver.apply_key(true, kc.code, kc.ch);
+        self.driver.handle_chat_input();
+        self.driver.apply_key(false, kc.code, kc.ch);
+        true
     }
 
     pub fn interact<'t>(&mut self, target: OpTarget<'t>, action: ActionSpec) -> SendResult<'t> {

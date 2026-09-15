@@ -1915,6 +1915,29 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         op: "recovery-anchor-none",
         fields: &[],
     },
+    InteractVariant {
+        op: "key",
+        fields: &[
+            TsField {
+                name: "down",
+                ty: "boolean",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "key",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "code",
+                ty: "string",
+                optional: true,
+                doc: None,
+            },
+        ],
+    },
 ];
 
 #[cfg(test)]

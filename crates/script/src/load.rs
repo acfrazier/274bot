@@ -5050,6 +5050,119 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 .unwrap();
             assert!(err, "defineBot throws without a name/create pair");
         }
+
+        #[test]
+        fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
+            ensure_platform();
+            let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+            runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
+            let report: serde_json::Value = runtime
+                .eval(
+                    r#"
+(() => {
+    const canvas = document.getElementById('canvas');
+    const other = document.getElementById('other');
+    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+    canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+    let mouseCtor = true;
+    try { new MouseEvent('mousedown'); } catch { mouseCtor = false; }
+    let mouseDispatch = '';
+    try { canvas.dispatchEvent(new MouseEvent('mousedown')); }
+    catch (e) { mouseDispatch = String((e && e.message) || e); }
+    let layout = '';
+    try { canvas.getBoundingClientRect(); }
+    catch (e) { layout = String((e && e.message) || e); }
+    return {
+        canvas: canvas !== null && typeof canvas === 'object',
+        other: other,
+        interact: globalThis.__rs2b0t_host.interact,
+        mouseCtor,
+        mouseDispatch,
+        layout,
+    };
+})()
+"#,
+                )
+                .unwrap();
+            assert_eq!(report["canvas"], true);
+            assert!(report["other"].is_null());
+            assert_eq!(
+                report["interact"],
+                serde_json::json!([
+                    {"op": "key", "down": true, "key": "2", "code": "2"},
+                    {"op": "key", "down": false, "key": "2", "code": "2"},
+                ])
+            );
+            assert_eq!(report["mouseCtor"], true);
+            assert!(
+                report["mouseDispatch"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("BLOCKED: missing mouse")),
+                "{report:?}"
+            );
+            assert!(
+                report["layout"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("BLOCKED: missing getBoundingClientRect")),
+                "{report:?}"
+            );
+        }
+
+        #[test]
+        fn canvas_keyboard_producer_round_trips_fb_and_drops_stale_generation() {
+            let iso = LoadIsolate::spawn(
+                r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+        canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            iso.on_game_tick(1);
+            iso.probe("true").unwrap();
+            let reqs = iso.drain_interacts();
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Key {
+                        down: true,
+                        key,
+                        ..
+                    } if key == "2"
+                )),
+                "{reqs:?}"
+            );
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Key {
+                        down: false,
+                        key,
+                        ..
+                    } if key == "2"
+                )),
+                "{reqs:?}"
+            );
+
+            iso.on_game_tick(2);
+            iso.probe("true").unwrap();
+            iso.reset_session_work();
+            let stale = iso.drain_interacts();
+            assert!(
+                stale
+                    .iter()
+                    .all(|req| !matches!(req, crate::shim::InteractReq::Key { .. })),
+                "stale generation must not deliver keys: {stale:?}"
+            );
+            iso.join();
+        }
     }
 }
 
