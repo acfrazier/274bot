@@ -419,7 +419,9 @@ struct AppWindow {
     /// the imgui pass renders into this private offscreen texture (same
     /// format as the surface, so the present blit is a legal texture
     /// copy), the shot readback copies it, and it is blitted to the
-    /// surface for present.
+    /// surface for present. Occluded capture reuses this target when it
+    /// already exists; COPY_SRC backends allocate a one-off instead of
+    /// keeping a second framebuffer on every slot.
     offscreen: Option<wgpu::Texture>,
 }
 
@@ -685,7 +687,33 @@ impl AppWindow {
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Occluded => {
-                report_deferred_readback(shots, "occluded");
+                // Presentation is blocked, but a promoted capture can still
+                // rasterize the current UI into the existing (or a one-off)
+                // COPY_SRC offscreen target. Unpromoted jobs stay queued;
+                // no pending wanted means skip so occlusion does not start
+                // a second always-on framebuffer or a present.
+                if shots.lock().unwrap().wanted.is_empty() {
+                    return Ok(());
+                }
+                let one_off = self
+                    .offscreen
+                    .is_none()
+                    .then(|| make_offscreen(&self.device, &self.surface_desc));
+                let target = one_off
+                    .as_ref()
+                    .or(self.offscreen.as_ref())
+                    .expect("occluded capture has an offscreen target");
+                submit_ui_frame(
+                    &self.device,
+                    &self.queue,
+                    &mut self.imgui.renderer,
+                    draw_data,
+                    self.clear_color,
+                    self.surface_desc.format,
+                    target,
+                    None,
+                    shots,
+                )?;
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
@@ -693,201 +721,36 @@ impl AppWindow {
             }
         };
 
-        let view = match &self.offscreen {
-            // Fallback render target: the imgui pass draws here, then the
-            // offscreen texture is blitted to the surface for present.
-            Some(offscreen) => offscreen.create_view(&wgpu::TextureViewDescriptor::default()),
-            None => frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-        };
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            self.imgui
-                .renderer
-                .new_frame()
-                .map_err(PanelError::FramePrepare)?;
-            self.imgui
-                .renderer
-                .render_draw_data(draw_data, &mut rpass)
-                .map_err(PanelError::Render)?;
-        }
-
-        // Whole-window shots: drain the UI body's requests, copy the
-        // just-rendered frame into staging buffers (recorded in this
-        // encoder), and map the bytes back after submit. No file I/O —
-        // the loop side stays pure; `done` holds bytes for the panel.
-        let mut readbacks: Vec<ShotReadback> = Vec::new();
-        {
-            let mut guard = shots.lock().unwrap();
-            let wanted = mem::take(&mut guard.wanted);
-            if !wanted.is_empty() {
-                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                    eprintln!("[panel] capture readback requested: {}", wanted.len());
-                }
-                let source = self.offscreen.as_ref().unwrap_or(&frame.texture);
-                readbacks = self.readback(source, &mut encoder, &wanted);
-            }
-        }
         if let Some(offscreen) = &self.offscreen {
-            // Present blit: same-format texture copy (the offscreen holds
-            // what the render pass wrote).
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: offscreen,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &frame.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: self.surface_desc.width,
-                    height: self.surface_desc.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+            submit_ui_frame(
+                &self.device,
+                &self.queue,
+                &mut self.imgui.renderer,
+                draw_data,
+                self.clear_color,
+                self.surface_desc.format,
+                offscreen,
+                Some(&frame.texture),
+                shots,
+            )?;
+        } else {
+            submit_ui_frame(
+                &self.device,
+                &self.queue,
+                &mut self.imgui.renderer,
+                draw_data,
+                self.clear_color,
+                self.surface_desc.format,
+                &frame.texture,
+                None,
+                shots,
+            )?;
         }
-        self.queue.submit(Some(encoder.finish()));
         frame.present();
-        if !readbacks.is_empty() {
-            let attempted = readbacks
-                .iter()
-                .map(|readback| readback.label.clone())
-                .collect::<Vec<_>>();
-            let captures = self.map_readbacks(readbacks);
-            record_readback_outcomes(&mut shots.lock().unwrap(), &attempted, captures);
-        }
         if reconfigure_after_present {
             self.surface.configure(&self.device, &self.surface_desc);
         }
         Ok(())
-    }
-
-    /// Record a `copy_texture_to_buffer` per requested shot into a
-    /// `MAP_READ | COPY_DST` staging buffer. The copies share this
-    /// encoder's submission; the bytes land in [`Self::map_readbacks`].
-    fn readback(
-        &self,
-        source: &wgpu::Texture,
-        encoder: &mut wgpu::CommandEncoder,
-        jobs: &[(String, String)],
-    ) -> Vec<ShotReadback> {
-        let width = source.width();
-        let height = source.height();
-        let bytes_per_row = 4 * width;
-        let padded = align_up(bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        jobs.iter()
-            .map(|(label, snapshot_json)| {
-                let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("274 panel shot staging"),
-                    size: padded as u64 * height as u64,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                });
-                encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: source,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &buffer,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(padded),
-                            rows_per_image: Some(height),
-                        },
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                ShotReadback {
-                    label: label.clone(),
-                    snapshot_json: snapshot_json.clone(),
-                    buffer,
-                    width,
-                    height,
-                }
-            })
-            .collect()
-    }
-
-    /// Block on the staging copies (poll) and pack the padded rows into
-    /// RGBA8, normalized from the surface/offscreen format.
-    fn map_readbacks(&self, readbacks: Vec<ShotReadback>) -> Vec<ShotCapture> {
-        readbacks
-            .into_iter()
-            .filter_map(|rb| {
-                let padded = align_up(4 * rb.width, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-                let slice = rb.buffer.slice(..);
-                let mapped = Arc::new(AtomicBool::new(false));
-                let flag = Arc::clone(&mapped);
-                let label = rb.label.clone();
-                slice.map_async(wgpu::MapMode::Read, move |res| match res {
-                    Ok(()) => flag.store(true, Ordering::Release),
-                    Err(error) => eprintln!("[panel] shot {label}: map failed: {error}"),
-                });
-                if let Err(error) = self.device.poll(wgpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: None,
-                }) {
-                    eprintln!("[panel] shot {}: poll failed: {error}", rb.label);
-                }
-                // A failed map (device lost) drops the shot instead of
-                // panicking the loop, which recovers GPU state on render
-                // errors — the shot is a smoke artifact, not the run.
-                if !mapped.load(Ordering::Acquire) {
-                    eprintln!("[panel] shot {}: readback did not complete", rb.label);
-                    return None;
-                }
-                let data = slice.get_mapped_range();
-                let mut rgba = Vec::with_capacity((4 * rb.width * rb.height) as usize);
-                for row in 0..rb.height as usize {
-                    let start = row * padded as usize;
-                    rgba.extend_from_slice(&data[start..start + (4 * rb.width) as usize]);
-                }
-                drop(data);
-                rb.buffer.unmap();
-                Some(ShotCapture {
-                    label: rb.label,
-                    snapshot_json: rb.snapshot_json,
-                    width: rb.width,
-                    height: rb.height,
-                    rgba: to_rgba(&rgba, self.surface_desc.format),
-                })
-            })
-            .collect()
     }
 }
 
@@ -914,8 +777,209 @@ fn record_readback_outcomes(
     shots.done.extend(captures);
 }
 
+/// Rasterize the current UI into `target`, drain promoted `wanted` shots
+/// from that same texture, and optionally blit onto a presentable
+/// destination. Does not present. Occluded capture passes `present_dest =
+/// None` so a fresh frame can be read without a swapchain image.
+fn submit_ui_frame(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut imgui_wgpu::WgpuRenderer,
+    draw_data: &mut imgui::DrawData,
+    clear_color: wgpu::Color,
+    format: wgpu::TextureFormat,
+    target: &wgpu::Texture,
+    present_dest: Option<&wgpu::Texture>,
+    shots: &Mutex<ShotState>,
+) -> Result<(), PanelError> {
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Render Encoder"),
+    });
+
+    {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+
+        renderer.new_frame().map_err(PanelError::FramePrepare)?;
+        renderer
+            .render_draw_data(draw_data, &mut rpass)
+            .map_err(PanelError::Render)?;
+    }
+
+    // Whole-window shots: drain the UI body's promoted requests, copy the
+    // just-rendered frame into staging buffers (recorded in this encoder),
+    // and map the bytes back after submit. No file I/O — the loop side
+    // stays pure; `done` holds bytes for the panel.
+    let mut readbacks: Vec<ShotReadback> = Vec::new();
+    {
+        let mut guard = shots.lock().unwrap();
+        let wanted = mem::take(&mut guard.wanted);
+        if !wanted.is_empty() {
+            if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+                eprintln!("[panel] capture readback requested: {}", wanted.len());
+            }
+            readbacks = readback(device, target, &mut encoder, &wanted);
+        }
+    }
+    if let Some(dest) = present_dest {
+        blit_texture(&mut encoder, target, dest);
+    }
+    queue.submit(Some(encoder.finish()));
+    if !readbacks.is_empty() {
+        let attempted = readbacks
+            .iter()
+            .map(|readback| readback.label.clone())
+            .collect::<Vec<_>>();
+        let captures = map_readbacks(device, format, readbacks);
+        record_readback_outcomes(&mut shots.lock().unwrap(), &attempted, captures);
+    }
+    Ok(())
+}
+
+fn blit_texture(encoder: &mut wgpu::CommandEncoder, src: &wgpu::Texture, dest: &wgpu::Texture) {
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: src,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: dest,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: src.width(),
+            height: src.height(),
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// Record a `copy_texture_to_buffer` per requested shot into a
+/// `MAP_READ | COPY_DST` staging buffer. The copies share this encoder's
+/// submission; the bytes land in [`map_readbacks`].
+fn readback(
+    device: &wgpu::Device,
+    source: &wgpu::Texture,
+    encoder: &mut wgpu::CommandEncoder,
+    jobs: &[(String, String)],
+) -> Vec<ShotReadback> {
+    let width = source.width();
+    let height = source.height();
+    let bytes_per_row = 4 * width;
+    let padded = align_up(bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    jobs.iter()
+        .map(|(label, snapshot_json)| {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("274 panel shot staging"),
+                size: padded as u64 * height as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: source,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded),
+                        rows_per_image: Some(height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            ShotReadback {
+                label: label.clone(),
+                snapshot_json: snapshot_json.clone(),
+                buffer,
+                width,
+                height,
+            }
+        })
+        .collect()
+}
+
+/// Block on the staging copies (poll) and pack the padded rows into
+/// RGBA8, normalized from the surface/offscreen format.
+fn map_readbacks(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    readbacks: Vec<ShotReadback>,
+) -> Vec<ShotCapture> {
+    readbacks
+        .into_iter()
+        .filter_map(|rb| {
+            let padded = align_up(4 * rb.width, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let slice = rb.buffer.slice(..);
+            let mapped = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&mapped);
+            let label = rb.label.clone();
+            slice.map_async(wgpu::MapMode::Read, move |res| match res {
+                Ok(()) => flag.store(true, Ordering::Release),
+                Err(error) => eprintln!("[panel] shot {label}: map failed: {error}"),
+            });
+            if let Err(error) = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            }) {
+                eprintln!("[panel] shot {}: poll failed: {error}", rb.label);
+            }
+            // A failed map (device lost) drops the shot instead of
+            // panicking the loop, which recovers GPU state on render
+            // errors — the shot is a smoke artifact, not the run.
+            if !mapped.load(Ordering::Acquire) {
+                eprintln!("[panel] shot {}: readback did not complete", rb.label);
+                return None;
+            }
+            let data = slice.get_mapped_range();
+            let mut rgba = Vec::with_capacity((4 * rb.width * rb.height) as usize);
+            for row in 0..rb.height as usize {
+                let start = row * padded as usize;
+                rgba.extend_from_slice(&data[start..start + (4 * rb.width) as usize]);
+            }
+            drop(data);
+            rb.buffer.unmap();
+            Some(ShotCapture {
+                label: rb.label,
+                snapshot_json: rb.snapshot_json,
+                width: rb.width,
+                height: rb.height,
+                rgba: to_rgba(&rgba, format),
+            })
+        })
+        .collect()
+}
+
 /// The offscreen capture target for backends whose surface textures
-/// cannot be copied: same format as the surface so the present blit
+/// cannot be copied, and for a one-off occluded capture when the surface
+/// itself is COPY_SRC. Same format as the surface so a present blit
 /// (`copy_texture_to_texture`) is a legal copy. Captured bytes are
 /// normalized to RGBA in [`to_rgba`].
 fn make_offscreen(device: &wgpu::Device, desc: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
@@ -1540,6 +1604,300 @@ mod tests {
         assert_eq!(
             deferred_readback_message(&shots, "occluded").as_deref(),
             Some("[panel] capture readback deferred by surface occluded: still-requested")
+        );
+    }
+
+    const OCCLUDED_TEST_PX: u32 = 64;
+    const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+    const RED: [u8; 4] = [255, 0, 0, 255];
+    const GREEN: [u8; 4] = [0, 255, 0, 255];
+    const GREEN_CLEAR: wgpu::Color = wgpu::Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
+
+    fn test_texture(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("274 panel occluded capture test"),
+            size: wgpu::Extent3d {
+                width: OCCLUDED_TEST_PX,
+                height: OCCLUDED_TEST_PX,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    }
+
+    fn fill_solid(queue: &wgpu::Queue, texture: &wgpu::Texture, px: [u8; 4]) {
+        let width = texture.width();
+        let height = texture.height();
+        let mut data = vec![0u8; (width * height * 4) as usize];
+        for chunk in data.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&px);
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    fn read_texture_rgba(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        format: wgpu::TextureFormat,
+    ) -> Vec<u8> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("274 panel occluded capture probe"),
+        });
+        let copies = readback(
+            device,
+            texture,
+            &mut encoder,
+            &[("probe".into(), String::new())],
+        );
+        queue.submit(Some(encoder.finish()));
+        map_readbacks(device, format, copies)
+            .into_iter()
+            .next()
+            .expect("probe readback")
+            .rgba
+    }
+
+    fn headless_capture_renderer(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Option<(imgui::Context, imgui_wgpu::WgpuRenderer)> {
+        let mut context = imgui::Context::create();
+        context
+            .io_mut()
+            .set_display_size([OCCLUDED_TEST_PX as f32, OCCLUDED_TEST_PX as f32]);
+        let renderer = imgui_wgpu::WgpuRenderer::new(
+            imgui_wgpu::WgpuInitInfo::new(device.clone(), queue.clone(), format),
+            &mut context,
+        )
+        .ok()?;
+        Some((context, renderer))
+    }
+
+    /// Occluded / no-present acquisition with a promoted ready job must
+    /// rasterize a fresh frame into the offscreen target, complete the
+    /// capture, and leave a present probe untouched.
+    #[test]
+    fn occluded_ready_capture_renders_fresh_pixels_without_present() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
+        else {
+            return;
+        };
+
+        let target = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        let present_probe = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+        );
+        fill_solid(&queue, &target, MAGENTA);
+        fill_solid(&queue, &present_probe, RED);
+
+        let shots = Mutex::new(ShotState::default());
+        {
+            let mut shots = shots.lock().unwrap();
+            shots.enqueue("flax_aio".into(), "{\"scene\":2}".into());
+            assert_eq!(shots.promote_requests(), 1);
+        }
+
+        let _ui = context.frame();
+        let draw_data = context.render();
+        submit_ui_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            format,
+            &target,
+            None,
+            &shots,
+        )
+        .expect("occluded capture submit");
+
+        let shots = shots.lock().unwrap();
+        assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
+        assert_eq!(shots.done.len(), 1);
+        let capture = &shots.done[0];
+        assert_eq!(capture.label, "flax_aio");
+        assert_eq!(capture.snapshot_json, "{\"scene\":2}");
+        assert_eq!(capture.width, OCCLUDED_TEST_PX);
+        assert_eq!(capture.height, OCCLUDED_TEST_PX);
+        assert_eq!(
+            &capture.rgba[0..4],
+            &GREEN,
+            "readback must be the newly rendered clear, not the magenta prefill"
+        );
+        assert!(
+            capture.rgba.chunks_exact(4).all(|px| px == GREEN),
+            "every pixel must come from this submit, not a prior framebuffer"
+        );
+
+        let probe = read_texture_rgba(&device, &queue, &present_probe, format);
+        assert_eq!(
+            &probe[0..4],
+            &RED,
+            "occluded capture must not blit onto a present destination"
+        );
+    }
+
+    /// No promoted wanted job: the render/readback helper must not invent
+    /// a capture from still-queued requests. AppWindow skips this helper
+    /// entirely when occluded with empty `wanted`.
+    #[test]
+    fn occluded_submit_skips_capture_without_promoted_wanted() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
+        else {
+            return;
+        };
+
+        let target = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        fill_solid(&queue, &target, MAGENTA);
+
+        let shots = Mutex::new(ShotState::default());
+        shots.lock().unwrap().enqueue_for_actor(
+            "flax_aio".into(),
+            "{\"scene\":1}".into(),
+            "bot".into(),
+        );
+
+        let _ui = context.frame();
+        let draw_data = context.render();
+        submit_ui_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            format,
+            &target,
+            None,
+            &shots,
+        )
+        .expect("occluded skip submit");
+
+        let shots = shots.lock().unwrap();
+        assert_eq!(shots.status("flax_aio"), ShotStatus::Requested);
+        assert!(shots.wanted.is_empty());
+        assert!(shots.done.is_empty());
+        assert_eq!(shots.requests.len(), 1);
+    }
+
+    /// Visible offscreen present path still blits the freshly rendered
+    /// frame and completes a promoted capture from that same target.
+    #[test]
+    fn visible_offscreen_path_blits_and_captures_fresh_pixels() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let Some((mut context, mut renderer)) = headless_capture_renderer(&device, &queue, format)
+        else {
+            return;
+        };
+
+        let target = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        let present_dest = test_texture(
+            &device,
+            format,
+            wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+        );
+        fill_solid(&queue, &target, MAGENTA);
+        fill_solid(&queue, &present_dest, RED);
+
+        let shots = Mutex::new(ShotState::default());
+        {
+            let mut shots = shots.lock().unwrap();
+            shots.enqueue("flax_aio".into(), "{\"scene\":2}".into());
+            assert_eq!(shots.promote_requests(), 1);
+        }
+
+        let _ui = context.frame();
+        let draw_data = context.render();
+        submit_ui_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_data,
+            GREEN_CLEAR,
+            format,
+            &target,
+            Some(&present_dest),
+            &shots,
+        )
+        .expect("visible present submit");
+
+        let shots = shots.lock().unwrap();
+        assert_eq!(shots.status("flax_aio"), ShotStatus::WritePending);
+        assert_eq!(&shots.done[0].rgba[0..4], &GREEN);
+
+        let presented = read_texture_rgba(&device, &queue, &present_dest, format);
+        assert_eq!(
+            &presented[0..4],
+            &GREEN,
+            "visible path must blit the just-rendered offscreen onto the present dest"
         );
     }
 
