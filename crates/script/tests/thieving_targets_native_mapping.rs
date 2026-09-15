@@ -26,12 +26,14 @@ function outcome(result) {
     return { target: label(result.target), blocked: label(result.blocked) };
 }
 
-// The previous body, kept verbatim as the parity oracle.
-function reference(candidates, reachable) {
-    for (const c of candidates) {
+// The previous body, kept verbatim as the parity oracle. The parameter keeps
+// the moved function's name, so an engine error that quotes the iterable reads
+// identically on both sides.
+function reference(candidatesNearestFirst, reachable) {
+    for (const c of candidatesNearestFirst) {
         if (reachable(c)) return { target: c, blocked: null };
     }
-    return { target: null, blocked: candidates[0] ?? null };
+    return { target: null, blocked: candidatesNearestFirst[0] ?? null };
 }
 
 function parity(make, probe) {
@@ -212,6 +214,108 @@ globalThis.__close = {
     identity: closedHit.target === E.a,
 };
 
+// The engine's own iterator protocol is what the moved scan has to keep: the
+// caller's `next` is read once when its iterator is acquired and called once
+// per step, and a primitive `next()` result, a missing or non-callable
+// `Symbol.iterator`, a non-callable `return` and a throwing close are the
+// engine's errors, not shim ones.
+function tracedIterator(values, trace) {
+    let at = 0;
+    const iterator = {
+        get next() {
+            trace.push('read:' + at);
+            return function () {
+                trace.push('call:' + at);
+                if (at >= values.length) return { done: true, value: undefined };
+                const value = values[at];
+                at += 1;
+                return { done: false, value };
+            };
+        },
+        [Symbol.iterator]() { return iterator; },
+    };
+    return iterator;
+}
+
+function swappedNextIterator(values, trace) {
+    let reads = 0;
+    const iterator = {
+        get next() {
+            reads += 1;
+            trace.push('read:' + reads);
+            if (reads > 1) {
+                return function () {
+                    trace.push('call:swapped');
+                    return { done: true, value: undefined };
+                };
+            }
+            let at = 0;
+            return function () {
+                trace.push('call:' + at);
+                if (at >= values.length) return { done: true, value: undefined };
+                const value = values[at];
+                at += 1;
+                return { done: false, value };
+            };
+        },
+        [Symbol.iterator]() { return iterator; },
+    };
+    return iterator;
+}
+
+// Runs the same iterable shape through the moved export and the oracle, with
+// each side building its own iterator, and reports both runs including the
+// callback sequence and any thrown error name/message.
+function protocol(make, probe) {
+    const runs = {};
+    for (const [name, impl] of [['native', chooseTarget], ['reference', reference]]) {
+        const trace = [];
+        const calls = [];
+        try {
+            const result = impl(make(trace), (c) => {
+                calls.push(label(c));
+                return probe(c);
+            });
+            runs[name] = { ...outcome(result), trace, calls };
+        } catch (e) {
+            runs[name] = {
+                error: e && e.constructor ? e.constructor.name : typeof e,
+                message: String(e && e.message ? e.message : e),
+                trace,
+                calls,
+            };
+        }
+    }
+    return runs;
+}
+
+globalThis.__protocol = {
+    getterNext: protocol((trace) => tracedIterator([E.a, E.b, E.c], trace), (c) => c === E.b),
+    swappedNext: protocol((trace) => swappedNextIterator([E.a, E.b, E.c], trace), (c) => c === E.b),
+    primitiveNext: protocol(
+        () => ({ next: () => 7, [Symbol.iterator]() { return this; } }),
+        () => true,
+    ),
+    missingIterator: protocol(() => ({ 0: E.a, length: 1 }), () => true),
+    primitiveIterator: protocol(() => ({ [Symbol.iterator]: () => 7 }), () => true),
+    nonCallableReturn: protocol(
+        () => ({
+            next: () => ({ done: false, value: E.a }),
+            return: 5,
+            [Symbol.iterator]() { return this; },
+        }),
+        () => true,
+    ),
+    throwingReturn: protocol(
+        () => ({
+            next: () => ({ done: false, value: E.a }),
+            return() { throw new Error('close boom'); },
+            [Symbol.iterator]() { return this; },
+        }),
+        () => true,
+    ),
+};
+
 // The direct wire contract of `__rs2b0t_target_step`.
 const step = globalThis.rustyscript.functions.__rs2b0t_target_step;
 globalThis.__wire = {
@@ -366,6 +470,66 @@ fn callback_errors_receiver_order_reentrancy_and_close_are_preserved() {
         iso.probe("__close").unwrap(),
         serde_json::json!({ "afterHit": 1, "afterThrow": 2, "identity": true }),
         "the iterator is closed on a hit and on a throwing callback"
+    );
+    iso.join();
+}
+
+#[test]
+fn the_callers_iterator_protocol_and_errors_are_exactly_the_previous_body() {
+    let iso = spawn();
+    let protocol = iso.probe("__protocol").unwrap();
+    for case in [
+        "getterNext",
+        "swappedNext",
+        "primitiveNext",
+        "missingIterator",
+        "primitiveIterator",
+        "nonCallableReturn",
+        "throwingReturn",
+    ] {
+        assert_eq!(
+            protocol[case]["native"], protocol[case]["reference"],
+            "{case} must keep the previous body's iterator protocol: {protocol:?}"
+        );
+    }
+    assert_eq!(
+        protocol["getterNext"]["native"]["trace"],
+        serde_json::json!(["read:0", "call:0", "call:1"]),
+        "`next` is read once at acquisition and called once per step: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["getterNext"]["native"]["calls"],
+        serde_json::json!(["a", "b"]),
+        "the callback order is unchanged: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["swappedNext"]["native"]["target"], "b",
+        "a `next` re-read mid-scan must not replace the acquired one: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["primitiveNext"]["native"]["error"], "TypeError",
+        "a primitive `next()` result is the engine's TypeError: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["primitiveNext"]["native"]["calls"],
+        serde_json::json!([]),
+        "a primitive `next()` result never reaches `reachable`: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["missingIterator"]["native"]["error"], "TypeError",
+        "a missing `Symbol.iterator` is the engine's TypeError: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["primitiveIterator"]["native"]["error"], "TypeError",
+        "a primitive `Symbol.iterator` result is the engine's TypeError: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["nonCallableReturn"]["native"]["error"], "TypeError",
+        "a non-callable `iterator.return` on the hit is the engine's TypeError: {protocol:?}"
+    );
+    assert_eq!(
+        protocol["throwingReturn"]["native"]["message"], "close boom",
+        "a throwing close still propagates instead of the hit: {protocol:?}"
     );
     iso.join();
 }

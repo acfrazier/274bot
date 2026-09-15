@@ -812,12 +812,19 @@ globalThis.__nonFinite = {
     })(),
 };
 
-// The previous body, kept verbatim as the parity oracle.
+// The previous body, kept verbatim as the parity oracle, over whichever posted
+// list the case installed on the host content.
+function postedPlots() {
+    const content = globalThis.__rs2b0t_host.content;
+    return (content && content.fire_plots) || [];
+}
+
 function referencePlot(origin, half) {
     const o = origin;
     const x = o.x;
     const z = o.z;
     const level = o.level ?? 0;
+    const plots = postedPlots();
     for (const p of plots) {
         const lv = (p.bank && p.bank.level) ?? 0;
         if (lv !== level) {
@@ -854,16 +861,144 @@ globalThis.__parity = [
     });
 }).flat();
 
+// The caller's posted list is iterated the way the previous body iterated it:
+// a non-array iterable, a customised array `Symbol.iterator`, the close on the
+// hitting return and the row/iterator errors all keep the frozen order.
+function withPlots(value, fn) {
+    const content = globalThis.__rs2b0t_host.content;
+    const saved = content.fire_plots;
+    content.fire_plots = value;
+    try {
+        return fn();
+    } finally {
+        content.fire_plots = saved;
+    }
+}
+
+const ORIGIN = { x: 3253, z: 3420, level: 0 };
+
+function equal(a, b) {
+    if (typeof a === 'string' || typeof b === 'string') return a === b;
+    return same(a, b);
+}
+
+// Each side scans a fresh posted list, built by `make`, installed on the host
+// content for the call.
+function scanned(make) {
+    const run = (impl) => withPlots(make(), () => {
+        try {
+            return view(impl(ORIGIN, 4));
+        } catch (e) {
+            return String(e && e.message ? e.message : e);
+        }
+    });
+    const native = run(localFirePlot);
+    const reference = run(referencePlot);
+    return { native, reference, parity: equal(native, reference) };
+}
+
+function plotRow(name, bankX, level) {
+    return { name, bank: { x: bankX, z: 3420, level }, x0: 3250, x1: 3260, z0: 3410, z1: 3430 };
+}
+
+globalThis.__iterator = {
+    plainArray: scanned(() => [plotRow('First', 3253, 0)]),
+    nonArrayIterable: scanned(() => new Set([plotRow('First', 3253, 0)])),
+    generatorList: scanned(function* () { yield plotRow('First', 3253, 0); }),
+    customArrayIterator: scanned(() => {
+        const rows = [plotRow('First', 3253, 0)];
+        const arr = [];
+        arr[Symbol.iterator] = function* () { yield rows[0]; };
+        return arr;
+    }),
+    reorderedArray: scanned(() => {
+        const rows = [plotRow('First', 3253, 0), plotRow('Second', 2710, 0)];
+        rows[Symbol.iterator] = function* () { yield rows[1]; yield rows[0]; };
+        return rows;
+    }),
+    nonIterable: scanned(() => 5),
+};
+
+// The caller's iterator is closed by the return that leaves the scan, its own
+// error survives a throwing close, and a throwing close wins over the hit.
+function tracedScan(makeIterator) {
+    const run = (impl) => {
+        const log = [];
+        const list = { [Symbol.iterator]: () => makeIterator(log) };
+        const value = withPlots(list, () => {
+            try {
+                return view(impl(ORIGIN, 4));
+            } catch (e) {
+                return String(e && e.message ? e.message : e);
+            }
+        });
+        return { value, log };
+    };
+    const native = run(localFirePlot);
+    const reference = run(referencePlot);
+    return {
+        native: native.value,
+        reference: reference.value,
+        parity: equal(native.value, reference.value),
+        nativeLog: native.log,
+        logsMatch: JSON.stringify(native.log) === JSON.stringify(reference.log),
+    };
+}
+
+function hitRow() {
+    return plotRow('First', 3253, 0);
+}
+
+globalThis.__close = {
+    onHit: tracedScan((log) => {
+        const rows = [hitRow()];
+        let at = 0;
+        return {
+            next: () => (at < rows.length
+                ? { done: false, value: rows[at++] }
+                : { done: true, value: undefined }),
+            return: () => { log.push('close'); return {}; },
+        };
+    }),
+    onRowThrow: tracedScan((log) => {
+        let at = 0;
+        return {
+            next: () => (at++ === 0
+                ? { done: false, value: { get bank() { throw new Error('row boom'); } } }
+                : { done: true, value: undefined }),
+            return: () => { log.push('close'); return {}; },
+        };
+    }),
+    rowThrowBeatsCloseThrow: tracedScan((log) => {
+        let at = 0;
+        return {
+            next: () => (at++ === 0
+                ? { done: false, value: { get bank() { throw new Error('row boom'); } } }
+                : { done: true, value: undefined }),
+            return: () => { log.push('close'); throw new Error('close boom'); },
+        };
+    }),
+    closeThrowBeatsHit: tracedScan((log) => {
+        const rows = [hitRow()];
+        let at = 0;
+        return {
+            next: () => (at < rows.length
+                ? { done: false, value: rows[at++] }
+                : { done: true, value: undefined }),
+            return: () => { log.push('close'); throw new Error('close boom'); },
+        };
+    }),
+};
+
 // The direct wire contract of the `local-plot` op.
 const fire = globalThis.rustyscript.functions.__rs2b0t_fire;
 globalThis.__wire = {
-    start: fire({ op: 'local-plot' }),
-    absent: fire({ op: 'local-plot', index: 0, present: false }),
-    levelMiss: fire({ op: 'local-plot', index: 0, present: true, level_ok: false }),
-    levelHit: fire({ op: 'local-plot', index: 0, present: true, level_ok: true }),
-    contained: fire({ op: 'local-plot', index: 1, contained: true }),
-    missed: fire({ op: 'local-plot', index: 1, contained: false }),
-    noFact: fire({ op: 'local-plot', index: 1 }),
+    levelMiss: fire({ op: 'local-plot', level_ok: false }),
+    levelHit: fire({ op: 'local-plot', level_ok: true }),
+    contained: fire({ op: 'local-plot', contained: true }),
+    missed: fire({ op: 'local-plot', contained: false }),
+    exhausted: fire({ op: 'local-plot', exhausted: true }),
+    noFact: fire({ op: 'local-plot' }),
 };
 
 export default class T extends LoopingBot {
@@ -997,6 +1132,83 @@ fn local_fire_plot_guards_invalid_origins_without_json_coercion() {
 }
 
 #[test]
+fn local_fire_plot_scans_the_callers_posted_list_and_closes_it() {
+    let iso = spawn(LOCAL_PLOT);
+    let iterator = iso.probe("__iterator").unwrap();
+    for case in [
+        "plainArray",
+        "nonArrayIterable",
+        "generatorList",
+        "customArrayIterator",
+        "reorderedArray",
+        "nonIterable",
+    ] {
+        assert_eq!(
+            iterator[case]["parity"], true,
+            "{case} must scan the posted list the previous body scanned: {iterator:?}"
+        );
+    }
+    assert_eq!(
+        iterator["nonArrayIterable"]["native"]["bank"]["x"], 3253,
+        "a non-array posted iterable is scanned, not skipped: {iterator:?}"
+    );
+    assert_eq!(
+        iterator["generatorList"]["native"]["bank"]["x"], 3253,
+        "a generator posted list is scanned, not skipped: {iterator:?}"
+    );
+    assert_eq!(
+        iterator["customArrayIterator"]["native"]["bank"]["x"], 3253,
+        "a customised array `Symbol.iterator` is what is walked: {iterator:?}"
+    );
+    assert_eq!(
+        iterator["reorderedArray"]["native"]["bank"]["x"], 2710,
+        "the caller's own iteration order decides the hit: {iterator:?}"
+    );
+    assert!(
+        iterator["nonIterable"]["native"].is_string(),
+        "a non-iterable posted value throws instead of falling back: {iterator:?}"
+    );
+
+    let close = iso.probe("__close").unwrap();
+    for case in [
+        "onHit",
+        "onRowThrow",
+        "rowThrowBeatsCloseThrow",
+        "closeThrowBeatsHit",
+    ] {
+        assert_eq!(
+            close[case]["parity"], true,
+            "{case} must match the previous body: {close:?}"
+        );
+        assert_eq!(
+            close[case]["logsMatch"], true,
+            "{case} must close the caller's iterator as before: {close:?}"
+        );
+    }
+    assert_eq!(
+        close["onHit"]["nativeLog"],
+        serde_json::json!(["close"]),
+        "the hitting return closes the caller's iterator: {close:?}"
+    );
+    assert_eq!(close["onHit"]["native"]["bank"]["x"], 3253);
+    assert_eq!(close["onRowThrow"]["native"], "row boom");
+    assert_eq!(
+        close["onRowThrow"]["nativeLog"],
+        serde_json::json!(["close"]),
+        "a row error still closes the caller's iterator: {close:?}"
+    );
+    assert_eq!(
+        close["rowThrowBeatsCloseThrow"]["native"], "row boom",
+        "the row error survives a throwing close: {close:?}"
+    );
+    assert_eq!(
+        close["closeThrowBeatsHit"]["native"], "close boom",
+        "a throwing close propagates instead of the hit: {close:?}"
+    );
+    iso.join();
+}
+
+#[test]
 fn local_fire_plot_matches_the_previous_scan_body() {
     let iso = spawn(LOCAL_PLOT);
     let parity = iso.probe("__parity").unwrap();
@@ -1012,12 +1224,11 @@ fn local_fire_plot_matches_the_previous_scan_body() {
     assert_eq!(
         iso.probe("__wire").unwrap(),
         serde_json::json!({
-            "start": { "kind": "plot", "index": 0 },
-            "absent": { "kind": "fallback" },
-            "levelMiss": { "kind": "plot", "index": 1 },
-            "levelHit": { "kind": "contains", "index": 0 },
-            "contained": { "kind": "hit", "index": 1 },
-            "missed": { "kind": "plot", "index": 2 },
+            "levelMiss": { "kind": "plot" },
+            "levelHit": { "kind": "contains" },
+            "contained": { "kind": "hit" },
+            "missed": { "kind": "plot" },
+            "exhausted": { "kind": "fallback" },
             "noFact": { "kind": "notImpl", "reason": "missing plot fact" },
         }),
         "the local-plot steps answer the shim without holding state"

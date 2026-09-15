@@ -34,11 +34,15 @@ export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
  * First posted fire plot whose bank level matches `origin` and whose inclusive
  * AABB contains it, else a half-tile box around `origin`.
  *
- * The scan is native (`__rs2b0t_fire` `local-plot`): it names the posted index
- * to read, gates the level before the containment and stops at the first hit.
- * The posted row, the two scalar facts (`lv === level` and the inclusive AABB)
- * and the fallback box stay here at the original expressions, so `typeof`,
- * `?? 0`, NaN/Infinity and a mutated posted row keep their JS coercion.
+ * The posted list is walked by the engine's own `for...of`, so a non-array
+ * iterable, a customised array `Symbol.iterator`, the live row read, the close
+ * on the returning hit and a throwing row keep the frozen `for...of` order.
+ * The native `local-plot` step owns the gates: it asks for the level
+ * comparison first and only then for the inclusive AABB, names the first
+ * containment as the hit and authorises the fallback box only once the
+ * caller's list ends. The posted row, the two scalar comparisons, `?? 0`,
+ * `typeof`, NaN/Infinity coercion and the `Tile`/box arithmetic stay here at
+ * the original expressions.
  */
 export function localFirePlot(origin, half = 4) {
     const o = origin || snap().here || {};
@@ -49,63 +53,36 @@ export function localFirePlot(origin, half = 4) {
         throw notImpl('localFirePlot');
     }
     const plots = (host().content && host().content.fire_plots) || [];
-    let index = 0;
-    let row = null;
-    let rowLevel = 0;
-    let report = 'start';
-    let levelOk = false;
-    let contained = false;
-    for (;;) {
-        const payload = { op: 'local-plot' };
-        if (report === 'absent') {
-            payload.index = index;
-            payload.present = false;
-        } else if (report === 'level') {
-            payload.index = index;
-            payload.present = true;
-            payload.level_ok = levelOk;
-        } else if (report === 'contains') {
-            payload.index = index;
-            payload.contained = contained;
-        }
-        const step = callFire(payload, 'Firemaking.localFirePlot');
-        if (step.kind === 'fallback') {
-            const h = Math.max(0, Math.floor(Number(half) || 4));
-            return {
-                bank: new Tile(x, z, level),
-                x0: x - h,
-                x1: x + h,
-                z0: z - h,
-                z1: z + h,
-            };
-        }
-        if (step.kind === 'hit') {
-            return {
-                bank: new Tile(row.bank.x, row.bank.z, rowLevel),
-                x0: row.x0,
-                x1: row.x1,
-                z0: row.z0,
-                z1: row.z1,
-            };
-        }
-        if (step.kind === 'contains') {
-            contained = x >= row.x0 && x <= row.x1 && z >= row.z0 && z <= row.z1;
-            report = 'contains';
+    for (const p of plots) {
+        const lv = (p.bank && p.bank.level) ?? 0;
+        const gate = callFire({ op: 'local-plot', level_ok: lv === level }, 'Firemaking.localFirePlot');
+        if (gate.kind === 'contains') {
+            const contained = x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1;
+            const verdict = callFire({ op: 'local-plot', contained }, 'Firemaking.localFirePlot');
+            if (verdict.kind === 'hit') {
+                return {
+                    bank: new Tile(p.bank.x, p.bank.z, lv),
+                    x0: p.x0,
+                    x1: p.x1,
+                    z0: p.z0,
+                    z1: p.z1,
+                };
+            }
+            if (verdict.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', verdict.reason);
             continue;
         }
-        if (step.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', step.reason);
-        index = step.index;
-        row = null;
-        rowLevel = 0;
-        if (index < plots.length) {
-            row = plots[index];
-            rowLevel = (row.bank && row.bank.level) ?? 0;
-            levelOk = rowLevel === level;
-            report = 'level';
-        } else {
-            report = 'absent';
-        }
+        if (gate.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', gate.reason);
     }
+    const end = callFire({ op: 'local-plot', exhausted: true }, 'Firemaking.localFirePlot');
+    if (end.kind !== 'fallback') throw notImpl('Firemaking.localFirePlot', end.reason);
+    const h = Math.max(0, Math.floor(Number(half) || 4));
+    return {
+        bank: new Tile(x, z, level),
+        x0: x - h,
+        x1: x + h,
+        z0: z - h,
+        z1: z + h,
+    };
 }
 
 export const LOG_LEVELS = {

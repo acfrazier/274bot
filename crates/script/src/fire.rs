@@ -881,39 +881,25 @@ fn in_fire_plot(input: &Value) -> Value {
 /// and whose inclusive AABB contains it, else the `±half` box around the
 /// origin.
 ///
-/// The scan itself is native: this module names the plot index to read, gates
-/// the level before the containment, stops at the first containing plot, and
-/// only falls back once the caller's posted list is exhausted. The shim reads
-/// `content.fire_plots[index]` live and reports the two scalar facts the frozen
-/// expressions produce (`((p.bank && p.bank.level) ?? 0) === level` and
-/// `x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1`). No coordinate, level or
-/// posted row crosses the bridge, so `typeof`, `?? 0`, NaN/Infinity and a
-/// mutated posted row keep their existing JS coercion; the fallback box
-/// arithmetic and the `Tile` construction also stay in the shim.
+/// The caller's list is walked by its own iterator in JS (the frozen
+/// `for...of`), so this step decides what to do with the row that iterator just
+/// produced: `{level_ok}` gates the level comparison before the containment is
+/// asked for, `{contained}` names the first hit, and the `{exhausted}` report
+/// authorises the fallback box only after the caller's list ends. No
+/// coordinate, level or posted row crosses the bridge, so `typeof`, `?? 0`,
+/// NaN/Infinity and a mutated posted row keep their existing JS coercion; the
+/// fallback box arithmetic and the `Tile` construction also stay in the shim.
 fn local_plot_step(input: &Value) -> Value {
-    let Some(index) = input.get("index").and_then(Value::as_i64) else {
-        return json!({ "kind": "plot", "index": 0 });
-    };
     if let Some(contained) = input.get("contained").and_then(Value::as_bool) {
-        return if contained {
-            json!({ "kind": "hit", "index": index })
-        } else {
-            json!({ "kind": "plot", "index": index + 1 })
-        };
+        return json!({ "kind": if contained { "hit" } else { "plot" } });
     }
-    match input.get("present").and_then(Value::as_bool) {
-        Some(false) => json!({ "kind": "fallback" }),
-        Some(true)
-            if input
-                .get("level_ok")
-                .and_then(Value::as_bool)
-                .unwrap_or(false) =>
-        {
-            json!({ "kind": "contains", "index": index })
-        }
-        Some(true) => json!({ "kind": "plot", "index": index + 1 }),
-        None => json!({ "kind": "notImpl", "reason": "missing plot fact" }),
+    if let Some(level_ok) = input.get("level_ok").and_then(Value::as_bool) {
+        return json!({ "kind": if level_ok { "contains" } else { "plot" } });
     }
+    if input.get("exhausted").and_then(Value::as_bool) == Some(true) {
+        return json!({ "kind": "fallback" });
+    }
+    json!({ "kind": "notImpl", "reason": "missing plot fact" })
 }
 
 fn burn_lane_want(input: &Value) -> Value {
@@ -1458,40 +1444,36 @@ mod tests {
     }
 
     #[test]
-    fn local_plot_starts_at_the_first_posted_plot() {
-        let start = dispatch(&json!({ "op": "local-plot" }));
-        assert_eq!(start, json!({ "kind": "plot", "index": 0 }));
+    fn local_plot_steps_are_routed_through_dispatch() {
+        let step = json!({ "op": "local-plot", "level_ok": true });
         assert_eq!(
-            start,
-            local_plot_step(&json!({ "op": "local-plot" })),
+            dispatch(&step),
+            json!({ "kind": "contains" }),
             "the op is routed through dispatch"
         );
+        assert_eq!(dispatch(&step), local_plot_step(&step));
     }
 
     #[test]
     fn local_plot_gates_level_before_containment_and_stops_at_the_hit() {
         assert_eq!(
-            local_plot_step(&json!({
-                "op": "local-plot", "index": 0, "present": true, "level_ok": false,
-            })),
-            json!({ "kind": "plot", "index": 1 }),
+            local_plot_step(&json!({ "op": "local-plot", "level_ok": false })),
+            json!({ "kind": "plot" }),
             "a level mismatch advances without asking for containment"
         );
         assert_eq!(
-            local_plot_step(&json!({
-                "op": "local-plot", "index": 0, "present": true, "level_ok": true,
-            })),
-            json!({ "kind": "contains", "index": 0 }),
+            local_plot_step(&json!({ "op": "local-plot", "level_ok": true })),
+            json!({ "kind": "contains" }),
             "a matching level asks for the inclusive AABB fact"
         );
         assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "index": 2, "contained": true })),
-            json!({ "kind": "hit", "index": 2 }),
+            local_plot_step(&json!({ "op": "local-plot", "contained": true })),
+            json!({ "kind": "hit" }),
             "the first containing posted plot is the hit"
         );
         assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "index": 2, "contained": false })),
-            json!({ "kind": "plot", "index": 3 }),
+            local_plot_step(&json!({ "op": "local-plot", "contained": false })),
+            json!({ "kind": "plot" }),
             "an inclusive AABB miss advances to the next posted plot"
         );
     }
@@ -1499,24 +1481,26 @@ mod tests {
     #[test]
     fn local_plot_falls_back_only_when_the_posted_list_is_exhausted() {
         assert_eq!(
-            local_plot_step(&json!({
-                "op": "local-plot", "index": 4, "present": false,
-            })),
+            local_plot_step(&json!({ "op": "local-plot", "exhausted": true })),
             json!({ "kind": "fallback" }),
-            "an exhausted posted list is the null-target fallback path"
+            "the caller's exhausted list is the only fallback path"
         );
         assert_eq!(
             local_plot_step(&json!({
-                "op": "local-plot", "index": 0, "present": true, "level_ok": true,
-                "contained": false,
+                "op": "local-plot", "level_ok": true, "contained": false,
             })),
-            json!({ "kind": "plot", "index": 1 }),
-            "containment outranks a matching level"
+            json!({ "kind": "plot" }),
+            "containment outranks the level fact"
         );
         assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "index": 1 })),
+            local_plot_step(&json!({ "op": "local-plot" })),
             json!({ "kind": "notImpl", "reason": "missing plot fact" }),
             "a step without a plot fact is explicit, never a guessed hit"
+        );
+        assert_eq!(
+            local_plot_step(&json!({ "op": "local-plot", "exhausted": false })),
+            json!({ "kind": "notImpl", "reason": "missing plot fact" }),
+            "only a true exhaustion report authorises the fallback"
         );
     }
 }
