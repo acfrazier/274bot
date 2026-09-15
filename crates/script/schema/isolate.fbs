@@ -334,8 +334,29 @@ table PaintButton {
   label: string;
 }
 
-// One recorded Canvas op (isolate→host). `kind` 0 = fillRect, 1 = fillText.
-// Optional at the end of Paint so older buffers decode as no canvas.
+// One path command. `kind` 0 move, 1 line, 2 quad, 3 cubic, 4 close.
+table CanvasSeg {
+  kind: byte;
+  x: float;
+  y: float;
+  c1x: float;
+  c1y: float;
+  c2x: float;
+  c2y: float;
+}
+
+table GradStop {
+  offset: float;
+  color: uint;
+}
+
+table ClipPath {
+  segs: [CanvasSeg];
+}
+
+// One recorded Canvas op (isolate→host). `kind` 0 = fillRect, 1 = fillText,
+// 2 = fillPath, 3 = strokePath. Additive fields after `mono` are omitted on
+// old buffers and default to no clip/shadow/gradient (fillRect/fillText).
 table CanvasOp {
   kind: byte;
   x: int;
@@ -346,6 +367,24 @@ table CanvasOp {
   text: string;
   font_px: ushort;
   mono: bool;
+  segs: [CanvasSeg];
+  clips: [ClipPath];
+  stops: [GradStop];
+  gx0: float;
+  gy0: float;
+  gx1: float;
+  gy1: float;
+  r0: float;
+  r1: float;
+  grad_kind: byte; // 0 solid, 1 linear, 2 radial
+  line_width: float;
+  line_join: byte;
+  shadow_color: uint;
+  shadow_blur: float;
+  shadow_x: float;
+  shadow_y: float;
+  align: byte;
+  baseline: byte;
 }
 
 // One recorded paint frame (`Paint.begin` … `end()`), isolate→host.

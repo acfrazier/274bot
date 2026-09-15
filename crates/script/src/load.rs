@@ -2370,6 +2370,12 @@ mod isolate {
         })
     }
 
+    fn json_f64(value: Option<&serde_json::Value>) -> f64 {
+        value
+            .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)))
+            .unwrap_or(0.0)
+    }
+
     fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
         let object = value.and_then(serde_json::Value::as_object)?;
         Some(api::WorldTile {
@@ -2774,14 +2780,183 @@ mod isolate {
                     .first()
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
-                let value = match prop {
-                    "font" => crate::canvas::font(),
-                    "fillStyle" => crate::canvas::fill_style(),
-                    _ => String::new(),
-                };
+                let value = crate::canvas::get_style(prop);
                 Ok(serde_json::Value::String(value))
             })
             .map_err(|e| format!("register canvas get: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_set_num", |args: &[serde_json::Value]| {
+                let prop = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                crate::canvas::set_number(prop, json_f64(args.get(1)));
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas set num: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_get_num", |args: &[serde_json::Value]| {
+                let prop = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                Ok(serde_json::json!(crate::canvas::get_number(prop)))
+            })
+            .map_err(|e| format!("register canvas get num: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_fill_gradient_id",
+                |_args: &[serde_json::Value]| {
+                    Ok(serde_json::json!(crate::canvas::fill_gradient_id()))
+                },
+            )
+            .map_err(|e| format!("register canvas fill gradient id: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_set_fill_gradient",
+                |args: &[serde_json::Value]| {
+                    let id = json_f64(args.first()) as u32;
+                    crate::canvas::set_fill_gradient(id);
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas set fill gradient: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_save", |_args: &[serde_json::Value]| {
+                crate::canvas::save();
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas save: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_restore",
+                |_args: &[serde_json::Value]| {
+                    crate::canvas::restore();
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas restore: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_begin_path",
+                |_args: &[serde_json::Value]| {
+                    crate::canvas::begin_path();
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas beginPath: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_close_path",
+                |_args: &[serde_json::Value]| {
+                    crate::canvas::close_path();
+                    Ok(serde_json::Value::Null)
+                },
+            )
+            .map_err(|e| format!("register canvas closePath: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_move_to", |args: &[serde_json::Value]| {
+                crate::canvas::move_to(json_f64(args.first()), json_f64(args.get(1)));
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas moveTo: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_line_to", |args: &[serde_json::Value]| {
+                crate::canvas::line_to(json_f64(args.first()), json_f64(args.get(1)));
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas lineTo: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_quad_to", |args: &[serde_json::Value]| {
+                crate::canvas::quadratic_curve_to(
+                    json_f64(args.first()),
+                    json_f64(args.get(1)),
+                    json_f64(args.get(2)),
+                    json_f64(args.get(3)),
+                );
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas quadraticCurveTo: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_arc", |args: &[serde_json::Value]| {
+                crate::canvas::arc(
+                    json_f64(args.first()),
+                    json_f64(args.get(1)),
+                    json_f64(args.get(2)),
+                    json_f64(args.get(3)),
+                    json_f64(args.get(4)),
+                    args.get(5)
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas arc: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_fill", |_args: &[serde_json::Value]| {
+                crate::canvas::fill();
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas fill: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_stroke", |_args: &[serde_json::Value]| {
+                crate::canvas::stroke();
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas stroke: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_canvas_clip", |_args: &[serde_json::Value]| {
+                crate::canvas::clip();
+                Ok(serde_json::Value::Null)
+            })
+            .map_err(|e| format!("register canvas clip: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_create_linear",
+                |args: &[serde_json::Value]| match crate::canvas::create_linear(
+                    json_f64(args.first()),
+                    json_f64(args.get(1)),
+                    json_f64(args.get(2)),
+                    json_f64(args.get(3)),
+                ) {
+                    Ok(id) => Ok(serde_json::json!(id)),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                },
+            )
+            .map_err(|e| format!("register canvas createLinearGradient: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_create_radial",
+                |args: &[serde_json::Value]| match crate::canvas::create_radial(
+                    json_f64(args.first()),
+                    json_f64(args.get(1)),
+                    json_f64(args.get(2)),
+                    json_f64(args.get(3)),
+                    json_f64(args.get(4)),
+                    json_f64(args.get(5)),
+                ) {
+                    Ok(id) => Ok(serde_json::json!(id)),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                },
+            )
+            .map_err(|e| format!("register canvas createRadialGradient: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_canvas_add_color_stop",
+                |args: &[serde_json::Value]| {
+                    let id = json_f64(args.first()) as u32;
+                    let offset = json_f64(args.get(1));
+                    let color = args
+                        .get(2)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    match crate::canvas::add_color_stop(id, offset, color) {
+                        Ok(()) => Ok(serde_json::Value::Null),
+                        Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                    }
+                },
+            )
+            .map_err(|e| format!("register canvas addColorStop: {e}"))?;
         runtime
             .register_function(
                 "__rs2b0t_canvas_fill_rect",

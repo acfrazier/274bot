@@ -135,11 +135,52 @@ globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
 globalThis.__rs2b0t_make_paint_ctx = () => {
     const fn = globalThis.rustyscript.functions;
     fn.__rs2b0t_canvas_begin();
+    const grads = Object.create(null);
+    const gradObj = (id) => {
+        if (!grads[id]) {
+            const g = {
+                addColorStop(offset, color) {
+                    fn.__rs2b0t_canvas_add_color_stop(id, Number(offset), String(color));
+                }
+            };
+            Object.defineProperty(g, '__rs2b0t_gradient', { value: id });
+            grads[id] = g;
+        }
+        return grads[id];
+    };
     const ctx = {
         set font(v) { fn.__rs2b0t_canvas_set('font', String(v)); },
         get font() { return fn.__rs2b0t_canvas_get('font'); },
-        set fillStyle(v) { fn.__rs2b0t_canvas_set('fillStyle', String(v)); },
-        get fillStyle() { return fn.__rs2b0t_canvas_get('fillStyle'); },
+        set fillStyle(v) {
+            if (v && typeof v === 'object' && typeof v.__rs2b0t_gradient === 'number') {
+                fn.__rs2b0t_canvas_set_fill_gradient(v.__rs2b0t_gradient);
+                return;
+            }
+            fn.__rs2b0t_canvas_set('fillStyle', String(v));
+        },
+        get fillStyle() {
+            const id = fn.__rs2b0t_canvas_fill_gradient_id();
+            if (id >= 0) return gradObj(id);
+            return fn.__rs2b0t_canvas_get('fillStyle');
+        },
+        set strokeStyle(v) { fn.__rs2b0t_canvas_set('strokeStyle', String(v)); },
+        get strokeStyle() { return fn.__rs2b0t_canvas_get('strokeStyle'); },
+        set shadowColor(v) { fn.__rs2b0t_canvas_set('shadowColor', String(v)); },
+        get shadowColor() { return fn.__rs2b0t_canvas_get('shadowColor'); },
+        set lineJoin(v) { fn.__rs2b0t_canvas_set('lineJoin', String(v)); },
+        get lineJoin() { return fn.__rs2b0t_canvas_get('lineJoin'); },
+        set textAlign(v) { fn.__rs2b0t_canvas_set('textAlign', String(v)); },
+        get textAlign() { return fn.__rs2b0t_canvas_get('textAlign'); },
+        set textBaseline(v) { fn.__rs2b0t_canvas_set('textBaseline', String(v)); },
+        get textBaseline() { return fn.__rs2b0t_canvas_get('textBaseline'); },
+        set lineWidth(v) { fn.__rs2b0t_canvas_set_num('lineWidth', Number(v)); },
+        get lineWidth() { return fn.__rs2b0t_canvas_get_num('lineWidth'); },
+        set shadowBlur(v) { fn.__rs2b0t_canvas_set_num('shadowBlur', Number(v)); },
+        get shadowBlur() { return fn.__rs2b0t_canvas_get_num('shadowBlur'); },
+        set shadowOffsetX(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetX', Number(v)); },
+        get shadowOffsetX() { return fn.__rs2b0t_canvas_get_num('shadowOffsetX'); },
+        set shadowOffsetY(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetY', Number(v)); },
+        get shadowOffsetY() { return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
         fillRect(x, y, w, h) { fn.__rs2b0t_canvas_fill_rect(x, y, w, h); },
         fillText(text, x, y) {
             if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
@@ -148,6 +189,28 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         measureText(text) {
             return { width: fn.__rs2b0t_canvas_measure_text(String(text)) };
         },
+        save() { fn.__rs2b0t_canvas_save(); },
+        restore() { fn.__rs2b0t_canvas_restore(); },
+        beginPath() { fn.__rs2b0t_canvas_begin_path(); },
+        closePath() { fn.__rs2b0t_canvas_close_path(); },
+        moveTo(x, y) { fn.__rs2b0t_canvas_move_to(x, y); },
+        lineTo(x, y) { fn.__rs2b0t_canvas_line_to(x, y); },
+        quadraticCurveTo(cpx, cpy, x, y) { fn.__rs2b0t_canvas_quad_to(cpx, cpy, x, y); },
+        arc(x, y, r, a0, a1, ccw) { fn.__rs2b0t_canvas_arc(x, y, r, a0, a1, !!ccw); },
+        fill() { fn.__rs2b0t_canvas_fill(); },
+        stroke() { fn.__rs2b0t_canvas_stroke(); },
+        clip() { fn.__rs2b0t_canvas_clip(); },
+        createLinearGradient(x0, y0, x1, y1) {
+            return gradObj(fn.__rs2b0t_canvas_create_linear(x0, y0, x1, y1));
+        },
+        createRadialGradient(x0, y0, r0, x1, y1, r1) {
+            return gradObj(fn.__rs2b0t_canvas_create_radial(x0, y0, r0, x1, y1, r1));
+        },
+    };
+    const styleProps = {
+        font: 1, fillStyle: 1, strokeStyle: 1, shadowColor: 1, lineJoin: 1,
+        textAlign: 1, textBaseline: 1, lineWidth: 1, shadowBlur: 1,
+        shadowOffsetX: 1, shadowOffsetY: 1
     };
     return new Proxy(ctx, {
         get(target, prop) {
@@ -157,7 +220,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             throw new Error('not impl: Canvas.' + String(prop));
         },
         set(target, prop, value) {
-            if (prop === 'font' || prop === 'fillStyle') {
+            if (typeof prop === 'string' && styleProps[prop]) {
                 target[prop] = value;
                 return true;
             }

@@ -111,7 +111,7 @@ fn unsupported_verbs_throw_not_impl_and_canvas_is_undefined() {
 export default class T extends LoopingBot {
     onPaint(ctx) {
         globalThis.__canvasIs = ctx.canvas;
-        ctx.beginPath();
+        ctx.translate();
     }
 }
 "#;
@@ -122,7 +122,7 @@ export default class T extends LoopingBot {
         paint
             .lines
             .iter()
-            .any(|l| l.contains("not impl: Canvas.beginPath")),
+            .any(|l| l.contains("not impl: Canvas.translate")),
         "{paint:?}"
     );
     assert!(paint.canvas.is_empty(), "throw discards this call's canvas");
@@ -213,7 +213,7 @@ export default class T extends LoopingBot {
             return;
         }
         if (t === 2) {
-            ctx.beginPath();
+            ctx.translate();
             return;
         }
         ctx.fillRect(6, 6, 20, 8);
@@ -364,21 +364,15 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
         buttons: Vec::new(),
         generation: 0,
         canvas: vec![
-            CanvasOp::FillRect {
-                x: 6,
-                y: 6,
-                w: 400,
-                h: 50,
-                color: canvas::pack_rgba(0, 0, 0, 178),
-            },
-            CanvasOp::FillText {
-                text: "hi".into(),
-                x: 12,
-                y: 22,
-                color: canvas::pack_rgba(0xff, 0xb1, 0x5b, 255),
-                font_px: 12,
-                mono: true,
-            },
+            CanvasOp::fill_rect(6, 6, 400, 50, canvas::pack_rgba(0, 0, 0, 178)),
+            CanvasOp::fill_text(
+                "hi",
+                12,
+                22,
+                canvas::pack_rgba(0xff, 0xb1, 0x5b, 255),
+                12,
+                true,
+            ),
         ],
     };
     let bytes = IsolateBuf::new().encode_paint(&paint);
@@ -401,13 +395,7 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
 
     let mut huge = old.clone();
     huge.canvas = (0..=canvas::MAX_CANVAS_OPS)
-        .map(|i| CanvasOp::FillRect {
-            x: i as i32,
-            y: 0,
-            w: 1,
-            h: 1,
-            color: 0,
-        })
+        .map(|i| CanvasOp::fill_rect(i as i32, 0, 1, 1, 0))
         .collect();
     let over = IsolateBuf::new().encode_paint(&huge);
     assert!(
@@ -416,14 +404,7 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
     );
 
     let mut huge_font = old.clone();
-    huge_font.canvas = vec![CanvasOp::FillText {
-        text: "x".into(),
-        x: 0,
-        y: 10,
-        color: 0,
-        font_px: 65535,
-        mono: true,
-    }];
+    huge_font.canvas = vec![CanvasOp::fill_text("x", 0, 10, 0, 65535, true)];
     let over_font = IsolateBuf::new().encode_paint(&huge_font);
     assert!(
         decode_paint(&over_font).is_err(),
@@ -523,5 +504,276 @@ export default class T extends LoopingBot {
             .any(|op| matches!(op, CanvasOp::FillText { text, .. } if text == "ok")),
         "{second:?}"
     );
+    iso.join();
+}
+
+#[test]
+fn sherpa_required_verbs_record_without_not_impl() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(8, 4, 0, 0.55)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 3;
+        const leather = ctx.createLinearGradient(279, 211, 279, 333);
+        leather.addColorStop(0, '#6d4a2e');
+        leather.addColorStop(0.45, '#4a2e1c');
+        leather.addColorStop(1, '#3a2416');
+        ctx.beginPath();
+        ctx.moveTo(287, 211);
+        ctx.lineTo(439, 211);
+        ctx.quadraticCurveTo(447, 211, 447, 219);
+        ctx.lineTo(447, 325);
+        ctx.quadraticCurveTo(447, 333, 439, 333);
+        ctx.lineTo(287, 333);
+        ctx.quadraticCurveTo(279, 333, 279, 325);
+        ctx.lineTo(279, 219);
+        ctx.quadraticCurveTo(279, 211, 287, 211);
+        ctx.closePath();
+        ctx.fillStyle = leather;
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.strokeStyle = '#d2b07a';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.save();
+        ctx.clip();
+        ctx.fillStyle = 'rgba(20, 12, 6, 0.28)';
+        ctx.fillRect(279, 231, 168, 6);
+        ctx.restore();
+        ctx.beginPath();
+        ctx.arc(433, 295, 36, 0, Math.PI * 2);
+        const ring = ctx.createRadialGradient(429, 291, 6, 433, 295, 39.5);
+        ring.addColorStop(0, '#e8c888');
+        ring.addColorStop(0.55, '#d2b07a');
+        ring.addColorStop(1, '#5a3a16');
+        ctx.fillStyle = ring;
+        ctx.fill();
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#f4e6c8';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText("TENZING'S PASS", 313, 237);
+        ctx.restore();
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert!(
+        !paint.lines.iter().any(|l| l.contains("not impl: Canvas.")),
+        "{paint:?}"
+    );
+    assert!(
+        paint
+            .canvas
+            .iter()
+            .any(|op| matches!(op, CanvasOp::FillPath { .. })),
+        "path fill: {paint:?}"
+    );
+    assert!(
+        paint
+            .canvas
+            .iter()
+            .any(|op| matches!(op, CanvasOp::StrokePath { .. })),
+        "path stroke: {paint:?}"
+    );
+    let raster = canvas::rasterize(&paint.canvas).expect("raster");
+    assert!(raster.w > 10 && raster.h > 10);
+    let mut opaque = 0usize;
+    for px in raster.rgba.chunks_exact(4) {
+        if px[3] > 0 {
+            opaque += 1;
+        }
+    }
+    assert!(opaque > 50, "sherpa frame must paint, opaque={opaque}");
+    iso.join();
+}
+
+#[test]
+fn firegiant_outline_records_round_join_strokes() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 224, 64, 0.55)';
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = 'round';
+        const box = [
+            {x: 40, y: 40}, {x: 80, y: 40}, {x: 80, y: 90}, {x: 40, y: 90},
+            {x: 50, y: 30}, {x: 90, y: 30}, {x: 90, y: 80}, {x: 50, y: 80}
+        ];
+        const edge = (a, b) => {
+            ctx.beginPath();
+            ctx.moveTo(box[a].x, box[a].y);
+            ctx.lineTo(box[b].x, box[b].y);
+            ctx.stroke();
+        };
+        for (let i = 0; i < 4; i++) {
+            edge(i, (i + 1) % 4);
+            edge(4 + i, 4 + ((i + 1) % 4));
+            edge(i, 4 + i);
+        }
+        ctx.restore();
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert!(
+        !paint.lines.iter().any(|l| l.contains("not impl:")),
+        "{paint:?}"
+    );
+    let strokes: Vec<_> = paint
+        .canvas
+        .iter()
+        .filter(|op| matches!(op, CanvasOp::StrokePath { .. }))
+        .collect();
+    assert_eq!(strokes.len(), 12, "{paint:?}");
+    match strokes[0] {
+        CanvasOp::StrokePath {
+            line_width,
+            line_join,
+            ..
+        } => {
+            assert!((line_width - 1.5).abs() < 1e-5);
+            assert_eq!(*line_join, canvas::LineJoinKind::Round);
+        }
+        _ => unreachable!(),
+    }
+    assert!(canvas::rasterize(&paint.canvas).is_some());
+    iso.join();
+}
+
+#[test]
+fn clip_intersection_and_restore_roundtrip() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.beginPath();
+        ctx.moveTo(10, 10);
+        ctx.lineTo(60, 10);
+        ctx.lineTo(60, 60);
+        ctx.lineTo(10, 60);
+        ctx.closePath();
+        ctx.save();
+        ctx.clip();
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 0, 80, 80);
+        ctx.restore();
+        ctx.fillStyle = '#00ff00';
+        ctx.fillRect(70, 70, 10, 10);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(paint.canvas.len(), 2, "{paint:?}");
+    match &paint.canvas[0] {
+        CanvasOp::FillRect { extras, .. } => assert_eq!(extras.clips.len(), 1),
+        other => panic!("{other:?}"),
+    }
+    match &paint.canvas[1] {
+        CanvasOp::FillRect { extras, .. } => assert!(extras.clips.is_empty()),
+        other => panic!("{other:?}"),
+    }
+    let bytes = IsolateBuf::new().encode_paint(&paint);
+    let decoded = decode_paint(&bytes).expect("roundtrip");
+    assert_eq!(decoded.canvas, paint.canvas);
+    let raster = canvas::rasterize(&paint.canvas).expect("raster");
+    let at = |x: i32, y: i32| -> [u8; 4] {
+        let col = (x - raster.x) as usize;
+        let row = (y - raster.y) as usize;
+        let i = (row * raster.w as usize + col) * 4;
+        [
+            raster.rgba[i],
+            raster.rgba[i + 1],
+            raster.rgba[i + 2],
+            raster.rgba[i + 3],
+        ]
+    };
+    let inside = at(30, 30);
+    assert!(
+        inside[0] > 200 && inside[3] > 200,
+        "clipped red inside {inside:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn linear_and_radial_are_nonconstant() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        const g = ctx.createLinearGradient(10, 20, 80, 20);
+        g.addColorStop(0, '#ff0000');
+        g.addColorStop(1, '#0000ff');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(10, 10);
+        ctx.lineTo(80, 10);
+        ctx.lineTo(80, 30);
+        ctx.lineTo(10, 30);
+        ctx.closePath();
+        ctx.fill();
+        const ring = ctx.createRadialGradient(40, 70, 6, 44, 74, 24);
+        ring.addColorStop(0, '#ffffff');
+        ring.addColorStop(1, '#000000');
+        ctx.fillStyle = ring;
+        ctx.beginPath();
+        ctx.arc(44, 74, 24, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(paint.canvas.len(), 2, "{paint:?}");
+    let raster = canvas::rasterize(&paint.canvas).expect("raster");
+    let mut colors = std::collections::BTreeSet::new();
+    for px in raster.rgba.chunks_exact(4) {
+        if px[3] > 200 {
+            colors.insert((px[0] / 16, px[1] / 16, px[2] / 16));
+        }
+    }
+    assert!(
+        colors.len() >= 2,
+        "gradient must not collapse to one stop, got {colors:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn fill_then_stroke_preserves_path_and_invalid_addcolorstop_throws() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.beginPath();
+        ctx.moveTo(10, 10);
+        ctx.lineTo(40, 10);
+        ctx.lineTo(40, 40);
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        try {
+            const g = ctx.createLinearGradient(0, 0, 1, 0);
+            g.addColorStop(2, '#fff');
+            globalThis.__stopOk = false;
+        } catch (e) {
+            globalThis.__stopOk = String(e.message || e).indexOf('IndexSizeError') >= 0;
+        }
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(paint.canvas.len(), 2);
+    assert!(matches!(paint.canvas[0], CanvasOp::FillPath { .. }));
+    assert!(matches!(paint.canvas[1], CanvasOp::StrokePath { .. }));
+    assert_eq!(iso.probe("__stopOk").unwrap(), true);
     iso.join();
 }
