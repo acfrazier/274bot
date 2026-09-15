@@ -919,6 +919,9 @@ pub enum InteractReq {
         level: i32,
         #[serde(default)]
         allow_teleports: bool,
+        /// Isolate-allocated walk wait token. `0` on old callers.
+        #[serde(default)]
+        request_id: u64,
     },
     /// Packed navigation to a reachable tile within the requested radius.
     #[serde(rename = "walk-near")]
@@ -929,6 +932,9 @@ pub enum InteractReq {
         radius: i32,
         #[serde(default)]
         allow_teleports: bool,
+        /// Isolate-allocated walk wait token. `0` on old callers.
+        #[serde(default)]
+        request_id: u64,
     },
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]

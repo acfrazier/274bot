@@ -53,6 +53,7 @@ export const Traversal = proxy('Traversal', {
             z: target.z,
             level: target.level,
             allow_teleports,
+            request_id: token,
         });
         const done = await Execution.delayUntil(
             () => walkNative({ op: 'settled', token }) === true,

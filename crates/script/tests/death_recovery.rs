@@ -133,6 +133,7 @@ fn walk_near_anchor() -> InteractReq {
         level: 0,
         radius: 3,
         allow_teleports: false,
+        request_id: 0,
     }
 }
 

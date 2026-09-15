@@ -99,6 +99,7 @@ fn near() -> TileInput {
 fn fail_native(
     seq: u64,
     generation: u64,
+    request_id: u64,
     x: i32,
     z: i32,
     radius: i32,
@@ -106,6 +107,7 @@ fn fail_native(
     NativeFactsInput {
         walk_outcome_seq: seq,
         walk_outcome_generation: generation,
+        walk_outcome_request_id: request_id,
         walk_outcome_failed: true,
         walk_outcome_x: x,
         walk_outcome_z: z,
@@ -133,31 +135,35 @@ export default class T extends LoopingBot {{
     )
 }
 
-fn park_walk(iso: &LoadIsolate) {
+fn park_walk(iso: &LoadIsolate) -> u64 {
     // Snapshot, then tick: begin/queue run in the isolate. Drain proves the
     // WalkNear left on the producer wire before any outcome snapshot is posted.
     iso.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::WalkNear {
+    let drained = iso.drain_interacts();
+    let request_id = match &drained[..] {
+        [InteractReq::WalkNear {
             x: 2820,
             z: 3556,
             level: 0,
             radius: 1,
             allow_teleports: false,
-        }]
-    );
+            request_id,
+        }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
+    assert_ne!(request_id, 0, "isolate must allocate a walk request id");
+    request_id
 }
 
 #[test]
 fn isolate_nopath_outcome_returns_false_promptly() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
-    park_walk(&iso);
+    let request_id = park_walk(&iso);
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(2, far()),
-        fail_native(1, 1, 2820, 3556, 1),
+        fail_native(1, 0, request_id, 2820, 3556, 1),
     ));
     iso.on_game_tick(2);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
@@ -191,10 +197,10 @@ fn isolate_pending_keeps_the_caller_timeout() {
 #[test]
 fn isolate_other_request_nopath_cannot_settle() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
-    park_walk(&iso);
+    let request_id = park_walk(&iso);
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(2, far()),
-        fail_native(1, 1, 3200, 3200, 1),
+        fail_native(1, 0, request_id, 3200, 3200, 1),
     ));
     iso.on_game_tick(2);
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
@@ -202,23 +208,23 @@ fn isolate_other_request_nopath_cannot_settle() {
 }
 
 #[test]
-fn isolate_stale_seq_cannot_settle_a_new_wait() {
+fn isolate_stale_request_id_cannot_settle_a_new_wait() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(1, far()),
-        fail_native(4, 4, 2820, 3556, 1),
+        fail_native(4, 4, 4, 2820, 3556, 1),
     ));
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(2, far()),
-        fail_native(4, 4, 2820, 3556, 1),
+        fail_native(4, 4, 4, 2820, 3556, 1),
     ));
     iso.on_game_tick(2);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
-        "already-observed fail seq must not settle the later wait"
+        "already-observed fail request id must not settle the later wait"
     );
     iso.join();
 }
@@ -235,22 +241,22 @@ fn isolate_pending_timeout_still_returns_false() {
 }
 
 #[test]
-fn isolate_drain_then_same_target_stale_generation_does_not_settle() {
+fn isolate_drain_then_wrong_request_id_does_not_settle() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
-    park_walk(&iso);
+    let request_id = park_walk(&iso);
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(2, far()),
-        fail_native(1, 0, 2820, 3556, 1),
+        fail_native(1, 0, request_id.wrapping_add(7), 2820, 3556, 1),
     ));
     iso.on_game_tick(2);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
-        "same-target NoPath at generation 0 is not newer than the wait"
+        "same-target NoPath for a different request id must not settle"
     );
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(3, far()),
-        fail_native(2, 1, 2820, 3556, 1),
+        fail_native(2, 0, request_id, 2820, 3556, 1),
     ));
     iso.on_game_tick(3);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
@@ -258,27 +264,31 @@ fn isolate_drain_then_same_target_stale_generation_does_not_settle() {
 }
 
 #[test]
-fn isolate_same_target_wrong_generation_does_not_settle_when_seq_advances() {
+fn isolate_same_target_old_request_id_does_not_settle_new_wait() {
     let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(1, far()),
-        fail_native(1, 5, 2820, 3556, 1),
+        fail_native(1, 5, 5, 2820, 3556, 1),
     ));
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    let request_id = match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(2, far()),
-        fail_native(2, 5, 2820, 3556, 1),
+        fail_native(2, 5, 5, 2820, 3556, 1),
     ));
     iso.on_game_tick(2);
     assert_eq!(
         iso.probe("__rs_ok").unwrap(),
         serde_json::Value::Null,
-        "late same-target NoPath under generation 5 must not settle the new wait"
+        "late same-target NoPath for request id 5 must not settle the new wait"
     );
     iso.post_snapshot(encode_snapshot_with_native(
         &base_snapshot(3, far()),
-        fail_native(3, 6, 2820, 3556, 1),
+        fail_native(3, 6, request_id, 2820, 3556, 1),
     ));
     iso.on_game_tick(3);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
