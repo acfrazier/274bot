@@ -1947,6 +1947,36 @@ fn drain_advancestat() -> Step {
     }
 }
 
+/// Janitor after combat `setstat` 1→40: click level-up continues until the
+/// published continue/chat tree is gone. Uses [`Proof::NoActiveContinue`]
+/// rather than [`Proof::ChatClosed`] alone — FireGiant baselines can keep
+/// open-root continue widgets while `main_modal` is already -1.
+fn drain_setstat_levelups_before_hostile_tele() -> Step {
+    Step {
+        name: "drain setstat level-up dialogs before the hostile-field teleport",
+        kind: StepKind::DrainDialogs { choice: 1 },
+        wait: Wait {
+            arm: Proof::NoActiveContinue,
+            budget_ticks: 60,
+        },
+    }
+}
+
+/// Insert the setstat level-up drain immediately before the hostile-field
+/// teleport step (and therefore before Start/baseline).
+fn insert_setstat_drain_before_hostile_tele(scenario: &mut Scenario) {
+    let tele = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat core has a hostile-field teleport step");
+    scenario
+        .steps
+        .insert(tele, drain_setstat_levelups_before_hostile_tele());
+}
+
 /// Catalog Start after the last seed wait: live pumps call `script_start_load`
 /// once, then this one-tick arm (run energy, not XP) succeeds.
 fn start_catalog_step() -> Step {
@@ -11949,9 +11979,11 @@ fn green_dragon_potions_scenario() -> Scenario {
 
 /// FireGiant melee already inside the east dungeon room. Approach, barrel
 /// escape and bank are unqualified. Waterfall Quest plus amulet 295 and
-/// rope 954 use existing allowed preparation.
+/// rope 954 use existing allowed preparation. Frozen `GearEquip` refuses a
+/// carried melee fixture, so the cell wears 1331 before the hostile tele;
+/// setstat 1→40 queues level-up continues that must drain before Start.
 fn fire_giant_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
+    let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "fire_giant",
         card: "FireGiant",
         tele: FIRE_GIANT_ROOM,
@@ -11965,13 +11997,18 @@ fn fire_giant_scenario() -> Scenario {
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
         ],
-        wear: None,
+        wear: Some((
+            "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport",
+            COMBAT_SCIMITAR_ID,
+        )),
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some(WATERFALL_QUEST_PREREQ),
         thieving: 0,
         agility: 0,
-    })
+    });
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
 }
 
 /// ArdyFighter default Guard/strength. No fabricated cakes; the script
@@ -12830,7 +12867,8 @@ fn green_dragon_tele_scenario() -> Scenario {
 
 /// FireGiant `EnterDungeon` from the raft. Start is not already z>=9000; the
 /// frozen script has to board the raft, rope the rock and tree, open the
-/// ledge door, then fight.
+/// ledge door, then fight. Same frozen `GearEquip` melee refuse as the core
+/// cell: wear 1331 and drain setstat level-ups before the raft teleport.
 fn fire_giant_approach_scenario() -> Scenario {
     let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "fire_giant_approach",
@@ -12846,13 +12884,17 @@ fn fire_giant_approach_scenario() -> Scenario {
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
         ],
-        wear: None,
+        wear: Some((
+            "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport",
+            COMBAT_SCIMITAR_ID,
+        )),
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
         complete_quest: Some(WATERFALL_QUEST_PREREQ),
         thieving: 0,
         agility: 0,
     });
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
     let start = scenario
         .steps
         .iter()
@@ -17444,6 +17486,10 @@ mod tests {
             .iter()
             .position(|step| matches!(step.kind, StepKind::StartScript))
             .unwrap();
+        let seed = approach.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
         assert!(approach.steps[..start].iter().any(|step| step.wait.arm
             == Proof::ArrivedNear {
                 x: FIRE_GIANT_RAFT.x,
@@ -17451,6 +17497,41 @@ mod tests {
                 level: FIRE_GIANT_RAFT.level,
                 radius: 5,
             }));
+        assert!(seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        assert!(approach.steps[..start].iter().any(|step| step.name
+            == "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport"));
+        assert!(seed.contains(&Proof::NoActiveContinue));
+        let wear_i = approach.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport"
+            })
+            .expect("fire_giant_approach wear step");
+        let drain_i = approach.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "drain setstat level-up dialogs before the hostile-field teleport"
+            })
+            .expect("fire_giant_approach setstat drain");
+        let tele_i = approach.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "teleport into the hostile field only after preparation is acknowledged"
+            })
+            .expect("fire_giant_approach hostile tele");
+        assert!(
+            wear_i < drain_i && drain_i < tele_i && tele_i < start,
+            "wear then setstat drain then tele then Start: wear={wear_i} drain={drain_i} tele={tele_i} start={start}"
+        );
+        assert!(matches!(
+            approach.steps[drain_i].kind,
+            StepKind::DrainDialogs { choice: 1 }
+        ));
         assert!(approach.steps[start + 1..].iter().any(|step| step.wait.arm
             == Proof::ArrivedNear {
                 x: FIRE_GIANT_ROOM.x,
@@ -21189,6 +21270,43 @@ mod tests {
             id: BIG_BONES_ID,
             count: 0,
         }));
+        // Frozen FireGiant GearEquip refuses carried melee; wear + EquipmentId
+        // before the hostile tele match rock_crab's pre-Start receipt.
+        assert!(seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        assert!(giant.steps[..start].iter().any(|step| step.name
+            == "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport"));
+        assert!(seed.contains(&Proof::NoActiveContinue));
+        let wear_i = giant.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "wield and acknowledge the prepared Adamant scimitar before the hostile-field teleport"
+            })
+            .expect("fire_giant wear step");
+        let drain_i = giant.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "drain setstat level-up dialogs before the hostile-field teleport"
+            })
+            .expect("fire_giant setstat drain");
+        let tele_i = giant.steps[..start]
+            .iter()
+            .position(|step| {
+                step.name
+                    == "teleport into the hostile field only after preparation is acknowledged"
+            })
+            .expect("fire_giant hostile tele");
+        assert!(
+            wear_i < drain_i && drain_i < tele_i && tele_i < start,
+            "wear then setstat drain then tele then Start: wear={wear_i} drain={drain_i} tele={tele_i} start={start}"
+        );
+        assert!(matches!(
+            giant.steps[drain_i].kind,
+            StepKind::DrainDialogs { choice: 1 }
+        ));
         assert_eq!(giant.proof, strength);
 
         let ardy = get("ardy_fighter").expect("ardy_fighter");
@@ -21240,6 +21358,12 @@ mod tests {
             id: CAKE_ID,
             count: 1,
         }));
+        // Other combat cores stay unworn / undrained for setstat; only the
+        // two FireGiant cells own that pre-Start hop.
+        assert!(!seed.contains(&Proof::EquipmentId {
+            id: COMBAT_SCIMITAR_ID,
+        }));
+        assert!(!seed.contains(&Proof::NoActiveContinue));
         assert_eq!(ardy.proof, strength);
     }
 
