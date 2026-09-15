@@ -107,6 +107,8 @@ mod special;
 mod teleport;
 #[cfg(feature = "load")]
 mod trade;
+#[cfg(feature = "load")]
+mod walk_wait;
 
 #[cfg(feature = "memory-profile")]
 pub mod memory_profile;
