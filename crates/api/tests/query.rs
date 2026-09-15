@@ -1591,6 +1591,171 @@ fn loc_approach_operability() {
     assert!(sq.operable_tiles(&tree).unwrap().len() >= 4);
 }
 
+fn seers_booth(angle: i32, force_approach: i32) -> LocView {
+    LocView {
+        typecode: 0,
+        info: 0,
+        id: 2213,
+        name: Some("Bank booth".into()),
+        description: None,
+        actions: vec![None, Some("Use-quickly".into())],
+        tile: WorldTile {
+            x: 2722,
+            z: 3494,
+            level: 0,
+        },
+        distance: 0,
+        layer: LocLayer::Ground,
+        shape: 10,
+        angle,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: true,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach,
+    }
+}
+
+fn seers_scene() -> SceneView {
+    let mut scene = SceneView {
+        available: true,
+        base_x: 2700,
+        base_z: 3470,
+        level: 0,
+        width: 40,
+        height: 40,
+        collision_flags: vec![0; 40 * 40],
+    };
+    let lx = 2722 - scene.base_x;
+    let lz = 3494 - scene.base_z;
+    scene.collision_flags[(lx * scene.height + lz) as usize] = CollisionFlag::WALK_SCENERY;
+    let east = ((lx + 1) * scene.height + lz) as usize;
+    scene.collision_flags[east] = CollisionFlag::WALK_SCENERY;
+    scene
+}
+
+fn seers_flood(scene: &SceneView, from: WorldTile) -> ReachFlood {
+    SceneQuery::new(scene, Some(from))
+        .flood_reach()
+        .expect("player in seers scene floods")
+}
+
+fn tile(x: i32, z: i32) -> WorldTile {
+    WorldTile { x, z, level: 0 }
+}
+
+#[test]
+fn booth_approach_seers_diagonal_picks_south_not_signum_or_closed_east() {
+    let scene = seers_scene();
+    let loc = seers_booth(2, 0);
+    let from = tile(2723, 3493);
+    let flood = seers_flood(&scene, from);
+    let got = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert!(!got.can_operate, "diagonal is not test_loc ready");
+    assert_eq!(
+        got.dest,
+        Some(tile(2722, 3493)),
+        "south, not east closed booth"
+    );
+    assert_ne!(got.dest, Some(from), "dest is not the signum stay-put tile");
+}
+
+#[test]
+fn booth_approach_south_already_ready_keeps_from() {
+    let scene = seers_scene();
+    let loc = seers_booth(2, 0);
+    let from = tile(2722, 3493);
+    let flood = seers_flood(&scene, from);
+    let got = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert!(got.can_operate);
+    assert_eq!(got.dest, Some(from));
+}
+
+#[test]
+fn booth_approach_blocked_orthogonal_does_not_pick_east() {
+    let mut scene = seers_scene();
+    let east_lx = 2723 - scene.base_x;
+    let east_lz = 3494 - scene.base_z;
+    scene.collision_flags[(east_lx * scene.height + east_lz) as usize] = CollisionFlag::SQ_BLOCKED;
+    let loc = seers_booth(2, 0);
+    let from = tile(2723, 3493);
+    let flood = seers_flood(&scene, from);
+    let got = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert_ne!(got.dest, Some(tile(2723, 3494)));
+    assert_eq!(got.dest, Some(tile(2722, 3493)));
+}
+
+#[test]
+fn booth_approach_rotated_forceapproach_drops_manhattan_south() {
+    let scene = seers_scene();
+    // angle 2 rotates FORCE_NORTH (0x1) onto FORCE_SOUTH.
+    let loc = seers_booth(2, 0x1);
+    let from = tile(2723, 3493);
+    let flood = seers_flood(&scene, from);
+    let got = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert!(!got.can_operate);
+    assert_eq!(
+        got.dest,
+        Some(tile(2721, 3494)),
+        "remaining reachable operable is west by cheb-then-x-z, not Manhattan-south"
+    );
+
+    let mut blocked = scene;
+    for z in 3493..=3495 {
+        for x in 2721..=2723 {
+            if x == 2722 && z == 3494 {
+                continue;
+            }
+            let lx = x - blocked.base_x;
+            let lz = z - blocked.base_z;
+            blocked.collision_flags[(lx * blocked.height + lz) as usize] =
+                CollisionFlag::SQ_BLOCKED;
+        }
+    }
+    let flood = seers_flood(&blocked, from);
+    let empty = loc_approach::booth_approach(&loc, &blocked, from, &flood).expect("model");
+    assert!(!empty.can_operate);
+    assert_eq!(empty.dest, None);
+}
+
+#[test]
+fn booth_approach_unsupported_shape_and_missing_scene_are_none() {
+    let scene = seers_scene();
+    let from = tile(2722, 3493);
+    let flood = seers_flood(&scene, from);
+    let mut rock = seers_booth(2, 0);
+    rock.shape = 0;
+    assert!(loc_approach::booth_approach(&rock, &scene, from, &flood).is_none());
+    let mut missing = scene.clone();
+    missing.available = false;
+    assert!(loc_approach::booth_approach(&seers_booth(2, 0), &missing, from, &flood).is_none());
+}
+
+#[test]
+fn booth_approach_collision_change_keeps_loc_id_and_moves_dest() {
+    let mut scene = seers_scene();
+    let loc = seers_booth(2, 0);
+    let from = tile(2723, 3493);
+    let flood = seers_flood(&scene, from);
+    let first = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert_eq!(first.dest, Some(tile(2722, 3493)));
+
+    let south_lx = 2722 - scene.base_x;
+    let south_lz = 3493 - scene.base_z;
+    scene.collision_flags[(south_lx * scene.height + south_lz) as usize] =
+        CollisionFlag::SQ_BLOCKED;
+    let flood = seers_flood(&scene, from);
+    let next = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
+    assert_eq!(loc.id, 2213);
+    assert_eq!(next.dest, Some(tile(2721, 3494)));
+}
+
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),

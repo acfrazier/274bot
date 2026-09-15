@@ -1905,6 +1905,17 @@ impl<'a> SceneQuery<'a> {
         loc_approach::operable_tiles(loc, self.0)
     }
 
+    /// Compact bank-booth dest + readiness from `loc_approach` and an
+    /// already-built flood. `None` when this loc has no footprint model.
+    pub fn booth_approach(
+        &self,
+        loc: &LocView,
+        flood: &ReachFlood,
+    ) -> Option<loc_approach::BoothApproach> {
+        let from = self.1?;
+        loc_approach::booth_approach(loc, self.0, from, flood)
+    }
+
     /// Whether the local player can walk to `destination` (BFS with a
     /// step budget; `adjacent_ok` stops one tile short).
     pub fn can_reach(&self, destination: WorldTile, options: &SceneReachOptions) -> bool {
@@ -2743,6 +2754,45 @@ pub mod loc_approach {
             }
         }
         Some(tiles)
+    }
+
+    /// Compact operate-from-here + exact stand dest for one footprint loc.
+    /// `None` when the loc has no approach model. Dest is the closest
+    /// flood-reachable operable tile (cheb, then x, then z); already-ready
+    /// keeps `from` and does not walk off it.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct BoothApproach {
+        pub can_operate: bool,
+        pub dest: Option<WorldTile>,
+    }
+
+    /// One `test_loc` producer: readiness from [`can_operate_from`], dest
+    /// from [`operable_tiles`] filtered by an existing [`super::ReachFlood`]
+    /// exact stand. No second BFS and no world copy.
+    pub fn booth_approach(
+        loc: &LocView,
+        scene: &SceneView,
+        from: WorldTile,
+        flood: &super::ReachFlood,
+    ) -> Option<BoothApproach> {
+        let can_operate = can_operate_from(loc, scene, from)?;
+        if can_operate {
+            return Some(BoothApproach {
+                can_operate: true,
+                dest: Some(from),
+            });
+        }
+        let dest = operable_tiles(loc, scene)?
+            .into_iter()
+            .filter(|tile| flood.at(tile).0)
+            .min_by_key(|tile| {
+                let cheb = (from.x - tile.x).abs().max((from.z - tile.z).abs());
+                (cheb, tile.x, tile.z)
+            });
+        Some(BoothApproach {
+            can_operate: false,
+            dest,
+        })
     }
 }
 

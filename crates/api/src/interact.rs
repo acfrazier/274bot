@@ -1065,14 +1065,13 @@ impl<'a> Interactions<'a> {
         }) else {
             return refuse(snapshot, SendReason::StaleTarget);
         };
-        let cheb = (loc.tile.x - px).abs().max((loc.tile.z - pz).abs());
-        if cheb > 1 {
-            let dest = WorldTile {
-                x: loc.tile.x + (px - loc.tile.x).signum(),
-                z: loc.tile.z + (pz - loc.tile.z).signum(),
-                level,
-            };
-            return self.walk(dest);
+        let here = WorldTile {
+            x: px,
+            z: pz,
+            level,
+        };
+        if crate::query::loc_approach::can_operate_from(loc, snapshot.scene(), here) != Some(true) {
+            return refuse(snapshot, SendReason::Unreachable);
         }
         let Some(op) = operation_of(&OpTarget::Loc(loc), expected_action) else {
             return refuse(snapshot, SendReason::InvalidAction);
