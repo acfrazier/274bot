@@ -188,6 +188,39 @@ globalThis.__rs2b0t_call_on_paint = (bot) => {
         fn.__rs2b0t_canvas_onpaint_done(2, msg);
     }
 };
+globalThis.KeyboardEvent = function KeyboardEvent(type, init) {
+    init = init || {};
+    this.type = String(type || '');
+    this.key = String(init.key || '');
+    this.code = String(init.code || '');
+};
+globalThis.MouseEvent = function MouseEvent(type) {
+    this.type = String(type || '');
+};
+globalThis.__rs2b0t_input_canvas = {
+    getBoundingClientRect() {
+        throw new Error('BLOCKED: missing getBoundingClientRect');
+    },
+    dispatchEvent(ev) {
+        if (!ev || (ev.type !== 'keydown' && ev.type !== 'keyup')) {
+            throw new Error('BLOCKED: missing mouse');
+        }
+        const h = globalThis.__rs2b0t_host;
+        h.interact = h.interact || [];
+        h.interact.push({
+            op: 'key',
+            down: ev.type === 'keydown',
+            key: String(ev.key || ''),
+            code: String(ev.code || ''),
+        });
+        return true;
+    },
+};
+globalThis.document = {
+    getElementById(id) {
+        return id === 'canvas' ? globalThis.__rs2b0t_input_canvas : null;
+    },
+};
 "#;
 
 /// The extra modules that make rs2b0t imports hit our shim, in load order
@@ -1018,6 +1051,16 @@ pub enum InteractReq {
     /// `recoveryAnchor()` missing, invalid, or threw.
     #[serde(rename = "recovery-anchor-none")]
     RecoveryAnchorNone,
+    /// One canvas KeyboardEvent. `key` is the DOM key string; `code` is
+    /// optional. `down` is keydown vs keyup. Host allowlists digits and
+    /// Enter onto the slot Client's GameShell.
+    #[serde(rename = "key")]
+    Key {
+        down: bool,
+        key: String,
+        #[serde(default)]
+        code: String,
+    },
 }
 
 impl InteractReq {

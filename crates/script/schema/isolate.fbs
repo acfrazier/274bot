@@ -280,7 +280,8 @@ table Snapshot {
 // | "shop-button" | "make-panel"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
-// | "recovery-anchor" | "recovery-anchor-none".
+// | "recovery-anchor" | "recovery-anchor-none" | "key".
+// "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;

@@ -1251,7 +1251,8 @@ fn script_observe_with_npc_boxes(
             }
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
-                    let _ = slot.drain_interacts();
+                    let dropped = slot.drain_interacts();
+                    release_script_key_held(driver, &dropped);
                 } else {
                     interact.extend(slot.drain_interacts());
                 }
@@ -1498,6 +1499,7 @@ fn script_observe_with_npc_boxes(
                 }
             }
         } else {
+            release_script_key_held(driver, &interact);
             let rejected_x = interact
                 .iter()
                 .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
@@ -1534,6 +1536,7 @@ fn script_observe_with_npc_boxes(
             }
         }
     } else if !interact.is_empty() {
+        release_script_key_held(driver, &interact);
         let rejected_x = interact
             .iter()
             .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
@@ -1710,6 +1713,28 @@ fn nearest_bank_booth(world: &NavWorld, (x, z, level): (i32, i32, i32)) -> Optio
             }
         })
         .map(|stand| stand.tile)
+}
+
+fn amount_key_code(key: &str) -> Option<client::client::JavaKeyCode> {
+    let kc = client::client::lookup(key)?;
+    if (48..=57).contains(&kc.ch) || kc.ch == 10 {
+        Some(kc)
+    } else {
+        None
+    }
+}
+
+fn release_script_key_held(driver: &mut dyn Driver, reqs: &[script::shim::InteractReq]) {
+    for req in reqs {
+        if let script::shim::InteractReq::Key {
+            down: false, key, ..
+        } = req
+        {
+            if let Some(kc) = amount_key_code(key) {
+                driver.apply_key(false, kc.code, kc.ch);
+            }
+        }
+    }
 }
 
 /// Dispatch one isolate's shim interact requests. Open/close/deposit/
@@ -2321,6 +2346,9 @@ fn dispatch_script_interact(
                     }
                 }
                 wrote |= matches!(res, SendResult::Sent { .. });
+            }
+            InteractReq::Key { down, key, .. } => {
+                wrote |= ix.apply_amount_key(down, &key);
             }
             InteractReq::SetCameraYaw { .. } => {}
             InteractReq::NoteProgress
@@ -9245,6 +9273,535 @@ export default class T extends LoopingBot {
             (before_ack.0.wrapping_add(1), false),
             "a closed session never acknowledges the raw X action"
         );
+    }
+
+    fn key_req(down: bool, key: &str) -> script::shim::InteractReq {
+        script::shim::InteractReq::Key {
+            down,
+            key: key.into(),
+            code: key.into(),
+        }
+    }
+
+    fn type_amount(chars: &str) -> Vec<script::shim::InteractReq> {
+        let mut reqs = Vec::new();
+        for ch in chars.chars() {
+            let key = ch.to_string();
+            reqs.push(key_req(true, &key));
+            reqs.push(key_req(false, &key));
+        }
+        reqs
+    }
+
+    fn dispatch_keys(
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+        reqs: Vec<script::shim::InteractReq>,
+    ) -> bool {
+        let (navs, world) = empty_nav();
+        dispatch_script_interact(
+            client,
+            snapshot,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            reqs,
+        )
+    }
+
+    fn count_packet(client: &Client) -> Option<i32> {
+        let opcode = client::io::ClientProt::RESUME_P_COUNTDIALOG.id as u8;
+        let data = &client.out.data()[..client.out.pos];
+        if data.len() < 5 || data[0] != opcode {
+            return None;
+        }
+        Some(i32::from_be_bytes([data[1], data[2], data[3], data[4]]))
+    }
+
+    /// Real JS document/KeyboardEvent producer through FB dispatch into a
+    /// real Client amount prompt. Digits are visible before Enter; keyup
+    /// does not duplicate; inventory is not fabricated by the key path.
+    #[test]
+    fn canvas_keyboard_types_visible_200_then_enter_on_real_client() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        const n = (globalThis.__step = (globalThis.__step || 0) + 1);
+        if (n === 1) {
+            for (const ch of ['2', '0', '0']) {
+                canvas.dispatchEvent(new KeyboardEvent('keydown', {key: ch, code: ch}));
+                canvas.dispatchEvent(new KeyboardEvent('keyup', {key: ch, code: ch}));
+            }
+        } else if (n === 2) {
+            canvas.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter'}));
+            canvas.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', code: 'Enter'}));
+        }
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("canvas keyboard isolate starts");
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let inv_before = c.out.pos;
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(c.dialog_input, "200", "digits are visible in the prompt");
+        assert!(c.dialog_input_open);
+        assert_eq!(
+            c.out.pos, inv_before,
+            "keys do not fabricate a count packet"
+        );
+        assert!(c.chat_input.is_empty());
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(count_packet(&c), Some(200));
+        assert!(!c.dialog_input_open);
+        assert!(c.chat_input.is_empty());
+        assert_eq!(
+            c.shell.key_held[b'2' as usize], 0,
+            "keyup must not leave synthetic held state"
+        );
+    }
+
+    #[test]
+    fn canvas_keyboard_enter_then_digit_does_not_leak_into_chat() {
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let mut reqs = type_amount("200");
+        reqs.push(key_req(true, "Enter"));
+        reqs.push(key_req(false, "Enter"));
+        reqs.push(key_req(true, "3"));
+        reqs.push(key_req(false, "3"));
+        dispatch_keys(&mut c, &snap, reqs);
+        assert_eq!(count_packet(&c), Some(200));
+        assert!(!c.dialog_input_open);
+        assert!(
+            !c.chat_input.contains('3'),
+            "digit after Enter in the same batch must not enter chat, got {:?}",
+            c.chat_input
+        );
+        assert!(c.social_input.is_empty());
+    }
+
+    #[test]
+    fn canvas_keyboard_drops_closed_social_and_replaced_prompts() {
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        dispatch_keys(&mut c, &snap, type_amount("2"));
+        assert!(c.dialog_input.is_empty());
+        assert!(
+            !c.chat_input.contains('2'),
+            "closed prompt must not leak into chat: {:?}",
+            c.chat_input
+        );
+
+        c.social_input_open = true;
+        c.dialog_input_open = true;
+        c.dialog_input.clear();
+        c.social_input.clear();
+        dispatch_keys(&mut c, &snap, type_amount("7"));
+        assert!(
+            c.social_input.is_empty(),
+            "social recipient must not take amount keys: {:?}",
+            c.social_input
+        );
+        assert_ne!(c.dialog_input, "7");
+
+        c.social_input_open = false;
+        c.apply_p_countdialog();
+        dispatch_keys(&mut c, &snap, type_amount("2"));
+        assert_eq!(c.dialog_input, "2");
+        c.apply_p_countdialog();
+        let mut reqs = type_amount("00");
+        reqs.push(key_req(true, "Enter"));
+        reqs.push(key_req(false, "Enter"));
+        dispatch_keys(&mut c, &snap, reqs);
+        assert_eq!(
+            count_packet(&c),
+            Some(0),
+            "replaced prompt must not keep the previous 2"
+        );
+        assert!(!c.dialog_input_open);
+    }
+
+    #[test]
+    fn canvas_keyboard_respects_ring_capacity_and_allowlist() {
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        for _ in 0..127 {
+            c.shell.apply_key(true, 0, b'a' as i32);
+        }
+        assert!(!Driver::can_enqueue_key(&c));
+        dispatch_keys(&mut c, &snap, type_amount("9"));
+        assert!(
+            c.dialog_input.is_empty(),
+            "a full ring must not overwrite unread user keys with a script digit"
+        );
+        assert_eq!(c.shell.poll_key(), b'a' as i32);
+
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        snap.rebuild(&c);
+        let mut overflow = Vec::new();
+        for _ in 0..80 {
+            overflow.push(key_req(true, "1"));
+            overflow.push(key_req(false, "1"));
+        }
+        dispatch_keys(&mut c, &snap, overflow);
+        assert_eq!(c.dialog_input, "1111111111");
+        assert_eq!(c.shell.key_queue_write, c.shell.key_queue_read);
+
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        snap.rebuild(&c);
+        dispatch_keys(
+            &mut c,
+            &snap,
+            vec![
+                key_req(true, "a"),
+                key_req(false, "a"),
+                key_req(true, ":"),
+                key_req(false, ":"),
+                key_req(true, "F1"),
+                key_req(false, "F1"),
+            ],
+        );
+        assert!(c.dialog_input.is_empty());
+        assert!(c.chat_input.is_empty());
+        assert_eq!(c.shell.key_queue_write, c.shell.key_queue_read);
+    }
+
+    #[test]
+    fn canvas_keyboard_keyup_does_not_duplicate_and_second_slot_is_untouched() {
+        let mut alice = bank_client();
+        let mut bob = bank_client();
+        alice.apply_p_countdialog();
+        bob.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&alice);
+        dispatch_keys(
+            &mut alice,
+            &snap,
+            vec![key_req(true, "2"), key_req(false, "2"), key_req(false, "2")],
+        );
+        assert_eq!(alice.dialog_input, "2");
+        assert_eq!(bob.dialog_input, "");
+        assert_eq!(bob.shell.key_queue_write, bob.shell.key_queue_read);
+        assert!(bob.dialog_input_open);
+    }
+
+    #[test]
+    fn canvas_keyboard_pause_and_hold_use_existing_interact_freeze() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        const n = (globalThis.__step = (globalThis.__step || 0) + 1);
+        if (n === 1) {
+            canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+            canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+        } else if (n === 2) {
+            canvas.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter'}));
+            canvas.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', code: 'Enter'}));
+        }
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("pause isolate starts");
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(c.dialog_input, "2");
+        assert_eq!(c.out.pos, 0);
+
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pause();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(c.dialog_input, "2");
+        assert_eq!(c.out.pos, 0, "pause must not dispatch Enter");
+
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .resume();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(count_packet(&c), Some(2));
+
+        let mut held = bank_client();
+        held.apply_p_countdialog();
+        snap.rebuild(&held);
+        let scripts_hold: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        script_slot_or_insert(&scripts_hold, "bob")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("hold isolate starts");
+        script_observe(
+            &mut held,
+            "bob",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts_hold,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false,
+        );
+        script_slot(&scripts_hold, "bob")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut held,
+            "bob",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts_hold,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false,
+        );
+        assert!(
+            held.dialog_input.is_empty(),
+            "guardian hold must not apply canvas keys, got {:?}",
+            held.dialog_input
+        );
+        assert_eq!(held.out.pos, 0);
+        assert_eq!(held.shell.key_held[b'2' as usize], 0);
     }
 
     #[test]

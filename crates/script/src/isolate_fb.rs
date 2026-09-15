@@ -4662,6 +4662,14 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
             }),
             "recovery-anchor-none" => out.push(crate::shim::InteractReq::RecoveryAnchorNone),
+            "key" => out.push(crate::shim::InteractReq::Key {
+                down: row.index() == Some(1),
+                key: row
+                    .action()
+                    .ok_or_else(|| "key has no key".to_string())?
+                    .to_string(),
+                code: row.kind().unwrap_or("").to_string(),
+            }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -4712,12 +4720,14 @@ fn interact_off<'b>(
         InteractReq::WaitSettled => "wait-settled",
         InteractReq::RecoveryAnchor { .. } => "recovery-anchor",
         InteractReq::RecoveryAnchorNone => "recovery-anchor-none",
+        InteractReq::Key { .. } => "key",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
         | InteractReq::UseOn { kind, .. }
         | InteractReq::UseWidgetOn { kind, .. }
         | InteractReq::ShopButton { kind, .. } => Some(b.create_string(kind)),
+        InteractReq::Key { code, .. } if !code.is_empty() => Some(b.create_string(code)),
         _ => None,
     };
     let name_off = match req {
@@ -4766,6 +4776,7 @@ fn interact_off<'b>(
             allow_teleports: true,
             ..
         } => Some(b.create_string("tele")),
+        InteractReq::Key { key, .. } => Some(b.create_string(key)),
         _ => None,
     };
     let tab = b.start_table();
@@ -5018,6 +5029,13 @@ fn interact_off<'b>(
         InteractReq::SetCameraYaw { yaw } => {
             b.push_slot_always(VT_IN_X, *yaw);
         }
+        InteractReq::Key { down, .. } => {
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            if let Some(off) = kind_off {
+                b.push_slot_always(VT_IN_KIND, off);
+            }
+            b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
+        }
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -5208,6 +5226,47 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_interact_key_down_and_enter_up_round_trips() {
+        let reqs = vec![
+            InteractReq::Key {
+                down: true,
+                key: "2".into(),
+                code: "2".into(),
+            },
+            InteractReq::Key {
+                down: false,
+                key: "Enter".into(),
+                code: "Enter".into(),
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("key batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn decode_interact_unknown_op_still_fails_the_batch() {
+        let bytes = encode_interact_batch(&[InteractReq::Key {
+            down: true,
+            key: "2".into(),
+            code: String::new(),
+        }]);
+        let got = decode_interact_batch(&bytes).expect("empty code still decodes");
+        assert_eq!(
+            got,
+            vec![InteractReq::Key {
+                down: true,
+                key: "2".into(),
+                code: String::new(),
+            }]
+        );
+        assert!(
+            decode_interact_batch(b"not a batch").is_err(),
+            "unknown bytes fail closed"
+        );
     }
 
     /// Task 8 fix — delta with mask set clears optional `chat_text`.
