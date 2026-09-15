@@ -2934,14 +2934,23 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             h.loopInFlight = false;
         }
     }
-    // IPC bus: posted chat_text changed → chat.message { text }.
-    const text = (h.snapshot || {}).chat_text;
-    const t = (text == null || text === '') ? '' : String(text);
-    if (t !== globalThis.__rs2b0t_last_chat) {
-        globalThis.__rs2b0t_last_chat = t;
+    // IPC bus: the Rust-owned ring head sequence selects one new line. The
+    // legacy chat_text body remains on the snapshot for older consumers.
+    if ((h.snapshot || {}).ingame === false) {
+        globalThis.__rs2b0t_last_chat_seq = undefined;
+    }
+    const lines = (h.snapshot || {}).chat_lines;
+    const line = Array.isArray(lines) && lines.length ? lines[0] : null;
+    const seq = line && Number.isFinite(Number(line.seq)) ? Number(line.seq) : null;
+    if (seq !== null && seq !== globalThis.__rs2b0t_last_chat_seq) {
+        globalThis.__rs2b0t_last_chat_seq = seq;
         const cbs = inst && inst._subs && inst._subs['chat.message'];
-        if (t && cbs) {
-            const ev = { text: t };
+        if (line && line.text && cbs) {
+            const ev = {
+                type: Number(line.type) || 0,
+                username: line.username == null ? undefined : String(line.username),
+                text: String(line.text),
+            };
             for (let i = 0; i < cbs.length; i++) {
                 try { cbs[i](ev); } catch (_) {}
             }
@@ -4149,6 +4158,12 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "seq", seq)?;
             let text = js_string(scope, line.text())?;
             set(scope, o, "text", text)?;
+            let type_ = num(scope, line.type_() as f64);
+            set(scope, o, "type", type_)?;
+            if let Some(username) = line.username() {
+                let username = js_string(scope, username)?;
+                set(scope, o, "username", username)?;
+            }
             arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }

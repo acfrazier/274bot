@@ -3541,6 +3541,8 @@ fn with_script_snapshot_input<R>(
                 .map(|l| ChatLineInput {
                     seq: l.sequence,
                     text: l.text.as_str(),
+                    type_: l.type_,
+                    username: l.username.as_deref(),
                 })
                 .collect()
         })

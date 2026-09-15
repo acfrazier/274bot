@@ -127,6 +127,8 @@ table SideTabIface {
 table ChatLine {
   seq: int;
   text: string;
+  type: int;
+  username: string;
 }
 
 // Compact derived reach query: scene origin plus JS-safe u32 bitsets
