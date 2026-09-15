@@ -13441,6 +13441,79 @@ export default class T extends LoopingBot {
     }
 
     #[test]
+    fn native_chat_producer_reaches_isolate_with_request_identity() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.ingame = true;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(0, 0));
+        let iso = script::LoadIsolate::spawn(
+            r#"export default class T extends LoopingBot {
+                onStart() {
+                    globalThis.__events = [];
+                    globalThis.__requests = 0;
+                    this.on('chat.message', (e) => {
+                        globalThis.__events.push(e);
+                        // A consumer needs all three native fields to distinguish
+                        // a partner trade request from the same body elsewhere.
+                        if (e.type === 4 && e.username === 'Partner' &&
+                            e.text === 'wishes to trade with you.') {
+                            globalThis.__requests++;
+                        }
+                    });
+                }
+                loop() {}
+            }"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let mut snapshot = GameSnapshot::new();
+        let mut fingerprint = None;
+        for (tick, seq, kind, sender, events, requests) in [
+            (1, 11, 0, "Partner", 1, 0),
+            (2, 12, 4, "Stranger", 2, 0),
+            (3, 13, 4, "Partner", 3, 1),
+            (4, 13, 4, "Partner", 3, 1),
+            (5, 14, 4, "Partner", 4, 2),
+        ] {
+            c.chat_text[0] = "wishes to trade with you.".into();
+            c.chat_type[0] = kind;
+            c.chat_username[0] = sender.into();
+            c.chat_seq = seq;
+            c.bump_gens(ServerProt::MESSAGE_GAME);
+            snapshot.rebuild(&c);
+            let (bytes, next) = script_snapshot_fb(
+                fingerprint.as_ref(), false, tick, Some((3200, 3200, 0)),
+                true, None, Some(&snapshot), None, None, false, false, false,
+            );
+            fingerprint = Some(next);
+            iso.post_snapshot(bytes);
+            iso.on_game_tick(tick);
+            assert_eq!(iso.probe("__events.length").unwrap(), events);
+            assert_eq!(iso.probe("__requests").unwrap(), requests);
+        }
+        assert_eq!(
+            iso.probe("__events[2]").unwrap(),
+            serde_json::json!({
+                "type": 4, "username": "Partner", "text": "wishes to trade with you."
+            }),
+        );
+        iso.join();
+    }
+
+    #[test]
     fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
         let mut c = prepare_client(
             ClientConfig {
