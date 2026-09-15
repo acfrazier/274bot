@@ -207,8 +207,9 @@ pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
     }
 }
 
-/// Append an HTML `arc`. Full circles (`|end-start| >= 2π`) use four cubics.
-/// Partial arcs use cubic approximations in the requested direction.
+/// Append an HTML `arc`. Sweep follows WHATWG direction and full-circle rules:
+/// CW full circle iff `end − start ≥ 2π`; CCW full circle iff `start − end ≥ 2π`;
+/// equal angles are a connecting segment only. Zero radius still connects.
 /// Returns `false` if a segment would exceed `max_len` (path stays ≤ `max_len`).
 pub fn append_arc(
     path: &mut Vec<PathSeg>,
@@ -224,7 +225,7 @@ pub fn append_arc(
     {
         return true;
     }
-    if r <= 0.0 {
+    if r < 0.0 {
         return true;
     }
     let push = |path: &mut Vec<PathSeg>, seg: PathSeg| -> bool {
@@ -234,7 +235,6 @@ pub fn append_arc(
         path.push(seg);
         true
     };
-    let tau = std::f32::consts::TAU;
     let sx = cx + r * start.cos();
     let sy = cy + r * start.sin();
     let start_seg = if path.is_empty() {
@@ -245,37 +245,15 @@ pub fn append_arc(
     if !push(path, start_seg) {
         return false;
     }
-    let mut sweep = if ccw {
-        let mut d = end - start;
-        if d >= 0.0 {
-            d -= tau * ((d / tau).floor() + 1.0);
-        }
-        if (end - start).abs() >= tau - 1e-4 {
-            tau
-        } else {
-            d + tau
-        }
-    } else {
-        let mut d = end - start;
-        if d <= 0.0 {
-            d += tau * ((-d / tau).floor() + 1.0);
-        }
-        if (end - start).abs() >= tau - 1e-4 {
-            tau
-        } else {
-            d
-        }
-    };
-    if ccw {
-        sweep = -sweep.abs();
-        if (end - start).abs() >= tau - 1e-4 {
-            sweep = -tau;
-        }
-    } else if (end - start).abs() >= tau - 1e-4 {
-        sweep = tau;
+    if r == 0.0 {
+        return true;
     }
-    // Split into <=90° cubic segments.
-    let n = ((sweep.abs() / (std::f32::consts::FRAC_PI_2) - 1e-4).ceil() as i32).clamp(1, 8);
+    let sweep = directed_sweep(start, end, ccw);
+    if sweep == 0.0 || !sweep.is_finite() {
+        return true;
+    }
+    // Split into <=90° cubic segments. Zero sweep must not clamp to 1.
+    let n = ((sweep.abs() / std::f32::consts::FRAC_PI_2 - 1e-4).ceil() as i32).clamp(1, 8);
     let step = sweep / n as f32;
     let mut a = start;
     for _ in 0..n {
@@ -286,6 +264,34 @@ pub fn append_arc(
         a = a1;
     }
     true
+}
+
+/// HTML Canvas directed sweep. Uses f64 remainder so large finite angles stay
+/// bounded (no wrap loop, no unbounded cubics).
+fn directed_sweep(start: f32, end: f32, ccw: bool) -> f32 {
+    let start = f64::from(start);
+    let end = f64::from(end);
+    // Match f32 τ so `±f32::TAU` compares and wraps exactly; remainder stays bounded.
+    let tau = f64::from(std::f32::consts::TAU);
+    let delta = end - start;
+    if !delta.is_finite() {
+        return 0.0;
+    }
+    if !ccw {
+        if delta >= tau {
+            return std::f32::consts::TAU;
+        }
+        delta.rem_euclid(tau) as f32
+    } else if -delta >= tau {
+        -std::f32::consts::TAU
+    } else {
+        let rem = delta.rem_euclid(tau);
+        if rem == 0.0 {
+            0.0
+        } else {
+            (rem - tau) as f32
+        }
+    }
 }
 
 fn append_arc_cubic(
@@ -515,5 +521,217 @@ mod tests {
         let g = (mid >> 16) as u8;
         assert!(r > 80 && r < 180, "r={r}");
         assert!(g > 80 && g < 180, "g={g}");
+    }
+
+    fn cubics(path: &[PathSeg]) -> usize {
+        path.iter()
+            .filter(|s| matches!(s, PathSeg::CubicTo { .. }))
+            .count()
+    }
+
+    fn end_xy(path: &[PathSeg]) -> (f32, f32) {
+        match *path.last().expect("path") {
+            PathSeg::MoveTo { x, y } | PathSeg::LineTo { x, y } => (x, y),
+            PathSeg::CubicTo { x, y, .. } => (x, y),
+            PathSeg::QuadTo { x, y, .. } => (x, y),
+            PathSeg::Close => panic!("close"),
+        }
+    }
+
+    fn near(got: (f32, f32), want: (f32, f32)) {
+        let dx = (got.0 - want.0).abs();
+        let dy = (got.1 - want.1).abs();
+        assert!(
+            dx < 1e-4 && dy < 1e-4,
+            "endpoint {got:?} want {want:?} dx={dx} dy={dy}"
+        );
+    }
+
+    #[test]
+    fn append_arc_ccw_quarter_from_zero_travels_three_quarters() {
+        // HTML: CCW 0→π/2 must end at π/2 via sweep −3π/2, not −π/2.
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+            true,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        near(end_xy(&path), (0.0, 10.0));
+        assert_eq!(cubics(&path), 3, "path={path:?}");
+    }
+
+    #[test]
+    fn append_arc_ccw_negative_quarter_is_short() {
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            -std::f32::consts::FRAC_PI_2,
+            true,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        near(end_xy(&path), (0.0, -10.0));
+        assert_eq!(cubics(&path), 1, "path={path:?}");
+    }
+
+    #[test]
+    fn append_arc_equal_angles_connect_only_both_dirs() {
+        for ccw in [false, true] {
+            let mut path = Vec::new();
+            assert!(append_arc(
+                &mut path,
+                4.0,
+                5.0,
+                8.0,
+                1.25,
+                1.25,
+                ccw,
+                MAX_PATH_SEGS_PER_OP,
+            ));
+            assert_eq!(cubics(&path), 0, "ccw={ccw} path={path:?}");
+            assert_eq!(path.len(), 1, "ccw={ccw}");
+            near(
+                end_xy(&path),
+                (4.0 + 8.0 * 1.25f32.cos(), 5.0 + 8.0 * 1.25f32.sin()),
+            );
+        }
+        let mut path = vec![PathSeg::MoveTo { x: 0.0, y: 0.0 }];
+        assert!(append_arc(
+            &mut path,
+            4.0,
+            5.0,
+            8.0,
+            0.0,
+            0.0,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 0);
+        assert!(matches!(path[1], PathSeg::LineTo { .. }), "{path:?}");
+    }
+
+    #[test]
+    fn append_arc_full_cw_zero_to_tau_four_cubics() {
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            std::f32::consts::TAU,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 4, "path={path:?}");
+        near(end_xy(&path), (10.0, 0.0));
+    }
+
+    #[test]
+    fn append_arc_directed_full_circle_rules() {
+        // 0→3π CCW: start−end is not ≥ 2π, so half-circle to coterminal π.
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            3.0 * std::f32::consts::PI,
+            true,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        near(end_xy(&path), (-10.0, 0.0));
+        assert_eq!(cubics(&path), 2, "path={path:?}");
+
+        // 0→−τ CW: end−start is not ≥ 2π, equal coterminal → zero sweep.
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            -std::f32::consts::TAU,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 0, "path={path:?}");
+        near(end_xy(&path), (10.0, 0.0));
+
+        // 0→3π CW is a directed full circle (end−start ≥ 2π).
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            3.0 * std::f32::consts::PI,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 4, "path={path:?}");
+        near(end_xy(&path), (10.0, 0.0));
+
+        // 0→−τ CCW is a directed full circle (start−end ≥ 2π).
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            -std::f32::consts::TAU,
+            true,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 4, "path={path:?}");
+        near(end_xy(&path), (10.0, 0.0));
+    }
+
+    #[test]
+    fn append_arc_zero_radius_connects_without_cubics() {
+        let mut path = vec![PathSeg::MoveTo { x: 1.0, y: 2.0 }];
+        assert!(append_arc(
+            &mut path,
+            50.0,
+            60.0,
+            0.0,
+            0.0,
+            std::f32::consts::PI,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert_eq!(cubics(&path), 0, "path={path:?}");
+        assert!(matches!(
+            path[1],
+            PathSeg::LineTo { x, y } if (x - 50.0).abs() < 1e-6 && (y - 60.0).abs() < 1e-6
+        ));
+    }
+
+    #[test]
+    fn append_arc_large_finite_angles_stay_bounded() {
+        let mut path = Vec::new();
+        assert!(append_arc(
+            &mut path,
+            0.0,
+            0.0,
+            4.0,
+            0.0,
+            1.0e10,
+            false,
+            MAX_PATH_SEGS_PER_OP,
+        ));
+        assert!(cubics(&path) <= 8, "cubics={} path={path:?}", cubics(&path));
+        assert!(path.len() <= MAX_PATH_SEGS_PER_OP);
     }
 }

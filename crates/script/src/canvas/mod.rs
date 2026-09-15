@@ -714,22 +714,25 @@ pub fn quadratic_curve_to(cx: f64, cy: f64, x: f64, y: f64) {
     push_seg(PathSeg::QuadTo { cx, cy, x, y });
 }
 
-pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) {
+pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) -> Result<(), String> {
     let Some(x) = finite_f32(x) else {
-        return;
+        return Ok(());
     };
     let Some(y) = finite_f32(y) else {
-        return;
+        return Ok(());
     };
     let Some(r) = finite_f32(r) else {
-        return;
+        return Ok(());
     };
     let Some(start) = finite_f32(start) else {
-        return;
+        return Ok(());
     };
     let Some(end) = finite_f32(end) else {
-        return;
+        return Ok(());
     };
+    if r < 0.0 {
+        return Err("IndexSizeError: radius must be non-negative".into());
+    }
     RECORDER.with(|rec| {
         let mut rec = rec.borrow_mut();
         if rec.overflow {
@@ -748,6 +751,7 @@ pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) {
             rec.fail(BoundFail::PathSegs);
         }
     });
+    Ok(())
 }
 
 pub fn fill() {
@@ -1643,7 +1647,8 @@ mod tests {
 
         reset();
         line_path(MAX_PATH_SEGS_PER_OP);
-        arc(10.0, 10.0, 4.0, 0.0, std::f64::consts::TAU, false);
+        arc(10.0, 10.0, 4.0, 0.0, std::f64::consts::TAU, false)
+            .expect("finite non-negative radius");
         let taken = take();
         assert!(taken.overflow);
         assert_eq!(taken.fail, Some("canvas: exceeded path segments"));

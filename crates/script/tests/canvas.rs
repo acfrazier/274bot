@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use script::canvas::{self, CanvasOp};
+use script::canvas::{self, CanvasOp, PathSeg};
 use script::isolate_fb::{decode_paint, IsolateBuf};
 use script::shim::ScriptPaint;
 use script::LoadIsolate;
@@ -775,5 +775,171 @@ export default class T extends LoopingBot {
     assert!(matches!(paint.canvas[0], CanvasOp::FillPath { .. }));
     assert!(matches!(paint.canvas[1], CanvasOp::StrokePath { .. }));
     assert_eq!(iso.probe("__stopOk").unwrap(), true);
+    iso.join();
+}
+
+fn path_cubics(segs: &[PathSeg]) -> usize {
+    segs.iter()
+        .filter(|s| matches!(s, PathSeg::CubicTo { .. }))
+        .count()
+}
+
+fn path_end(segs: &[PathSeg]) -> (f32, f32) {
+    match *segs.last().expect("segs") {
+        PathSeg::MoveTo { x, y } | PathSeg::LineTo { x, y } => (x, y),
+        PathSeg::CubicTo { x, y, .. } => (x, y),
+        PathSeg::QuadTo { x, y, .. } => (x, y),
+        PathSeg::Close => panic!("close"),
+    }
+}
+
+#[test]
+fn arc_ccw_equal_and_directed_isolate_geometry() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI / 2, true);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, -Math.PI / 2, true);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(4, 5, 8, 1.25, 1.25, false);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(4, 5, 8, 1.25, 1.25, true);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI * 3, true);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, -Math.PI * 2, false);
+        ctx.fill();
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(paint.canvas.len(), 7, "{paint:?}");
+    let segs_of = |i: usize| -> &[PathSeg] {
+        match &paint.canvas[i] {
+            CanvasOp::FillPath { segs, .. } => segs,
+            other => panic!("op {i}: {other:?}"),
+        }
+    };
+
+    let q = segs_of(0);
+    assert_eq!(path_cubics(q), 3, "{q:?}");
+    let (x, y) = path_end(q);
+    assert!(
+        x.abs() < 1e-3 && (y - 10.0).abs() < 1e-3,
+        "ccw quarter end {x},{y}"
+    );
+
+    let nq = segs_of(1);
+    assert_eq!(path_cubics(nq), 1, "{nq:?}");
+    let (x, y) = path_end(nq);
+    assert!(
+        x.abs() < 1e-3 && (y + 10.0).abs() < 1e-3,
+        "ccw -quarter end {x},{y}"
+    );
+
+    for i in [2, 3] {
+        let s = segs_of(i);
+        assert_eq!(path_cubics(s), 0, "equal {i} {s:?}");
+        assert_eq!(s.len(), 1, "equal {i}");
+    }
+
+    let full = segs_of(4);
+    assert_eq!(path_cubics(full), 4, "{full:?}");
+    let (x, y) = path_end(full);
+    assert!(
+        (x - 10.0).abs() < 1e-3 && y.abs() < 1e-3,
+        "full cw end {x},{y}"
+    );
+
+    let half = segs_of(5);
+    assert_eq!(path_cubics(half), 2, "{half:?}");
+    let (x, y) = path_end(half);
+    assert!(
+        (x + 10.0).abs() < 1e-3 && y.abs() < 1e-3,
+        "3pi ccw end {x},{y}"
+    );
+
+    let zero = segs_of(6);
+    assert_eq!(path_cubics(zero), 0, "{zero:?}");
+    iso.join();
+}
+
+#[test]
+fn arc_zero_radius_connects_without_cubics_isolate() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        ctx.beginPath();
+        ctx.moveTo(10, 10);
+        ctx.arc(50, 60, 0, 0, Math.PI);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    match &paint.canvas[0] {
+        CanvasOp::FillPath { segs, .. } => {
+            assert_eq!(path_cubics(segs), 0, "{segs:?}");
+            assert!(
+                segs.iter().any(
+                    |s| matches!(s, PathSeg::LineTo { x, y } if (*x - 50.0).abs() < 1e-4 && (*y - 60.0).abs() < 1e-4)
+                ),
+                "{segs:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    iso.join();
+}
+
+#[test]
+fn arc_negative_radius_throws_index_size_error_and_isolate_stays_alive() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        try {
+            ctx.arc(10, 10, -1, 0, 1);
+            globalThis.__neg = false;
+        } catch (e) {
+            globalThis.__neg = String(e.message || e).indexOf('IndexSizeError') >= 0;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(2, 2, 4, 4);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let paint = tick_paint(&iso, 1);
+    assert_eq!(iso.probe("__neg").unwrap(), true);
+    assert!(
+        paint
+            .canvas
+            .iter()
+            .any(|op| matches!(op, CanvasOp::FillRect { .. })),
+        "{paint:?}"
+    );
+    assert!(!is_error(&paint), "{paint:?}");
+    let second = tick_paint(&iso, 2);
+    assert!(
+        second
+            .canvas
+            .iter()
+            .any(|op| matches!(op, CanvasOp::FillRect { .. })),
+        "{second:?}"
+    );
     iso.join();
 }
