@@ -15161,7 +15161,7 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                         );
                     }
                     PairCompanionKind::FlaxSpinner => {
-                        cheat(c, "setstat crafting 1");
+                        cheat(c, "setstat crafting 10");
                         cheat(c, &tele_args(FLAX_MEET.level, FLAX_MEET.x, FLAX_MEET.z));
                     }
                     PairCompanionKind::DuelPeer => {
