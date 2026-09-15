@@ -1511,3 +1511,85 @@ fn mule_gap_transfer_does_not_qualify_without_further_cycle() {
     assert_eq!(evidence["witness"]["crafter"]["partner_transfer_events"], 1);
     assert_eq!(evidence["witness"]["mule"]["partner_transfer_events"], 1);
 }
+
+#[test]
+fn flax_partnerless_new_offer_invalidates_previous_episode() {
+    for confirmed in [true, false] {
+        for missing_partner in [None, Some("")] {
+            let mut runner = flax_slot(FlaxRole::Runner);
+            let mut spinner = flax_slot(FlaxRole::Spinner);
+            runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+            spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+            if confirmed {
+                runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+                spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+            } else {
+                runner.observe(flax_inactive(FlaxRole::Runner, 2, FLAX_LOAD));
+                spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
+            }
+            let mut runner_offer = flax_offer(FlaxRole::Runner, 3, FLAX_LOAD, 0);
+            let mut spinner_offer = flax_offer(FlaxRole::Spinner, 3, 0, 0);
+            runner_offer.trade_partner = missing_partner.map(str::to_owned);
+            spinner_offer.trade_partner = missing_partner.map(str::to_owned);
+            runner.observe(runner_offer);
+            spinner.observe(spinner_offer);
+            // A late label on the same offer cannot reconstruct an unbound episode.
+            runner.observe(flax_offer(FlaxRole::Runner, 4, FLAX_LOAD, 0));
+            spinner.observe(flax_offer(FlaxRole::Spinner, 4, 0, 0));
+            runner.observe(flax_confirm(FlaxRole::Runner, 5, FLAX_LOAD));
+            spinner.observe(flax_confirm(FlaxRole::Spinner, 5, 0));
+            runner.observe(flax_close(FlaxRole::Runner, 6, 0));
+            spinner.observe(flax_close(FlaxRole::Spinner, 6, FLAX_LOAD));
+            assert_flax_no_transfer(&runner, &spinner, confirmed);
+            // A separate, fully observed named offer still starts fresh.
+            runner.observe(flax_offer(FlaxRole::Runner, 7, FLAX_LOAD, 0));
+            spinner.observe(flax_offer(FlaxRole::Spinner, 7, 0, 0));
+            runner.observe(flax_confirm(FlaxRole::Runner, 8, FLAX_LOAD));
+            spinner.observe(flax_confirm(FlaxRole::Spinner, 8, 0));
+            runner.observe(flax_close(FlaxRole::Runner, 9, 0));
+            spinner.observe(flax_close(FlaxRole::Spinner, 9, FLAX_LOAD));
+            assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+        }
+    }
+}
+
+#[test]
+fn mule_partnerless_new_offer_invalidates_previous_episode() {
+    for confirmed in [true, false] {
+        for missing_partner in [None, Some("")] {
+            let mut crafter = mule_slot(MuleRole::Crafter);
+            let mut mule = mule_slot(MuleRole::Mule);
+            crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+            mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+            if confirmed {
+                crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+                mule.observe(mule_confirm(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+            } else {
+                crafter.observe(mule_inactive(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+                mule.observe(mule_inactive(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+            }
+            let mut crafter_offer = mule_offer(MuleRole::Crafter, 3, 0, MULE_TRADE_CAP, 0);
+            let mut mule_row = mule_offer(MuleRole::Mule, 3, MULE_TRADE_CAP, 0, 0);
+            crafter_offer.trade_partner = missing_partner.map(str::to_owned);
+            mule_row.trade_partner = missing_partner.map(str::to_owned);
+            crafter.observe(crafter_offer);
+            mule.observe(mule_row);
+            // A late label on the same offer cannot reconstruct an unbound episode.
+            crafter.observe(mule_offer(MuleRole::Crafter, 4, 0, MULE_TRADE_CAP, 0));
+            mule.observe(mule_offer(MuleRole::Mule, 4, MULE_TRADE_CAP, 0, 0));
+            crafter.observe(mule_confirm(MuleRole::Crafter, 5, 0, MULE_TRADE_CAP));
+            mule.observe(mule_confirm(MuleRole::Mule, 5, MULE_TRADE_CAP, 0));
+            crafter.observe(mule_close(MuleRole::Crafter, 6, MULE_TRADE_CAP, 0));
+            mule.observe(mule_close(MuleRole::Mule, 6, 0, MULE_TRADE_CAP));
+            assert_mule_no_transfer(&crafter, &mule, confirmed);
+            // A separate, fully observed named offer still starts fresh.
+            crafter.observe(mule_offer(MuleRole::Crafter, 7, 0, MULE_TRADE_CAP, 0));
+            mule.observe(mule_offer(MuleRole::Mule, 7, MULE_TRADE_CAP, 0, 0));
+            crafter.observe(mule_confirm(MuleRole::Crafter, 8, 0, MULE_TRADE_CAP));
+            mule.observe(mule_confirm(MuleRole::Mule, 8, MULE_TRADE_CAP, 0));
+            crafter.observe(mule_close(MuleRole::Crafter, 9, MULE_TRADE_CAP, 0));
+            mule.observe(mule_close(MuleRole::Mule, 9, 0, MULE_TRADE_CAP));
+            assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+        }
+    }
+}
