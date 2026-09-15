@@ -42,10 +42,21 @@ fn fbounds_to_dirty(minx: f32, miny: f32, maxx: f32, maxy: f32) -> Option<DirtyR
     if maxx <= minx || maxy <= miny {
         return None;
     }
+    // Clamp to applet before floor/ceil/i64 so huge finite extents cannot
+    // overflow `ceil as i64 - floor as i64` (e.g. ±f32::MAX).
+    let aw = APPLET_W as f32;
+    let ah = APPLET_H as f32;
+    let minx = minx.clamp(0.0, aw);
+    let miny = miny.clamp(0.0, ah);
+    let maxx = maxx.clamp(0.0, aw);
+    let maxy = maxy.clamp(0.0, ah);
+    if maxx <= minx || maxy <= miny {
+        return None;
+    }
     let x = minx.floor() as i64;
     let y = miny.floor() as i64;
-    let w = (maxx.ceil() as i64) - x;
-    let h = (maxy.ceil() as i64) - y;
+    let w = (maxx.ceil() as i64).saturating_sub(x);
+    let h = (maxy.ceil() as i64).saturating_sub(y);
     clip_to_applet(x, y, w, h)
 }
 
@@ -57,6 +68,10 @@ fn expand_bounds(
     pad: f32,
     shadow: Shadow,
 ) -> Option<DirtyRect> {
+    if !pad.is_finite() {
+        return None;
+    }
+    let pad = pad.max(0.0);
     let mut x0 = minx - pad;
     let mut y0 = miny - pad;
     let mut x1 = maxx + pad;
@@ -65,10 +80,12 @@ fn expand_bounds(
         let r = 3.0 * shadow.blur.max(0.0).min(MAX_SHADOW_BLUR);
         let ox = shadow.offset_x;
         let oy = shadow.offset_y;
-        x0 = x0.min(x0 + ox) - r;
-        y0 = y0.min(y0 + oy) - r;
-        x1 = x1.max(x1 + ox) + r;
-        y1 = y1.max(y1 + oy) + r;
+        if ox.is_finite() && oy.is_finite() && r.is_finite() {
+            x0 = x0.min(x0 + ox) - r;
+            y0 = y0.min(y0 + oy) - r;
+            x1 = x1.max(x1 + ox) + r;
+            y1 = y1.max(y1 + oy) + r;
+        }
     }
     fbounds_to_dirty(x0, y0, x1, y1)
 }
@@ -450,8 +467,8 @@ fn blit_shadow(
     }
     let w = dirty.w as usize;
     let h = dirty.h as usize;
-    let ox = shadow.offset_x.round() as i32;
-    let oy = shadow.offset_y.round() as i32;
+    let ox = shadow.offset_x.round() as i64;
+    let oy = shadow.offset_y.round() as i64;
     let clip_data = clip.map(Mask::data);
     for y in 0..h {
         for x in 0..w {
@@ -459,9 +476,9 @@ fn blit_shadow(
             if a == 0 {
                 continue;
             }
-            let dx = x as i32 + ox;
-            let dy = y as i32 + oy;
-            if dx < 0 || dy < 0 || dx >= dirty.w || dy >= dirty.h {
+            let dx = (x as i64).saturating_add(ox);
+            let dy = (y as i64).saturating_add(oy);
+            if dx < 0 || dy < 0 || dx >= i64::from(dirty.w) || dy >= i64::from(dirty.h) {
                 continue;
             }
             let di = dy as usize * w + dx as usize;

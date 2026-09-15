@@ -321,20 +321,59 @@ impl Recorder {
         }
     }
 
-    fn push_path_copy(&mut self) -> Option<Vec<PathSeg>> {
+    fn clip_emitted_segs(&self) -> usize {
+        self.clip.iter().map(|c| c.segs.len()).sum()
+    }
+
+    /// Charge path copy plus every clip snapshot that will be cloned onto the
+    /// draw, matching decoder `MAX_PATH_SEGS_PER_FRAME` accounting.
+    fn charge_emitted(&mut self, path_len: usize) -> bool {
         if self.overflow {
-            return None;
+            return false;
         }
+        let n = path_len.saturating_add(self.clip_emitted_segs());
+        if self.path_segs_frame.saturating_add(n) > MAX_PATH_SEGS_PER_FRAME {
+            self.fail(BoundFail::PathSegs);
+            return false;
+        }
+        self.path_segs_frame += n;
+        true
+    }
+
+    fn prepare_draw(&mut self, path_len: usize) -> bool {
+        if self.overflow {
+            return false;
+        }
+        if self.ops.len() >= MAX_CANVAS_OPS {
+            self.fail(BoundFail::Ops);
+            return false;
+        }
+        self.charge_emitted(path_len)
+    }
+
+    fn push_working_seg(&mut self, seg: PathSeg) -> bool {
+        if self.overflow {
+            return false;
+        }
+        if self.path.len() >= MAX_PATH_SEGS_PER_OP {
+            self.fail(BoundFail::PathSegs);
+            return false;
+        }
+        self.path.push(seg);
+        true
+    }
+
+    fn push_path_copy(&mut self) -> Option<Vec<PathSeg>> {
         if self.path.is_empty() {
             return None;
         }
-        if self.path.len() > MAX_PATH_SEGS_PER_OP
-            || self.path_segs_frame.saturating_add(self.path.len()) > MAX_PATH_SEGS_PER_FRAME
-        {
+        if self.path.len() > MAX_PATH_SEGS_PER_OP {
             self.fail(BoundFail::PathSegs);
             return None;
         }
-        self.path_segs_frame += self.path.len();
+        if !self.prepare_draw(self.path.len()) {
+            return None;
+        }
         Some(self.path.clone())
     }
 }
@@ -536,6 +575,9 @@ pub fn fill_rect(x: f64, y: f64, w: f64, h: f64) {
     };
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
+        if !rec.prepare_draw(0) {
+            return;
+        }
         let color = rec.solid_fill();
         let extras = rec.extras_for_fill();
         rec.push(CanvasOp::FillRect {
@@ -560,6 +602,9 @@ pub fn fill_text(text: &str, x: f64, y: f64) {
         let mut rec = r.borrow_mut();
         if text.len() > MAX_PAINT_TEXT {
             rec.fail(BoundFail::Text);
+            return;
+        }
+        if !rec.prepare_draw(0) {
             return;
         }
         let color = rec.solid_fill();
@@ -623,17 +668,13 @@ pub fn close_path() {
         if rec.path.is_empty() {
             return;
         }
-        rec.path.push(PathSeg::Close);
+        rec.push_working_seg(PathSeg::Close);
     });
 }
 
 fn push_seg(seg: PathSeg) {
     RECORDER.with(|r| {
-        let mut rec = r.borrow_mut();
-        if rec.overflow {
-            return;
-        }
-        rec.path.push(seg);
+        r.borrow_mut().push_working_seg(seg);
     });
 }
 
@@ -694,7 +735,18 @@ pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) {
         if rec.overflow {
             return;
         }
-        append_arc(&mut rec.path, x, y, r, start, end, ccw);
+        if !append_arc(
+            &mut rec.path,
+            x,
+            y,
+            r,
+            start,
+            end,
+            ccw,
+            MAX_PATH_SEGS_PER_OP,
+        ) {
+            rec.fail(BoundFail::PathSegs);
+        }
     });
 }
 
@@ -740,21 +792,18 @@ pub fn clip() {
         if rec.overflow {
             return;
         }
-        if rec.path.is_empty() {
-            rec.clip.push(ClipPath { segs: Vec::new() });
-            return;
-        }
         if rec.clip.len() >= MAX_CLIP_PATHS {
             rec.fail(BoundFail::Clips);
             return;
         }
-        if rec.path.len() > MAX_PATH_SEGS_PER_OP
-            || rec.path_segs_frame.saturating_add(rec.path.len()) > MAX_PATH_SEGS_PER_FRAME
-        {
+        if rec.path.is_empty() {
+            rec.clip.push(ClipPath { segs: Vec::new() });
+            return;
+        }
+        if rec.path.len() > MAX_PATH_SEGS_PER_OP {
             rec.fail(BoundFail::PathSegs);
             return;
         }
-        rec.path_segs_frame += rec.path.len();
         let segs = rec.path.clone();
         rec.clip.push(ClipPath { segs });
     });
@@ -1561,5 +1610,185 @@ mod tests {
             at(24, 28) > 80,
             "shadow offset below the rect must be visible"
         );
+    }
+
+    fn line_path(n: usize) {
+        begin_path();
+        move_to(0.0, 0.0);
+        for i in 1..n {
+            line_to(i as f64, 0.0);
+        }
+    }
+
+    #[test]
+    fn path_only_commands_cannot_grow_past_caps() {
+        reset();
+        line_path(MAX_PATH_SEGS_PER_OP);
+        fill();
+        let taken = take();
+        assert!(!taken.overflow);
+        match &taken.ops[0] {
+            CanvasOp::FillPath { segs, .. } => assert_eq!(segs.len(), MAX_PATH_SEGS_PER_OP),
+            other => panic!("{other:?}"),
+        }
+
+        reset();
+        line_path(MAX_PATH_SEGS_PER_OP);
+        line_to(400.0, 1.0);
+        close_path();
+        let taken = take();
+        assert!(taken.overflow);
+        assert_eq!(taken.fail, Some("canvas: exceeded path segments"));
+        assert!(taken.ops.is_empty());
+
+        reset();
+        line_path(MAX_PATH_SEGS_PER_OP);
+        arc(10.0, 10.0, 4.0, 0.0, std::f64::consts::TAU, false);
+        let taken = take();
+        assert!(taken.overflow);
+        assert_eq!(taken.fail, Some("canvas: exceeded path segments"));
+        assert!(taken.ops.is_empty());
+    }
+
+    #[test]
+    fn empty_clip_cannot_bypass_clip_cap() {
+        reset();
+        for _ in 0..MAX_CLIP_PATHS {
+            begin_path();
+            clip();
+        }
+        fill_rect(0.0, 0.0, 2.0, 2.0);
+        let taken = take();
+        assert!(!taken.overflow);
+        match &taken.ops[0] {
+            CanvasOp::FillRect { extras, .. } => assert_eq!(extras.clips.len(), MAX_CLIP_PATHS),
+            other => panic!("{other:?}"),
+        }
+
+        reset();
+        for _ in 0..(MAX_CLIP_PATHS + 3) {
+            begin_path();
+            clip();
+        }
+        fill_rect(0.0, 0.0, 2.0, 2.0);
+        let taken = take();
+        assert!(taken.overflow);
+        assert_eq!(taken.fail, Some("canvas: exceeded clip paths"));
+        assert!(taken.ops.is_empty());
+    }
+
+    #[test]
+    fn clipped_fill_rects_charge_emitted_clip_segs() {
+        reset();
+        line_path(MAX_PATH_SEGS_PER_OP);
+        clip();
+        let per = MAX_PATH_SEGS_PER_OP;
+        let ok = MAX_PATH_SEGS_PER_FRAME / per;
+        for _ in 0..ok {
+            fill_rect(0.0, 0.0, 1.0, 1.0);
+        }
+        let taken = take();
+        assert!(!taken.overflow, "fail={:?}", taken.fail);
+        assert_eq!(taken.ops.len(), ok);
+        let paint = crate::shim::ScriptPaint {
+            title: None,
+            accent: None,
+            lines: Vec::new(),
+            buttons: Vec::new(),
+            generation: 0,
+            canvas: taken.ops.clone(),
+        };
+        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
+        let decoded =
+            crate::isolate_fb::decode_paint(&buf).expect("decoder must accept recorder frame");
+        assert_eq!(decoded.canvas.len(), ok);
+
+        reset();
+        line_path(MAX_PATH_SEGS_PER_OP);
+        clip();
+        for _ in 0..(ok + 1) {
+            fill_rect(0.0, 0.0, 1.0, 1.0);
+        }
+        let taken = take();
+        assert!(taken.overflow);
+        assert_eq!(taken.fail, Some("canvas: exceeded path segments"));
+        assert_eq!(taken.ops.len(), ok);
+
+        let mut extras = DrawExtras::default();
+        extras.clips.push(ClipPath {
+            segs: (0..MAX_PATH_SEGS_PER_OP)
+                .map(|i| {
+                    if i == 0 {
+                        PathSeg::MoveTo { x: 0.0, y: 0.0 }
+                    } else {
+                        PathSeg::LineTo {
+                            x: i as f32,
+                            y: 0.0,
+                        }
+                    }
+                })
+                .collect(),
+        });
+        let over: Vec<CanvasOp> = (0..(ok + 1))
+            .map(|_| CanvasOp::FillRect {
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+                color: pack_rgba(255, 0, 0, 255),
+                extras: extras.clone(),
+            })
+            .collect();
+        let paint = crate::shim::ScriptPaint {
+            title: None,
+            accent: None,
+            lines: Vec::new(),
+            buttons: Vec::new(),
+            generation: 0,
+            canvas: over,
+        };
+        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
+        let err = crate::isolate_fb::decode_paint(&buf).expect_err("decoder frame budget");
+        assert!(err.contains("path segs"), "{err}");
+    }
+
+    #[test]
+    fn huge_finite_path_extent_does_not_panic() {
+        let segs = vec![
+            PathSeg::MoveTo {
+                x: -f32::MAX,
+                y: -f32::MAX,
+            },
+            PathSeg::LineTo {
+                x: f32::MAX,
+                y: f32::MAX,
+            },
+        ];
+        let op = CanvasOp::FillPath {
+            segs,
+            color: pack_rgba(255, 0, 0, 255),
+            extras: DrawExtras::default(),
+        };
+        let dirty = dirty_bounds(&[op.clone()]);
+        assert!(dirty.is_some());
+        let _ = rasterize(&[op]);
+
+        let mut extras = DrawExtras::default();
+        extras.shadow = Shadow {
+            color: pack_rgba(0, 0, 0, 200),
+            blur: MAX_SHADOW_BLUR,
+            offset_x: f32::MAX,
+            offset_y: -f32::MAX,
+        };
+        let shadowed = CanvasOp::FillRect {
+            x: 20,
+            y: 20,
+            w: 8,
+            h: 8,
+            color: pack_rgba(255, 255, 255, 255),
+            extras,
+        };
+        let _ = dirty_bounds(&[shadowed.clone()]);
+        let _ = rasterize(&[shadowed]);
     }
 }
