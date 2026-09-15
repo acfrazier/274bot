@@ -13446,7 +13446,13 @@ fn aio_teleport_variant(plan: AioTeleportPlan) -> Scenario {
 }
 
 fn shop_buyout_scenario() -> Scenario {
-    shop_buyout_variant("shop_buyout", SHOP_BUYOUT_INJECT, AEMAD_STAND, AEMAD_BANK)
+    shop_buyout_variant(
+        "shop_buyout",
+        SHOP_BUYOUT_INJECT,
+        AEMAD_STAND,
+        AEMAD_BANK,
+        "Aemad",
+    )
 }
 
 fn shop_buyout_aubury_scenario() -> Scenario {
@@ -13455,6 +13461,7 @@ fn shop_buyout_aubury_scenario() -> Scenario {
         SHOP_BUYOUT_AUBURY_INJECT,
         AUBURY_STAND,
         VARROCK_EAST_BANK,
+        "Aubury",
     )
 }
 
@@ -13463,6 +13470,7 @@ fn shop_buyout_variant(
     inject: &'static [ScriptSettingInject],
     stand: WorldTile,
     bank: WorldTile,
+    keeper_name: &'static str,
 ) -> Scenario {
     let coins = Proof::ItemId {
         id: COINS_ID,
@@ -13470,11 +13478,84 @@ fn shop_buyout_variant(
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed banked coins and tele to the keeper before Start",
+        name: "seed stackable coins and stand at the named bank before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "givebank coins 20000");
+                cheat(c, "give coins 20000");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(tanner_open_seed_bank(
+        "open the actual named shop bank for the seed deposit",
+        Proof::BankItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(Step {
+        name: "deposit the coin seed through the bank window",
+        kind: StepKind::Repeat {
+            send: Box::new(move |c, snapshot| {
+                if (Proof::BankItemId {
+                    id: COINS_ID,
+                    count: 20000,
+                })
+                .check(snapshot, None)
+                {
+                    return true;
+                }
+                let mut ix = Interactions::new(snapshot, c);
+                let mut wrote = false;
+                for item in snapshot.bank_side() {
+                    if let Some(op) = bank_deposit_all_op(&item.actions) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+                wrote
+            }),
+        },
+        wait: Wait {
+            arm: Proof::BankItemId {
+                id: COINS_ID,
+                count: 20000,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm the named bank has no excess coin seed",
+        Proof::BankItemIdAtMost {
+            id: COINS_ID,
+            count: 20000,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "confirm the coin seed left the pack",
+        Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(Step {
+        name: "tele to the original shop keeper before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
@@ -13490,20 +13571,15 @@ fn shop_buyout_variant(
         },
     });
     steps.push(bank_fletcher_watch(
-        "confirm empty pack of coins before Start",
-        Proof::ItemIdAtMost {
-            id: COINS_ID,
-            count: 0,
+        "acknowledge the original shop keeper before Start",
+        Proof::NpcNameNear {
+            name: keeper_name,
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+            radius: 12,
         },
     ));
-    steps.push(tanner_open_seed_bank(
-        "open and acknowledge the coin seed bank",
-        Proof::BankItemId {
-            id: COINS_ID,
-            count: 20000,
-        },
-    ));
-    steps.push(bank_fletcher_close_seed_bank());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         ("watch coins withdrawn after Start", coins),
@@ -13522,7 +13598,6 @@ fn shop_buyout_variant(
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
-    let _ = bank;
     Scenario {
         name,
         seed: Seed {
@@ -15110,7 +15185,7 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             }
             PairCompanionKind::FlaxSpinner => {
                 if pair_near(&snap, FLAX_MEET, 8)
-                    && pair_stat(&snap, CRAFTING_STAT) >= 1
+                    && pair_stat(&snap, CRAFTING_STAT) >= 10
                     && pair_inv_id(&snap, FLAX_ID) == 0
                     && pair_inv_id(&snap, BOW_STRING_ID) == 0
                 {

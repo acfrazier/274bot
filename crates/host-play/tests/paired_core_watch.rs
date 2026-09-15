@@ -33,7 +33,10 @@ fn flax_ready(player: &str, role: FlaxRole) -> FlaxObservation {
             FlaxRole::Runner => FLAX_FIELD,
             FlaxRole::Spinner => FLAX_MEET,
         }),
-        crafting: 1,
+        crafting: match role {
+            FlaxRole::Runner => 1,
+            FlaxRole::Spinner => 10,
+        },
         ..FlaxObservation::default()
     }
 }
@@ -183,6 +186,24 @@ fn flax_full_cycle_caches_one_receipt() {
     let second = watch.qualify().expect("terminal receipt remains cached");
     assert!(std::sync::Arc::ptr_eq(&first, &second));
     assert_eq!(first["case"], "flax");
+}
+
+#[test]
+fn flax_spinner_requires_ten_crafting_but_runner_keeps_low_stat() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+    let mut spinner = flax_ready("spinner", FlaxRole::Spinner);
+    spinner.crafting = 9;
+    watch.observe_flax("spinner", spinner, false);
+    assert_eq!(watch.barrier(), StartBarrier::Wait);
+    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+
+    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
+    assert_eq!(watch.barrier(), StartBarrier::StartBoth);
+    watch
+        .begin_shared_start("runner", "spinner")
+        .expect("Crafting 10 admits spinner while Runner remains valid at 1");
 }
 
 #[test]
