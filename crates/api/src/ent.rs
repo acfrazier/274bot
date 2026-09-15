@@ -1,4 +1,4 @@
-//! Host-owned Ent NPC identity and supplied-array tile match.
+//! Host-owned Ent NPC identity facts.
 //!
 //! Public contract is revision-independent on the selected 274/289 caches:
 //! `npc.pack` maps 444..=452 to `macro_ent_*` and 453 to `suit_of_armour`
@@ -9,8 +9,9 @@
 //! `scripts/macro events/scripts/woodcutting/macro_event_ent.rs2` on both
 //! trees. Generated `SelectedGameData` item rows do not carry NPC ids;
 //! these constants are the public binding, not a copied JS table.
-
-use crate::snapshot::WorldTile;
+//!
+//! The supplied-array tile lookup is script behavior and lives in
+//! `script::ent`; this module stays the shared identity contract.
 
 /// Ent NPC type ids from selected `npc.pack` (`macro_ent_tree1`..=`macro_ent_magic`).
 /// 453 is `suit_of_armour` and is not an Ent.
@@ -25,18 +26,6 @@ pub const ENT_LIFE_TICKS: i32 = 60;
 /// True when `id` is one of the selected-cache Ent NPC types.
 pub fn is_ent_npc_id(id: i32) -> bool {
     ENT_NPC_IDS.contains(&id)
-}
-
-/// True when a supplied NPC row is an Ent standing on `tile`.
-///
-/// Uses the caller-supplied `(id, tile)` list only. Does not read the
-/// current posted scene or copy the world.
-pub fn ent_npc_on_tile<I>(npcs: I, tile: WorldTile) -> bool
-where
-    I: IntoIterator<Item = (i32, WorldTile)>,
-{
-    npcs.into_iter()
-        .any(|(id, npc_tile)| is_ent_npc_id(id) && npc_tile == tile)
 }
 
 #[cfg(test)]
@@ -56,39 +45,6 @@ mod tests {
         assert!(!is_ent_npc_id(SUIT_OF_ARMOUR_NPC_ID));
         assert!(!is_ent_npc_id(0));
         assert!(!is_ent_npc_id(-1));
-    }
-
-    #[test]
-    fn supplied_array_matches_exact_tile_not_world_scan() {
-        let tree = WorldTile {
-            x: 3087,
-            z: 3234,
-            level: 0,
-        };
-        let neighbour = WorldTile {
-            x: 3088,
-            z: 3234,
-            level: 0,
-        };
-        let other_plane = WorldTile {
-            x: 3087,
-            z: 3234,
-            level: 1,
-        };
-        assert!(ent_npc_on_tile([(444, tree)], tree));
-        assert!(!ent_npc_on_tile([(444, tree)], neighbour));
-        assert!(!ent_npc_on_tile([(444, tree)], other_plane));
-        assert!(!ent_npc_on_tile([(443, tree)], tree));
-        assert!(!ent_npc_on_tile([(SUIT_OF_ARMOUR_NPC_ID, tree)], tree));
-        assert!(!ent_npc_on_tile(std::iter::empty(), tree));
-        assert!(ent_npc_on_tile(
-            [(443, tree), (452, tree), (444, neighbour)],
-            tree
-        ));
-        assert!(!ent_npc_on_tile(
-            [(444, neighbour), (445, other_plane)],
-            tree
-        ));
     }
 
     #[test]

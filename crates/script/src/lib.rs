@@ -5,12 +5,18 @@
 
 #[cfg(feature = "load")]
 pub mod canvas;
+/// Curated script site configuration and the hostile-attacker predicate.
+pub mod content;
 pub mod ctx;
 pub mod declared_abi;
-pub mod host_js;
-pub mod identity;
+/// Script-side Ent tile lookup over caller-supplied rows.
+pub mod ent;
 #[cfg(feature = "load")]
 mod events;
+/// Native gather-tool selection over the posted `api::gather_tools` rows.
+pub mod gather_tools;
+pub mod host_js;
+pub mod identity;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
@@ -41,10 +47,12 @@ pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
     live_file_fixture_path, live_file_fixture_stem, raw_content_fingerprint,
-    resolve_sibling_modules, scan_import_specifiers, scan_same_folder_js_imports,
-    sibling_module_url, CatalogApplyReport, CatalogDiff, JsCard, JsLibrary, LoadShape,
-    PreparedCard, ScriptSel,
+    scan_import_specifiers, scan_same_folder_js_imports, sibling_module_url, CatalogApplyReport,
+    CatalogDiff, JsCard, LoadShape, PreparedCard, ScriptSel,
 };
+/// Cache/transpile-backed library and sibling resolution (isolate feature).
+#[cfg(feature = "load")]
+pub use load::{resolve_sibling_modules, JsLibrary};
 pub use loadouts_store::{
     copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
     resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, CarryEntry, Loadout,
