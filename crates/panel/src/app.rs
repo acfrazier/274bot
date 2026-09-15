@@ -7150,7 +7150,7 @@ mod tests {
                         crafting: 1,
                         ..FlaxObservation::default()
                     };
-                    let spinner = FlaxObservation {
+                    let mut spinner = FlaxObservation {
                         ingame: true,
                         scene_state: 2,
                         inventory_tab_available: true,
@@ -7160,6 +7160,13 @@ mod tests {
                         ..FlaxObservation::default()
                     };
                     watch.observe_flax(a, runner, false);
+                    watch.observe_flax(b, spinner.clone(), false);
+                    assert_eq!(
+                        watch.barrier(),
+                        StartBarrier::Wait,
+                        "Crafting 1 cannot spin flax"
+                    );
+                    spinner.crafting = 10;
                     watch.observe_flax(b, spinner, false);
                     assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
                     watch.begin_shared_start(a, b).unwrap();
