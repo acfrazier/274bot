@@ -359,55 +359,164 @@ fn posted_rows_are_the_decision_input_not_the_compiled_table() {
 #[test]
 fn native_step_wire_contract_is_probe_accept_and_none() {
     let iso = spawn();
-    let facts = iso
-        .probe("globalThis.__rs2b0t_host.content.gather_tools")
-        .unwrap();
-    let step = |payload: String| {
+    let step = |payload: &str| {
         iso.probe(&format!(
             "rustyscript.functions.__rs2b0t_tool_step({payload})"
         ))
         .unwrap()
     };
-    let probe = step(format!(
-        "{{op:'best', kind:'pickaxes', level:30, facts:{facts}, index:-1, accepted:false}}"
-    ));
     assert_eq!(
-        probe,
+        step("{op:'best', index:-1, accepted:false, has_next:true}"),
+        serde_json::json!({"kind": "need_row", "index": 0})
+    );
+    assert_eq!(
+        step("{op:'best', index:-1, accepted:false, has_next:true, row_index:0, row:{name:'Mithril pickaxe', use_skill:'mining'}}"),
+        serde_json::json!({"kind": "need_level", "index": 0})
+    );
+    assert_eq!(
+        step("{op:'best', index:-1, accepted:false, has_next:true, row_index:0, row:{name:'Mithril pickaxe', use_skill:'mining'}, level_ok:true}"),
         serde_json::json!({"kind": "probe", "index": 0, "name": "Mithril pickaxe"})
     );
-    let stale = step(format!(
-        "{{op:'best', kind:'pickaxes', level:30, facts:{facts}, index:-1, accepted:true}}"
-    ));
     assert_eq!(
-        stale,
+        step("{op:'best', index:-1, accepted:true, has_next:true}"),
         serde_json::json!({"kind": "none"}),
         "an accepted answer with no probed candidate is not a hit"
     );
-    let accepted = step(format!(
-        "{{op:'best', kind:'pickaxes', level:30, facts:{facts}, index:0, accepted:true}}"
-    ));
     assert_eq!(
-        accepted,
+        step("{op:'best', index:0, accepted:true, row_index:0, row:{name:'Mithril pickaxe', use_skill:'mining'}}"),
         serde_json::json!({"kind": "done", "name": "Mithril pickaxe"})
     );
-    let absent = step(stringify_json(&serde_json::json!({
-        "op": "best",
-        "kind": "pickaxes",
-        "level": 99,
-        "facts": serde_json::Value::Null,
-        "index": -1,
-        "accepted": false,
-    })));
-    assert_eq!(absent, serde_json::json!({"kind": "none"}));
-    let unsupported = step("{op:'nope'}".to_string());
     assert_eq!(
-        unsupported,
+        step("{op:'best', index:-1, accepted:false, has_next:false}"),
+        serde_json::json!({"kind": "none"})
+    );
+    assert_eq!(
+        step("{op:'nope'}"),
         serde_json::json!({"kind": "error", "feature": "Tools"})
     );
     iso.join();
 }
 
-/// JSON literal for embedding in a JS payload.
-fn stringify_json(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+#[test]
+fn coercion_and_lazy_access_preserve_existing_export_behavior() {
+    let src = r#"
+import { bestAxe, bestPickaxe, canWieldTool, hasAllTools, toolRestockPlan } from '../../api/acquisition/Tools.js';
+const results = {};
+function capture(name, fn) {
+    try { results[name] = fn(); } catch (e) { results[name] = 'THREW: ' + e.message; }
+}
+const throwing = { valueOf() { throw new Error('unused numeric input'); } };
+capture('axeIgnoresLevel', () => bestAxe(throwing, () => true));
+capture('unknownIgnoresAttack', () => canWieldTool('Unknown tool', throwing));
+capture('bronzeIgnoresAttack', () => canWieldTool('Bronze axe', throwing));
+capture('levelConversions', () => {
+    const log = [];
+    const level = { valueOf() { log.push('level'); return 99; } };
+    bestPickaxe(level, name => { log.push(name); return name === 'Adamant pickaxe'; });
+    return log;
+});
+capture('stringComparison', () => hasAllTools([{ name: 'Tinderbox', min: '10' }], null, () => '2'));
+capture('hexMinimum', () => hasAllTools([{ name: 'Tinderbox', min: '0x10' }], null, () => 16));
+capture('shortCircuitGetter', () => {
+    let reads = 0;
+    const result = hasAllTools([
+        { name: 'Tinderbox', min: 2 },
+        { get name() { reads++; return 'Hammer'; } },
+    ], null, () => 0);
+    return [result, reads];
+});
+capture('nanQuantity', () => Number.isNaN(toolRestockPlan([{name:'Tinderbox', restock:NaN}], null, () => 0, () => 1)[0].qty));
+capture('infiniteQuantity', () => toolRestockPlan([{name:'Tinderbox', restock:Infinity}], null, () => 0, () => Infinity)[0].qty === Infinity);
+globalThis.__coercionResults = results;
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actual = iso.probe("__coercionResults").unwrap();
+    iso.join();
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "axeIgnoresLevel": "Rune axe",
+            "unknownIgnoresAttack": false,
+            "bronzeIgnoresAttack": true,
+            "levelConversions": ["level", "Rune pickaxe", "level", "Adamant pickaxe"],
+            "stringComparison": true,
+            "hexMinimum": true,
+            "shortCircuitGetter": [false, 0],
+            "nanQuantity": true,
+            "infiniteQuantity": true,
+        })
+    );
+}
+
+#[test]
+fn skipped_throwing_getter_does_not_abort_the_host() {
+    let src = r#"
+import { hasAllTools } from '../../api/acquisition/Tools.js';
+let threw = 'no';
+let result;
+try {
+    result = hasAllTools([
+        { name: 'Tinderbox', min: 2 },
+        { get name() { throw new Error('skipped getter'); } },
+    ], null, () => 0);
+} catch (e) {
+    threw = String(e && e.message ? e.message : e);
+}
+globalThis.__throwingGetter = { result, threw };
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actual = iso.probe("__throwingGetter").unwrap();
+    iso.join();
+    assert_eq!(
+        actual,
+        serde_json::json!({"result": false, "threw": "no"}),
+        "a skipped requirement getter must not be serialized through serde_v8"
+    );
+}
+
+#[test]
+fn reentrant_best_axe_keeps_independent_candidate_cursors() {
+    let src = r#"
+import { bestAxe } from '../../api/acquisition/Tools.js';
+const log = [];
+const hit = bestAxe(1, (n) => {
+    log.push('outer:' + n);
+    if (n === 'Rune axe') {
+        const inner = bestAxe(1, (m) => {
+            log.push('inner:' + m);
+            return m === 'Bronze axe';
+        });
+        log.push('innerHit:' + inner);
+    }
+    return n === 'Steel axe';
+});
+globalThis.__reenter = { hit, log };
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actual = iso.probe("__reenter").unwrap();
+    iso.join();
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "hit": "Steel axe",
+            "log": [
+                "outer:Rune axe",
+                "inner:Rune axe",
+                "inner:Adamant axe",
+                "inner:Mithril axe",
+                "inner:Black axe",
+                "inner:Steel axe",
+                "inner:Iron axe",
+                "inner:Bronze axe",
+                "innerHit:Bronze axe",
+                "outer:Adamant axe",
+                "outer:Mithril axe",
+                "outer:Black axe",
+                "outer:Steel axe",
+            ],
+        })
+    );
 }
