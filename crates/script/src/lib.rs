@@ -31,6 +31,8 @@ pub mod settings_store;
 #[cfg(feature = "load")]
 pub mod shim;
 pub mod slot;
+/// Native `chooseTarget` traversal over the caller's nearest-first candidates.
+pub mod targets;
 #[cfg(feature = "load")]
 pub mod watchdog;
 

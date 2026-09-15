@@ -2739,6 +2739,13 @@ mod isolate {
             })
             .map_err(|e| format!("register tool step: {e}"))?;
         runtime
+            .register_function("__rs2b0t_target_step", |args: &[serde_json::Value]| {
+                Ok(crate::targets::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register target step: {e}"))?;
+        runtime
             .register_function("__rs2b0t_canvas_begin", |_args: &[serde_json::Value]| {
                 crate::canvas::begin();
                 Ok(serde_json::Value::Null)

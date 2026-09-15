@@ -704,3 +704,323 @@ fn tool_restock_plan_is_ordinary_tinderbox_withdraw() {
     assert_eq!(iso.probe("__pick").unwrap(), Value::Null);
     iso.join();
 }
+
+// `localFirePlot`: the posted-plot scan is native `__rs2b0t_fire` `local-plot`;
+// the shim keeps the posted row read, the two scalar facts and the fallback box.
+const LOCAL_PLOT: &str = r#"
+import { localFirePlot } from '../../api/firemaking/Firemaking.js';
+
+const plots = globalThis.__rs2b0t_host.content.fire_plots;
+
+function view(p) {
+    return {
+        bank: { x: p.bank.x, z: p.bank.z, level: p.bank.level },
+        x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1,
+    };
+}
+
+function attempt(origin, half, useDefaultHalf) {
+    try {
+        return view(useDefaultHalf ? localFirePlot(origin) : localFirePlot(origin, half));
+    } catch (e) {
+        return String(e && e.message ? e.message : e);
+    }
+}
+
+// Posted order: first plot whose bank level matches and whose inclusive AABB
+// contains the origin, in the existing `content.fire_plots` order.
+globalThis.__posted = {
+    varrockEast: attempt({ x: 3253, z: 3420, level: 0 }),
+    varrockWest: attempt({ x: 3185, z: 3440, level: 0 }),
+    draynor: attempt({ x: 3093, z: 3243, level: 0 }),
+    seers: attempt({ x: 2725, z: 3491, level: 0 }),
+    eastCorner: attempt({ x: 3235, z: 3418, level: 0 }),
+    eastEdge: attempt({ x: 3275, z: 3432, level: 0 }),
+    outside: attempt({ x: 3000, z: 3000, level: 0 }),
+    wrongPlane: attempt({ x: 3253, z: 3420, level: 1 }),
+    nullLevel: attempt({ x: 3253, z: 3420, level: null }),
+    stringLevel: attempt({ x: 3253, z: 3420, level: '0' }),
+};
+
+// The first posted plot still wins when a later row also contains the origin.
+globalThis.__overlap = (() => {
+    const saved = plots[1];
+    plots[1] = {
+        name: 'Overlap',
+        bank: { x: 2710, z: 3482, level: 0 },
+        x0: 2700, x1: 2760, z0: 3470, z1: 3500,
+    };
+    try {
+        return attempt({ x: 2725, z: 3491, level: 0 });
+    } finally {
+        plots[1] = saved;
+    }
+})();
+
+// `h = Math.max(0, Math.floor(Number(half) || 4))`, default 4, `±h` at origin.
+globalThis.__half = {
+    defaultHalf: attempt({ x: 3000, z: 3000, level: 0 }, undefined, true),
+    ten: attempt({ x: 3000, z: 3000, level: 0 }, 10),
+    stringThree: attempt({ x: 3000, z: 3000, level: 0 }, '3'),
+    zeroIsFour: attempt({ x: 3000, z: 3000, level: 0 }, 0),
+    negativeIsZero: attempt({ x: 3000, z: 3000, level: 0 }, -2),
+    fractionFloors: attempt({ x: 3000, z: 3000, level: 0 }, 2.7),
+    nanIsFour: attempt({ x: 3000, z: 3000, level: 0 }, NaN),
+};
+
+// Invalid origins keep the explicit `notImpl`; non-finite coordinates keep
+// their JS value instead of being converted through the bridge.
+globalThis.__invalid = [
+    { x: '5', z: 3000 },
+    {},
+    undefined,
+    null,
+    7,
+    { x: 3000, z: null },
+].map((origin) => {
+    try {
+        localFirePlot(origin);
+        return 'no throw';
+    } catch (e) {
+        return String(e && e.message ? e.message : e);
+    }
+});
+
+globalThis.__nonFinite = {
+    nanOrigin: (() => {
+        const p = localFirePlot({ x: NaN, z: 3000, level: 0 });
+        return {
+            x0NaN: Number.isNaN(p.x0), x1NaN: Number.isNaN(p.x1),
+            bankXNaN: Number.isNaN(p.bank.x), z0: p.z0, z1: p.z1,
+        };
+    })(),
+    infOrigin: (() => {
+        const p = localFirePlot({ x: Infinity, z: 3000, level: 0 });
+        return {
+            x0Inf: p.x0 === Infinity, x1Inf: p.x1 === Infinity,
+            bankXInf: p.bank.x === Infinity, z0: p.z0, z1: p.z1,
+        };
+    })(),
+    infHalf: (() => {
+        const p = localFirePlot({ x: 3000, z: 3000, level: 0 }, Infinity);
+        return { x0NegInf: p.x0 === -Infinity, x1PosInf: p.x1 === Infinity };
+    })(),
+    objectLevel: (() => {
+        const level = {};
+        const p = localFirePlot({ x: 3253, z: 3420, level });
+        return { fellBack: p.x0 === 3253 - 4, levelSame: p.bank.level === level };
+    })(),
+};
+
+// The previous body, kept verbatim as the parity oracle.
+function referencePlot(origin, half) {
+    const o = origin;
+    const x = o.x;
+    const z = o.z;
+    const level = o.level ?? 0;
+    for (const p of plots) {
+        const lv = (p.bank && p.bank.level) ?? 0;
+        if (lv !== level) {
+            continue;
+        }
+        if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1) {
+            return { bank: { x: p.bank.x, z: p.bank.z, level: lv }, x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1 };
+        }
+    }
+    const h = Math.max(0, Math.floor(Number(half) || 4));
+    return { bank: { x, z, level }, x0: x - h, x1: x + h, z0: z - h, z1: z + h };
+}
+
+function same(a, b) {
+    return Object.is(a.bank.x, b.bank.x) && Object.is(a.bank.z, b.bank.z)
+        && Object.is(a.bank.level, b.bank.level)
+        && Object.is(a.x0, b.x0) && Object.is(a.x1, b.x1)
+        && Object.is(a.z0, b.z0) && Object.is(a.z1, b.z1);
+}
+
+globalThis.__parity = [
+    { name: 'inside-east', origin: { x: 3253, z: 3420, level: 0 } },
+    { name: 'edge-inclusive', origin: { x: 3235, z: 3432, level: 0 } },
+    { name: 'outside', origin: { x: 3000, z: 3000, level: 0 } },
+    { name: 'wrong-plane', origin: { x: 2710, z: 3482, level: 2 } },
+    { name: 'seers-corner', origin: { x: 2710, z: 3482, level: 0 } },
+    { name: 'whole-halves', origin: { x: 3000, z: 3000, level: 0 }, halves: [undefined, 0, 1, 4, 8, '6', NaN, -3, 12.9] },
+].map(({ name, origin, halves }) => {
+    const h = halves || [undefined];
+    return h.map((half) => {
+        const native = half === undefined ? localFirePlot(origin) : localFirePlot(origin, half);
+        const reference = referencePlot(origin, half);
+        return { name, half: String(half), parity: same(native, reference) };
+    });
+}).flat();
+
+// The direct wire contract of the `local-plot` op.
+const fire = globalThis.rustyscript.functions.__rs2b0t_fire;
+globalThis.__wire = {
+    start: fire({ op: 'local-plot' }),
+    absent: fire({ op: 'local-plot', index: 0, present: false }),
+    levelMiss: fire({ op: 'local-plot', index: 0, present: true, level_ok: false }),
+    levelHit: fire({ op: 'local-plot', index: 0, present: true, level_ok: true }),
+    contained: fire({ op: 'local-plot', index: 1, contained: true }),
+    missed: fire({ op: 'local-plot', index: 1, contained: false }),
+    noFact: fire({ op: 'local-plot', index: 1 }),
+};
+
+export default class T extends LoopingBot {
+    loop() {}
+}
+"#;
+
+#[test]
+fn local_fire_plot_selects_the_first_posted_plot_in_order() {
+    let iso = spawn(LOCAL_PLOT);
+    let posted = iso.probe("__posted").unwrap();
+    for (name, bank_x, bank_z) in [
+        ("varrockEast", 3253, 3420),
+        ("varrockWest", 3185, 3440),
+        ("draynor", 3093, 3243),
+        ("seers", 2725, 3491),
+    ] {
+        assert_eq!(
+            (
+                posted[name]["bank"]["x"].as_i64(),
+                posted[name]["bank"]["z"].as_i64()
+            ),
+            (Some(bank_x), Some(bank_z)),
+            "{name} must return its own posted bank stand: {posted:?}"
+        );
+    }
+    assert_eq!(
+        posted["eastCorner"]["x0"],
+        serde_json::json!(3235),
+        "the inclusive AABB lower corner is inside the first posted plot: {posted:?}"
+    );
+    assert_eq!(posted["eastEdge"]["x1"], serde_json::json!(3275));
+    assert_eq!(
+        posted["seers"]["x1"],
+        serde_json::json!(2735),
+        "a later posted plot is still selected on its own tile: {posted:?}"
+    );
+    assert_eq!(
+        iso.probe("__overlap").unwrap(),
+        serde_json::json!({
+            "bank": { "x": 2710, "z": 3482, "level": 0 },
+            "x0": 2700, "x1": 2760, "z0": 3470, "z1": 3500,
+        }),
+        "an earlier posted row wins over a later containing row"
+    );
+    iso.join();
+}
+
+#[test]
+fn local_fire_plot_level_gate_and_half_fallback_hold() {
+    let iso = spawn(LOCAL_PLOT);
+    let posted = iso.probe("__posted").unwrap();
+    for name in ["wrongPlane", "stringLevel"] {
+        assert_eq!(
+            posted[name],
+            serde_json::json!({
+                "bank": { "x": 3253, "z": 3420, "level": posted[name]["bank"]["level"] },
+                "x0": 3249, "x1": 3257, "z0": 3416, "z1": 3424,
+            }),
+            "{name} must fall back to the ±4 box: {posted:?}"
+        );
+    }
+    assert_eq!(
+        posted["wrongPlane"]["bank"]["level"],
+        serde_json::json!(1),
+        "the fallback box keeps the origin plane"
+    );
+    assert_eq!(
+        posted["nullLevel"]["bank"]["x"],
+        serde_json::json!(3253),
+        "`level ?? 0` still matches the posted plot: {posted:?}"
+    );
+    let half = iso.probe("__half").unwrap();
+    assert_eq!(
+        half["defaultHalf"],
+        serde_json::json!({
+            "bank": { "x": 3000, "z": 3000, "level": 0 },
+            "x0": 2996, "x1": 3004, "z0": 2996, "z1": 3004,
+        }),
+        "the shim default half is 4"
+    );
+    assert_eq!(half["ten"]["x0"], serde_json::json!(2990));
+    assert_eq!(
+        half["stringThree"]["x0"],
+        serde_json::json!(2997),
+        "JS `Number('3')` coercion stays in the shim"
+    );
+    assert_eq!(
+        half["zeroIsFour"]["x0"],
+        serde_json::json!(2996),
+        "`Number(half) || 4` keeps a falsy half at the default"
+    );
+    assert_eq!(half["negativeIsZero"]["x0"], serde_json::json!(3000));
+    assert_eq!(half["fractionFloors"]["x1"], serde_json::json!(3002));
+    assert_eq!(half["nanIsFour"]["x1"], serde_json::json!(3004));
+    iso.join();
+}
+
+#[test]
+fn local_fire_plot_guards_invalid_origins_without_json_coercion() {
+    let iso = spawn(LOCAL_PLOT);
+    assert_eq!(
+        iso.probe("__invalid").unwrap(),
+        serde_json::json!([
+            "not impl: localFirePlot",
+            "not impl: localFirePlot",
+            "not impl: localFirePlot",
+            "not impl: localFirePlot",
+            "not impl: localFirePlot",
+            "not impl: localFirePlot",
+        ]),
+        "a non-number x/z keeps the current `notImpl` error"
+    );
+    assert_eq!(
+        iso.probe("__nonFinite").unwrap(),
+        serde_json::json!({
+            "nanOrigin": {
+                "x0NaN": true, "x1NaN": true, "bankXNaN": true,
+                "z0": 2996, "z1": 3004,
+            },
+            "infOrigin": {
+                "x0Inf": true, "x1Inf": true, "bankXInf": true,
+                "z0": 2996, "z1": 3004,
+            },
+            "infHalf": { "x0NegInf": true, "x1PosInf": true },
+            "objectLevel": { "fellBack": true, "levelSame": true },
+        }),
+        "NaN/Infinity stay JS values and never cross the bridge"
+    );
+    iso.join();
+}
+
+#[test]
+fn local_fire_plot_matches_the_previous_scan_body() {
+    let iso = spawn(LOCAL_PLOT);
+    let parity = iso.probe("__parity").unwrap();
+    let rows = parity.as_array().expect("parity rows");
+    assert!(!rows.is_empty(), "parity cases ran");
+    for row in rows {
+        assert_eq!(
+            row["parity"],
+            serde_json::json!(true),
+            "native scan differs from the previous body at {row:?}"
+        );
+    }
+    assert_eq!(
+        iso.probe("__wire").unwrap(),
+        serde_json::json!({
+            "start": { "kind": "plot", "index": 0 },
+            "absent": { "kind": "fallback" },
+            "levelMiss": { "kind": "plot", "index": 1 },
+            "levelHit": { "kind": "contains", "index": 0 },
+            "contained": { "kind": "hit", "index": 1 },
+            "missed": { "kind": "plot", "index": 2 },
+            "noFact": { "kind": "notImpl", "reason": "missing plot fact" },
+        }),
+        "the local-plot steps answer the shim without holding state"
+    );
+    iso.join();
+}
