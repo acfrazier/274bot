@@ -2732,6 +2732,13 @@ mod isolate {
             )
             .map_err(|e| format!("register ent npc on tile: {e}"))?;
         runtime
+            .register_function("__rs2b0t_tool_step", |args: &[serde_json::Value]| {
+                Ok(crate::gather_tools::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register tool step: {e}"))?;
+        runtime
             .register_function("__rs2b0t_canvas_begin", |_args: &[serde_json::Value]| {
                 crate::canvas::begin();
                 Ok(serde_json::Value::Null)
