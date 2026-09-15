@@ -11243,7 +11243,7 @@ fn select_strength_combat_style_step() -> Step {
             }),
         },
         wait: Wait {
-            arm: Proof::Varp { id: 43, min: 1 },
+            arm: Proof::VarpExact { id: 43, value: 1 },
             budget_ticks: 200,
         },
     }
@@ -22795,7 +22795,7 @@ mod tests {
             assert!(style < start, "{name}: style selection precedes Start");
             assert_eq!(
                 scenario.steps[style].wait.arm,
-                Proof::Varp { id: 43, min: 1 }
+                Proof::VarpExact { id: 43, value: 1 }
             );
         }
         for name in ["ardy_cakes", "ardy_thiever", "ardy_thiever_knight"] {
