@@ -2113,3 +2113,45 @@ fn mule_full_cycle_still_requires_second_exchange_and_craft() {
         MuleClaim::MuleBankReturnSecondCycle
     );
 }
+
+#[test]
+fn nature_pending_craft_expires_on_leaving_temple() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
+    // A later product update outside the temple cannot complete that episode.
+    master.observe(air_keep(
+        air_close(AirRole::Master, 21, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    assert_eq!(master.craft_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+    // Returning with the same old fields cannot resurrect the consumed input.
+    master.observe(air_temple(AirRole::Master, 22, 0, TRADE_CAP, AIR_CRAFT_XP));
+    assert_eq!(master.craft_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+}
+
+#[test]
+fn mule_pending_craft_expires_on_leaving_temple() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, 0, 0, 0));
+    let mut outside = mule_close(MuleRole::Crafter, 111, 0, MULE_TRADE_CAP);
+    outside.runecraft_xp = MULE_CRAFT_XP;
+    crafter.observe(outside);
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        112,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+}
