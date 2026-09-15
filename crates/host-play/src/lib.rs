@@ -3010,7 +3010,12 @@ fn with_script_snapshot_input<R>(
                     .actor
                     .actions
                     .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    // FlatBuffers cannot carry null entries in a string
+                    // vector. Keep each native op's position with the
+                    // existing empty-string sentinel; the shim filters it
+                    // from the public actions while opIndex still sees the
+                    // original one-based slot numbers.
+                    .map(|a| a.as_deref().unwrap_or_default().to_string())
                     .collect::<Vec<String>>()
             })
             .collect();
@@ -12895,6 +12900,75 @@ export default class T extends LoopingBot {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    #[test]
+    fn script_snapshot_player_actions_preserve_native_slots() {
+        fn emitted_actions(player_op: [Option<&str>; 5]) -> Vec<String> {
+            let mut c = prepare_client(
+                ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 1,
+                    cache_dir: String::new(),
+                    members: true,
+                    lowmem: true,
+                },
+                1,
+                Arc::new(Cache::default()),
+                Arc::new(vec![]),
+                Vec::new(),
+            );
+            c.ingame = true;
+            c.player_count = 1;
+            c.player_ids[0] = 0;
+            c.players[0] = Some(Box::new(client::client::ClientPlayer {
+                name: Some("partner".into()),
+                ..Default::default()
+            }));
+            c.player_op = player_op.map(|action| action.map(str::to_owned));
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.rebuild(&c);
+            let (bytes, _) = script_snapshot_fb(
+                None,
+                false,
+                1,
+                None,
+                true,
+                None,
+                Some(&snapshot),
+                None,
+                None,
+                false,
+                false,
+                false,
+            );
+            let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+            view.players()
+                .first()
+                .expect("native player emitted")
+                .actions()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        // The production snapshot producer must retain the op4 identity;
+        // dropping holes would move Trade with from native slot 4 to slot 2.
+        assert_eq!(
+            emitted_actions([None, None, Some("Follow"), Some("Trade with"), None]),
+            vec!["", "", "Follow", "Trade with", ""]
+        );
+        // Missing and hidden native slots remain unavailable rather than
+        // being synthesized as a Trade action.
+        assert_eq!(
+            emitted_actions([None, None, Some("Follow"), None, None]),
+            vec!["", "", "Follow", "", ""]
+        );
+        assert_eq!(
+            emitted_actions([None, None, Some("Follow"), Some("hidden"), None]),
+            vec!["", "", "Follow", "hidden", ""]
+        );
     }
 
     #[test]
