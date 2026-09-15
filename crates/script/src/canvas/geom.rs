@@ -209,6 +209,7 @@ pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
 
 /// Append an HTML `arc`. Full circles (`|end-start| >= 2π`) use four cubics.
 /// Partial arcs use cubic approximations in the requested direction.
+/// Returns `false` if a segment would exceed `max_len` (path stays ≤ `max_len`).
 pub fn append_arc(
     path: &mut Vec<PathSeg>,
     cx: f32,
@@ -217,21 +218,32 @@ pub fn append_arc(
     start: f32,
     end: f32,
     ccw: bool,
-) {
+    max_len: usize,
+) -> bool {
     if !(cx.is_finite() && cy.is_finite() && r.is_finite() && start.is_finite() && end.is_finite())
     {
-        return;
+        return true;
     }
     if r <= 0.0 {
-        return;
+        return true;
     }
+    let push = |path: &mut Vec<PathSeg>, seg: PathSeg| -> bool {
+        if path.len() >= max_len {
+            return false;
+        }
+        path.push(seg);
+        true
+    };
     let tau = std::f32::consts::TAU;
     let sx = cx + r * start.cos();
     let sy = cy + r * start.sin();
-    if path.is_empty() {
-        path.push(PathSeg::MoveTo { x: sx, y: sy });
+    let start_seg = if path.is_empty() {
+        PathSeg::MoveTo { x: sx, y: sy }
     } else {
-        path.push(PathSeg::LineTo { x: sx, y: sy });
+        PathSeg::LineTo { x: sx, y: sy }
+    };
+    if !push(path, start_seg) {
+        return false;
     }
     let mut sweep = if ccw {
         let mut d = end - start;
@@ -268,12 +280,23 @@ pub fn append_arc(
     let mut a = start;
     for _ in 0..n {
         let a1 = a + step;
-        append_arc_cubic(path, cx, cy, r, a, a1);
+        if !append_arc_cubic(path, cx, cy, r, a, a1, max_len) {
+            return false;
+        }
         a = a1;
     }
+    true
 }
 
-fn append_arc_cubic(path: &mut Vec<PathSeg>, cx: f32, cy: f32, r: f32, a0: f32, a1: f32) {
+fn append_arc_cubic(
+    path: &mut Vec<PathSeg>,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    a0: f32,
+    a1: f32,
+    max_len: usize,
+) -> bool {
     let da = a1 - a0;
     // 4/3 * tan(da/4)
     let k = (4.0 / 3.0) * (da / 4.0).tan();
@@ -289,6 +312,9 @@ fn append_arc_cubic(path: &mut Vec<PathSeg>, cx: f32, cy: f32, r: f32, a0: f32, 
     let c2y = y1 - k * r * c1;
     let _ = x0;
     let _ = y0;
+    if path.len() >= max_len {
+        return false;
+    }
     path.push(PathSeg::CubicTo {
         c1x,
         c1y,
@@ -297,6 +323,7 @@ fn append_arc_cubic(path: &mut Vec<PathSeg>, cx: f32, cy: f32, r: f32, a0: f32, 
         x: x1,
         y: y1,
     });
+    true
 }
 
 /// Two-circle conical parameter `t` for point `(px,py)`.
