@@ -1251,8 +1251,7 @@ fn script_observe_with_npc_boxes(
             }
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
-                    let dropped = slot.drain_interacts();
-                    release_script_key_held(driver, &dropped);
+                    let _dropped = slot.drain_interacts();
                 } else {
                     interact.extend(slot.drain_interacts());
                 }
@@ -1499,7 +1498,6 @@ fn script_observe_with_npc_boxes(
                 }
             }
         } else {
-            release_script_key_held(driver, &interact);
             let rejected_x = interact
                 .iter()
                 .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
@@ -1536,7 +1534,6 @@ fn script_observe_with_npc_boxes(
             }
         }
     } else if !interact.is_empty() {
-        release_script_key_held(driver, &interact);
         let rejected_x = interact
             .iter()
             .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
@@ -1713,28 +1710,6 @@ fn nearest_bank_booth(world: &NavWorld, (x, z, level): (i32, i32, i32)) -> Optio
             }
         })
         .map(|stand| stand.tile)
-}
-
-fn amount_key_code(key: &str) -> Option<client::client::JavaKeyCode> {
-    let kc = client::client::lookup(key)?;
-    if (48..=57).contains(&kc.ch) || kc.ch == 10 {
-        Some(kc)
-    } else {
-        None
-    }
-}
-
-fn release_script_key_held(driver: &mut dyn Driver, reqs: &[script::shim::InteractReq]) {
-    for req in reqs {
-        if let script::shim::InteractReq::Key {
-            down: false, key, ..
-        } = req
-        {
-            if let Some(kc) = amount_key_code(key) {
-                driver.apply_key(false, kc.code, kc.ch);
-            }
-        }
-    }
 }
 
 /// Dispatch one isolate's shim interact requests. Open/close/deposit/
@@ -9461,6 +9436,54 @@ export default class T extends LoopingBot {
     }
 
     #[test]
+    fn canvas_keyboard_preserves_pending_user_enter_without_chat_leak() {
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        c.dialog_input = "7".into();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        c.shell.apply_key(true, 10, 10);
+        let before = (c.shell.key_queue_read, c.shell.key_queue_write);
+        dispatch_keys(&mut c, &snap, type_amount("2"));
+        assert!(
+            c.chat_input.is_empty(),
+            "script digit leaked into chat: {:?}",
+            c.chat_input
+        );
+        assert_eq!(
+            (c.shell.key_queue_read, c.shell.key_queue_write),
+            before,
+            "script input must not drain pending user input"
+        );
+        assert_eq!(c.dialog_input, "7");
+        assert!(c.dialog_input_open);
+        assert_eq!(c.shell.poll_key(), 10);
+    }
+
+    #[test]
+    fn canvas_keyboard_preserves_user_held_digit_on_script_keyup() {
+        let mut c = bank_client();
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        c.shell.apply_key(true, 0, b'2' as i32);
+        assert_eq!(c.shell.poll_key(), b'2' as i32);
+        assert_eq!(c.shell.key_held[b'2' as usize], 1);
+        dispatch_keys(
+            &mut c,
+            &snap,
+            vec![key_req(true, "5"), key_req(false, "5"), key_req(false, "2")],
+        );
+        assert_eq!(c.dialog_input, "5");
+        assert_eq!(
+            c.shell.key_held[b'2' as usize], 1,
+            "script keyup must not clear a user-held digit"
+        );
+        assert_eq!(c.shell.key_queue_write, c.shell.key_queue_read);
+        assert!(c.chat_input.is_empty());
+    }
+
+    #[test]
     fn canvas_keyboard_enter_then_digit_does_not_leak_into_chat() {
         let mut c = bank_client();
         c.apply_p_countdialog();
@@ -9511,17 +9534,27 @@ export default class T extends LoopingBot {
         c.apply_p_countdialog();
         dispatch_keys(&mut c, &snap, type_amount("2"));
         assert_eq!(c.dialog_input, "2");
+        c.shell.apply_key(true, 0, b'9' as i32);
         c.apply_p_countdialog();
+        let queued = (c.shell.key_queue_read, c.shell.key_queue_write);
         let mut reqs = type_amount("00");
         reqs.push(key_req(true, "Enter"));
         reqs.push(key_req(false, "Enter"));
         dispatch_keys(&mut c, &snap, reqs);
-        assert_eq!(
-            count_packet(&c),
-            Some(0),
-            "replaced prompt must not keep the previous 2"
+        assert!(
+            c.dialog_input.is_empty(),
+            "script must not type over unread user keys, got {:?}",
+            c.dialog_input
         );
-        assert!(!c.dialog_input_open);
+        assert_eq!(
+            (c.shell.key_queue_read, c.shell.key_queue_write),
+            queued,
+            "replaced prompt must leave unread user work in the ring"
+        );
+        assert_eq!(c.shell.poll_key(), b'9' as i32);
+        assert!(c.chat_input.is_empty());
+        assert_eq!(count_packet(&c), None);
+        assert!(c.dialog_input_open);
     }
 
     #[test]
@@ -9802,6 +9835,130 @@ export default class T extends LoopingBot {
         );
         assert_eq!(held.out.pos, 0);
         assert_eq!(held.shell.key_held[b'2' as usize], 0);
+    }
+
+    #[test]
+    fn canvas_keyboard_producer_leaves_pending_user_enter_untouched() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+        canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("pending-enter isolate starts");
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        c.apply_p_countdialog();
+        c.dialog_input = "7".into();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        c.shell.apply_key(true, 10, 10);
+        let before = (c.shell.key_queue_read, c.shell.key_queue_write);
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert!(
+            c.chat_input.is_empty(),
+            "producer digit leaked into chat: {:?}",
+            c.chat_input
+        );
+        assert_eq!(
+            (c.shell.key_queue_read, c.shell.key_queue_write),
+            before,
+            "producer must not drain pending user Enter"
+        );
+        assert_eq!(c.dialog_input, "7");
+        assert_eq!(c.shell.poll_key(), 10);
+    }
+
+    #[test]
+    fn canvas_keyboard_script_digits_do_not_advance_revision289_cyclelogic4() {
+        let mut c = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        c.ingame = true;
+        c.apply_p_countdialog();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let mut ones = Vec::new();
+        for _ in 0..200 {
+            ones.push(key_req(true, "1"));
+            ones.push(key_req(false, "1"));
+        }
+        dispatch_keys(&mut c, &snap, ones);
+        assert_eq!(c.dialog_input, "1111111111");
+        assert_eq!(
+            c.out.pos, 0,
+            "script digits must not emit ANTICHEAT_CYCLELOGIC4"
+        );
+        for _ in 0..192 {
+            c.handle_chat_input();
+        }
+        assert_eq!(c.out.pos, 0, "192 empty polls must not emit yet");
+        c.handle_chat_input();
+        assert_eq!(
+            &c.out.data()[..c.out.pos],
+            &[137, 232],
+            "the authentic 193rd frame poll still emits cyclelogic4"
+        );
     }
 
     #[test]

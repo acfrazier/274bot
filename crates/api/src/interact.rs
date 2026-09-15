@@ -104,6 +104,12 @@ pub trait Driver {
     fn apply_key(&mut self, _down: bool, _java_code: i32, _ch: i32) {}
     /// Existing `Client::handle_chat_input` poll of the GameShell ring.
     fn handle_chat_input(&mut self) {}
+    /// Unread GameShell ring entries. Stubs have none.
+    fn unread_keys_pending(&self) -> bool {
+        false
+    }
+    /// Existing single-character chat-branch body, without a frame poll.
+    fn consume_chat_key(&mut self, _key: i32) {}
 }
 
 impl Driver for Client {
@@ -237,6 +243,14 @@ impl Driver for Client {
 
     fn handle_chat_input(&mut self) {
         Client::handle_chat_input(self);
+    }
+
+    fn unread_keys_pending(&self) -> bool {
+        self.shell.key_queue_write != self.shell.key_queue_read
+    }
+
+    fn consume_chat_key(&mut self, key: i32) {
+        Client::consume_chat_key(self, key);
     }
 }
 
@@ -809,10 +823,9 @@ impl<'a> Interactions<'a> {
         Interactions { snapshot, driver }
     }
 
-    /// Canvas amount-prompt key through GameShell, then immediate
-    /// `handle_chat_input`, so Enter-then-digit and a closed/replaced
-    /// prompt cannot leak into chat and the 128-ring is never filled by a
-    /// 256-row batch. Digits and Enter only.
+    /// Canvas amount-prompt digit/Enter through the existing single-character
+    /// chat-branch body. Refuses while unread ring events make consumption
+    /// ambiguous. Does not poll the frame, enqueue, or touch `key_held`.
     pub fn apply_amount_key(&mut self, down: bool, key: &str) -> bool {
         let Some(kc) = client::client::lookup(key) else {
             return false;
@@ -821,18 +834,15 @@ impl<'a> Interactions<'a> {
             return false;
         }
         if !down {
-            self.driver.apply_key(false, kc.code, kc.ch);
             return false;
         }
         if self.driver.social_prompt_open() || !self.driver.count_dialog_open() {
             return false;
         }
-        if !self.driver.can_enqueue_key() {
+        if self.driver.unread_keys_pending() {
             return false;
         }
-        self.driver.apply_key(true, kc.code, kc.ch);
-        self.driver.handle_chat_input();
-        self.driver.apply_key(false, kc.code, kc.ch);
+        self.driver.consume_chat_key(kc.ch);
         true
     }
 
