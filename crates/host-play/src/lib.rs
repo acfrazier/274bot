@@ -1060,11 +1060,33 @@ fn script_observe_with_npc_boxes(
             let recovery_hold = slot.load_active() && slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold;
             if slot.load_active() {
-                let teleports_enabled = navs
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .is_some_and(|b| b.allow_teleports);
+                let (
+                    teleports_enabled,
+                    walk_seq,
+                    walk_generation,
+                    walk_failed,
+                    walk_x,
+                    walk_z,
+                    walk_level,
+                    walk_radius,
+                    walk_allow_teleports,
+                ) = {
+                    let all = navs.lock().unwrap();
+                    match all.get(name) {
+                        Some(b) => (
+                            b.allow_teleports,
+                            b.walk_outcome_seq,
+                            b.walk_outcome_generation,
+                            b.walk_outcome_failed,
+                            b.walk_outcome_x,
+                            b.walk_outcome_z,
+                            b.walk_outcome_level,
+                            b.walk_outcome_radius,
+                            b.walk_outcome_allow_teleports,
+                        ),
+                        None => (false, 0, 0, false, 0, 0, 0, 0, false),
+                    }
+                };
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
                 let (withdraw_load_result_seq, withdraw_load_result) = slot.withdraw_load_result();
                 let (bank_op_result_seq, bank_op_result) = slot.bank_op_result();
@@ -1087,6 +1109,16 @@ fn script_observe_with_npc_boxes(
                     bank_op_result_seq,
                     bank_op_result,
                     canlight,
+                    PostedWalkOutcome {
+                        seq: walk_seq,
+                        generation: walk_generation,
+                        failed: walk_failed,
+                        x: walk_x,
+                        z: walk_z,
+                        level: walk_level,
+                        radius: walk_radius,
+                        allow_teleports: walk_allow_teleports,
+                    },
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -2344,10 +2376,12 @@ fn dispatch_script_interact(
 
 fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+        bot.route_generation = bot.route_generation.wrapping_add(1);
         bot.route = None;
         bot.route_worker = None;
         bot.pending_route = None;
         bot.requested_route = None;
+        bot.clear_walk_outcome();
     }
 }
 
@@ -2657,6 +2691,7 @@ fn script_snapshot_fb(
         0,
         false,
         None,
+        PostedWalkOutcome::default(),
         |input, native| {
             script::isolate_fb::encode_snapshot_delta_with_native(last, input, native, force_banks)
         },
@@ -2684,6 +2719,19 @@ fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 
         .unwrap_or(-1)
 }
 
+/// Host-published walk outcome copied onto the isolate snapshot.
+#[derive(Clone, Copy, Default)]
+struct PostedWalkOutcome {
+    seq: u64,
+    generation: u64,
+    failed: bool,
+    x: i32,
+    z: i32,
+    level: i32,
+    radius: i32,
+    allow_teleports: bool,
+}
+
 /// Build the observed snapshot input and hand it to `f`. The live observe
 /// path encodes through the slot's reusable [`script::isolate_fb::IsolateBuf`];
 /// tests encode through a one-shot builder via [`script_snapshot_fb`].
@@ -2707,16 +2755,17 @@ fn with_script_snapshot_input<R>(
     bank_op_result_seq: u64,
     bank_op_result: bool,
     canlight: Option<&[u64]>,
+    walk_outcome: PostedWalkOutcome,
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
         script::isolate_fb::NativeFactsInput<'_>,
     ) -> R,
 ) -> R {
     use script::isolate_fb::{
-        BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
-        MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput, QuestStatusInput,
-        ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
-        VarpInput, WidgetTextInput, BankApproachInput,
+        BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput,
+        ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput,
+        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+        StatInput, TileInput, VarpInput, WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3714,6 +3763,14 @@ fn with_script_snapshot_input<R>(
         shop_player,
         main_make,
         bank_approaches: Some(&bank_approach_store),
+        walk_outcome_seq: walk_outcome.seq,
+        walk_outcome_generation: walk_outcome.generation,
+        walk_outcome_failed: walk_outcome.failed,
+        walk_outcome_x: walk_outcome.x,
+        walk_outcome_z: walk_outcome.z,
+        walk_outcome_level: walk_outcome.level,
+        walk_outcome_radius: walk_outcome.radius,
+        walk_outcome_allow_teleports: walk_outcome.allow_teleports,
     };
     f(&input, native)
 }
@@ -3773,6 +3830,15 @@ struct NavBot {
     bank_fetch: Option<PendingBankFetch>,
     /// Last packed-walk `allow_teleports` opt-in (`Traversal.teleportsEnabled`).
     allow_teleports: bool,
+    /// Bounded published walk outcome. Seq `0` means never published.
+    walk_outcome_seq: u64,
+    walk_outcome_generation: u64,
+    walk_outcome_failed: bool,
+    walk_outcome_x: i32,
+    walk_outcome_z: i32,
+    walk_outcome_level: i32,
+    walk_outcome_radius: i32,
+    walk_outcome_allow_teleports: bool,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
@@ -3819,6 +3885,12 @@ impl ScriptWalkArm {
     ) -> bool {
         self.queue_route(x, z, level, opts, radius, true)
     }
+    fn publish_refusal(&self, to: WorldTile, radius: i32, allow_teleports: bool) {
+        let mut navs = self.navs.lock().unwrap();
+        let bot = navs.entry(self.name.clone()).or_default();
+        bot.note_failure(bot.route_generation, to, radius, allow_teleports);
+    }
+
     fn queue_route(
         &self,
         x: i32,
@@ -3828,10 +3900,13 @@ impl ScriptWalkArm {
         radius: i32,
         retarget: bool,
     ) -> bool {
+        let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
+            self.publish_refusal(to, radius, opts.allow_teleports);
             return false;
         };
         let Some(world) = self.world.as_ref() else {
+            self.publish_refusal(to, radius, opts.allow_teleports);
             return false;
         };
         let from = WorldTile {
@@ -3839,13 +3914,13 @@ impl ScriptWalkArm {
             z: hz,
             level: hl,
         };
-        let to = WorldTile { x, z, level };
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
             if bot.bank_fetch.is_some()
                 || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
             {
+                bot.note_failure(bot.route_generation, to, radius, opts.allow_teleports);
                 return false;
             }
             let key = (to, radius, opts.allow_teleports);
@@ -3922,6 +3997,9 @@ impl ScriptWalkArm {
                     .as_ref()
                     .is_some_and(|t| Arc::ptr_eq(t, &token))
                 {
+                    if let Some((to, radius, allow)) = bot.requested_route {
+                        bot.note_failure(bot.route_generation, to, radius, allow);
+                    }
                     bot.route_worker = None;
                     bot.pending_route = None;
                     bot.requested_route = None;
@@ -5458,6 +5536,7 @@ fn reset_slot_session_work(
         nav.traveller.clear();
         nav.route = None;
         nav.bank_fetch = None;
+        nav.clear_walk_outcome();
     }
 }
 
@@ -6178,7 +6257,38 @@ impl ScriptRouteRequest {
     }
 }
 impl NavBot {
+    fn bump_walk_outcome_seq(&mut self) {
+        self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
+        if self.walk_outcome_seq == 0 {
+            self.walk_outcome_seq = 1;
+        }
+    }
+
+    fn note_failure(&mut self, generation: u64, to: WorldTile, radius: i32, allow_teleports: bool) {
+        self.bump_walk_outcome_seq();
+        self.walk_outcome_generation = generation;
+        self.walk_outcome_failed = true;
+        self.walk_outcome_x = to.x;
+        self.walk_outcome_z = to.z;
+        self.walk_outcome_level = to.level;
+        self.walk_outcome_radius = radius;
+        self.walk_outcome_allow_teleports = allow_teleports;
+    }
+
+    fn clear_walk_outcome(&mut self) {
+        self.bump_walk_outcome_seq();
+        self.walk_outcome_failed = false;
+        self.walk_outcome_generation = self.route_generation;
+        self.walk_outcome_x = 0;
+        self.walk_outcome_z = 0;
+        self.walk_outcome_level = 0;
+        self.walk_outcome_radius = 0;
+        self.walk_outcome_allow_teleports = false;
+    }
+
     fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
+        // Superseded workers and aborted/restarted runs keep a newer
+        // route_generation. A late NoPath for the same dest must not publish.
         if self.route_generation != generation {
             return;
         }
@@ -6186,6 +6296,9 @@ impl NavBot {
             RouteOutcome::Routed(route) => (route, None),
             RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
             RouteOutcome::NoPath => {
+                if let Some((to, radius, allow)) = self.requested_route {
+                    self.note_failure(generation, to, radius, allow);
+                }
                 // The retained route belongs to the previous request. A later
                 // request for this failed destination must be allowed to retry.
                 self.requested_route = None;
@@ -6467,6 +6580,7 @@ mod tests {
             0,
             false,
             None,
+            PostedWalkOutcome::default(),
             script::isolate_fb::encode_snapshot_with_native,
         );
         let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -7456,15 +7570,60 @@ mod tests {
         let mut bot = NavBot {
             route: Some(old.clone()),
             route_generation: 2,
+            requested_route: Some((
+                WorldTile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
+                0,
+                true,
+            )),
             ..Default::default()
         };
         bot.publish_route(1, true, RouteOutcome::Routed(next.clone()));
         assert_eq!(bot.route, Some(old.clone()));
+        assert!(!bot.walk_outcome_failed);
         bot.publish_route(2, true, RouteOutcome::NoPath);
         assert_eq!(bot.route, Some(old));
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_seq, 1);
+        assert_eq!(bot.walk_outcome_generation, 2);
+        assert_eq!(bot.walk_outcome_x, 2);
+        assert_eq!(bot.walk_outcome_z, 2);
+        assert_eq!(bot.walk_outcome_radius, 0);
+        assert!(bot.walk_outcome_allow_teleports);
+        assert!(bot.requested_route.is_none());
         bot.publish_route(2, true, RouteOutcome::Routed(next.clone()));
         assert_eq!(bot.route, Some(next));
         assert!(bot.allow_teleports);
+    }
+
+    #[test]
+    fn stale_generation_same_target_nopath_does_not_publish() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let mut bot = NavBot {
+            route_generation: 2,
+            requested_route: Some((dest, 1, false)),
+            ..Default::default()
+        };
+        bot.publish_route(1, false, RouteOutcome::NoPath);
+        assert!(
+            !bot.walk_outcome_failed,
+            "superseded same-target NoPath must not publish"
+        );
+        assert_eq!(bot.walk_outcome_seq, 0);
+        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        bot.publish_route(2, false, RouteOutcome::NoPath);
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_generation, 2);
+        assert_eq!(bot.walk_outcome_x, dest.x);
+        assert_eq!(bot.walk_outcome_z, dest.z);
+        assert!(bot.requested_route.is_none());
     }
 
     #[test]
@@ -7635,6 +7794,84 @@ mod tests {
         assert_eq!(bot.route_generation, 1);
         assert!(bot.pending_route.is_none());
         assert!(bot.requested_route.is_none());
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_x, 2);
+        assert_eq!(bot.walk_outcome_z, 2);
+        assert_eq!(bot.walk_outcome_radius, 0);
+        assert!(bot.bank_fetch.is_some());
+    }
+
+    #[test]
+    fn missing_nav_world_publishes_a_failed_walk_outcome() {
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: None,
+            navs: Arc::clone(&navs),
+            name: "noworld".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(!arm.route_with_radius(2820, 3556, 0, FindOptions::default(), 1));
+        let bot = &navs.lock().unwrap()["noworld"];
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_seq, 1);
+        assert_eq!(bot.walk_outcome_x, 2820);
+        assert_eq!(bot.walk_outcome_z, 3556);
+        assert_eq!(bot.walk_outcome_radius, 1);
+        assert!(bot.route.is_none());
+        assert!(bot.requested_route.is_none());
+    }
+
+    #[test]
+    fn abort_clears_walk_outcome_without_settling_a_stale_generation() {
+        let dest = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "abort".to_string(),
+            NavBot {
+                route_generation: 4,
+                requested_route: Some((dest, 0, false)),
+                walk_outcome_seq: 3,
+                walk_outcome_failed: true,
+                walk_outcome_generation: 4,
+                walk_outcome_x: dest.x,
+                walk_outcome_z: dest.z,
+                ..Default::default()
+            },
+        )])));
+        abort_script_walk(&navs, "abort");
+        let bot = &navs.lock().unwrap()["abort"];
+        assert_eq!(bot.route_generation, 5);
+        assert!(!bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_seq, 4);
+        bot_clone_generation_guard(bot);
+    }
+
+    fn bot_clone_generation_guard(bot: &NavBot) {
+        let mut bot = NavBot {
+            route_generation: bot.route_generation,
+            walk_outcome_seq: bot.walk_outcome_seq,
+            walk_outcome_failed: bot.walk_outcome_failed,
+            requested_route: Some((
+                WorldTile {
+                    x: 2,
+                    z: 2,
+                    level: 0,
+                },
+                0,
+                false,
+            )),
+            ..Default::default()
+        };
+        bot.publish_route(4, false, RouteOutcome::NoPath);
+        assert!(
+            !bot.walk_outcome_failed,
+            "stale generation after abort must not republish"
+        );
     }
 
     #[test]
@@ -7835,7 +8072,12 @@ mod tests {
             panic!("occupied target should route to a neighbour");
         };
         assert_ne!(route.dest, target);
-        assert!((route.dest.x - target.x).abs().max((route.dest.z - target.z).abs()) <= 1);
+        assert!(
+            (route.dest.x - target.x)
+                .abs()
+                .max((route.dest.z - target.z).abs())
+                <= 1
+        );
         assert!(request.world.collision.standable(route.dest));
     }
 
@@ -7848,8 +8090,8 @@ mod tests {
             z: 3,
             level: 0,
         };
-        flags[3 * 7 + 3] = client::dash3d::CollisionFlag::W_S as u32
-            | client::dash3d::CollisionFlag::W_E as u32;
+        flags[3 * 7 + 3] =
+            client::dash3d::CollisionFlag::W_S as u32 | client::dash3d::CollisionFlag::W_E as u32;
         // Close the east-side pocket: the east neighbour's W_W face blocks
         // both direct and diagonal entry, while its north/south faces keep
         // a route from walking around the pocket inside radius one.
@@ -7874,8 +8116,16 @@ mod tests {
             bank: vec![],
         };
         let component = nav::router::local_step_component(&request.world.collision, target, 1);
-        let same_side = WorldTile { x: 2, z: 3, level: 0 };
-        let far_side = WorldTile { x: 4, z: 3, level: 0 };
+        let same_side = WorldTile {
+            x: 2,
+            z: 3,
+            level: 0,
+        };
+        let far_side = WorldTile {
+            x: 4,
+            z: 3,
+            level: 0,
+        };
         assert!(component.contains(&same_side));
         assert!(!component.contains(&far_side), "component={component:?}");
         let RouteOutcome::Routed(route) = request.calculate() else {
@@ -7896,11 +8146,19 @@ mod tests {
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         world.collision.walk = walk;
         world.collision.blocked = blocked;
-        let target = WorldTile { x: 3, z: 3, level: 0 };
+        let target = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
         let request = ScriptRouteRequest {
             generation: 0,
             world: Arc::new(world),
-            from: WorldTile { x: 4, z: 3, level: 0 },
+            from: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
             to: target,
             radius: 1,
             opts: FindOptions::default(),
@@ -7908,12 +8166,23 @@ mod tests {
             bank: vec![],
         };
         let component = nav::router::local_step_component(&request.world.collision, target, 1);
-        assert!(!component.contains(&WorldTile { x: 4, z: 3, level: 0 }));
+        assert!(!component.contains(&WorldTile {
+            x: 4,
+            z: 3,
+            level: 0
+        }));
         let RouteOutcome::Routed(route) = request.calculate() else {
             panic!("global detour should still leave a local approach");
         };
         assert!(component.contains(&route.dest));
-        assert_ne!(route.dest, WorldTile { x: 4, z: 3, level: 0 });
+        assert_ne!(
+            route.dest,
+            WorldTile {
+                x: 4,
+                z: 3,
+                level: 0
+            }
+        );
     }
 
     #[test]
@@ -13695,6 +13964,7 @@ export default class T extends LoopingBot {
             0,
             false,
             Some(bits.as_slice()),
+            PostedWalkOutcome::default(),
             script::isolate_fb::encode_snapshot_with_native,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -13733,6 +14003,7 @@ export default class T extends LoopingBot {
             0,
             false,
             None,
+            PostedWalkOutcome::default(),
             script::isolate_fb::encode_snapshot_with_native,
         );
         let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");
@@ -13797,8 +14068,18 @@ export default class T extends LoopingBot {
             c.bump_gens(ServerProt::MESSAGE_GAME);
             snapshot.rebuild(&c);
             let (bytes, next) = script_snapshot_fb(
-                fingerprint.as_ref(), false, tick, Some((3200, 3200, 0)),
-                true, None, Some(&snapshot), None, None, false, false, false,
+                fingerprint.as_ref(),
+                false,
+                tick,
+                Some((3200, 3200, 0)),
+                true,
+                None,
+                Some(&snapshot),
+                None,
+                None,
+                false,
+                false,
+                false,
             );
             fingerprint = Some(next);
             iso.post_snapshot(bytes);

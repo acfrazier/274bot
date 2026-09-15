@@ -18,6 +18,10 @@ function arrival(tile, opts) {
     };
 }
 
+function walkNative(payload) {
+    return globalThis.rustyscript.functions.__rs2b0t_walk(payload);
+}
+
 export const Traversal = proxy('Traversal', {
     async walkTo(tile, opts = {}) {
         const { target, radius, arrived } = arrival(tile, opts);
@@ -33,18 +37,28 @@ export const Traversal = proxy('Traversal', {
         const { target, radius, arrived } = arrival(tile, opts);
         if (!target) return false;
         if (arrived) return true;
+        const allow_teleports = allowTeleports(opts);
+        const token = walkNative({
+            op: 'begin',
+            x: target.x,
+            z: target.z,
+            level: target.level,
+            radius,
+            allow_teleports,
+        });
         queue({
             op: radius > 0 ? 'walk-near' : 'walk',
             ...(radius > 0 ? { radius } : {}),
             x: target.x,
             z: target.z,
             level: target.level,
-            allow_teleports: allowTeleports(opts),
+            allow_teleports,
         });
-        return Execution.delayUntil(() => {
-            const h = snap().here;
-            return h && chebyshev(h, target) <= radius;
-        }, opts.timeoutMs ?? 60_000);
+        const done = await Execution.delayUntil(
+            () => walkNative({ op: 'settled', token }) === true,
+            opts.timeoutMs ?? 60_000,
+        );
+        return done === true && walkNative({ op: 'value', token }) === true;
     },
     preload() {
         // NavWorld already binds at template/Play construction.

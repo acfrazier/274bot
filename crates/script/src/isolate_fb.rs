@@ -182,6 +182,14 @@ const VT_SNAP_SHOP_PLAYER_AVAILABLE: VOffsetT = 160;
 const VT_SNAP_MAIN_MAKE: VOffsetT = 162;
 const VT_SNAP_MAIN_MAKE_AVAILABLE: VOffsetT = 164;
 const VT_SNAP_BANK_APPROACHES: VOffsetT = 166;
+const VT_SNAP_WALK_OUTCOME_SEQ: VOffsetT = 168;
+const VT_SNAP_WALK_OUTCOME_GENERATION: VOffsetT = 170;
+const VT_SNAP_WALK_OUTCOME_FAILED: VOffsetT = 172;
+const VT_SNAP_WALK_OUTCOME_X: VOffsetT = 174;
+const VT_SNAP_WALK_OUTCOME_Z: VOffsetT = 176;
+const VT_SNAP_WALK_OUTCOME_LEVEL: VOffsetT = 178;
+const VT_SNAP_WALK_OUTCOME_RADIUS: VOffsetT = 180;
+const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
 
 // BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
 const VT_BA_LOC_ID: VOffsetT = 4;
@@ -645,6 +653,15 @@ pub struct NativeFactsInput<'a> {
     /// Compact bank dest/readiness. `None` omits the field (delta keep /
     /// tests without a model). `Some([])` is an explicit empty table.
     pub bank_approaches: Option<&'a [BankApproachInput]>,
+    /// Host-published walk outcome sequence. `0` on old buffers / never published.
+    pub walk_outcome_seq: u64,
+    pub walk_outcome_generation: u64,
+    pub walk_outcome_failed: bool,
+    pub walk_outcome_x: i32,
+    pub walk_outcome_z: i32,
+    pub walk_outcome_level: i32,
+    pub walk_outcome_radius: i32,
+    pub walk_outcome_allow_teleports: bool,
 }
 
 /// One native bank-booth dest + readiness row.
@@ -1324,6 +1341,22 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_BANK_APPROACHES,
                 false,
             )?
+            .visit_field::<u64>("walk_outcome_seq", VT_SNAP_WALK_OUTCOME_SEQ, false)?
+            .visit_field::<u64>(
+                "walk_outcome_generation",
+                VT_SNAP_WALK_OUTCOME_GENERATION,
+                false,
+            )?
+            .visit_field::<bool>("walk_outcome_failed", VT_SNAP_WALK_OUTCOME_FAILED, false)?
+            .visit_field::<i32>("walk_outcome_x", VT_SNAP_WALK_OUTCOME_X, false)?
+            .visit_field::<i32>("walk_outcome_z", VT_SNAP_WALK_OUTCOME_Z, false)?
+            .visit_field::<i32>("walk_outcome_level", VT_SNAP_WALK_OUTCOME_LEVEL, false)?
+            .visit_field::<i32>("walk_outcome_radius", VT_SNAP_WALK_OUTCOME_RADIUS, false)?
+            .visit_field::<bool>(
+                "walk_outcome_allow_teleports",
+                VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1655,6 +1688,41 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_approaches(&self) -> Vec<BankApproachReader<'_>> {
         rows::<BankApproachReader>(&self.tab, VT_SNAP_BANK_APPROACHES)
+    }
+    pub fn has_walk_outcome_seq(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_WALK_OUTCOME_SEQ, None)
+                .is_some()
+        }
+    }
+    pub fn walk_outcome_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_failed(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_WALK_OUTCOME_FAILED, None) }.unwrap_or(false)
+    }
+    pub fn walk_outcome_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_X, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_Z, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_radius(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_WALK_OUTCOME_RADIUS, None) }.unwrap_or(0)
+    }
+    pub fn walk_outcome_allow_teleports(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS, None)
+        }
+        .unwrap_or(false)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -2196,6 +2264,14 @@ pub struct SnapshotFingerprint {
     pub quest_statuses: Option<Vec<(String, String)>>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
+    pub walk_outcome_seq: u64,
+    pub walk_outcome_generation: u64,
+    pub walk_outcome_failed: bool,
+    pub walk_outcome_x: i32,
+    pub walk_outcome_z: i32,
+    pub walk_outcome_level: i32,
+    pub walk_outcome_radius: i32,
+    pub walk_outcome_allow_teleports: bool,
 }
 
 impl SnapshotFingerprint {
@@ -2412,6 +2488,14 @@ impl SnapshotFingerprint {
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
+            walk_outcome_seq: native.walk_outcome_seq,
+            walk_outcome_generation: native.walk_outcome_generation,
+            walk_outcome_failed: native.walk_outcome_failed,
+            walk_outcome_x: native.walk_outcome_x,
+            walk_outcome_z: native.walk_outcome_z,
+            walk_outcome_level: native.walk_outcome_level,
+            walk_outcome_radius: native.walk_outcome_radius,
+            walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
         }
     }
 }
@@ -2498,6 +2582,7 @@ pub struct DeltaMask {
     pub quest_statuses: bool,
     pub npc_boxes: bool,
     pub bank_approaches: bool,
+    pub walk_outcome: bool,
 }
 
 impl DeltaMask {
@@ -2579,6 +2664,7 @@ impl DeltaMask {
             quest_statuses: true,
             npc_boxes: true,
             bank_approaches: true,
+            walk_outcome: true,
         }
     }
 
@@ -2670,6 +2756,14 @@ impl DeltaMask {
             quest_statuses: next.quest_statuses != last.quest_statuses,
             npc_boxes: next.npc_boxes != last.npc_boxes,
             bank_approaches: next.bank_approaches != last.bank_approaches,
+            walk_outcome: next.walk_outcome_seq != last.walk_outcome_seq
+                || next.walk_outcome_generation != last.walk_outcome_generation
+                || next.walk_outcome_failed != last.walk_outcome_failed
+                || next.walk_outcome_x != last.walk_outcome_x
+                || next.walk_outcome_z != last.walk_outcome_z
+                || next.walk_outcome_level != last.walk_outcome_level
+                || next.walk_outcome_radius != last.walk_outcome_radius
+                || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports,
         }
     }
 }
@@ -3391,6 +3485,22 @@ fn encode_snapshot_masked_into(
         if let Some(off) = bank_approaches_off {
             b.push_slot_always(VT_SNAP_BANK_APPROACHES, off);
         }
+    }
+    if mask.walk_outcome {
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_SEQ, native.walk_outcome_seq);
+        b.push_slot_always(
+            VT_SNAP_WALK_OUTCOME_GENERATION,
+            native.walk_outcome_generation,
+        );
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_FAILED, native.walk_outcome_failed);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_X, native.walk_outcome_x);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_Z, native.walk_outcome_z);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_LEVEL, native.walk_outcome_level);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_RADIUS, native.walk_outcome_radius);
+        b.push_slot_always(
+            VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
+            native.walk_outcome_allow_teleports,
+        );
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -5969,6 +6079,25 @@ pub(crate) mod tests {
             attacked_by_player: false,
             widgets: &[],
         }
+    }
+
+    #[test]
+    fn omitted_walk_outcome_fields_default_safe() {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(!view.has_walk_outcome_seq());
+        assert_eq!(view.walk_outcome_seq(), 0);
+        assert_eq!(view.walk_outcome_generation(), 0);
+        assert!(!view.walk_outcome_failed());
+        assert_eq!(view.walk_outcome_x(), 0);
+        assert_eq!(view.walk_outcome_z(), 0);
+        assert_eq!(view.walk_outcome_level(), 0);
+        assert_eq!(view.walk_outcome_radius(), 0);
+        assert!(!view.walk_outcome_allow_teleports());
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.

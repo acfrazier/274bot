@@ -290,6 +290,16 @@ table Snapshot {
   // Compact bank dest/readiness. Omitted in a delta is not empty: the
   // native helper keeps its last rows. An explicit empty vector clears.
   bank_approaches: [BankApproach];
+  // Bounded native walk outcome for the isolate wait matcher. Omitted on
+  // old buffers (seq 0 / failed false): pending waits keep the caller timeout.
+  walk_outcome_seq: ulong = 0;
+  walk_outcome_generation: ulong = 0;
+  walk_outcome_failed: bool = false;
+  walk_outcome_x: int = 0;
+  walk_outcome_z: int = 0;
+  walk_outcome_level: int = 0;
+  walk_outcome_radius: int = 0;
+  walk_outcome_allow_teleports: bool = false;
 }
 
 // One shim interact request, tagged by `op`:
