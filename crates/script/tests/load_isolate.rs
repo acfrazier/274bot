@@ -571,6 +571,44 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+#[test]
+fn isolate_chat_offline_retained_line_is_not_delivered_and_reused_seq_is_fresh() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onStart() {
+        globalThis.__chat = [];
+        this.on('chat.message', (e) => globalThis.__chat.push(e.text));
+    }
+    loop() {}
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let lines = [script::isolate_fb::ChatLineInput {
+        seq: 7,
+        text: "retained",
+        type_: 0,
+        username: None,
+    }];
+    let mut snap = base_snapshot();
+    snap.ingame = false;
+    snap.chat_lines = &lines;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    assert_eq!(iso.probe("__chat.length").unwrap(), 0);
+
+    snap.ingame = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1");
+    assert_eq!(
+        iso.probe("__chat").unwrap(),
+        serde_json::json!(["retained"])
+    );
+    iso.join();
+}
+
 // (5e) A throwing tick is logged, not fatal.
 #[test]
 fn isolate_logs_tick_errors() {

@@ -13460,6 +13460,9 @@ export default class T extends LoopingBot {
         local.entity.chat_message = Some("FIGHT!".into());
         c.local_player = Some(local);
         c.chat_text[0] = "latest ring line".into();
+        c.chat_type[0] = 4;
+        c.chat_username[0] = "Partner".into();
+        c.chat_seq = 11;
         c.hint_type = 2;
         c.hint_tile_x = 2761;
         c.hint_tile_z = 9546;
@@ -13487,6 +13490,10 @@ export default class T extends LoopingBot {
         assert_eq!(first.self_chat(), Some("FIGHT!"));
         assert_eq!(first.hint_tile(), Some((2761, 9546)));
         assert_eq!(first.chat_text(), Some("latest ring line"));
+        let chat = first.chat_lines();
+        assert_eq!(chat[0].seq(), 11);
+        assert_eq!(chat[0].type_(), 4);
+        assert_eq!(chat[0].username(), Some("Partner"));
 
         c.local_player.as_mut().unwrap().entity.chat_message = None;
         c.hint_type = 0;
