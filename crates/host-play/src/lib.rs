@@ -6072,6 +6072,10 @@ fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32)
             }
         }
     }
+    if world.collision.standable(to) {
+        let connected = nav::router::local_step_component(&world.collision, to, r);
+        tiles.retain(|tile| connected.contains(tile));
+    }
     tiles.sort_by_key(|t| {
         (
             (t.x - from.x).abs().max((t.z - from.z).abs()),
@@ -7482,6 +7486,140 @@ mod tests {
             .all(|t| *t != target && (t.x - 3).abs() <= 1 && (t.z - 3).abs() <= 1));
         assert_eq!(candidates[0].x, 2);
         assert!(approach_tiles(&world, target, target, 0).is_empty());
+    }
+
+    #[test]
+    fn radius_calculate_keeps_first_connected_open_floor_approach() {
+        let world = Arc::new(open_world(7, 7));
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world,
+            from: WorldTile {
+                x: 2,
+                z: 3,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3,
+                z: 3,
+                level: 0,
+            },
+            radius: 1,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("open floor should route");
+        };
+        assert_eq!(
+            route.dest,
+            WorldTile {
+                x: 2,
+                z: 3,
+                level: 0
+            }
+        );
+    }
+
+    #[test]
+    fn radius_calculate_drops_wall_separated_candidate() {
+        let mut world = open_world(7, 7);
+        let mut flags = vec![0u32; 49];
+        for z in 2..=4 {
+            flags[z * 7 + 3] |= client::dash3d::CollisionFlag::W_E as u32;
+            flags[z * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        world.collision.walk = walk;
+        world.collision.blocked = blocked;
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world: Arc::new(world),
+            from: WorldTile {
+                x: 4,
+                z: 3,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3,
+                z: 3,
+                level: 0,
+            },
+            radius: 1,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("same-room approach should route");
+        };
+        assert_ne!(
+            route.dest,
+            WorldTile {
+                x: 4,
+                z: 3,
+                level: 0
+            }
+        );
+        assert!(
+            (route.dest.x - request.to.x)
+                .abs()
+                .max((route.dest.z - request.to.z).abs())
+                <= 1
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the locally generated actual 289 navpack"]
+    fn actual_289_radius_arrival_stays_out_of_horvik() {
+        let world = Arc::new(
+            NavWorld::load_pack(std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/debug/nav/289/274bot.navpack"
+            )))
+            .expect("actual 289 navpack"),
+        );
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world: Arc::clone(&world),
+            from: WorldTile {
+                x: 3252,
+                z: 3420,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3253,
+                z: 3401,
+                level: 0,
+            },
+            radius: 2,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("actual 289 route should exist");
+        };
+        assert_ne!(
+            route.dest,
+            WorldTile {
+                x: 3251,
+                z: 3403,
+                level: 0,
+            }
+        );
+        assert!(
+            route.legs.iter().all(|leg| !matches!(
+                leg,
+                Leg::Transport { edge } if edge.loc_id == 1530
+            )),
+            "radius arrival must not use Horvik door 1530"
+        );
+        assert!(
+            nav::router::local_step_component(&world.collision, request.to, 2)
+                .contains(&route.dest)
+        );
     }
 
     #[test]

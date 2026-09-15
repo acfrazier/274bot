@@ -649,6 +649,43 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
     }
 }
 
+/// Return the component reachable from `origin` using baked client-style
+/// walk steps within the requested Chebyshev radius. This deliberately omits
+/// transports and validates its own origin so callers cannot turn it into an
+/// unbounded or cross-plane flood.
+pub fn local_step_component(
+    collision: &WorldCollision,
+    origin: WorldTile,
+    radius: i32,
+) -> HashSet<WorldTile> {
+    let mut visited = HashSet::new();
+    let r = radius.clamp(0, 104);
+    if !collision.standable(origin) {
+        return visited;
+    }
+    let mut queue = std::collections::VecDeque::from([origin]);
+    visited.insert(origin);
+    while let Some(cur) = queue.pop_front() {
+        for d in STEPS {
+            let next = WorldTile {
+                x: cur.x + d.0,
+                z: cur.z + d.1,
+                level: origin.level,
+            };
+            if (next.x - origin.x).abs().max((next.z - origin.z).abs()) > r
+                || next.level != origin.level
+                || !collision.standable(next)
+                || !step_ok(collision, cur, d)
+                || !visited.insert(next)
+            {
+                continue;
+            }
+            queue.push_back(next);
+        }
+    }
+    visited
+}
+
 /// How a tile was reached: by a walk step (each costing the search's run
 /// rate) from `Walk`'s tile, by transport edge `Transport` (an index
 /// into [`TransportGraph::edges`], taken from `from` — the standable tile
@@ -988,12 +1025,52 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::router::{
         find, find_allow_teleports, find_bounded, find_missing_item_reqs, find_on_grid, find_with,
-        find_with_model, step_ok, CostModel, FindOptions, GridLeg, Leg, MissingReq, RouteError,
-        PER_STEP_WALK,
+        find_with_model, local_step_component, step_ok, CostModel, FindOptions, GridLeg, Leg,
+        MissingReq, RouteError, PER_STEP_WALK,
     };
     use crate::tile::Tile;
     use crate::transport::{TransportEdge, TransportGraph, TransportKind};
     use crate::world_state::WorldState;
+
+    #[test]
+    fn local_component_rejects_invalid_origins_and_clamps_radius() {
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 3,
+            height: 3,
+            walk: vec![0; 36],
+            blocked: vec![0],
+            flags: None,
+        };
+        assert!(local_step_component(
+            &collision,
+            WorldTile {
+                x: -1,
+                z: 0,
+                level: 0,
+            },
+            1,
+        )
+        .is_empty());
+        assert!(local_step_component(
+            &collision,
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 4,
+            },
+            1,
+        )
+        .is_empty());
+        assert_eq!(
+            local_step_component(&collision, collision.origin, 999).len(),
+            9
+        );
+    }
 
     #[test]
     fn find_on_grid_across_open_3x3_is_a_walk_leg() {
