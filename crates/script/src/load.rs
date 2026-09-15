@@ -2879,7 +2879,7 @@ mod isolate {
             .map_err(|e| format!("register canvas quadraticCurveTo: {e}"))?;
         runtime
             .register_function("__rs2b0t_canvas_arc", |args: &[serde_json::Value]| {
-                crate::canvas::arc(
+                match crate::canvas::arc(
                     json_f64(args.first()),
                     json_f64(args.get(1)),
                     json_f64(args.get(2)),
@@ -2888,8 +2888,10 @@ mod isolate {
                     args.get(5)
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false),
-                );
-                Ok(serde_json::Value::Null)
+                ) {
+                    Ok(()) => Ok(serde_json::Value::Null),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                }
             })
             .map_err(|e| format!("register canvas arc: {e}"))?;
         runtime
