@@ -744,6 +744,25 @@ mod tests {
     }
 
     #[test]
+    fn collision_at_with_preserves_all_eight_sidecar_wall_bits() {
+        let raw = CollisionFlag::W_NW as u32
+            | CollisionFlag::W_N as u32
+            | CollisionFlag::W_NE as u32
+            | CollisionFlag::W_E as u32
+            | CollisionFlag::W_SE as u32
+            | CollisionFlag::W_S as u32
+            | CollisionFlag::W_SW as u32
+            | CollisionFlag::W_W as u32;
+        let c = bake(1, 1, &[]);
+        let flags = vec![raw; 4];
+        let fb = collision_at_with(&c, tile(0, 0, 0), Some(&flags));
+        assert!(fb.n && fb.e && fb.s && fb.w);
+        assert!(fb.ne && fb.se && fb.nw && fb.sw);
+        assert_eq!(fb.raw, CollisionFlag::WALK_BLOCK_FLAGS as u8);
+        assert!(!fb.blocked, "wall faces remain standable ground");
+    }
+
+    #[test]
     fn collision_at_blocks_ground_and_scenery() {
         let c = bake(
             1,

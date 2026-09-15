@@ -4564,7 +4564,7 @@ mod tests {
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::dash3d::CollisionFlag;
     use client::io::ServerProt;
-    use client::render::nav_debug::{FACE_N, FACE_S};
+    use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
     use host::{FrameBuf, InputEv, SlotInput};
     use host_play::profile::ProfileEnvironment;
     use host_play::{ProfileOptions, SlotArm, SlotStatus};
@@ -5873,14 +5873,14 @@ mod tests {
     }
 
     #[test]
-    fn face_only_cell_stays_in_nsew_set_without_collision_block() {
-        // A W_S-only tile: standable ground, one face flag. With both
-        // layers on the cell must stay in the NSEW set (letters) yet
-        // report `blocked` false so the client never collision-fills it.
+    fn face_only_cells_publish_with_fill_without_labels() {
+        // Face-only cardinal and corner tiles remain visible with fill on
+        // even when the optional NSEW label layer is off.
         let width = 64;
         let height = 64;
         let mut flags = vec![0u32; width * height];
         flags[width + 1] = CollisionFlag::W_S as u32;
+        flags[width + 2] = CollisionFlag::W_NE as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
             WorldCollision {
@@ -5901,7 +5901,7 @@ mod tests {
         let mut c = paint_client();
         let layers = NavSettings {
             collision_fill: true,
-            nsew_labels: true,
+            nsew_labels: false,
             ..NavSettings::default()
         };
         publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
@@ -5914,6 +5914,20 @@ mod tests {
         assert!(
             face_only.bits & FACE_S != 0 && !face_only.blocked,
             "face-only cell keeps its letter but is never collision-blocked"
+        );
+        let corner_only = paint
+            .collision
+            .iter()
+            .find(|cell| cell.lx == 2 && cell.lz == 1)
+            .expect("the W_NE tile must be published under fill-only");
+        assert_eq!(corner_only.bits, CORNER_NE);
+        assert!(!corner_only.blocked);
+        assert!(
+            !paint
+                .collision
+                .iter()
+                .any(|cell| cell.lx == 0 && cell.lz == 0),
+            "open ground with no wall bits is omitted under fill-only"
         );
     }
 
