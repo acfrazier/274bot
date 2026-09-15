@@ -3804,15 +3804,29 @@ impl ScriptWalkArm {
     /// the worker stores the outcome on the uid's nav bot. Returns whether
     /// the worker was spawned — not whether a path exists.
     fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
-        self.route_with_radius(x, z, level, opts, 0)
+        self.queue_route(x, z, level, opts, 0, false)
     }
+    /// Explicit WalkNear, including radius 0. Unlike [`Self::route`], an
+    /// armed or in-flight route is replaced through the existing generation /
+    /// pending-route coalescing path. A latched bank-fetch session still refuses.
     fn route_with_radius(
+        &self,
+        x: i32,
+        z: i32,
+        level: i32,
+        opts: FindOptions,
+        radius: i32,
+    ) -> bool {
+        self.queue_route(x, z, level, opts, radius, true)
+    }
+    fn queue_route(
         &self,
         x: i32,
         z: i32,
         level: i32,
         mut opts: FindOptions,
         radius: i32,
+        retarget: bool,
     ) -> bool {
         let Some((hx, hz, hl)) = self.here else {
             return false;
@@ -3830,7 +3844,7 @@ impl ScriptWalkArm {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
             if bot.bank_fetch.is_some()
-                || (radius <= 0 && (bot.route.is_some() || bot.route_worker.is_some()))
+                || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
             {
                 return false;
             }
@@ -7499,6 +7513,183 @@ mod tests {
                 );
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
+        }
+    }
+
+    #[test]
+    fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
+        let nearby = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
+        let exact = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest: nearby,
+            ticks: 0.0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "bank".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((nearby, 1, false)),
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "bank".into(),
+            state: None,
+            bank: vec![],
+        };
+
+        assert!(
+            arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0),
+            "explicit WalkNear radius 0 must retarget while a nearby route is active"
+        );
+        assert!(
+            !arm.route(4, 4, 0, FindOptions::default()),
+            "ordinary Walk stays non-retargeting while a route or worker is busy"
+        );
+
+        let pending = {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("bank").expect("nav bot");
+            assert_eq!(bot.route_generation, 2);
+            assert_eq!(bot.requested_route, Some((exact, 0, false)));
+            assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(nearby));
+            assert!(bot.route_worker.is_some());
+            let pending = bot
+                .pending_route
+                .take()
+                .expect("exact request coalesces onto the in-flight worker");
+            assert_eq!(pending.generation, 2);
+            assert_eq!(pending.radius, 0);
+            assert_eq!(pending.to, exact);
+            pending
+        };
+
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("bank").expect("nav bot");
+            bot.publish_route(1, false, RouteOutcome::Routed(old.clone()));
+            assert_eq!(
+                bot.route.as_ref().map(|r| r.dest),
+                Some(nearby),
+                "stale nearby worker result must not replace the exact request"
+            );
+            bot.publish_route(2, false, pending.calculate());
+            assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
+        }
+
+        assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
+        assert_eq!(navs.lock().unwrap()["bank"].route_generation, 2);
+    }
+
+    #[test]
+    fn bank_fetch_session_refuses_exact_walk_near() {
+        let dest = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "bank".to_string(),
+            NavBot {
+                bank_fetch: Some(PendingBankFetch {
+                    steps: VecDeque::new(),
+                    dest,
+                    opts: FindOptions::default(),
+                    final_route: Route {
+                        legs: vec![],
+                        dest,
+                        ticks: 0.0,
+                    },
+                }),
+                route_generation: 1,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "bank".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(
+            !arm.route_with_radius(2, 2, 0, FindOptions::default(), 0),
+            "a latched bank-fetch session must refuse exact WalkNear"
+        );
+        let bot = &navs.lock().unwrap()["bank"];
+        assert_eq!(bot.route_generation, 1);
+        assert!(bot.pending_route.is_none());
+        assert!(bot.requested_route.is_none());
+    }
+
+    #[test]
+    fn exact_walk_near_replaces_published_nearby_route() {
+        let exact = WorldTile {
+            x: 1,
+            z: 1,
+            level: 0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "bank".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(arm.route_with_radius(6, 6, 0, FindOptions::default(), 1));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let all = navs.lock().unwrap();
+            let bot = all.get("bank").expect("nav bot");
+            if bot.route_worker.is_none() && bot.route.is_some() {
+                break;
+            }
+            drop(all);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "nearby worker did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let nearby_dest = navs.lock().unwrap()["bank"]
+            .route
+            .as_ref()
+            .map(|route| route.dest);
+        assert_ne!(nearby_dest, Some(exact));
+
+        assert!(arm.route_with_radius(exact.x, exact.z, exact.level, FindOptions::default(), 0));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let all = navs.lock().unwrap();
+            let bot = all.get("bank").expect("nav bot");
+            if bot.route_worker.is_none()
+                && bot.route.as_ref().map(|route| route.dest) == Some(exact)
+            {
+                break;
+            }
+            drop(all);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "exact worker did not publish dest"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
 
