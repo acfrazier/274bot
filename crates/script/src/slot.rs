@@ -135,6 +135,12 @@ impl PendingWithdrawX {
 pub enum PendingBankOpKind {
     Deposit,
     Withdraw,
+    /// Raw open-only `Withdraw X` (`Bank.withdraw(name, 'Withdraw X')`).
+    /// The frozen caller reads the accepted click as the result
+    /// (`Input.invButton` → `actions.menuAction`) and types the amount +
+    /// Enter itself, so this kind never settles on an inventory delta:
+    /// the sent action plus the still-current bank session acknowledge it.
+    WithdrawXAction,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,6 +165,10 @@ impl PendingBankOp {
         let remaining = Duration::from_millis(match kind {
             PendingBankOpKind::Deposit => 2000,
             PendingBankOpKind::Withdraw => 4000,
+            // The acknowledgment lands on the next observe pass; this bound
+            // only backstops a stalled session, so it keeps the ordinary
+            // withdrawal bound rather than inventing a new one.
+            PendingBankOpKind::WithdrawXAction => 4000,
         });
         Self {
             kind,
