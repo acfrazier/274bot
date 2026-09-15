@@ -88,61 +88,31 @@ function callStep(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_target_step(payload);
 }
 
-/** `for...of` closes an iterator it leaves early: a returning body propagates a
- *  `return()` failure, a throwing body keeps its own error. */
-function closeIterator(iterator) {
-    const ret = iterator.return;
-    if (ret === undefined || ret === null) return;
-    if (typeof ret !== 'function') throw new TypeError('iterator.return is not callable');
-    const inner = ret.call(iterator);
-    if (inner === null || (typeof inner !== 'object' && typeof inner !== 'function')) {
-        throw new TypeError('iterator.return must return an object');
-    }
-}
-
 /**
- * First candidate the caller accepts wins. The native step owns the traversal,
- * the first hit, the short circuit and the exhaustion fallback; this shim keeps
- * the caller's iterator and runs only the element read, the `reachable(c)` call
- * and the truthiness conversion each step asks for.
+ * First candidate the caller accepts wins. The native step owns the decisions:
+ * it asks for the element's `reachable` answer, names the first truthy answer
+ * as the hit, stops the scan there, and only the caller's exhaustion reaches
+ * the blocked fallback.
+ *
+ * The walk is the engine's own `for...of` over the caller's iterable and
+ * nothing else: the iterator is acquired once, its `next` is read once and
+ * called per step, a primitive `next()` result, a missing or non-callable
+ * `Symbol.iterator`, a non-callable `return` and the close on the returning
+ * hit keep their exact engine order. Only the element read, the `reachable(c)`
+ * call and the truthiness conversion happen in JS, and no candidate, callback
+ * answer or collected reachability crosses the bridge.
  */
 export function chooseTarget(candidatesNearestFirst, reachable) {
-    const iterator = candidatesNearestFirst[Symbol.iterator]();
-    let value;
-    let done = null;
-    let probed = null;
-    for (;;) {
-        const payload = { op: 'choose' };
-        if (done !== null) payload.done = done;
-        if (probed !== null) payload.probed = probed;
-        const step = callStep(payload);
-        if (step.kind === 'hit') {
-            closeIterator(iterator);
-            return { target: value, blocked: null };
-        }
-        if (step.kind === 'exhausted') {
-            return { target: null, blocked: candidatesNearestFirst[0] ?? null };
-        }
-        if (step.kind === 'probe') {
-            let answer;
-            try {
-                answer = reachable(value);
-            } catch (e) {
-                try {
-                    closeIterator(iterator);
-                } catch (_) {
-                    // the callback's own error wins, exactly as `for...of` closes
-                }
-                throw e;
-            }
-            done = null;
-            probed = !!answer;
-            continue;
-        }
-        if (step.kind !== 'next') throw notImpl('Thieving.chooseTarget', step.reason);
-        const next = iterator.next();
-        done = !!next.done;
-        probed = null;
-        if (!done) value = next.value;
+    const start = callStep({ op: 'choose' });
+    if (start.kind !== 'next') throw notImpl('Thieving.chooseTarget', start.reason);
+    for (const c of candidatesNearestFirst) {
+        const held = callStep({ op: 'choose', done: false });
+        if (held.kind !== 'probe') throw notImpl('Thieving.chooseTarget', held.reason);
+        const verdict = callStep({ op: 'choose', probed: !!reachable(c) });
+        if (verdict.kind === 'hit') return { target: c, blocked: null };
+        if (verdict.kind !== 'next') throw notImpl('Thieving.chooseTarget', verdict.reason);
     }
+    const end = callStep({ op: 'choose', done: true });
+    if (end.kind !== 'exhausted') throw notImpl('Thieving.chooseTarget', end.reason);
+    return { target: null, blocked: candidatesNearestFirst[0] ?? null };
 }

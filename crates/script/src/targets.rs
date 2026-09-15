@@ -10,21 +10,23 @@
 //! return { target: null, blocked: candidatesNearestFirst[0] ?? null };
 //! ```
 //!
-//! [`dispatch`] backs the `__rs2b0t_target_step` binding and owns that
-//! traversal: which candidate is visited, that the first truthy `reachable`
-//! answer is the hit, that `reachable` is never called past the hit, and that
-//! the blocked fallback only follows exhaustion. The shim keeps the caller's
-//! iterator and the element it last read, runs `next()` / `reachable(value)` /
-//! `candidatesNearestFirst[0]` exactly when a step asks for it, and reports
-//! back only `done` / truthiness booleans — no caller object, candidate,
+//! [`dispatch`] backs the `__rs2b0t_target_step` binding and owns the
+//! decisions: whether the element the caller's iterator produced is probed,
+//! that the first truthy `reachable` answer is the hit, that `reachable` is
+//! never called past the hit, and that the blocked fallback only follows
+//! exhaustion. The walk itself is the caller's own `for...of` in the shim —
+//! engine marshaling, never a shim-side index or `next()` walk — and it reports
+//! back only `done` / truthiness booleans, so no caller object, candidate,
 //! callback answer or collected reachability list crosses the rustyscript
 //! bridge.
 //!
-//! The `for...of` engine details stay in JS because the shim still drives the
-//! caller's real iterator: live length, mutation, holes read as `undefined`,
-//! callback receiver/argument/order, reentrancy and the iterator close on an
-//! early exit are unchanged. Truthiness is the shim's `!!` (never
-//! `=== true`), so a truthy non-`true` answer is still a hit.
+//! The `for...of` engine details stay in JS because the shim drives the
+//! caller's real iterator through that loop: the iterator is acquired once,
+//! its `next` is read once and called per step, and live length, mutation,
+//! holes read as `undefined`, a primitive `next()` result, the iterator close
+//! on the returning hit and a throwing close all keep their engine order.
+//! Callback receiver/argument/order, reentrancy and truthiness (`!!`, never
+//! `=== true`, so a truthy non-`true` answer is still a hit) are unchanged.
 
 use serde_json::{json, Value};
 
