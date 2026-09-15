@@ -15455,6 +15455,37 @@ fn nature_crafter_air_scenario() -> Scenario {
 fn mule_crafter_air_scenario() -> Scenario {
     let ruins = MULECRAFTER_AIR_RUINS;
     let mut steps = script_live_seed_steps();
+    steps.push(native_bank_seed(
+        "seed Mule crafter's exact noted essence bank before Start",
+        FALADOR_EAST_BANK,
+        vec![NativeSeed {
+            unnoted_id: RUNE_ESSENCE_ID,
+            debug_alias: "blankrune",
+            note_alias: Some("cert_blankrune"),
+            quantity: RUNE_ESSENCE_SEED,
+            note_id: Some(NOTED_ESSENCE_ID),
+        }],
+        "runecraft",
+        1,
+    ));
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the Mule crafter essence bank",
+        Proof::BankItemIdAtMost {
+            id: NOTED_ESSENCE_ID,
+            count: 0,
+        },
+    ));
+    steps.extend(native_bank_deposit(
+        "deposit the Mule crafter noted essence through the bank window",
+        vec![NativeSeed {
+            unnoted_id: RUNE_ESSENCE_ID,
+            debug_alias: "blankrune",
+            note_alias: Some("cert_blankrune"),
+            quantity: RUNE_ESSENCE_SEED,
+            note_id: Some(NOTED_ESSENCE_ID),
+        }],
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
     steps.push(Step {
         name: "seed Mule crafter talisman and first 27 essence at ruins before Start",
         kind: StepKind::Perform {
@@ -22157,6 +22188,19 @@ mod tests {
             }));
             assert!(names().contains(&name));
         }
+        let mule = get("mule_crafter_air").expect("MuleCrafter pair is registered");
+        assert!(mule.steps.iter().any(|step| {
+            step.name == "seed Mule crafter's exact noted essence bank before Start"
+        }));
+        assert!(mule.steps.iter().any(|step| {
+            matches!(
+                step.wait.arm,
+                Proof::BankItemId {
+                    id: RUNE_ESSENCE_ID,
+                    count: RUNE_ESSENCE_SEED,
+                }
+            )
+        }));
     }
 
     fn pair_companion_client() -> client::client::Client {

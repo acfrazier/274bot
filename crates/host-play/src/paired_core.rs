@@ -1400,6 +1400,7 @@ impl MuleSlotRecord {
                 }
             }
         }
+        let stage_before = self.exchange_stage;
         match self.exchange_stage {
             MuleExchangeStage::Offer => {
                 if observation.trade_offer_open && named_partner {
@@ -1441,6 +1442,13 @@ impl MuleSlotRecord {
                 }
             }
         }
+        debug_trade_edge_mule(
+            &self.account,
+            &self.latest,
+            &observation,
+            stage_before,
+            self.exchange_stage,
+        );
         if observation.essence_unnoted < prev_ess && observation.runecraft_xp > prev_xp {
             self.craft_events = self.craft_events.saturating_add(1);
             if self.role == MuleRole::Crafter
@@ -1494,6 +1502,37 @@ impl MuleSlotRecord {
             .max((observation.air_runes - self.baseline.air_runes).max(0));
         self.xp_from_script = (observation.runecraft_xp - self.baseline.runecraft_xp).max(0);
         self.latest = Some(observation);
+    }
+}
+
+fn debug_trade_edge_mule(
+    actor: &str,
+    previous: &Option<AirObservation>,
+    observation: &AirObservation,
+    stage_before: MuleExchangeStage,
+    stage_after: MuleExchangeStage,
+) {
+    if std::env::var_os("BOT_DEBUG").is_none() {
+        return;
+    }
+    let changed = previous.as_ref().is_none_or(|prev| {
+        prev.trade_offer_open != observation.trade_offer_open
+            || prev.trade_confirm_open != observation.trade_confirm_open
+            || prev.trade_partner != observation.trade_partner
+            || prev.trade_accept_id != observation.trade_accept_id
+            || stage_before != stage_after
+    });
+    if changed {
+        eprintln!(
+            "PAIR_TRADE_EDGE actor={actor} tick={} offer={} confirm={} partner={} accept_id={} held_ess={} held_air={} stage={stage_before:?}->{stage_after:?}",
+            observation.tick,
+            observation.trade_offer_open,
+            observation.trade_confirm_open,
+            observation.trade_partner.as_deref().unwrap_or("<none>"),
+            observation.trade_accept_id,
+            observation.essence_unnoted,
+            observation.air_runes,
+        );
     }
 }
 
@@ -2084,6 +2123,7 @@ impl FlaxSlotRecord {
                 }
             }
         }
+        let stage_before = self.exchange_stage;
         match self.exchange_stage {
             FlaxExchangeStage::Offer => {
                 if observation.trade_offer_open && named_partner {
@@ -2124,6 +2164,13 @@ impl FlaxSlotRecord {
                 }
             }
         }
+        debug_trade_edge_flax(
+            &self.account,
+            &self.latest,
+            &observation,
+            stage_before,
+            self.exchange_stage,
+        );
         if self.role == FlaxRole::Spinner
             && flax_out > 0
             && observation.crafting_xp > prev_xp
@@ -2160,6 +2207,37 @@ impl FlaxSlotRecord {
             .max(self.string_from_script);
         self.xp_from_script = (observation.crafting_xp - self.baseline.crafting_xp).max(0);
         self.latest = Some(observation);
+    }
+}
+
+fn debug_trade_edge_flax(
+    actor: &str,
+    previous: &Option<FlaxObservation>,
+    observation: &FlaxObservation,
+    stage_before: FlaxExchangeStage,
+    stage_after: FlaxExchangeStage,
+) {
+    if std::env::var_os("BOT_DEBUG").is_none() {
+        return;
+    }
+    let changed = previous.as_ref().is_none_or(|prev| {
+        prev.trade_offer_open != observation.trade_offer_open
+            || prev.trade_confirm_open != observation.trade_confirm_open
+            || prev.trade_partner != observation.trade_partner
+            || prev.trade_accept_id != observation.trade_accept_id
+            || stage_before != stage_after
+    });
+    if changed {
+        eprintln!(
+            "PAIR_TRADE_EDGE actor={actor} tick={} offer={} confirm={} partner={} accept_id={} held_flax={} held_string={} stage={stage_before:?}->{stage_after:?}",
+            observation.tick,
+            observation.trade_offer_open,
+            observation.trade_confirm_open,
+            observation.trade_partner.as_deref().unwrap_or("<none>"),
+            observation.trade_accept_id,
+            observation.flax,
+            observation.bow_string,
+        );
     }
 }
 
