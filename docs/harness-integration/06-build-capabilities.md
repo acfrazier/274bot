@@ -1,20 +1,16 @@
 # Release versus scenario build capabilities
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Reviewer: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: bounded architecture for brief 47, input to
 synthesis `t_14b7a7e3`. Not implementation, not LIVE, not a release
 tag, not a change to the current packager command, not a second
 executable, not a restart of the memory campaign.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, `docs/compat/briefs/46-harness-architecture.md`,
-`docs/compat/briefs/47-release-scenario-builds.md`, and reports
-`01-capture-evidence.md`, `02-run-controls.md`,
-`03-platform-delivery.md`, `05-generated-game-data.md`. Branch
-checked first: `codex/rs2b0t-multirevision` (not `main`). Work was read-only except this report. No product edits,
-LIVE, fixtures, STATE, sibling A–E files, subagents, stash, reset,
-restore, checkout, merge, remotes, or release actions. Concurrent
-uncommitted catalog/game-data WIP is not this report's product.
 
 Operator premise (brief 47, mid-run clarification): development
 facilities primarily serve us, script authors, and potential external

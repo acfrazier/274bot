@@ -1,17 +1,15 @@
 # Combined harness application integration plan
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Architect: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: architecture only for brief 46 section D, with
 brief 47 / report 06 as a required parent. Not implementation, not
 LIVE, not a release tag, not source acceptance, not native proof.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, briefs 46 and 47, and reports 01, 02, 03, 05,
-06. Branch checked first: `codex/rs2b0t-multirevision` (not `main`).
-Work is this report only. No product edits, LIVE, fixtures, STATE,
-sibling files, stash, reset, restore, checkout, merge, remotes, or
-release actions. Concurrent untracked evidence under
-`docs/compat/evidence/` is root's; it is not this plan's product.
 
 Section E (report 05) is complete and is considered. It does not gate
 this plan. Design approval is not live acceptance.

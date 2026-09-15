@@ -71,9 +71,10 @@ silently dropping the assignment.
 
 ## Operator controls
 
-Browse / Start / Pause / Stop / Load / **Reload** are wired in **both**
-operator panels (`panel-play` script chrome and `tui-play` script pane) over
-the same `host_play::Play` dispatch.
+Browse / Start / Pause / Stop / Load are wired in both operator panels
+(`panel-play` script chrome and `tui-play` script pane) over the same
+`host_play::Play` dispatch. The native panel also exposes Reload, Refresh
+catalog and the MultiBox bulk script controls described below.
 
 | Control | Behavior |
 | --- | --- |

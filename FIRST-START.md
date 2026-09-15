@@ -3,8 +3,8 @@
 274bot talks to a **local Lost City engine** first. Choose an immutable
 **server profile** for the process (`local-274`, `local-289`, or
 `public-289`). Public `public-289` / `--prod` is WSS + HTTPS on
-`w1.rs2b2t.com:443` and is a ship-gate login path, not a substitute for
-local tests. This repo does not ship Jagex assets and does not promise
+`w1.rs2b2t.com:443` and requires separate live login verification.
+This repo does not ship Jagex assets and does not promise
 automatic asset distribution beyond the client’s ordinary `/crc` + jag
 fetch into the configured cache/unpack directory.
 
@@ -35,8 +35,8 @@ local engine). That script does not download assets from the public
 internet for you.
 
 **Prod / public-289** downloads `/crc` and jags into
-**`~/.274bot/unpack-289`** by default (274-era unpack path remains
-`~/.274bot/unpack` when that profile is selected). Versioned model/anim
+**`~/.274bot/unpack-289`** by default. The local-274 unpack default is
+`~/.274bot/unpack`; there is no public-274 profile. Versioned model/anim
 snapshots from `unpack-cache` live in a child folder named the first 8 hex
 bytes of SHA-256(`versionlist`) — not the `/crc` table.
 
@@ -66,7 +66,7 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 # headless twin:
 cargo run --release -p tui --bin tui-play -- --profile local-289
 # 274:
-# cargo run --release -p panel --bin panel-play -- --profile local-274
+# BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
 ```
 
 Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):
@@ -101,4 +101,4 @@ dir and the game stream is **WSS** (`binary` subprotocol) on
 `w1.rs2b2t.com:443`. Local stays TCP on the profile’s game/asset ports.
 Vault defaults: `~/.274bot/vault-prod` for public-289; local-274
 `~/.274bot/vault`; local-289 `~/.274bot/vault-289`. `--vault PATH` still
-wins. Live public login is a ship gate, not a unit substitute.
+wins. Unit tests do not verify public login.

@@ -39,8 +39,8 @@ PASS/FAIL.
 
 ## Limits
 
-Bulk **Start all / Stop all** and some panel-only chrome live on the native
-MultiBox rail; the TUI keeps the focused script controls above. Catalog
+Reload, Refresh catalog and bulk **Start all / Stop all** are native-panel
+controls; the TUI keeps the focused script controls above. Catalog
 compatibility remains partial. In-tree farming script *ports* are not the
 product surface — catalog/file bots run through the shim; guardian solvers
 are host-side.

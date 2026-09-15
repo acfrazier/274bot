@@ -1,17 +1,15 @@
 # Generated game-data architecture
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Architect: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: architecture only for brief 46 section E.
 Not implementation, not LIVE, not a Quester, not a universal planner,
 not a server interpreter, not a restore of foreign `gen-spelldb.ts`.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, briefs 43/44/45 and 26/27/38/39/40, plus the
-named current seams. Branch checked first:
-`codex/rs2b0t-multirevision` (not `main`). Work is this report only.
-No product edits, LIVE, fixtures, STATE, matrix, other workers' files,
-stash, reset, restore, checkout, merge, remotes, gitlink, or release
-actions.
 
 ## Verdict
 
