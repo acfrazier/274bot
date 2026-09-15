@@ -86,8 +86,7 @@ mod autocast;
 mod bank_open;
 #[cfg(feature = "load")]
 mod bank_withdraw;
-#[cfg(feature = "load")]
-mod cake_stall;
+pub mod cake_stall;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
