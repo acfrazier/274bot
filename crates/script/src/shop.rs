@@ -926,6 +926,39 @@ mod tests {
     }
 
     #[test]
+    fn buy_settles_total_across_separate_matching_inventory_slots() {
+        let mut rt = ShopRuntime::new();
+        rt.kind = Kind::Buy;
+        rt.name = "Vial".into();
+        rt.requested = 15;
+        rt.batch_baseline = 0;
+        rt.phase = Phase::WaitBatch;
+        rt.arm(SETTLE_MS);
+        let stock = [row("Vial", 20, 3), row("Feather", 99, 4)];
+        let inv = [
+            row("Vial", 10, 1),
+            row("Coins", 1900, 2),
+            row("vIaL", 5, 7),
+            row("Feather", 99, 8),
+        ];
+        let probe = Probe {
+            ingame: true,
+            shop_open: true,
+            has_stock: true,
+            stock: &stock,
+            player: None,
+            inv: &inv,
+            npcs: &[],
+        };
+        assert_eq!(transfer_step(&mut rt, &probe)["kind"], "wait");
+        let settled = transfer_step(&mut rt, &probe);
+        assert_eq!(settled["kind"], "done");
+        assert_eq!(settled["result"], true);
+        assert_eq!(settled["quantity"], 15);
+        assert_eq!(rt.transferred, 15);
+    }
+
+    #[test]
     fn sell_plans_against_the_shop_player_pack_and_counts_inventory_losses() {
         let mut rt = ShopRuntime::new();
         rt.kind = Kind::Sell;
@@ -950,6 +983,38 @@ mod tests {
         assert_eq!(step["kind"], "done");
         assert_eq!(step["result"], true);
         assert_eq!(step["quantity"], 10);
+    }
+
+    #[test]
+    fn sell_settles_total_across_separate_matching_inventory_slots() {
+        let mut rt = ShopRuntime::new();
+        rt.kind = Kind::Sell;
+        rt.name = "Vial".into();
+        rt.requested = 10;
+        rt.batch_baseline = 20;
+        rt.phase = Phase::WaitBatch;
+        rt.arm(SETTLE_MS);
+        let player = [row("Vial", 7, 4), row("Coins", 2000, 5), row("vIaL", 3, 9)];
+        let inv = [
+            row("Vial", 4, 8),
+            row("Feather", 99, 10),
+            row("vIaL", 6, 11),
+        ];
+        let probe = Probe {
+            ingame: true,
+            shop_open: true,
+            has_stock: true,
+            stock: &[],
+            player: Some(&player),
+            inv: &inv,
+            npcs: &[],
+        };
+        assert_eq!(transfer_step(&mut rt, &probe)["kind"], "wait");
+        let settled = transfer_step(&mut rt, &probe);
+        assert_eq!(settled["kind"], "done");
+        assert_eq!(settled["result"], true);
+        assert_eq!(settled["quantity"], 10);
+        assert_eq!(rt.transferred, 10);
     }
 
     #[test]

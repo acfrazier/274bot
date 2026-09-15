@@ -9750,13 +9750,25 @@ mod tests {
         further.shop_stock[0].count = 4;
         further.item_ids.insert(EMPTY_VIAL_ID, 1);
         further.item_ids.insert(COINS_ID, 3880);
-        assert!(witness(
+        let top_up_witness = witness(
             case,
             &baseline,
-            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &further]
-        )
-        .qualify()
-        .is_ok());
+            [
+                &opened, &bought, &deposited, &restocked, &returned, &reopened, &further,
+            ],
+        );
+        let top_up_ok = top_up_witness.qualify().unwrap();
+        assert_eq!(
+            top_up_ok["shop_buyout_cycle"]["funding"],
+            json!({
+                "TopUp": {
+                    "carried_before": 1900,
+                    "carried_after": 3900,
+                    "bank_before": 18000,
+                    "bank_after": 16100
+                }
+            })
+        );
         assert!(witness(case, &baseline, [&opened, &bought])
             .qualify()
             .is_err());
