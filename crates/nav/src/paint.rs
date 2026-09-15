@@ -142,6 +142,12 @@ pub struct FaceBits {
     /// not blocked ground — the wall's face-flagged floor tile is
     /// standable even though the router can never walk onto it.
     pub blocked: bool,
+    pub ne: bool,
+    pub se: bool,
+    pub nw: bool,
+    pub sw: bool,
+    /// Raw low collision byte, retaining all eight W_* bits.
+    pub raw: u8,
 }
 
 /// The collision state a consumer paints at `t`: the raw `W_*` face bits
@@ -167,6 +173,11 @@ pub fn collision_at_with(c: &WorldCollision, t: WorldTile, flags: Option<&[u32]>
         e: raw & CollisionFlag::W_E as u32 != 0,
         s: raw & CollisionFlag::W_S as u32 != 0,
         w: raw & CollisionFlag::W_W as u32 != 0,
+        ne: raw & CollisionFlag::W_NE as u32 != 0,
+        se: raw & CollisionFlag::W_SE as u32 != 0,
+        nw: raw & CollisionFlag::W_NW as u32 != 0,
+        sw: raw & CollisionFlag::W_SW as u32 != 0,
+        raw: raw as u8,
         blocked,
     }
 }
@@ -713,6 +724,23 @@ mod tests {
         assert!(fb.s);
         assert!(!fb.n && !fb.e && !fb.w);
         assert!(!fb.blocked, "a bare face flag is not blocked ground");
+    }
+
+    #[test]
+    fn collision_at_preserves_all_eight_wall_bits() {
+        let raw = CollisionFlag::W_NW as u32
+            | CollisionFlag::W_N as u32
+            | CollisionFlag::W_NE as u32
+            | CollisionFlag::W_E as u32
+            | CollisionFlag::W_SE as u32
+            | CollisionFlag::W_S as u32
+            | CollisionFlag::W_SW as u32
+            | CollisionFlag::W_W as u32;
+        let fb = collision_at(&bake(1, 1, &[(0, 0, raw)]), tile(0, 0, 0));
+        assert!(fb.n && fb.e && fb.s && fb.w);
+        assert!(fb.ne && fb.se && fb.nw && fb.sw);
+        assert_eq!(fb.raw, CollisionFlag::WALK_BLOCK_FLAGS as u8);
+        assert!(!fb.blocked, "wall faces remain standable ground");
     }
 
     #[test]

@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientGens};
 use client::render::nav_debug::{
-    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, FACE_E, FACE_N, FACE_S, FACE_W,
+    NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, CORNER_NE, CORNER_NW, CORNER_SE,
+    CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
@@ -727,7 +728,21 @@ fn publish_nav_debug(
                 if fb.w {
                     bits |= FACE_W;
                 }
-                if (settings.collision_fill && fb.blocked) || (settings.nsew_labels && bits != 0) {
+                if fb.ne {
+                    bits |= CORNER_NE;
+                }
+                if fb.se {
+                    bits |= CORNER_SE;
+                }
+                if fb.nw {
+                    bits |= CORNER_NW;
+                }
+                if fb.sw {
+                    bits |= CORNER_SW;
+                }
+                if (settings.collision_fill && (fb.blocked || bits != 0))
+                    || (settings.nsew_labels && bits != 0)
+                {
                     paint.collision.push(NavDebugCell {
                         lx,
                         lz,
