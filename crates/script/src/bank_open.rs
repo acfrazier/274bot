@@ -66,6 +66,7 @@ struct Observation {
     bank_generation: u64,
     nearest_booth: Option<Booth>,
     locs: Vec<Booth>,
+    locs_populated: bool,
     has_booth_stands: bool,
     approaches: Vec<ApproachFact>,
 }
@@ -80,6 +81,7 @@ impl Observation {
             bank_generation: 0,
             nearest_booth: None,
             locs: Vec::new(),
+            locs_populated: false,
             has_booth_stands: false,
             approaches: Vec::new(),
         }
@@ -127,6 +129,7 @@ impl Observation {
             self.has_booth_stands = snap.banks().iter().any(|stand| stand.kind() == "booth");
         }
         if snap.has_locs() {
+            self.locs_populated = true;
             self.locs = snap.locs().iter().filter_map(bank_candidate).collect();
         }
         if snap.has_bank_approaches() {
@@ -437,6 +440,17 @@ impl BankOpenRuntime {
         let Some(selected) = self.selected.as_ref() else {
             return false;
         };
+        if selected.name.is_none() && selected.action.is_none() {
+            return if obs.locs_populated {
+                obs.locs
+                    .iter()
+                    .any(|row| row.id == selected.id && row.tile == selected.tile)
+            } else {
+                obs.nearest_booth
+                    .as_ref()
+                    .is_some_and(|row| row.id == selected.id && row.tile == selected.tile)
+            };
+        }
         obs.locs.iter().any(|row| {
             row.id == selected.id
                 && row.tile == selected.tile
@@ -688,6 +702,7 @@ mod tests {
                 action: Some("Use-quickly".into()),
                 actions: vec!["Use-quickly".into()],
             }],
+            locs_populated: true,
             has_booth_stands: true,
             approaches: vec![ApproachFact {
                 loc_id: 2213,
