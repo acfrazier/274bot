@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use script::isolate_fb::{
-    encode_snapshot, encode_snapshot_delta, ItemRowInput, ReachViewInput, SnapshotInput, StatInput,
+    encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
+    SnapshotInput, StatInput,
 };
 use script::{LoadIsolate, LoadShape};
 
@@ -477,6 +478,13 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1");
     snap.inv = &[];
     snap.chat_text = Some("You bury the bones.");
+    let chat_lines = [ChatLineInput {
+        seq: 1,
+        text: "You bury the bones.",
+        type_: 0,
+        username: None,
+    }];
+    snap.chat_lines = &chat_lines;
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);

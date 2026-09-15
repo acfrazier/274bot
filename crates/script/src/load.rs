@@ -2911,6 +2911,14 @@ globalThis.__rs_bot = inst;
     /// that throws) land on the host handle's `lastError` for the thread
     /// to log.
     const COMPAT_RUNNER: &str = r#"
+globalThis.__rs2b0t_flush_native_events = () => {
+    const pending = globalThis.__rs2b0t_pending_native_event_batch;
+    globalThis.__rs2b0t_pending_native_event_batch = null;
+    if (pending && pending.length) {
+        const dispatch = globalThis.__rs2b0t_dispatch_native_events;
+        if (typeof dispatch === 'function') dispatch(pending);
+    }
+};
 globalThis.__rs_tick = (n) => {
     if (!inst) return;
     globalThis.__rs2b0t_tick_async(n).catch((e) => {
@@ -2936,12 +2944,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     }
     // Native Rust selects/deduplicates events; deliver them only after
     // onStart has installed subscriptions.
-    const pendingEvents = globalThis.__rs2b0t_pending_native_event_batch;
-    globalThis.__rs2b0t_pending_native_event_batch = null;
-    if (pendingEvents) {
-        const dispatch = globalThis.__rs2b0t_dispatch_native_events;
-        if (typeof dispatch === 'function') dispatch(pendingEvents);
-    }
+    globalThis.__rs2b0t_flush_native_events();
 
     // Single-flight: a never-resolving loop() must not re-enter. Tick
     // listeners, chat, and onPaint still run.
@@ -3687,7 +3690,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         runtime
             .eval::<()>(
-                "(() => { const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; globalThis.__rs2b0t_pending_native_event_batch = b; })()",
+                "(() => { const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; const q = globalThis.__rs2b0t_pending_native_event_batch || (globalThis.__rs2b0t_pending_native_event_batch = []); q.push(...b); })()",
             )
             .map_err(|e| format!("{e}"))
     }
@@ -4688,6 +4691,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         // (global); module-local `inst` is not visible here.
                         let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
                         let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                        let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
                         let _ = runtime.block_on_event_loop(
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
@@ -4757,6 +4761,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
                         );
+                        let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
                         result
                     } else {
                         // `__rs_tick` is a synchronous entry that returns
