@@ -1367,7 +1367,9 @@ fn observe_runecraft_work(
     post_exchange_craft_events: &mut u32,
     partner_transfer_events: u32,
 ) {
-    if expire {
+    // Keep receipt credit while approaching the temple, but never carry a
+    // partly observed craft out of it and attach a later product publication.
+    if expire || (*consumed > 0 && !observation.in_temple) {
         *input_from_exchange = 0;
         *consumed = 0;
         *xp_at_consume = 0;
