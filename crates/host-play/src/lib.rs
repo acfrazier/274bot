@@ -871,6 +871,16 @@ fn script_observe_with_npc_boxes(
                 });
                 if !valid_session {
                     slot.complete_bank_op(false);
+                } else if matches!(
+                    pending.kind,
+                    script::slot::PendingBankOpKind::WithdrawXAction
+                ) {
+                    // Raw open-only `Withdraw X`: the accepted menu action is
+                    // the result the frozen caller awaits (it types the amount
+                    // + Enter itself), so no bank or inventory delta can exist
+                    // yet. Acknowledge on the same generation/bank-open gate
+                    // the counted ops settle through.
+                    slot.complete_bank_op(true);
                 } else {
                     let current = snapshot.map_or(0, |snap| match pending.kind {
                         script::slot::PendingBankOpKind::Deposit => snap
@@ -879,7 +889,10 @@ fn script_observe_with_npc_boxes(
                             .filter(|item| item.def.id == pending.item_id)
                             .map(|item| item.count)
                             .sum(),
-                        script::slot::PendingBankOpKind::Withdraw => snap
+                        // The open-only X kind never reaches the delta
+                        // branch: it acknowledged on the session gate above.
+                        script::slot::PendingBankOpKind::Withdraw
+                        | script::slot::PendingBankOpKind::WithdrawXAction => snap
                             .bank()
                             .iter()
                             .filter(|item| item.def.id == pending.item_id)
@@ -1653,6 +1666,11 @@ fn dispatch_observed_bank_op(
                     .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
             })?;
             let op = action_slot(&item.actions, action)?;
+            let kind = if open_only_withdraw_x(&item.actions, op) {
+                PendingBankOpKind::WithdrawXAction
+            } else {
+                PendingBankOpKind::Withdraw
+            };
             let before_count = snapshot
                 .bank()
                 .iter()
@@ -1666,7 +1684,7 @@ fn dispatch_observed_bank_op(
             )
             .then(|| {
                 PendingBankOp::new(
-                    PendingBankOpKind::Withdraw,
+                    kind,
                     item.def.id,
                     before_count,
                     inventory_count(item.def.id),
@@ -2491,6 +2509,22 @@ fn action_slot(actions: &[Option<String>], wanted: &str) -> Option<i32> {
         .iter()
         .position(|a| a.as_deref().map(norm_action).as_deref() == Some(wanted.as_str()))
         .map(|i| i as i32 + 1)
+}
+
+/// Whether the resolved bank op is the open-only `Withdraw X` label: it
+/// opens the amount dialog and cannot move inventory on its own, so the
+/// accepted send *is* the result (frozen `Bank.withdraw` returns
+/// `Input.invButton` → `actions.menuAction`). Every other withdraw label
+/// settles on the observed delta.
+fn open_only_withdraw_x(actions: &[Option<String>], op: i32) -> bool {
+    let index = match usize::try_from(op) {
+        Ok(index) if index >= 1 => index - 1,
+        _ => return false,
+    };
+    actions
+        .get(index)
+        .and_then(|label| label.as_deref())
+        .is_some_and(|label| norm_action(label) == norm_action("Withdraw X"))
 }
 
 /// The bank-side op slot whose label contains "all" (Deposit All / the
@@ -8977,6 +9011,239 @@ export default class T extends LoopingBot {
                 .probe("globalThis.__withdraw_result")
                 .unwrap(),
             true
+        );
+    }
+
+    /// Raw `Bank.withdraw(name, 'Withdraw X')` is the open-only amount
+    /// action: the frozen caller awaits the accepted click and then types
+    /// the amount + Enter itself, so the acknowledgment must arrive with
+    /// the inventory still unchanged (the pre-repair path waited for a
+    /// delta that cannot exist and posted false after the 4s bound).
+    #[test]
+    fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("withdraw-X isolate starts");
+        let mut c = bank_fetch_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        let before_send = c.out.pos;
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert!(c.out.pos > before_send, "Withdraw X reaches the driver");
+        let before_ack = {
+            let slot = script_slot(&scripts, "alice").unwrap();
+            let slot = slot.lock().unwrap();
+            assert_eq!(
+                slot.pending_bank_op().map(|pending| pending.kind),
+                Some(script::slot::PendingBankOpKind::WithdrawXAction),
+                "the raw X action arms the open-only acknowledgment"
+            );
+            slot.bank_op_result()
+        };
+
+        // The bank is still open and the inventory still holds no Knife:
+        // the accepted action alone acknowledges the wait.
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        let slot = script_slot(&scripts, "alice").unwrap();
+        let slot = slot.lock().unwrap();
+        assert!(slot.pending_bank_op().is_none(), "the acknowledgment lands");
+        assert_eq!(
+            slot.bank_op_result(),
+            (before_ack.0.wrapping_add(1), true),
+            "sent open-only X acknowledges true with unchanged inventory"
+        );
+        assert_eq!(
+            slot.probe("globalThis.__withdraw_result").unwrap(),
+            true,
+            "the frozen caller can type the amount after the acknowledgment"
+        );
+    }
+
+    /// The open-only acknowledgment is bound to the accepted bank session:
+    /// closing the bank before the acknowledgment pass posts false instead.
+    #[test]
+    fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("withdraw-X isolate starts");
+        let mut c = bank_fetch_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        let before_ack = {
+            let slot = script_slot(&scripts, "alice").unwrap();
+            let slot = slot.lock().unwrap();
+            assert_eq!(
+                slot.pending_bank_op().map(|pending| pending.kind),
+                Some(script::slot::PendingBankOpKind::WithdrawXAction)
+            );
+            slot.bank_op_result()
+        };
+
+        // The session ended before the acknowledgment pass.
+        c.main_modal_id = -1;
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        snap.rebuild(&c);
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        let slot = script_slot(&scripts, "alice").unwrap();
+        let slot = slot.lock().unwrap();
+        assert!(slot.pending_bank_op().is_none());
+        assert_eq!(
+            slot.bank_op_result(),
+            (before_ack.0.wrapping_add(1), false),
+            "a closed session never acknowledges the raw X action"
         );
     }
 
