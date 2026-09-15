@@ -6128,6 +6128,8 @@ pub struct ShopBuyoutCycle {
     pub returned: bool,
     pub reopened: Option<Observation>,
     pub further: bool,
+    last_tick: Option<u32>,
+    bought_quantity: i32,
 }
 
 pub struct ShopBuyoutSpec {
@@ -6152,7 +6154,19 @@ pub fn shop_buyout_spec(case: CoreCase) -> Option<ShopBuyoutSpec> {
     }
 }
 
-fn shop_bought_id(before: &Observation, now: &Observation) -> Option<i32> {
+fn shop_bought_id(
+    before: &Observation,
+    now: &Observation,
+    stand: (i32, i32, i32),
+    stand_radius: i32,
+) -> Option<(i32, i32)> {
+    if !now.shop_open
+        || now.main_modal != SHOPMAIN
+        || now.shop_stock.is_empty()
+        || !near(now.tile, stand, stand_radius)
+    {
+        return None;
+    }
     if now.item_id(COINS_ID) >= before.item_id(COINS_ID) {
         return None;
     }
@@ -6160,10 +6174,13 @@ fn shop_bought_id(before: &Observation, now: &Observation) -> Option<i32> {
     for row in &before.shop_stock {
         if now.shop_item_id(row.id) < row.count && now.item_id(row.id) > before.item_id(row.id) {
             if row.id == EMPTY_VIAL_ID {
-                return Some(EMPTY_VIAL_ID);
+                return Some((
+                    EMPTY_VIAL_ID,
+                    now.item_id(EMPTY_VIAL_ID) - before.item_id(EMPTY_VIAL_ID),
+                ));
             }
             if found.is_none() {
-                found = Some(row.id);
+                found = Some((row.id, now.item_id(row.id) - before.item_id(row.id)));
             }
         }
     }
@@ -6177,6 +6194,10 @@ impl ShopBuyoutCycle {
             stand_radius,
             restock,
         } = spec;
+        if now.tick <= self.last_tick.unwrap_or(baseline.tick) {
+            return;
+        }
+        self.last_tick = Some(now.tick);
         if self.opened.is_none()
             && now.shop_open
             && now.main_modal == SHOPMAIN
@@ -6187,8 +6208,9 @@ impl ShopBuyoutCycle {
         }
         if let Some(opened) = &self.opened {
             if self.bought.is_none() {
-                if let Some(id) = shop_bought_id(opened, now) {
+                if let Some((id, quantity)) = shop_bought_id(opened, now, stand, stand_radius) {
                     self.bought_id = Some(id);
+                    self.bought_quantity = quantity;
                     self.bought = Some(now.clone());
                 }
             }
@@ -6201,7 +6223,7 @@ impl ShopBuyoutCycle {
                 && now.bank_generation > baseline.bank_generation
                 && near(now.tile, restock, 8)
                 && now.item_id(id) == 0
-                && now.bank_item_id(id) >= 1
+                && now.bank_item_id(id) - baseline.bank_item_id(id) >= self.bought_quantity
                 && now.item_id(COINS_ID) >= 1
             {
                 self.deposited = Some(now.clone());
@@ -6254,7 +6276,8 @@ impl ShopBuyoutCycle {
             self.reopened = Some(now.clone());
         }
         if let Some(reopened) = &self.reopened {
-            self.further |= self.funding.is_some() && shop_bought_id(reopened, now).is_some();
+            self.further |= self.funding.is_some()
+                && shop_bought_id(reopened, now, stand, stand_radius).is_some();
         }
     }
 

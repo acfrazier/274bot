@@ -9716,11 +9716,14 @@ mod tests {
             count: 10,
         }];
         opened.item_ids.insert(COINS_ID, 2000);
+        opened.tick = 11;
         let mut bought = opened.clone();
+        bought.tick = 12;
         bought.shop_stock[0].count = 5;
         bought.item_ids.insert(EMPTY_VIAL_ID, 5);
         bought.item_ids.insert(COINS_ID, 1900);
         let mut deposited = bought.clone();
+        deposited.tick = 13;
         deposited.shop_open = false;
         deposited.main_modal = -1;
         deposited.shop_stock.clear();
@@ -9732,14 +9735,17 @@ mod tests {
         deposited.bank_ids.insert(EMPTY_VIAL_ID, 5);
         deposited.bank_ids.insert(COINS_ID, 18000);
         let mut restocked = deposited.clone();
+        restocked.tick = 14;
         restocked.item_ids.insert(COINS_ID, 3900);
         restocked.bank_ids.insert(COINS_ID, 16100);
         let mut returned = restocked.clone();
+        returned.tick = 15;
         returned.bank_open = false;
         returned.bank_loaded = false;
         returned.bank_generation = 2;
         returned.tile = Some(AEMAD_STAND);
         let mut reopened = returned.clone();
+        reopened.tick = 16;
         reopened.shop_open = true;
         reopened.main_modal = SHOPMAIN;
         reopened.shop_stock = vec![BoundedShopItem {
@@ -9747,6 +9753,7 @@ mod tests {
             count: 5,
         }];
         let mut further = reopened.clone();
+        further.tick = 17;
         further.shop_stock[0].count = 4;
         further.item_ids.insert(EMPTY_VIAL_ID, 1);
         further.item_ids.insert(COINS_ID, 3880);
@@ -9769,6 +9776,47 @@ mod tests {
                 }
             })
         );
+        let mut same_tick = bought.clone();
+        same_tick.tick = opened.tick;
+        assert!(witness(case, &baseline, [&opened, &same_tick]).qualify().is_err());
+        let mut backwards = bought.clone();
+        backwards.tick = opened.tick - 1;
+        assert!(witness(case, &baseline, [&opened, &backwards])
+            .qualify()
+            .is_err());
+        let mut closed_purchase = bought.clone();
+        closed_purchase.shop_open = false;
+        closed_purchase.main_modal = -1;
+        closed_purchase.shop_stock.clear();
+        assert!(witness(case, &baseline, [&opened, &closed_purchase]).qualify().is_err());
+        let mut wrong_location = bought.clone();
+        wrong_location.tile = Some(VARROCK_EAST_BANK);
+        assert!(witness(case, &baseline, [&opened, &wrong_location]).qualify().is_err());
+        let mut partial_deposit = deposited.clone();
+        partial_deposit.bank_ids.insert(EMPTY_VIAL_ID, 1);
+        assert!(witness(
+            case,
+            &baseline,
+            [&opened, &bought, &partial_deposit, &restocked, &returned, &reopened, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut preseeded_baseline = baseline.clone();
+        preseeded_baseline.bank_ids.insert(EMPTY_VIAL_ID, 1);
+        assert!(witness(
+            case,
+            &preseeded_baseline,
+            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &further]
+        )
+        .qualify()
+        .is_err());
+        assert!(witness(
+            case,
+            &baseline,
+            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &reopened]
+        )
+        .qualify()
+        .is_err());
         assert!(witness(case, &baseline, [&opened, &bought])
             .qualify()
             .is_err());
@@ -9781,15 +9829,15 @@ mod tests {
         // Retained funding is a separate valid branch: the bank session stays
         // loaded, but carried and bank coins do not change before the return.
         let mut retained = deposited.clone();
-        retained.tick = 11;
+        retained.tick = 21;
         let mut retained_returned = retained.clone();
-        retained_returned.tick = 12;
+        retained_returned.tick = 22;
         retained_returned.bank_open = false;
         retained_returned.bank_loaded = false;
         retained_returned.bank_generation = 2;
         retained_returned.tile = Some(AEMAD_STAND);
         let mut retained_reopened = retained_returned.clone();
-        retained_reopened.tick = 13;
+        retained_reopened.tick = 23;
         retained_reopened.shop_open = true;
         retained_reopened.main_modal = SHOPMAIN;
         retained_reopened.shop_stock = vec![BoundedShopItem {
@@ -9797,7 +9845,7 @@ mod tests {
             count: 5,
         }];
         let mut retained_further = retained_reopened.clone();
-        retained_further.tick = 14;
+        retained_further.tick = 24;
         retained_further.shop_stock[0].count = 4;
         retained_further.item_ids.insert(EMPTY_VIAL_ID, 1);
         retained_further.item_ids.insert(COINS_ID, 1880);
