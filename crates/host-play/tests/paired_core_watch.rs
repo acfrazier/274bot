@@ -1,7 +1,8 @@
 use host_play::paired_core::{
-    pair_settings, AirObservation, AirRole, DuelObservation, FlaxObservation, FlaxRole, PairCase,
-    PairWatch, PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR, FALADOR_EAST,
-    FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
+    pair_settings, AirObservation, AirRole, DuelObservation, FlaxExchangeStage, FlaxObservation,
+    FlaxRole, FlaxSlotRecord, MuleExchangeStage, MuleRole, MuleSlotRecord, PairCase, PairWatch,
+    PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR, FALADOR_EAST, FLAX_FIELD,
+    FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
 };
 
 fn air_ready(player: &str, role: AirRole) -> AirObservation {
@@ -683,4 +684,830 @@ fn duel_wrong_observed_opponent_does_not_qualify() {
     watch.observe_duel("bob", duel_ready("bob"), false);
     let error = watch.qualify().unwrap_err();
     assert!(error.contains("wrong partner"), "{error}");
+}
+
+const TRADE_OFFER_ACCEPT: i32 = 3420;
+const TRADE_CONFIRM_ACCEPT: i32 = 3546;
+const FLAX_LOAD: i32 = 28;
+
+fn flax_slot(role: FlaxRole) -> FlaxSlotRecord {
+    let (account, partner) = match role {
+        FlaxRole::Runner => ("runner", "spinner"),
+        FlaxRole::Spinner => ("spinner", "runner"),
+    };
+    FlaxSlotRecord::new(
+        role,
+        account.into(),
+        account.into(),
+        partner.into(),
+        serde_json::Map::new(),
+        flax_ready(account, role),
+    )
+}
+
+fn flax_trade(
+    role: FlaxRole,
+    tick: u32,
+    flax: i32,
+    offer: bool,
+    confirm: bool,
+    partner: Option<&str>,
+    accept: i32,
+    mine: i32,
+) -> FlaxObservation {
+    let player = match role {
+        FlaxRole::Runner => "runner",
+        FlaxRole::Spinner => "spinner",
+    };
+    FlaxObservation {
+        tick,
+        flax,
+        tile: Some(FLAX_MEET),
+        trade_offer_open: offer,
+        trade_confirm_open: confirm,
+        trade_partner: partner.map(str::to_string),
+        trade_accept_id: accept,
+        trade_mine_flax: mine,
+        ..flax_ready(player, role)
+    }
+}
+
+fn flax_offer(role: FlaxRole, tick: u32, flax: i32, mine: i32) -> FlaxObservation {
+    let partner = match role {
+        FlaxRole::Runner => "spinner",
+        FlaxRole::Spinner => "runner",
+    };
+    flax_trade(
+        role,
+        tick,
+        flax,
+        true,
+        false,
+        Some(partner),
+        TRADE_OFFER_ACCEPT,
+        mine,
+    )
+}
+
+fn flax_inactive(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
+    flax_trade(role, tick, flax, false, false, None, -1, 0)
+}
+
+fn flax_confirm(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
+    let partner = match role {
+        FlaxRole::Runner => "spinner",
+        FlaxRole::Spinner => "runner",
+    };
+    flax_trade(
+        role,
+        tick,
+        flax,
+        false,
+        true,
+        Some(partner),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    )
+}
+
+fn flax_close(role: FlaxRole, tick: u32, flax: i32) -> FlaxObservation {
+    flax_trade(role, tick, flax, false, false, None, -1, 0)
+}
+
+fn mule_baseline(role: MuleRole) -> AirObservation {
+    let player = match role {
+        MuleRole::Crafter => "crafter",
+        MuleRole::Mule => "mule",
+    };
+    AirObservation {
+        ingame: true,
+        scene_state: 2,
+        inventory_tab_available: true,
+        player: Some(player.into()),
+        tile: Some(AIR_RUINS),
+        air_talisman: match role {
+            MuleRole::Crafter => 1,
+            MuleRole::Mule => 0,
+        },
+        essence_unnoted: match role {
+            MuleRole::Crafter => 0,
+            MuleRole::Mule => MULE_TRADE_CAP,
+        },
+        ..AirObservation::default()
+    }
+}
+
+fn mule_slot(role: MuleRole) -> MuleSlotRecord {
+    let (account, partner) = match role {
+        MuleRole::Crafter => ("crafter", "mule"),
+        MuleRole::Mule => ("mule", "crafter"),
+    };
+    MuleSlotRecord::new(
+        role,
+        account.into(),
+        account.into(),
+        partner.into(),
+        serde_json::Map::new(),
+        mule_baseline(role),
+    )
+}
+
+fn mule_trade(
+    role: MuleRole,
+    tick: u32,
+    essence: i32,
+    air: i32,
+    offer: bool,
+    confirm: bool,
+    partner: Option<&str>,
+    accept: i32,
+    mine: i32,
+) -> AirObservation {
+    AirObservation {
+        tick,
+        essence_unnoted: essence,
+        air_runes: air,
+        tile: Some(AIR_RUINS),
+        trade_offer_open: offer,
+        trade_confirm_open: confirm,
+        trade_partner: partner.map(str::to_string),
+        trade_accept_id: accept,
+        trade_mine_essence: mine,
+        ..mule_baseline(role)
+    }
+}
+
+fn mule_offer(role: MuleRole, tick: u32, essence: i32, air: i32, mine: i32) -> AirObservation {
+    let partner = match role {
+        MuleRole::Crafter => "mule",
+        MuleRole::Mule => "crafter",
+    };
+    mule_trade(
+        role,
+        tick,
+        essence,
+        air,
+        true,
+        false,
+        Some(partner),
+        TRADE_OFFER_ACCEPT,
+        mine,
+    )
+}
+
+fn mule_inactive(role: MuleRole, tick: u32, essence: i32, air: i32) -> AirObservation {
+    mule_trade(role, tick, essence, air, false, false, None, -1, 0)
+}
+
+fn mule_confirm(role: MuleRole, tick: u32, essence: i32, air: i32) -> AirObservation {
+    let partner = match role {
+        MuleRole::Crafter => "mule",
+        MuleRole::Mule => "crafter",
+    };
+    mule_trade(
+        role,
+        tick,
+        essence,
+        air,
+        false,
+        true,
+        Some(partner),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    )
+}
+
+fn mule_close(role: MuleRole, tick: u32, essence: i32, air: i32) -> AirObservation {
+    mule_trade(role, tick, essence, air, false, false, None, -1, 0)
+}
+
+fn assert_flax_transfer(runner: &FlaxSlotRecord, spinner: &FlaxSlotRecord, events: u32, qty: i32) {
+    assert!(runner.saw_offer_with_partner && spinner.saw_offer_with_partner);
+    assert!(runner.saw_confirm_with_partner && spinner.saw_confirm_with_partner);
+    assert_eq!(runner.partner_transfer_events, events);
+    assert_eq!(spinner.partner_transfer_events, events);
+    assert_eq!(runner.transferred_out, qty);
+    assert_eq!(spinner.transferred_in, qty);
+    assert_eq!(runner.exchange_stage, FlaxExchangeStage::Offer);
+    assert_eq!(spinner.exchange_stage, FlaxExchangeStage::Offer);
+}
+
+fn assert_flax_no_transfer(runner: &FlaxSlotRecord, spinner: &FlaxSlotRecord, confirm: bool) {
+    assert_eq!(runner.saw_confirm_with_partner, confirm);
+    assert_eq!(spinner.saw_confirm_with_partner, confirm);
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(spinner.partner_transfer_events, 0);
+    assert_eq!(runner.transferred_out, 0);
+    assert_eq!(spinner.transferred_in, 0);
+}
+
+fn assert_mule_transfer(crafter: &MuleSlotRecord, mule: &MuleSlotRecord, events: u32, qty: i32) {
+    assert!(crafter.saw_offer_with_partner && mule.saw_offer_with_partner);
+    assert!(crafter.saw_confirm_with_partner && mule.saw_confirm_with_partner);
+    assert_eq!(crafter.partner_transfer_events, events);
+    assert_eq!(mule.partner_transfer_events, events);
+    assert_eq!(crafter.transferred_in, qty);
+    assert_eq!(mule.transferred_out, qty);
+    assert_eq!(crafter.air_transferred_out, qty);
+    assert_eq!(mule.air_transferred_in, qty);
+    assert_eq!(crafter.exchange_stage, MuleExchangeStage::Offer);
+    assert_eq!(mule.exchange_stage, MuleExchangeStage::Offer);
+}
+
+fn assert_mule_no_transfer(crafter: &MuleSlotRecord, mule: &MuleSlotRecord, confirm: bool) {
+    assert_eq!(crafter.saw_confirm_with_partner, confirm);
+    assert_eq!(mule.saw_confirm_with_partner, confirm);
+    assert_eq!(crafter.partner_transfer_events, 0);
+    assert_eq!(mule.partner_transfer_events, 0);
+    assert_eq!(crafter.transferred_in, 0);
+    assert_eq!(mule.transferred_out, 0);
+}
+
+fn flax_gap_close(runner: &mut FlaxSlotRecord, spinner: &mut FlaxSlotRecord) {
+    runner.observe(flax_offer(FlaxRole::Runner, 94, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 94, 0, 0));
+    runner.observe(flax_inactive(FlaxRole::Runner, 98, 0));
+    spinner.observe(flax_inactive(FlaxRole::Spinner, 98, 0));
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(spinner.partner_transfer_events, 0);
+    assert!(!runner.saw_confirm_with_partner);
+    runner.observe(flax_confirm(FlaxRole::Runner, 98, 0));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 98, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 100, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 100, FLAX_LOAD));
+}
+
+fn mule_gap_close(crafter: &mut MuleSlotRecord, mule: &mut MuleSlotRecord) {
+    crafter.observe(mule_offer(MuleRole::Crafter, 94, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 94, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 98, 0, 0));
+    mule.observe(mule_inactive(MuleRole::Mule, 98, 0, 0));
+    assert_eq!(crafter.partner_transfer_events, 0);
+    assert_eq!(mule.partner_transfer_events, 0);
+    crafter.observe(mule_confirm(MuleRole::Crafter, 98, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 98, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 100, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 100, 0, MULE_TRADE_CAP));
+}
+
+#[test]
+fn flax_observed_gap_counts_one_transfer_for_both_actors() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    flax_gap_close(&mut runner, &mut spinner);
+    assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+}
+
+#[test]
+fn mule_observed_gap_counts_one_transfer_for_both_actors() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn flax_direct_confirm_without_gap_still_counts() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
+    assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+}
+
+#[test]
+fn mule_direct_confirm_without_gap_still_counts() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 3, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 3, 0, MULE_TRADE_CAP));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn flax_repeated_offer_does_not_rebind_or_count_window_staging() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_offer(FlaxRole::Runner, 1, 0, FLAX_LOAD));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    assert_eq!(runner.exchange_stage, FlaxExchangeStage::Confirm);
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, 0));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
+    assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+}
+
+#[test]
+fn mule_repeated_offer_does_not_rebind_or_count_window_staging() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, 0, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, 0, 0, MULE_TRADE_CAP));
+    assert_eq!(mule.exchange_stage, MuleExchangeStage::Confirm);
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 3, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 3, 0, MULE_TRADE_CAP));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn flax_gap_then_new_offer_rebinds_and_does_not_count_old() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_inactive(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_offer(FlaxRole::Runner, 3, 20, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 3, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 4, 20));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 4, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 5, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, 20));
+    assert_flax_transfer(&runner, &spinner, 1, 20);
+}
+
+#[test]
+fn mule_gap_then_new_offer_rebinds_and_does_not_count_old() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+    mule.observe(mule_inactive(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_offer(MuleRole::Crafter, 3, 0, 20, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 3, 20, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 4, 0, 20));
+    mule.observe(mule_confirm(MuleRole::Mule, 4, 20, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, 20, 0));
+    mule.observe(mule_close(MuleRole::Mule, 5, 0, 20));
+    assert_mule_transfer(&crafter, &mule, 1, 20);
+}
+
+#[test]
+fn flax_skipped_offer_later_confirm_drops_without_latch() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_inactive(FlaxRole::Runner, 2, 0));
+    spinner.observe(flax_inactive(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 3, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 4, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 4, FLAX_LOAD));
+    assert_flax_no_transfer(&runner, &spinner, false);
+    assert_eq!(runner.exchange_stage, FlaxExchangeStage::Offer);
+}
+
+#[test]
+fn mule_skipped_offer_later_confirm_drops_without_latch() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 2, 0, 0));
+    mule.observe(mule_inactive(MuleRole::Mule, 2, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 3, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 3, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 4, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 4, 0, MULE_TRADE_CAP));
+    assert_mule_no_transfer(&crafter, &mule, false);
+    assert_eq!(mule.exchange_stage, MuleExchangeStage::Offer);
+}
+
+#[test]
+fn flax_partnerless_confirm_drops_without_count() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_trade(
+        FlaxRole::Runner,
+        2,
+        FLAX_LOAD,
+        false,
+        true,
+        None,
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    spinner.observe(flax_trade(
+        FlaxRole::Spinner,
+        2,
+        0,
+        false,
+        true,
+        None,
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
+    assert_flax_no_transfer(&runner, &spinner, false);
+}
+
+#[test]
+fn mule_partnerless_confirm_drops_without_count() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_trade(
+        MuleRole::Crafter,
+        2,
+        0,
+        MULE_TRADE_CAP,
+        false,
+        true,
+        None,
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    mule.observe(mule_trade(
+        MuleRole::Mule,
+        2,
+        MULE_TRADE_CAP,
+        0,
+        false,
+        true,
+        None,
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    crafter.observe(mule_close(MuleRole::Crafter, 3, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 3, 0, MULE_TRADE_CAP));
+    assert_mule_no_transfer(&crafter, &mule, false);
+}
+
+#[test]
+fn flax_wrong_partner_drops_without_count() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_trade(
+        FlaxRole::Runner,
+        2,
+        FLAX_LOAD,
+        false,
+        true,
+        Some("stranger"),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    spinner.observe(flax_trade(
+        FlaxRole::Spinner,
+        2,
+        0,
+        false,
+        true,
+        Some("stranger"),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    runner.observe(flax_close(FlaxRole::Runner, 3, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 3, FLAX_LOAD));
+    assert!(runner.saw_wrong_partner);
+    assert!(spinner.saw_wrong_partner);
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(spinner.partner_transfer_events, 0);
+}
+
+#[test]
+fn mule_wrong_partner_drops_without_count() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_trade(
+        MuleRole::Crafter,
+        2,
+        0,
+        MULE_TRADE_CAP,
+        false,
+        true,
+        Some("stranger"),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    mule.observe(mule_trade(
+        MuleRole::Mule,
+        2,
+        MULE_TRADE_CAP,
+        0,
+        false,
+        true,
+        Some("stranger"),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    ));
+    crafter.observe(mule_close(MuleRole::Crafter, 3, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 3, 0, MULE_TRADE_CAP));
+    assert!(crafter.saw_wrong_partner);
+    assert!(mule.saw_wrong_partner);
+    assert_eq!(crafter.partner_transfer_events, 0);
+    assert_eq!(mule.partner_transfer_events, 0);
+}
+
+#[test]
+fn flax_same_close_tick_delayed_inv_counts_once() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 5, FLAX_LOAD));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, 0));
+    assert_eq!(runner.partner_transfer_events, 0);
+    runner.observe(flax_close(FlaxRole::Runner, 5, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, FLAX_LOAD));
+    assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+}
+
+#[test]
+fn mule_same_close_tick_delayed_inv_counts_once() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, 0, MULE_TRADE_CAP));
+    mule.observe(mule_close(MuleRole::Mule, 5, MULE_TRADE_CAP, 0));
+    assert_eq!(mule.partner_transfer_events, 0);
+    crafter.observe(mule_close(MuleRole::Crafter, 5, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 5, 0, MULE_TRADE_CAP));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn flax_later_tick_unrelated_delta_is_refused() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 5, FLAX_LOAD));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 6, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 6, FLAX_LOAD));
+    assert_flax_no_transfer(&runner, &spinner, true);
+}
+
+#[test]
+fn mule_later_tick_unrelated_delta_is_refused() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, 0, MULE_TRADE_CAP));
+    mule.observe(mule_close(MuleRole::Mule, 5, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 6, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 6, 0, MULE_TRADE_CAP));
+    assert_mule_no_transfer(&crafter, &mule, true);
+}
+
+#[test]
+fn flax_confirmed_close_without_conservation_does_not_count() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, FLAX_LOAD));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 5, FLAX_LOAD));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 6, 4));
+    spinner.observe(flax_close(FlaxRole::Spinner, 6, 9));
+    assert_flax_no_transfer(&runner, &spinner, true);
+}
+
+#[test]
+fn mule_confirmed_close_without_conservation_does_not_count() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, MULE_TRADE_CAP));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, 0, MULE_TRADE_CAP));
+    mule.observe(mule_close(MuleRole::Mule, 5, MULE_TRADE_CAP, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 6, 3, 4));
+    mule.observe(mule_close(MuleRole::Mule, 6, 5, 6));
+    assert_mule_no_transfer(&crafter, &mule, true);
+}
+
+#[test]
+fn flax_gap_path_dedups_extra_pack_motion() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    flax_gap_close(&mut runner, &mut spinner);
+    runner.observe(flax_close(FlaxRole::Runner, 101, 4));
+    spinner.observe(flax_close(FlaxRole::Spinner, 101, 32));
+    assert_flax_transfer(&runner, &spinner, 1, FLAX_LOAD);
+}
+
+#[test]
+fn mule_gap_path_dedups_extra_pack_motion() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_close(MuleRole::Crafter, 101, 30, 2));
+    mule.observe(mule_close(MuleRole::Mule, 101, 2, 30));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn flax_new_offer_frame_does_not_count_old_episode() {
+    let mut runner = flax_slot(FlaxRole::Runner);
+    let mut spinner = flax_slot(FlaxRole::Spinner);
+    runner.observe(flax_offer(FlaxRole::Runner, 1, FLAX_LOAD, 0));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 1, 0, 0));
+    runner.observe(flax_confirm(FlaxRole::Runner, 2, 0));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 2, 0));
+    runner.observe(flax_offer(FlaxRole::Runner, 3, 0, 20));
+    spinner.observe(flax_offer(FlaxRole::Spinner, 3, 0, 0));
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(spinner.partner_transfer_events, 0);
+    assert_eq!(runner.exchange_stage, FlaxExchangeStage::Confirm);
+    runner.observe(flax_confirm(FlaxRole::Runner, 4, 0));
+    spinner.observe(flax_confirm(FlaxRole::Spinner, 4, 0));
+    runner.observe(flax_close(FlaxRole::Runner, 5, 0));
+    spinner.observe(flax_close(FlaxRole::Spinner, 5, 20));
+    assert_flax_transfer(&runner, &spinner, 1, 20);
+}
+
+#[test]
+fn mule_new_offer_frame_does_not_count_old_episode() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 2, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 2, 0, 0));
+    crafter.observe(mule_offer(MuleRole::Crafter, 3, 0, 20, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 3, 0, 0, 20));
+    assert_eq!(crafter.partner_transfer_events, 0);
+    assert_eq!(mule.partner_transfer_events, 0);
+    assert_eq!(mule.exchange_stage, MuleExchangeStage::Confirm);
+    crafter.observe(mule_confirm(MuleRole::Crafter, 4, 0, 20));
+    mule.observe(mule_confirm(MuleRole::Mule, 4, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, 20, 0));
+    mule.observe(mule_close(MuleRole::Mule, 5, 0, 20));
+    assert_mule_transfer(&crafter, &mule, 1, 20);
+}
+
+#[test]
+fn flax_and_mule_session_boundary_after_start_is_terminal() {
+    let flax = PairWatch::default();
+    flax.configure(PairCase::Flax, "runner", "spinner");
+    flax.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+    flax.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
+    flax.begin_shared_start("runner", "spinner").unwrap();
+    flax.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), true);
+    let flax_error = flax
+        .failure()
+        .expect("flax post-Start boundary is terminal");
+    assert!(
+        flax_error.contains("session boundary after Start"),
+        "{flax_error}"
+    );
+
+    let mule = PairWatch::default();
+    mule.configure(PairCase::Mule, "crafter", "mule");
+    let mut crafter = mule_baseline(MuleRole::Crafter);
+    crafter.essence_unnoted = MULE_TRADE_CAP;
+    let mut pack = mule_baseline(MuleRole::Mule);
+    pack.essence_unnoted = MULE_TRADE_CAP;
+    mule.observe_air("crafter", crafter, false);
+    mule.observe_air("mule", pack, false);
+    mule.begin_shared_start("crafter", "mule").unwrap();
+    mule.observe_air("crafter", mule_baseline(MuleRole::Crafter), true);
+    let mule_error = mule
+        .failure()
+        .expect("mule post-Start boundary is terminal");
+    assert!(
+        mule_error.contains("session boundary after Start"),
+        "{mule_error}"
+    );
+}
+
+#[test]
+fn flax_gap_transfer_does_not_qualify_without_further_cycle() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Flax, "runner", "spinner");
+    watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
+    watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
+    watch.begin_shared_start("runner", "spinner").unwrap();
+    watch.observe_flax(
+        "runner",
+        flax_offer(FlaxRole::Runner, 94, FLAX_LOAD, 0),
+        false,
+    );
+    watch.observe_flax("spinner", flax_offer(FlaxRole::Spinner, 94, 0, 0), false);
+    watch.observe_flax("runner", flax_inactive(FlaxRole::Runner, 98, 0), false);
+    watch.observe_flax("spinner", flax_inactive(FlaxRole::Spinner, 98, 0), false);
+    watch.observe_flax("runner", flax_confirm(FlaxRole::Runner, 98, 0), false);
+    watch.observe_flax("spinner", flax_confirm(FlaxRole::Spinner, 98, 0), false);
+    watch.observe_flax("runner", flax_close(FlaxRole::Runner, 100, 0), false);
+    watch.observe_flax(
+        "spinner",
+        flax_close(FlaxRole::Spinner, 100, FLAX_LOAD),
+        false,
+    );
+    let error = watch.qualify().unwrap_err();
+    assert!(
+        error.contains("no further work")
+            || error.contains("bank")
+            || error.contains("Make-X")
+            || error.contains("seed-only"),
+        "{error}"
+    );
+    let evidence = watch.evidence();
+    assert_eq!(
+        evidence["witness"]["runner"]["saw_confirm_with_partner"],
+        true
+    );
+    assert_eq!(
+        evidence["witness"]["spinner"]["saw_confirm_with_partner"],
+        true
+    );
+    assert_eq!(evidence["witness"]["runner"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["spinner"]["partner_transfer_events"], 1);
+}
+
+#[test]
+fn mule_gap_transfer_does_not_qualify_without_further_cycle() {
+    let watch = PairWatch::default();
+    watch.configure(PairCase::Mule, "crafter", "mule");
+    let mut crafter = mule_baseline(MuleRole::Crafter);
+    crafter.essence_unnoted = MULE_TRADE_CAP;
+    let mut pack = mule_baseline(MuleRole::Mule);
+    pack.essence_unnoted = MULE_TRADE_CAP;
+    watch.observe_air("crafter", crafter, false);
+    watch.observe_air("mule", pack, false);
+    watch.begin_shared_start("crafter", "mule").unwrap();
+    watch.observe_air(
+        "crafter",
+        mule_offer(MuleRole::Crafter, 94, 0, MULE_TRADE_CAP, 0),
+        false,
+    );
+    watch.observe_air(
+        "mule",
+        mule_offer(MuleRole::Mule, 94, MULE_TRADE_CAP, 0, 0),
+        false,
+    );
+    watch.observe_air("crafter", mule_inactive(MuleRole::Crafter, 98, 0, 0), false);
+    watch.observe_air("mule", mule_inactive(MuleRole::Mule, 98, 0, 0), false);
+    watch.observe_air("crafter", mule_confirm(MuleRole::Crafter, 98, 0, 0), false);
+    watch.observe_air("mule", mule_confirm(MuleRole::Mule, 98, 0, 0), false);
+    watch.observe_air(
+        "crafter",
+        mule_close(MuleRole::Crafter, 100, MULE_TRADE_CAP, 0),
+        false,
+    );
+    watch.observe_air(
+        "mule",
+        mule_close(MuleRole::Mule, 100, 0, MULE_TRADE_CAP),
+        false,
+    );
+    let error = watch.qualify().unwrap_err();
+    assert!(
+        error.contains("no further work")
+            || error.contains("bank")
+            || error.contains("missing conservation")
+            || error.contains("seed-only")
+            || error.contains("post-exchange"),
+        "{error}"
+    );
+    let evidence = watch.evidence();
+    assert_eq!(
+        evidence["witness"]["crafter"]["saw_confirm_with_partner"],
+        true
+    );
+    assert_eq!(
+        evidence["witness"]["mule"]["saw_confirm_with_partner"],
+        true
+    );
+    assert_eq!(evidence["witness"]["crafter"]["partner_transfer_events"], 1);
+    assert_eq!(evidence["witness"]["mule"]["partner_transfer_events"], 1);
 }
