@@ -1637,12 +1637,17 @@ fn interact_dispatches_loc_op_through_scene_coords() {
 fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     let mut s = scene();
     s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let diagonal_id = 2216;
     let near_id = 2213;
     let far_id = 2214;
     let bank_id = 2215;
+    let diagonal_tc = 0x4000_0000 + (diagonal_id << 14) + 1 + (2 << 7);
     let near_tc = 0x4000_0000 + (near_id << 14) + 1 + (2 << 7);
     let far_tc = 0x4000_0000 + (far_id << 14) + 1 + (2 << 7);
     let bank_tc = 0x4000_0000 + (bank_id << 14) + 1 + (2 << 7);
+    s.client
+        .world
+        .set_decor(0, 5, 6, 0, 0, 0, diagonal_tc, 0, 0, 0, 0, 0, 0, 0);
     s.client
         .world
         .set_wall(0, 6, 5, 0, 0, 0, near_tc, 10, 0, 0, 0, 0);
@@ -1654,9 +1659,16 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
         .set_wall(0, 5, 6, 0, 0, 0, bank_tc, 10, 0, 0, 0, 0);
     {
         let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
-        while cache.locs.len() <= bank_id as usize {
+        while cache.locs.len() <= diagonal_id as usize {
             cache.locs.push(LocType::default());
         }
+        cache.locs[diagonal_id as usize] = LocType {
+            id: diagonal_id,
+            name: "Bank booth".into(),
+            op: vec![None, Some("Use-quickly".into()), None, None, None],
+            forceapproach: 4,
+            ..Default::default()
+        };
         cache.locs[near_id as usize] = LocType {
             id: near_id,
             name: "Bank booth".into(),
@@ -1695,7 +1707,7 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     assert_eq!(
         rec.menus,
         vec![(0, MiniMenuAction::OP_LOC2, near_tc, 6, 5)],
-        "nearest Use-quickly on the same plane, never Bank / Talk-to"
+        "nearest ready Use-quickly tie on the same plane, never diagonal / Bank / Talk-to"
     );
 
     let mut exact = Recorder {
@@ -1726,6 +1738,20 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
             ),
             SendResult::Refused {
                 reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.open_booth_at(
+                WorldTile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+                diagonal_id
+            ),
+            SendResult::Refused {
+                reason: SendReason::Unreachable,
                 ..
             }
         ));

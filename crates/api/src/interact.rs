@@ -1006,7 +1006,42 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
         }
-        let Some(loc) = snapshot.nearest_use_quickly_booth() else {
+        let Some((px, pz, level)) = snapshot.tile() else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        let mut nearest = None;
+        let mut nearest_distance = i32::MAX;
+        let mut ready = None;
+        for loc in snapshot.locs().iter().filter(|loc| {
+            loc.tile.level == level
+                && loc.actions.iter().any(|action| {
+                    action
+                        .as_deref()
+                        .is_some_and(|label| label.eq_ignore_ascii_case("Use-quickly"))
+                })
+        }) {
+            let distance = (loc.tile.x - px).abs().max((loc.tile.z - pz).abs());
+            if distance < nearest_distance {
+                nearest_distance = distance;
+                nearest = Some(loc);
+                ready = None;
+            }
+            if distance == nearest_distance
+                && ready.is_none()
+                && crate::query::loc_approach::can_operate_from(
+                    loc,
+                    snapshot.scene(),
+                    WorldTile {
+                        x: px,
+                        z: pz,
+                        level,
+                    },
+                ) == Some(true)
+            {
+                ready = Some(loc);
+            }
+        }
+        let Some(loc) = ready.or(nearest) else {
             return refuse(snapshot, SendReason::StaleTarget);
         };
         self.open_booth_at(loc.tile, loc.id)
