@@ -31,23 +31,21 @@ function tools(kind) {
 export const AXES = tools('axes').map((t) => ({ name: t.name, id: t.id }));
 export const PICKAXES = tools('pickaxes').map((t) => ({ name: t.name, id: t.id }));
 
-/** Posted gather-tool facts for one decision (a single read per decision). */
-function facts() {
-    const row = host().content && host().content.gather_tools;
-    return row && typeof row === 'object' ? row : null;
-}
-
-/** JS `Number()` coercion, JSON-safe: non-finite numbers travel as tokens. */
-function numArg(value) {
-    const n = Number(value);
-    if (Number.isNaN(n)) return 'NaN';
-    if (n === Infinity) return 'Infinity';
-    if (n === -Infinity) return '-Infinity';
-    return n;
-}
-
 function fail(step) {
     throw notImpl(step.feature);
+}
+
+function resetReq(state) {
+    state.present = undefined;
+    state.has_kind = false;
+    state.kind = null;
+    state.has_name = false;
+    state.name = null;
+    state.ok = undefined;
+    state.need_le_0 = undefined;
+    state.avail_le_0 = undefined;
+    state.need = undefined;
+    state.available = undefined;
 }
 
 export function exactTool(name) {
@@ -79,46 +77,111 @@ function reqRows(reqs) {
 
 export function hasAllTools(reqs, skillLevel, invCount) {
     const rows = reqRows(reqs);
-    let index = 0;
-    if (typeof invCount === 'function') {
-        let count = null;
-        for (;;) {
-            const step = call({ op: 'has_all', mode: 'inventory', reqs: rows, index, count });
-            if (step.kind === 'error') fail(step);
-            if (step.kind === 'done') return step.value;
-            index = step.index;
-            count = numArg(invCount(step.name));
-        }
-    }
-    let ok = null;
+    const inventory = typeof invCount === 'function';
+    const state = { index: 0 };
+    resetReq(state);
     for (;;) {
-        const step = call({
+        const payload = {
             op: 'has_all',
-            mode: 'skill',
-            reqs: rows,
-            index,
-            ok,
+            mode: inventory ? 'inventory' : 'skill',
+            index: state.index,
+            req_len: rows.length,
             skill_fn: typeof skillLevel === 'function',
-        });
+        };
+        if (state.present !== undefined) payload.present = state.present;
+        if (state.has_kind) {
+            payload.has_kind = true;
+            payload.kind = state.kind;
+        }
+        if (state.has_name) {
+            payload.has_name = true;
+            payload.name = state.name;
+        }
+        if (state.ok !== undefined) payload.ok = state.ok;
+        const step = call(payload);
         if (step.kind === 'error') fail(step);
         if (step.kind === 'done') return step.value;
-        index = step.index;
-        ok = !!skillLevel(step.name);
+        if (step.kind === 'advance') {
+            state.index = step.index;
+            resetReq(state);
+            continue;
+        }
+        if (step.kind === 'read') {
+            const r = rows[step.index];
+            if (step.what === 'present') state.present = !!r;
+            else if (step.what === 'kind') {
+                state.has_kind = true;
+                state.kind = r.kind ?? null;
+            } else if (step.what === 'name') {
+                state.has_name = true;
+                state.name = r.name;
+            }
+            continue;
+        }
+        if (step.kind !== 'probe') return false;
+        if (step.what === 'inv') {
+            const r = rows[step.index];
+            state.ok = invCount(step.name) >= (r.min ?? 1);
+        } else {
+            state.ok = !!skillLevel(step.name);
+        }
     }
 }
 
 function bestFrom(kind, level, available) {
     if (typeof available !== 'function') return null;
-    const rows = facts();
-    const gate = numArg(level);
+    const snapshot = tools(kind);
     let index = -1;
     let accepted = false;
+    let row = null;
+    let rowIndex = null;
+    let levelOk = undefined;
+    let pending = null;
     for (;;) {
-        const step = call({ op: 'best', kind, level: gate, facts: rows, index, accepted });
+        const payload = {
+            op: 'best',
+            index,
+            accepted,
+            has_next: index + 1 < snapshot.length,
+        };
+        if (row) {
+            payload.row = row;
+            payload.row_index = rowIndex;
+        }
+        if (levelOk !== undefined) payload.level_ok = levelOk;
+        const step = call(payload);
+        if (step.kind === 'need_row') {
+            pending = snapshot[step.index];
+            row = pending
+                ? { name: pending.name, use_skill: pending.use_skill ?? null }
+                : null;
+            rowIndex = step.index;
+            levelOk = undefined;
+            continue;
+        }
+        if (step.kind === 'need_level') {
+            levelOk = Number(level) >= (pending.use_level ?? 0);
+            continue;
+        }
+        if (step.kind === 'skip') {
+            index = step.index;
+            accepted = false;
+            row = null;
+            rowIndex = null;
+            levelOk = undefined;
+            pending = null;
+            continue;
+        }
         if (step.kind === 'done') return step.name;
         if (step.kind !== 'probe') return null;
         index = step.index;
         accepted = available(step.name) === true;
+        if (!accepted) {
+            row = null;
+            rowIndex = null;
+            levelOk = undefined;
+            pending = null;
+        }
     }
 }
 
@@ -127,13 +190,29 @@ export function bestAxe(level, available) {
 }
 
 export function canWieldTool(name, attack) {
-    const step = call({
-        op: 'can_wield',
-        name: String(name ?? ''),
-        attack: numArg(attack),
-        facts: facts(),
-    });
-    return step.kind === 'value' ? step.value : false;
+    const want = String(name ?? '').trim();
+    if (!want) return false;
+    const snapshot = tools('axes').concat(tools('pickaxes'));
+    const names = snapshot.map((t) => t.name);
+    let wield = undefined;
+    let attackOk = undefined;
+    for (;;) {
+        const payload = { op: 'can_wield', name: want, names };
+        if (wield !== undefined) payload.wield = wield;
+        if (attackOk !== undefined) payload.attack_ok = attackOk;
+        const step = call(payload);
+        if (step.kind === 'value') return step.value;
+        if (step.kind === 'need_wield') {
+            const tool = snapshot[step.index];
+            wield = tool && tool.wield_attack != null ? tool.wield_attack : null;
+            continue;
+        }
+        if (step.kind === 'need_attack') {
+            attackOk = Number(attack) >= wield;
+            continue;
+        }
+        return false;
+    }
 }
 
 export function toolRestockPlan(reqs, skillLevel, invCount, bankCount) {
@@ -141,30 +220,93 @@ export function toolRestockPlan(reqs, skillLevel, invCount, bankCount) {
         throw notImpl('Tools.toolRestockPlan');
     }
     const plan = [];
-    let index = 0;
-    let count = null;
-    let bank = null;
+    const state = { index: 0 };
+    resetReq(state);
     for (;;) {
-        const step = call({ op: 'restock', reqs, index, count, bank });
+        const payload = { op: 'restock', index: state.index, req_len: reqs.length };
+        if (state.present !== undefined) payload.present = state.present;
+        if (state.has_kind) {
+            payload.has_kind = true;
+            payload.kind = state.kind;
+        }
+        if (state.has_name) {
+            payload.has_name = true;
+            payload.name = state.name;
+        }
+        if (state.need_le_0 !== undefined) payload.need_le_0 = state.need_le_0;
+        if (state.avail_le_0 !== undefined) payload.avail_le_0 = state.avail_le_0;
+        const step = call(payload);
         if (step.kind === 'error') fail(step);
         if (step.kind === 'done') return plan;
-        if (step.kind === 'emit') {
-            plan.push(step.step);
-            index = step.index;
-            count = null;
-            bank = null;
+        if (step.kind === 'advance') {
+            state.index = step.index;
+            resetReq(state);
             continue;
         }
-        if (step.what === 'inv') count = numArg(invCount(step.name));
-        else bank = numArg(bankCount(step.name));
+        if (step.kind === 'read') {
+            const r = reqs[step.index];
+            if (step.what === 'present') state.present = !!r;
+            else if (step.what === 'kind') {
+                state.has_kind = true;
+                state.kind = r.kind ?? null;
+            } else if (step.what === 'name') {
+                state.has_name = true;
+                state.name = r.name;
+            }
+            continue;
+        }
+        if (step.kind === 'emit') {
+            const r = reqs[step.index];
+            plan.push({
+                name: step.name,
+                qty: Math.min(state.need, state.available),
+                equip: r.equip === true,
+            });
+            state.index = step.index + 1;
+            resetReq(state);
+            continue;
+        }
+        if (step.kind !== 'probe') throw notImpl('Tools.toolRestockPlan');
+        const r = reqs[step.index];
+        if (step.what === 'inv') {
+            const min = r.min ?? 1;
+            const target = r.restock ?? min;
+            const have = Number(invCount(step.name)) || 0;
+            state.need = target - have;
+            state.need_le_0 = state.need <= 0;
+        } else {
+            state.available = Number(bankCount(step.name)) || 0;
+            state.avail_le_0 = state.available <= 0;
+        }
     }
 }
 
 export function hasToolReq(available, req) {
-    const probe = call({ op: 'has_req', req });
-    if (probe.kind !== 'probe') return probe.value === true;
-    const step = call({ op: 'has_req', req, ok: !!available(probe.name) });
-    return step.value === true;
+    let present;
+    let hasName = false;
+    let name = null;
+    let ok;
+    for (;;) {
+        const payload = { op: 'has_req' };
+        if (present !== undefined) payload.present = present;
+        if (hasName) {
+            payload.has_name = true;
+            payload.name = name;
+        }
+        if (ok !== undefined) payload.ok = ok;
+        const step = call(payload);
+        if (step.kind === 'done') return step.value === true;
+        if (step.kind === 'read') {
+            if (step.what === 'present') present = !!req;
+            else if (step.what === 'name') {
+                hasName = true;
+                name = req.name;
+            }
+            continue;
+        }
+        if (step.kind !== 'probe') return false;
+        ok = !!available(step.name);
+    }
 }
 
 export function missingToolLabels() {
