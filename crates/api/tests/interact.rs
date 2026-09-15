@@ -1637,17 +1637,17 @@ fn interact_dispatches_loc_op_through_scene_coords() {
 fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     let mut s = scene();
     s.client.local_player = Some(ClientPlayer::at(5, 5));
-    let diagonal_id = 2216;
+    let blocked_id = 2216;
     let near_id = 2213;
     let far_id = 2214;
     let bank_id = 2215;
-    let diagonal_tc = 0x4000_0000 + (diagonal_id << 14) + 1 + (2 << 7);
+    let blocked_tc = 0x4000_0000 + (blocked_id << 14) + 1 + (2 << 7);
     let near_tc = 0x4000_0000 + (near_id << 14) + 1 + (2 << 7);
     let far_tc = 0x4000_0000 + (far_id << 14) + 1 + (2 << 7);
     let bank_tc = 0x4000_0000 + (bank_id << 14) + 1 + (2 << 7);
     s.client
         .world
-        .set_decor(0, 5, 6, 0, 0, 0, diagonal_tc, 0, 0, 0, 0, 0, 0, 0);
+        .set_decor(0, 5, 6, 0, 0, 0, blocked_tc, 0, 0, 0, 0, 0, 0, 0);
     s.client
         .world
         .set_wall(0, 6, 5, 0, 0, 0, near_tc, 10, 0, 0, 0, 0);
@@ -1659,11 +1659,11 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
         .set_wall(0, 5, 6, 0, 0, 0, bank_tc, 10, 0, 0, 0, 0);
     {
         let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
-        while cache.locs.len() <= diagonal_id as usize {
+        while cache.locs.len() <= blocked_id as usize {
             cache.locs.push(LocType::default());
         }
-        cache.locs[diagonal_id as usize] = LocType {
-            id: diagonal_id,
+        cache.locs[blocked_id as usize] = LocType {
+            id: blocked_id,
             name: "Bank booth".into(),
             op: vec![None, Some("Use-quickly".into()), None, None, None],
             forceapproach: 4,
@@ -1707,7 +1707,7 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
     assert_eq!(
         rec.menus,
         vec![(0, MiniMenuAction::OP_LOC2, near_tc, 6, 5)],
-        "nearest ready Use-quickly tie on the same plane, never diagonal / Bank / Talk-to"
+        "nearest ready Use-quickly tie on the same plane, never blocked face / Bank / Talk-to"
     );
 
     let mut exact = Recorder {
@@ -1748,7 +1748,7 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
                     z: 3206,
                     level: 0,
                 },
-                diagonal_id
+                blocked_id
             ),
             SendResult::Refused {
                 reason: SendReason::Unreachable,
@@ -3768,4 +3768,83 @@ fn shop_sell_refuses_without_a_posted_player_pack() {
         ));
     }
     assert!(rec.menus.is_empty() && rec.actions.is_empty());
+}
+
+#[test]
+fn nearest_booth_real_diagonal_ties_choose_only_an_operable_nearest() {
+    for has_orthogonal_tie in [true, false] {
+        let mut s = scene();
+        s.client.local_player = Some(ClientPlayer::at(5, 5));
+        // Scene sweep sees (4,4) before (5,4), matching the native bank
+        // row's diagonal-before-orthogonal ordering. Both are distance one.
+        let placements = [(2213, 4, 4), (2214, 6, 4), (2215, 7, 5), (2216, 5, 4)];
+        for (id, x, z) in placements {
+            if id == 2216 && !has_orthogonal_tie {
+                continue;
+            }
+            let typecode = 0x4000_0000 + (id << 14) + x + (z << 7);
+            s.client
+                .world
+                .set_wall(0, x, z, 0, 0, 0, typecode, 10, 0, 0, 0, 0);
+            let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+            while cache.locs.len() <= id as usize {
+                cache.locs.push(LocType::default());
+            }
+            cache.locs[id as usize] = LocType {
+                id,
+                name: "Bank booth".into(),
+                op: vec![None, Some("Use-quickly".into()), None, None, None],
+                ..Default::default()
+            };
+        }
+        let snap = rebuild(&mut s.client);
+        let old_selection = snap.nearest_use_quickly_booth().expect("nearest booth");
+        assert_eq!(
+            old_selection.id, 2213,
+            "first nearest must really be diagonal"
+        );
+        assert_eq!(
+            old_selection.tile,
+            WorldTile {
+                x: 3204,
+                z: 3204,
+                level: 0
+            }
+        );
+        let mut rec = Recorder {
+            base: (3200, 3200),
+            ..Recorder::default()
+        };
+        let mut ix = Interactions::new(&snap, &mut rec);
+        // The pre-fix path selected this exact diagonal and refused. Exact
+        // APIs must still refuse it, even when another booth is reachable.
+        assert!(matches!(
+            ix.open_booth_at(old_selection.tile, old_selection.id),
+            SendResult::Refused {
+                reason: SendReason::Unreachable,
+                ..
+            }
+        ));
+        let result = ix.open_nearest_booth();
+        if has_orthogonal_tie {
+            assert!(matches!(result, SendResult::Sent { .. }));
+            let expected_typecode = 0x4000_0000 + (2216 << 14) + 5 + (4 << 7);
+            assert_eq!(
+                rec.menus,
+                vec![(0, MiniMenuAction::OP_LOC2, expected_typecode, 5, 4)]
+            );
+        } else {
+            assert!(matches!(
+                result,
+                SendResult::Refused {
+                    reason: SendReason::Unreachable,
+                    ..
+                }
+            ));
+            assert!(
+                rec.menus.is_empty(),
+                "no eligible nearest tie must dispatch nothing"
+            );
+        }
+    }
 }
