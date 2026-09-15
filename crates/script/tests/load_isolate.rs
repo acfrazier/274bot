@@ -2397,6 +2397,36 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     iso.join();
 }
 
+// Bank-opening fixtures post the native operability fact used by the runtime.
+// The caller must place the actor on an operable tile for the selected booth.
+fn post_operable_bank_snapshot(
+    iso: &LoadIsolate,
+    input: &script::isolate_fb::SnapshotInput<'_>,
+    loc_id: i32,
+    x: i32,
+    z: i32,
+) {
+    let here = input.here.as_ref().expect("bank fixture has an actor tile");
+    let approaches = [script::isolate_fb::BankApproachInput {
+        loc_id,
+        x,
+        z,
+        level: here.level,
+        can_operate: true,
+        dest_ok: true,
+        dest_x: here.x,
+        dest_z: here.z,
+        dest_level: here.level,
+    }];
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        input,
+        script::isolate_fb::NativeFactsInput {
+            bank_approaches: Some(&approaches),
+            ..Default::default()
+        },
+    ));
+}
+
 // Banking opening preserves the exact nearest-booth identity posted in the
 // snapshot so dispatch cannot retarget between observation and action.
 #[test]
@@ -2412,7 +2442,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
-        x: 100,
+        x: 199,
         z: 100,
         level: 0,
     });
@@ -2429,7 +2459,7 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_snapshot_input(&iso, &snap);
+    post_operable_bank_snapshot(&iso, &snap, 2213, 200, 100);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
@@ -2494,7 +2524,7 @@ export default class T extends LoopingBot {
         target_index: -1,
     }];
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
@@ -2584,10 +2614,10 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
         x: 150,
-        z: 149,
+        z: 150,
         level: 0,
     });
-    post_snapshot_input(&iso, &snap);
+    post_operable_bank_snapshot(&iso, &snap, 4483, 151, 150);
     iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
     assert_eq!(
@@ -2656,7 +2686,7 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_snapshot_input(&iso, &snap);
+    post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
     iso.on_game_tick(2);
     let _ = iso.probe("true");
     assert_eq!(
