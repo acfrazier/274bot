@@ -30,7 +30,16 @@ export const FIRE_SPOTS = fireSpots();
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
 
-/** Posted fire-plot AABB containing `origin`, else a half-tile box around it. */
+/**
+ * First posted fire plot whose bank level matches `origin` and whose inclusive
+ * AABB contains it, else a half-tile box around `origin`.
+ *
+ * The scan is native (`__rs2b0t_fire` `local-plot`): it names the posted index
+ * to read, gates the level before the containment and stops at the first hit.
+ * The posted row, the two scalar facts (`lv === level` and the inclusive AABB)
+ * and the fallback box stay here at the original expressions, so `typeof`,
+ * `?? 0`, NaN/Infinity and a mutated posted row keep their JS coercion.
+ */
 export function localFirePlot(origin, half = 4) {
     const o = origin || snap().here || {};
     const x = o.x;
@@ -40,29 +49,63 @@ export function localFirePlot(origin, half = 4) {
         throw notImpl('localFirePlot');
     }
     const plots = (host().content && host().content.fire_plots) || [];
-    for (const p of plots) {
-        const lv = (p.bank && p.bank.level) ?? 0;
-        if (lv !== level) {
-            continue;
+    let index = 0;
+    let row = null;
+    let rowLevel = 0;
+    let report = 'start';
+    let levelOk = false;
+    let contained = false;
+    for (;;) {
+        const payload = { op: 'local-plot' };
+        if (report === 'absent') {
+            payload.index = index;
+            payload.present = false;
+        } else if (report === 'level') {
+            payload.index = index;
+            payload.present = true;
+            payload.level_ok = levelOk;
+        } else if (report === 'contains') {
+            payload.index = index;
+            payload.contained = contained;
         }
-        if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1) {
+        const step = callFire(payload, 'Firemaking.localFirePlot');
+        if (step.kind === 'fallback') {
+            const h = Math.max(0, Math.floor(Number(half) || 4));
             return {
-                bank: new Tile(p.bank.x, p.bank.z, lv),
-                x0: p.x0,
-                x1: p.x1,
-                z0: p.z0,
-                z1: p.z1,
+                bank: new Tile(x, z, level),
+                x0: x - h,
+                x1: x + h,
+                z0: z - h,
+                z1: z + h,
             };
         }
+        if (step.kind === 'hit') {
+            return {
+                bank: new Tile(row.bank.x, row.bank.z, rowLevel),
+                x0: row.x0,
+                x1: row.x1,
+                z0: row.z0,
+                z1: row.z1,
+            };
+        }
+        if (step.kind === 'contains') {
+            contained = x >= row.x0 && x <= row.x1 && z >= row.z0 && z <= row.z1;
+            report = 'contains';
+            continue;
+        }
+        if (step.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', step.reason);
+        index = step.index;
+        row = null;
+        rowLevel = 0;
+        if (index < plots.length) {
+            row = plots[index];
+            rowLevel = (row.bank && row.bank.level) ?? 0;
+            levelOk = rowLevel === level;
+            report = 'level';
+        } else {
+            report = 'absent';
+        }
     }
-    const h = Math.max(0, Math.floor(Number(half) || 4));
-    return {
-        bank: new Tile(x, z, level),
-        x0: x - h,
-        x1: x + h,
-        z0: z - h,
-        z1: z + h,
-    };
 }
 
 export const LOG_LEVELS = {
@@ -110,12 +153,12 @@ export class NoLightTiles {
     }
 }
 
-function callFire(payload) {
+function callFire(payload, feature = 'Firemaking.findBurnLane') {
     const fn = globalThis.rustyscript && globalThis.rustyscript.functions
         ? globalThis.rustyscript.functions.__rs2b0t_fire
         : undefined;
     if (typeof fn !== 'function') {
-        throw notImpl('Firemaking.findBurnLane');
+        throw notImpl(feature);
     }
     return fn(payload);
 }

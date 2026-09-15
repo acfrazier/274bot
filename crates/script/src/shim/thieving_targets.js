@@ -84,11 +84,65 @@ export function isHostileAttacker(c, maxDistance) {
     });
 }
 
-export function chooseTarget(candidatesNearestFirst, reachable) {
-    for (const c of candidatesNearestFirst) {
-        if (reachable(c)) {
-            return { target: c, blocked: null };
-        }
+function callStep(payload) {
+    return globalThis.rustyscript.functions.__rs2b0t_target_step(payload);
+}
+
+/** `for...of` closes an iterator it leaves early: a returning body propagates a
+ *  `return()` failure, a throwing body keeps its own error. */
+function closeIterator(iterator) {
+    const ret = iterator.return;
+    if (ret === undefined || ret === null) return;
+    if (typeof ret !== 'function') throw new TypeError('iterator.return is not callable');
+    const inner = ret.call(iterator);
+    if (inner === null || (typeof inner !== 'object' && typeof inner !== 'function')) {
+        throw new TypeError('iterator.return must return an object');
     }
-    return { target: null, blocked: candidatesNearestFirst[0] ?? null };
+}
+
+/**
+ * First candidate the caller accepts wins. The native step owns the traversal,
+ * the first hit, the short circuit and the exhaustion fallback; this shim keeps
+ * the caller's iterator and runs only the element read, the `reachable(c)` call
+ * and the truthiness conversion each step asks for.
+ */
+export function chooseTarget(candidatesNearestFirst, reachable) {
+    const iterator = candidatesNearestFirst[Symbol.iterator]();
+    let value;
+    let done = null;
+    let probed = null;
+    for (;;) {
+        const payload = { op: 'choose' };
+        if (done !== null) payload.done = done;
+        if (probed !== null) payload.probed = probed;
+        const step = callStep(payload);
+        if (step.kind === 'hit') {
+            closeIterator(iterator);
+            return { target: value, blocked: null };
+        }
+        if (step.kind === 'exhausted') {
+            return { target: null, blocked: candidatesNearestFirst[0] ?? null };
+        }
+        if (step.kind === 'probe') {
+            let answer;
+            try {
+                answer = reachable(value);
+            } catch (e) {
+                try {
+                    closeIterator(iterator);
+                } catch (_) {
+                    // the callback's own error wins, exactly as `for...of` closes
+                }
+                throw e;
+            }
+            done = null;
+            probed = !!answer;
+            continue;
+        }
+        if (step.kind !== 'next') throw notImpl('Thieving.chooseTarget', step.reason);
+        const next = iterator.next();
+        done = !!next.done;
+        probed = null;
+        if (!done) value = next.value;
+    }
 }
