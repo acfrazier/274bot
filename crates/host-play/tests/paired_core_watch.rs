@@ -1705,6 +1705,23 @@ fn air_keep(mut observation: AirObservation, air: i32, xp: i32) -> AirObservatio
     observation
 }
 
+fn air_loading(
+    role: AirRole,
+    tick: u32,
+    essence: i32,
+    air: i32,
+    xp: i32,
+    in_temple: bool,
+) -> AirObservation {
+    let mut observation = if in_temple {
+        air_temple(role, tick, essence, air, xp)
+    } else {
+        air_keep(air_close(role, tick, essence), air, xp)
+    };
+    observation.scene_state = 1;
+    observation
+}
+
 fn nature_first_close(master: &mut AirSlotRecord, runner: &mut AirSlotRecord) {
     master.observe(air_offer(AirRole::Master, 10, 0, 0));
     runner.observe(air_offer(AirRole::Runner, 10, TRADE_CAP, 0));
@@ -1741,6 +1758,25 @@ fn mule_temple(role: MuleRole, tick: u32, essence: i32, air: i32, xp: i32) -> Ai
         in_temple: true,
         ..mule_baseline(role)
     }
+}
+
+fn mule_loading(
+    role: MuleRole,
+    tick: u32,
+    essence: i32,
+    air: i32,
+    xp: i32,
+    in_temple: bool,
+) -> AirObservation {
+    let mut observation = if in_temple {
+        mule_temple(role, tick, essence, air, xp)
+    } else {
+        let mut ruins = mule_close(role, tick, essence, air);
+        ruins.runecraft_xp = xp;
+        ruins
+    };
+    observation.scene_state = 1;
+    observation
 }
 
 fn assert_air_transfer(master: &AirSlotRecord, runner: &AirSlotRecord, events: u32, qty: i32) {
@@ -2154,4 +2190,114 @@ fn mule_pending_craft_expires_on_leaving_temple() {
     ));
     assert_eq!(crafter.craft_events, 0);
     assert_eq!(crafter.post_exchange_craft_events, 0);
+}
+
+#[test]
+fn nature_transfer_scene1_stable_temple_craft_counts_receipt() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    assert_eq!(master.craft_input_from_exchange, TRADE_CAP);
+    // Native altar enter publishes LoadingScene while the last ruins tile is
+    // still current, then a temple frame whose inventory can read empty.
+    master.observe(air_loading(AirRole::Master, 17, TRADE_CAP, 0, 0, false));
+    master.observe(air_loading(AirRole::Master, 18, 0, 0, 0, true));
+    assert_eq!(master.craft_input_from_exchange, TRADE_CAP);
+    assert_eq!(master.craft_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+    master.observe(air_temple(AirRole::Master, 19, TRADE_CAP, 0, 0));
+    master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
+    master.observe(air_temple(AirRole::Master, 21, 0, 0, AIR_CRAFT_XP));
+    master.observe(air_temple(AirRole::Master, 22, 0, TRADE_CAP, AIR_CRAFT_XP));
+    assert_eq!(master.craft_events, 1);
+    assert_eq!(master.post_transfer_craft_events, 1);
+}
+
+#[test]
+fn mule_transfer_scene1_stable_temple_craft_counts_receipt() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    assert_eq!(crafter.craft_input_from_exchange, MULE_TRADE_CAP);
+    crafter.observe(mule_loading(
+        MuleRole::Crafter,
+        101,
+        MULE_TRADE_CAP,
+        0,
+        0,
+        false,
+    ));
+    crafter.observe(mule_loading(MuleRole::Crafter, 102, 0, 0, 0, true));
+    assert_eq!(crafter.craft_input_from_exchange, MULE_TRADE_CAP);
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_temple(MuleRole::Crafter, 111, 0, 0, 0));
+    crafter.observe(mule_temple(MuleRole::Crafter, 112, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        113,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.craft_events, 1);
+    assert_eq!(crafter.post_exchange_craft_events, 1);
+}
+
+#[test]
+fn nature_pending_craft_expires_on_scene_loading() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
+    master.observe(air_loading(AirRole::Master, 21, 0, 0, 0, true));
+    master.observe(air_temple(AirRole::Master, 22, 0, TRADE_CAP, AIR_CRAFT_XP));
+    assert_eq!(master.craft_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+}
+
+#[test]
+fn mule_pending_craft_expires_on_scene_loading() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, 0, 0, 0));
+    crafter.observe(mule_loading(MuleRole::Crafter, 111, 0, 0, 0, true));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        112,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+}
+
+#[test]
+fn nature_loading_without_consume_is_not_craft() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    master.observe(air_loading(AirRole::Master, 17, TRADE_CAP, 0, 0, false));
+    master.observe(air_temple(AirRole::Master, 19, TRADE_CAP, 0, 0));
+    assert_eq!(master.craft_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+}
+
+#[test]
+fn nature_disconnect_after_receipt_drops_credit() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    let mut gone = air_close(AirRole::Master, 17, TRADE_CAP);
+    gone.ingame = false;
+    gone.scene_state = 0;
+    master.observe(gone);
+    master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
+    master.observe(air_temple(AirRole::Master, 21, 0, 0, AIR_CRAFT_XP));
+    master.observe(air_temple(AirRole::Master, 22, 0, TRADE_CAP, AIR_CRAFT_XP));
+    assert_eq!(master.craft_events, 1);
+    assert_eq!(master.post_transfer_craft_events, 0);
 }

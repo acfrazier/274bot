@@ -1293,7 +1293,6 @@ impl AirSlotRecord {
             self.exchange_stage,
         );
         let expire_craft = !observation.ingame
-            || observation.scene_state != 2
             || self.mixed_identity
             || self.saw_wrong_partner
             || observation.bank_open;
@@ -1367,10 +1366,19 @@ fn observe_runecraft_work(
     post_exchange_craft_events: &mut u32,
     partner_transfer_events: u32,
 ) {
-    // Keep receipt credit while approaching the temple, but never carry a
-    // partly observed craft out of it and attach a later product publication.
+    // Keep unconsumed receipt credit through ingame LoadingScene while
+    // carrying received essence. Never complete a partly observed craft
+    // across temple leave or scene_state != 2, and never treat loading
+    // inventory/XP as consume or product.
     if expire || (*consumed > 0 && !observation.in_temple) {
         *input_from_exchange = 0;
+        *consumed = 0;
+        *xp_at_consume = 0;
+        *air_at_consume = 0;
+        *from_exchange = false;
+        return;
+    }
+    if observation.scene_state != 2 {
         *consumed = 0;
         *xp_at_consume = 0;
         *air_at_consume = 0;
@@ -1841,7 +1849,6 @@ impl MuleSlotRecord {
             self.exchange_stage,
         );
         let expire_craft = !observation.ingame
-            || observation.scene_state != 2
             || self.mixed_identity
             || self.saw_wrong_partner
             || observation.bank_open;
