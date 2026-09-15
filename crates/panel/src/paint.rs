@@ -572,13 +572,13 @@ mod tests {
 
     fn canvas_banner() -> ScriptPaint {
         let mut p = paint(None, &[]);
-        p.canvas = vec![script::canvas::CanvasOp::FillRect {
-            x: 6,
-            y: 6,
-            w: 400,
-            h: 50,
-            color: script::canvas::pack_rgba(0, 0, 0, 178),
-        }];
+        p.canvas = vec![script::canvas::CanvasOp::fill_rect(
+            6,
+            6,
+            400,
+            50,
+            script::canvas::pack_rgba(0, 0, 0, 178),
+        )];
         p
     }
 
@@ -826,5 +826,51 @@ mod tests {
         );
         assert!(!overlay.canvas_gpu_alive());
         assert_eq!(gpu.unregistered.len(), 2);
+    }
+
+    #[test]
+    fn path_op_frame_reuses_texture_on_identical_ops() {
+        let Some((device, queue)) = headless_gpu() else {
+            return;
+        };
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let mut gpu = RecordingGpu::new(device, queue);
+        let mut p = paint(None, &[]);
+        p.canvas = vec![script::canvas::CanvasOp::StrokePath {
+            segs: vec![
+                script::canvas::PathSeg::MoveTo { x: 40.0, y: 40.0 },
+                script::canvas::PathSeg::LineTo { x: 80.0, y: 90.0 },
+            ],
+            color: script::canvas::pack_rgba(255, 224, 64, 140),
+            line_width: 1.5,
+            line_join: script::canvas::LineJoinKind::Round,
+            extras: script::canvas::DrawExtras::default(),
+        }];
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert_eq!(overlay.rasterize_calls(), 1);
+        assert_eq!(overlay.upload_calls(), 1);
+        gpu_frame(
+            &mut ctx,
+            &mut overlay,
+            &mut gpu,
+            &p,
+            [10.0, 20.0],
+            [765.0, 503.0],
+        );
+        assert_eq!(
+            overlay.rasterize_calls(),
+            1,
+            "identical path ops must not reraster"
+        );
+        assert_eq!(overlay.upload_calls(), 1);
     }
 }

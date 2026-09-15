@@ -13,7 +13,7 @@ memory-profile = []
 # (they exercise Load) and for panel/host-play; nothing else depends on
 # this crate.
 default = ["load"]
-load = ["dep:rustyscript", "dep:v8", "dep:deno_ast", "dep:flatbuffers"]
+load = ["dep:rustyscript", "dep:v8", "dep:deno_ast", "dep:flatbuffers", "dep:tiny-skia"]
 
 [dependencies]
 ab_glyph = "=0.2.32"
@@ -28,6 +28,9 @@ rustyscript = { version = "=0.12.3", optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
 sha2 = "=0.10.9"
+# Direct raster dependency for path/clip/linear-gradient. 0.11.4 `simd`
+# is an empty feature (no `wide` crate); `png-format` is not selected.
+tiny-skia = { version = "=0.11.4", default-features = false, features = ["std", "simd"], optional = true }
 vault = { path = "../vault" }
 v8 = { version = "=137.2.1", default-features = false, optional = true }
 

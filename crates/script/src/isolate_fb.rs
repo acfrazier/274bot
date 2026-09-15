@@ -33,6 +33,12 @@ const MAX_PAINT_BUTTONS: usize = 32;
 const MAX_CANVAS_OPS: usize = crate::canvas::MAX_CANVAS_OPS;
 /// Max UTF-8 bytes per canvas fillText string.
 const MAX_PAINT_TEXT: usize = crate::canvas::MAX_PAINT_TEXT;
+const MAX_PATH_SEGS_PER_OP: usize = crate::canvas::MAX_PATH_SEGS_PER_OP;
+const MAX_PATH_SEGS_PER_FRAME: usize = crate::canvas::MAX_PATH_SEGS_PER_FRAME;
+const MAX_GRADIENT_STOPS: usize = crate::canvas::MAX_GRADIENT_STOPS;
+const MAX_CLIP_PATHS: usize = crate::canvas::MAX_CLIP_PATHS;
+const MAX_LINE_WIDTH: f32 = crate::canvas::MAX_LINE_WIDTH;
+const MAX_SHADOW_BLUR: f32 = crate::canvas::MAX_SHADOW_BLUR;
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -303,7 +309,7 @@ const VT_PAINT_LINES: VOffsetT = 8;
 const VT_PAINT_BUTTONS: VOffsetT = 10;
 const VT_PAINT_CANVAS: VOffsetT = 12;
 
-// CanvasOp: { kind, x, y, w, h, color, text, font_px, mono }
+// CanvasOp: { kind, x, y, w, h, color, text, font_px, mono, segs, clips, stops, ... }
 const VT_CANVAS_KIND: VOffsetT = 4;
 const VT_CANVAS_X: VOffsetT = 6;
 const VT_CANVAS_Y: VOffsetT = 8;
@@ -313,6 +319,37 @@ const VT_CANVAS_COLOR: VOffsetT = 14;
 const VT_CANVAS_TEXT: VOffsetT = 16;
 const VT_CANVAS_FONT_PX: VOffsetT = 18;
 const VT_CANVAS_MONO: VOffsetT = 20;
+const VT_CANVAS_SEGS: VOffsetT = 22;
+const VT_CANVAS_CLIPS: VOffsetT = 24;
+const VT_CANVAS_STOPS: VOffsetT = 26;
+const VT_CANVAS_GX0: VOffsetT = 28;
+const VT_CANVAS_GY0: VOffsetT = 30;
+const VT_CANVAS_GX1: VOffsetT = 32;
+const VT_CANVAS_GY1: VOffsetT = 34;
+const VT_CANVAS_R0: VOffsetT = 36;
+const VT_CANVAS_R1: VOffsetT = 38;
+const VT_CANVAS_GRAD_KIND: VOffsetT = 40;
+const VT_CANVAS_LINE_WIDTH: VOffsetT = 42;
+const VT_CANVAS_LINE_JOIN: VOffsetT = 44;
+const VT_CANVAS_SHADOW_COLOR: VOffsetT = 46;
+const VT_CANVAS_SHADOW_BLUR: VOffsetT = 48;
+const VT_CANVAS_SHADOW_X: VOffsetT = 50;
+const VT_CANVAS_SHADOW_Y: VOffsetT = 52;
+const VT_CANVAS_ALIGN: VOffsetT = 54;
+const VT_CANVAS_BASELINE: VOffsetT = 56;
+
+const VT_SEG_KIND: VOffsetT = 4;
+const VT_SEG_X: VOffsetT = 6;
+const VT_SEG_Y: VOffsetT = 8;
+const VT_SEG_C1X: VOffsetT = 10;
+const VT_SEG_C1Y: VOffsetT = 12;
+const VT_SEG_C2X: VOffsetT = 14;
+const VT_SEG_C2Y: VOffsetT = 16;
+
+const VT_GSTOP_OFFSET: VOffsetT = 4;
+const VT_GSTOP_COLOR: VOffsetT = 6;
+
+const VT_CLIP_SEGS: VOffsetT = 4;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4273,41 +4310,357 @@ fn paint_button_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+fn canvas_seg_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    seg: &crate::canvas::PathSeg,
+) -> WIPOffset<CanvasSegReader<'b>> {
+    use crate::canvas::PathSeg;
+    let (kind, x, y, c1x, c1y, c2x, c2y) = match *seg {
+        PathSeg::MoveTo { x, y } => (0i8, x, y, 0.0, 0.0, 0.0, 0.0),
+        PathSeg::LineTo { x, y } => (1i8, x, y, 0.0, 0.0, 0.0, 0.0),
+        PathSeg::QuadTo { cx, cy, x, y } => (2i8, x, y, cx, cy, 0.0, 0.0),
+        PathSeg::CubicTo {
+            c1x,
+            c1y,
+            c2x,
+            c2y,
+            x,
+            y,
+        } => (3i8, x, y, c1x, c1y, c2x, c2y),
+        PathSeg::Close => (4i8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    };
+    let tab = b.start_table();
+    b.push_slot_always(VT_SEG_KIND, kind);
+    b.push_slot_always(VT_SEG_X, x);
+    b.push_slot_always(VT_SEG_Y, y);
+    if c1x != 0.0 {
+        b.push_slot_always(VT_SEG_C1X, c1x);
+    }
+    if c1y != 0.0 {
+        b.push_slot_always(VT_SEG_C1Y, c1y);
+    }
+    if c2x != 0.0 {
+        b.push_slot_always(VT_SEG_C2X, c2x);
+    }
+    if c2y != 0.0 {
+        b.push_slot_always(VT_SEG_C2Y, c2y);
+    }
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn canvas_segs_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    segs: &[crate::canvas::PathSeg],
+) -> Option<WIPOffset<flatbuffers::Vector<'b, ForwardsUOffset<CanvasSegReader<'b>>>>> {
+    if segs.is_empty() {
+        return None;
+    }
+    let offs: Vec<_> = segs.iter().map(|s| canvas_seg_off(b, s)).collect();
+    Some(b.create_vector(&offs))
+}
+
+fn clip_path_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    clip: &crate::canvas::ClipPath,
+) -> WIPOffset<ClipPathFbReader<'b>> {
+    let segs = canvas_segs_off(b, &clip.segs);
+    let tab = b.start_table();
+    if let Some(off) = segs {
+        b.push_slot_always(VT_CLIP_SEGS, off);
+    }
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn canvas_clips_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    clips: &[crate::canvas::ClipPath],
+) -> Option<WIPOffset<flatbuffers::Vector<'b, ForwardsUOffset<ClipPathFbReader<'b>>>>> {
+    if clips.is_empty() {
+        return None;
+    }
+    let offs: Vec<_> = clips.iter().map(|c| clip_path_off(b, c)).collect();
+    Some(b.create_vector(&offs))
+}
+
+fn grad_stop_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    stop: &crate::canvas::GradStop,
+) -> WIPOffset<GradStopReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_GSTOP_OFFSET, stop.offset);
+    b.push_slot_always(VT_GSTOP_COLOR, stop.color);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+struct EncodedFill {
+    kind: i8,
+    gx0: f32,
+    gy0: f32,
+    gx1: f32,
+    gy1: f32,
+    r0: f32,
+    r1: f32,
+    stops: Vec<crate::canvas::GradStop>,
+}
+
+fn encode_fill(fill: &crate::canvas::FillPaint) -> EncodedFill {
+    match fill {
+        crate::canvas::FillPaint::Solid => EncodedFill {
+            kind: 0,
+            gx0: 0.0,
+            gy0: 0.0,
+            gx1: 0.0,
+            gy1: 0.0,
+            r0: 0.0,
+            r1: 0.0,
+            stops: Vec::new(),
+        },
+        crate::canvas::FillPaint::Linear {
+            x0,
+            y0,
+            x1,
+            y1,
+            stops,
+        } => EncodedFill {
+            kind: 1,
+            gx0: *x0,
+            gy0: *y0,
+            gx1: *x1,
+            gy1: *y1,
+            r0: 0.0,
+            r1: 0.0,
+            stops: stops.clone(),
+        },
+        crate::canvas::FillPaint::Radial {
+            x0,
+            y0,
+            r0,
+            x1,
+            y1,
+            r1,
+            stops,
+        } => EncodedFill {
+            kind: 2,
+            gx0: *x0,
+            gy0: *y0,
+            gx1: *x1,
+            gy1: *y1,
+            r0: *r0,
+            r1: *r1,
+            stops: stops.clone(),
+        },
+    }
+}
+
 fn canvas_op_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     op: &crate::canvas::CanvasOp,
 ) -> WIPOffset<CanvasOpReader<'b>> {
-    match op {
-        crate::canvas::CanvasOp::FillRect { x, y, w, h, color } => {
-            let tab = b.start_table();
-            b.push_slot_always(VT_CANVAS_KIND, 0i8);
-            b.push_slot_always(VT_CANVAS_X, *x);
-            b.push_slot_always(VT_CANVAS_Y, *y);
-            b.push_slot_always(VT_CANVAS_W, *w);
-            b.push_slot_always(VT_CANVAS_H, *h);
-            b.push_slot_always(VT_CANVAS_COLOR, *color);
-            WIPOffset::new(b.end_table(tab).value())
-        }
-        crate::canvas::CanvasOp::FillText {
+    use crate::canvas::{CanvasOp, LineJoinKind, TextAlign, TextBaseline};
+    let (
+        kind,
+        x,
+        y,
+        w,
+        h,
+        color,
+        text,
+        font_px,
+        mono,
+        segs,
+        extras,
+        line_width,
+        line_join,
+        align,
+        baseline,
+    ) = match op {
+        CanvasOp::FillRect {
+            x,
+            y,
+            w,
+            h,
+            color,
+            extras,
+        } => (
+            0i8,
+            *x,
+            *y,
+            *w,
+            *h,
+            *color,
+            None,
+            0u16,
+            false,
+            None,
+            extras,
+            0.0f32,
+            LineJoinKind::Miter,
+            TextAlign::Left,
+            TextBaseline::Alphabetic,
+        ),
+        CanvasOp::FillText {
             text,
             x,
             y,
             color,
             font_px,
             mono,
-        } => {
-            let text_off = b.create_string(text);
-            let tab = b.start_table();
-            b.push_slot_always(VT_CANVAS_KIND, 1i8);
-            b.push_slot_always(VT_CANVAS_X, *x);
-            b.push_slot_always(VT_CANVAS_Y, *y);
-            b.push_slot_always(VT_CANVAS_COLOR, *color);
-            b.push_slot_always(VT_CANVAS_TEXT, text_off);
-            b.push_slot_always(VT_CANVAS_FONT_PX, *font_px);
-            b.push_slot_always(VT_CANVAS_MONO, *mono);
-            WIPOffset::new(b.end_table(tab).value())
-        }
+            align,
+            baseline,
+            extras,
+        } => (
+            1i8,
+            *x,
+            *y,
+            0,
+            0,
+            *color,
+            Some(text.as_str()),
+            *font_px,
+            *mono,
+            None,
+            extras,
+            0.0,
+            LineJoinKind::Miter,
+            *align,
+            *baseline,
+        ),
+        CanvasOp::FillPath {
+            segs,
+            color,
+            extras,
+        } => (
+            2i8,
+            0,
+            0,
+            0,
+            0,
+            *color,
+            None,
+            0,
+            false,
+            Some(segs.as_slice()),
+            extras,
+            0.0,
+            LineJoinKind::Miter,
+            TextAlign::Left,
+            TextBaseline::Alphabetic,
+        ),
+        CanvasOp::StrokePath {
+            segs,
+            color,
+            line_width,
+            line_join,
+            extras,
+        } => (
+            3i8,
+            0,
+            0,
+            0,
+            0,
+            *color,
+            None,
+            0,
+            false,
+            Some(segs.as_slice()),
+            extras,
+            *line_width,
+            *line_join,
+            TextAlign::Left,
+            TextBaseline::Alphabetic,
+        ),
+    };
+    let fill = encode_fill(&extras.fill);
+    let segs_off = segs.and_then(|s| canvas_segs_off(b, s));
+    let clips_off = canvas_clips_off(b, &extras.clips);
+    let stops_off = if fill.stops.is_empty() {
+        None
+    } else {
+        let offs: Vec<_> = fill.stops.iter().map(|s| grad_stop_off(b, s)).collect();
+        Some(b.create_vector(&offs))
+    };
+    let text_off = text.map(|s| b.create_string(s));
+    let tab = b.start_table();
+    b.push_slot_always(VT_CANVAS_KIND, kind);
+    if x != 0 {
+        b.push_slot_always(VT_CANVAS_X, x);
     }
+    if y != 0 {
+        b.push_slot_always(VT_CANVAS_Y, y);
+    }
+    if w != 0 {
+        b.push_slot_always(VT_CANVAS_W, w);
+    }
+    if h != 0 {
+        b.push_slot_always(VT_CANVAS_H, h);
+    }
+    if color != 0 {
+        b.push_slot_always(VT_CANVAS_COLOR, color);
+    }
+    if let Some(off) = text_off {
+        b.push_slot_always(VT_CANVAS_TEXT, off);
+    }
+    if font_px != 0 {
+        b.push_slot_always(VT_CANVAS_FONT_PX, font_px);
+    }
+    if mono {
+        b.push_slot_always(VT_CANVAS_MONO, mono);
+    }
+    if let Some(off) = segs_off {
+        b.push_slot_always(VT_CANVAS_SEGS, off);
+    }
+    if let Some(off) = clips_off {
+        b.push_slot_always(VT_CANVAS_CLIPS, off);
+    }
+    if let Some(off) = stops_off {
+        b.push_slot_always(VT_CANVAS_STOPS, off);
+    }
+    if fill.gx0 != 0.0 {
+        b.push_slot_always(VT_CANVAS_GX0, fill.gx0);
+    }
+    if fill.gy0 != 0.0 {
+        b.push_slot_always(VT_CANVAS_GY0, fill.gy0);
+    }
+    if fill.gx1 != 0.0 {
+        b.push_slot_always(VT_CANVAS_GX1, fill.gx1);
+    }
+    if fill.gy1 != 0.0 {
+        b.push_slot_always(VT_CANVAS_GY1, fill.gy1);
+    }
+    if fill.r0 != 0.0 {
+        b.push_slot_always(VT_CANVAS_R0, fill.r0);
+    }
+    if fill.r1 != 0.0 {
+        b.push_slot_always(VT_CANVAS_R1, fill.r1);
+    }
+    if fill.kind != 0 {
+        b.push_slot_always(VT_CANVAS_GRAD_KIND, fill.kind);
+    }
+    if line_width != 0.0 {
+        b.push_slot_always(VT_CANVAS_LINE_WIDTH, line_width);
+    }
+    if !matches!(line_join, LineJoinKind::Miter) {
+        b.push_slot_always(VT_CANVAS_LINE_JOIN, line_join as i8);
+    }
+    if extras.shadow.color != 0 {
+        b.push_slot_always(VT_CANVAS_SHADOW_COLOR, extras.shadow.color);
+    }
+    if extras.shadow.blur != 0.0 {
+        b.push_slot_always(VT_CANVAS_SHADOW_BLUR, extras.shadow.blur);
+    }
+    if extras.shadow.offset_x != 0.0 {
+        b.push_slot_always(VT_CANVAS_SHADOW_X, extras.shadow.offset_x);
+    }
+    if extras.shadow.offset_y != 0.0 {
+        b.push_slot_always(VT_CANVAS_SHADOW_Y, extras.shadow.offset_y);
+    }
+    if !matches!(align, TextAlign::Left) {
+        b.push_slot_always(VT_CANVAS_ALIGN, align as i8);
+    }
+    if !matches!(baseline, TextBaseline::Alphabetic) {
+        b.push_slot_always(VT_CANVAS_BASELINE, baseline as i8);
+    }
+    WIPOffset::new(b.end_table(tab).value())
 }
 
 fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptPaint) {
@@ -4425,6 +4778,144 @@ impl PaintButtonReader<'_> {
     }
 }
 
+struct CanvasSegReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for CanvasSegReader<'a> {
+    type Inner = CanvasSegReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for CanvasSegReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i8>("kind", VT_SEG_KIND, false)?
+            .visit_field::<f32>("x", VT_SEG_X, false)?
+            .visit_field::<f32>("y", VT_SEG_Y, false)?
+            .visit_field::<f32>("c1x", VT_SEG_C1X, false)?
+            .visit_field::<f32>("c1y", VT_SEG_C1Y, false)?
+            .visit_field::<f32>("c2x", VT_SEG_C2X, false)?
+            .visit_field::<f32>("c2y", VT_SEG_C2Y, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl CanvasSegReader<'_> {
+    fn into_seg(&self) -> Result<crate::canvas::PathSeg, String> {
+        let kind = unsafe { self.tab.get::<i8>(VT_SEG_KIND, None) }.unwrap_or(0);
+        let x = unsafe { self.tab.get::<f32>(VT_SEG_X, None) }.unwrap_or(0.0);
+        let y = unsafe { self.tab.get::<f32>(VT_SEG_Y, None) }.unwrap_or(0.0);
+        let c1x = unsafe { self.tab.get::<f32>(VT_SEG_C1X, None) }.unwrap_or(0.0);
+        let c1y = unsafe { self.tab.get::<f32>(VT_SEG_C1Y, None) }.unwrap_or(0.0);
+        let c2x = unsafe { self.tab.get::<f32>(VT_SEG_C2X, None) }.unwrap_or(0.0);
+        let c2y = unsafe { self.tab.get::<f32>(VT_SEG_C2Y, None) }.unwrap_or(0.0);
+        match kind {
+            0 => Ok(crate::canvas::PathSeg::MoveTo { x, y }),
+            1 => Ok(crate::canvas::PathSeg::LineTo { x, y }),
+            2 => Ok(crate::canvas::PathSeg::QuadTo {
+                cx: c1x,
+                cy: c1y,
+                x,
+                y,
+            }),
+            3 => Ok(crate::canvas::PathSeg::CubicTo {
+                c1x,
+                c1y,
+                c2x,
+                c2y,
+                x,
+                y,
+            }),
+            4 => Ok(crate::canvas::PathSeg::Close),
+            other => Err(format!("unknown canvas seg kind {other}")),
+        }
+    }
+}
+
+struct GradStopReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for GradStopReader<'a> {
+    type Inner = GradStopReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for GradStopReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<f32>("offset", VT_GSTOP_OFFSET, false)?
+            .visit_field::<u32>("color", VT_GSTOP_COLOR, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl GradStopReader<'_> {
+    fn into_stop(&self) -> Result<crate::canvas::GradStop, String> {
+        let offset = unsafe { self.tab.get::<f32>(VT_GSTOP_OFFSET, None) }.unwrap_or(0.0);
+        if !offset.is_finite() || !(0.0..=1.0).contains(&offset) {
+            return Err("canvas gradient stop offset out of range".into());
+        }
+        let color = unsafe { self.tab.get::<u32>(VT_GSTOP_COLOR, None) }.unwrap_or(0);
+        Ok(crate::canvas::GradStop { offset, color })
+    }
+}
+
+struct ClipPathFbReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for ClipPathFbReader<'a> {
+    type Inner = ClipPathFbReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for ClipPathFbReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasSegReader>>>>(
+                "segs",
+                VT_CLIP_SEGS,
+                false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+impl ClipPathFbReader<'_> {
+    fn into_clip(&self) -> Result<crate::canvas::ClipPath, String> {
+        let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CLIP_SEGS, MAX_PATH_SEGS_PER_OP)?;
+        if rows.len() > MAX_PATH_SEGS_PER_OP {
+            return Err(format!(
+                "canvas clip segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
+                rows.len()
+            ));
+        }
+        Ok(crate::canvas::ClipPath {
+            segs: rows
+                .into_iter()
+                .map(|r| r.into_seg())
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
 struct CanvasOpReader<'a> {
     tab: Table<'a>,
 }
@@ -4450,21 +4941,136 @@ impl Verifiable for CanvasOpReader<'_> {
             .visit_field::<ForwardsUOffset<&str>>("text", VT_CANVAS_TEXT, false)?
             .visit_field::<u16>("font_px", VT_CANVAS_FONT_PX, false)?
             .visit_field::<bool>("mono", VT_CANVAS_MONO, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasSegReader>>>>(
+                "segs",
+                VT_CANVAS_SEGS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ClipPathFbReader>>>>(
+                "clips",
+                VT_CANVAS_CLIPS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<GradStopReader>>>>(
+                "stops",
+                VT_CANVAS_STOPS,
+                false,
+            )?
+            .visit_field::<f32>("gx0", VT_CANVAS_GX0, false)?
+            .visit_field::<f32>("gy0", VT_CANVAS_GY0, false)?
+            .visit_field::<f32>("gx1", VT_CANVAS_GX1, false)?
+            .visit_field::<f32>("gy1", VT_CANVAS_GY1, false)?
+            .visit_field::<f32>("r0", VT_CANVAS_R0, false)?
+            .visit_field::<f32>("r1", VT_CANVAS_R1, false)?
+            .visit_field::<i8>("grad_kind", VT_CANVAS_GRAD_KIND, false)?
+            .visit_field::<f32>("line_width", VT_CANVAS_LINE_WIDTH, false)?
+            .visit_field::<i8>("line_join", VT_CANVAS_LINE_JOIN, false)?
+            .visit_field::<u32>("shadow_color", VT_CANVAS_SHADOW_COLOR, false)?
+            .visit_field::<f32>("shadow_blur", VT_CANVAS_SHADOW_BLUR, false)?
+            .visit_field::<f32>("shadow_x", VT_CANVAS_SHADOW_X, false)?
+            .visit_field::<f32>("shadow_y", VT_CANVAS_SHADOW_Y, false)?
+            .visit_field::<i8>("align", VT_CANVAS_ALIGN, false)?
+            .visit_field::<i8>("baseline", VT_CANVAS_BASELINE, false)?
             .finish();
         Ok(())
     }
 }
 
 impl CanvasOpReader<'_> {
+    fn decode_segs(&self) -> Result<Vec<crate::canvas::PathSeg>, String> {
+        let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CANVAS_SEGS, MAX_PATH_SEGS_PER_OP)?;
+        rows.into_iter().map(|r| r.into_seg()).collect()
+    }
+
+    fn decode_extras(&self) -> Result<crate::canvas::DrawExtras, String> {
+        use crate::canvas::{DrawExtras, FillPaint, Shadow};
+        let clip_rows =
+            rows_capped::<ClipPathFbReader>(&self.tab, VT_CANVAS_CLIPS, MAX_CLIP_PATHS)?;
+        if clip_rows.len() > MAX_CLIP_PATHS {
+            return Err(format!(
+                "canvas clips {} exceeds cap {MAX_CLIP_PATHS}",
+                clip_rows.len()
+            ));
+        }
+        let clips = clip_rows
+            .into_iter()
+            .map(|r| r.into_clip())
+            .collect::<Result<Vec<_>, _>>()?;
+        let stop_rows =
+            rows_capped::<GradStopReader>(&self.tab, VT_CANVAS_STOPS, MAX_GRADIENT_STOPS)?;
+        if stop_rows.len() > MAX_GRADIENT_STOPS {
+            return Err(format!(
+                "canvas gradient stops {} exceeds cap {MAX_GRADIENT_STOPS}",
+                stop_rows.len()
+            ));
+        }
+        let stops = stop_rows
+            .into_iter()
+            .map(|r| r.into_stop())
+            .collect::<Result<Vec<_>, _>>()?;
+        let gx0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GX0, None) }.unwrap_or(0.0);
+        let gy0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GY0, None) }.unwrap_or(0.0);
+        let gx1 = unsafe { self.tab.get::<f32>(VT_CANVAS_GX1, None) }.unwrap_or(0.0);
+        let gy1 = unsafe { self.tab.get::<f32>(VT_CANVAS_GY1, None) }.unwrap_or(0.0);
+        let r0 = unsafe { self.tab.get::<f32>(VT_CANVAS_R0, None) }.unwrap_or(0.0);
+        let r1 = unsafe { self.tab.get::<f32>(VT_CANVAS_R1, None) }.unwrap_or(0.0);
+        let grad_kind = unsafe { self.tab.get::<i8>(VT_CANVAS_GRAD_KIND, None) }.unwrap_or(0);
+        let fill = match grad_kind {
+            0 => FillPaint::Solid,
+            1 => FillPaint::Linear {
+                x0: gx0,
+                y0: gy0,
+                x1: gx1,
+                y1: gy1,
+                stops,
+            },
+            2 => FillPaint::Radial {
+                x0: gx0,
+                y0: gy0,
+                r0,
+                x1: gx1,
+                y1: gy1,
+                r1,
+                stops,
+            },
+            other => return Err(format!("unknown canvas grad_kind {other}")),
+        };
+        let blur = unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_BLUR, None) }.unwrap_or(0.0);
+        if blur > MAX_SHADOW_BLUR {
+            return Err(format!(
+                "canvas shadow_blur {blur} exceeds cap {MAX_SHADOW_BLUR}"
+            ));
+        }
+        Ok(DrawExtras {
+            clips,
+            shadow: Shadow {
+                color: unsafe { self.tab.get::<u32>(VT_CANVAS_SHADOW_COLOR, None) }.unwrap_or(0),
+                blur,
+                offset_x: unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_X, None) }.unwrap_or(0.0),
+                offset_y: unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_Y, None) }.unwrap_or(0.0),
+            },
+            fill,
+        })
+    }
+
     fn into_op(&self) -> Result<crate::canvas::CanvasOp, String> {
+        use crate::canvas::{CanvasOp, LineJoinKind, TextAlign, TextBaseline};
         let kind = unsafe { self.tab.get::<i8>(VT_CANVAS_KIND, None) }.unwrap_or(0);
         let x = unsafe { self.tab.get::<i32>(VT_CANVAS_X, None) }.unwrap_or(0);
         let y = unsafe { self.tab.get::<i32>(VT_CANVAS_Y, None) }.unwrap_or(0);
         let w = unsafe { self.tab.get::<i32>(VT_CANVAS_W, None) }.unwrap_or(0);
         let h = unsafe { self.tab.get::<i32>(VT_CANVAS_H, None) }.unwrap_or(0);
         let color = unsafe { self.tab.get::<u32>(VT_CANVAS_COLOR, None) }.unwrap_or(0);
+        let extras = self.decode_extras()?;
         match kind {
-            0 => Ok(crate::canvas::CanvasOp::FillRect { x, y, w, h, color }),
+            0 => Ok(CanvasOp::FillRect {
+                x,
+                y,
+                w,
+                h,
+                color,
+                extras,
+            }),
             1 => {
                 let text = unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CANVAS_TEXT, None) }
                     .unwrap_or("");
@@ -4482,13 +5088,75 @@ impl CanvasOpReader<'_> {
                     ));
                 }
                 let mono = unsafe { self.tab.get::<bool>(VT_CANVAS_MONO, None) }.unwrap_or(false);
-                Ok(crate::canvas::CanvasOp::FillText {
+                let align = match unsafe { self.tab.get::<i8>(VT_CANVAS_ALIGN, None) }.unwrap_or(0)
+                {
+                    0 => TextAlign::Left,
+                    1 => TextAlign::Center,
+                    2 => TextAlign::Right,
+                    other => return Err(format!("unknown canvas align {other}")),
+                };
+                let baseline =
+                    match unsafe { self.tab.get::<i8>(VT_CANVAS_BASELINE, None) }.unwrap_or(0) {
+                        0 => TextBaseline::Alphabetic,
+                        1 => TextBaseline::Top,
+                        2 => TextBaseline::Middle,
+                        3 => TextBaseline::Bottom,
+                        other => return Err(format!("unknown canvas baseline {other}")),
+                    };
+                Ok(CanvasOp::FillText {
                     text: text.to_string(),
                     x,
                     y,
                     color,
                     font_px,
                     mono,
+                    align,
+                    baseline,
+                    extras,
+                })
+            }
+            2 => {
+                let segs = self.decode_segs()?;
+                if segs.len() > MAX_PATH_SEGS_PER_OP {
+                    return Err(format!(
+                        "canvas path segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
+                        segs.len()
+                    ));
+                }
+                Ok(CanvasOp::FillPath {
+                    segs,
+                    color,
+                    extras,
+                })
+            }
+            3 => {
+                let segs = self.decode_segs()?;
+                if segs.len() > MAX_PATH_SEGS_PER_OP {
+                    return Err(format!(
+                        "canvas path segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
+                        segs.len()
+                    ));
+                }
+                let line_width =
+                    unsafe { self.tab.get::<f32>(VT_CANVAS_LINE_WIDTH, None) }.unwrap_or(1.0);
+                if line_width > MAX_LINE_WIDTH {
+                    return Err(format!(
+                        "canvas line_width {line_width} exceeds cap {MAX_LINE_WIDTH}"
+                    ));
+                }
+                let line_join =
+                    match unsafe { self.tab.get::<i8>(VT_CANVAS_LINE_JOIN, None) }.unwrap_or(0) {
+                        0 => LineJoinKind::Miter,
+                        1 => LineJoinKind::Round,
+                        2 => LineJoinKind::Bevel,
+                        other => return Err(format!("unknown canvas line_join {other}")),
+                    };
+                Ok(CanvasOp::StrokePath {
+                    segs,
+                    color,
+                    line_width,
+                    line_join,
+                    extras,
                 })
             }
             other => Err(format!("unknown canvas op kind {other}")),
@@ -4533,7 +5201,28 @@ impl PaintReader<'_> {
     }
     fn canvas(&self) -> Result<Vec<crate::canvas::CanvasOp>, String> {
         let rows = rows_capped::<CanvasOpReader>(&self.tab, VT_PAINT_CANVAS, MAX_CANVAS_OPS)?;
-        rows.into_iter().map(|row| row.into_op()).collect()
+        let mut out = Vec::with_capacity(rows.len());
+        let mut segs = 0usize;
+        for row in rows {
+            let op = row.into_op()?;
+            segs = segs.saturating_add(match &op {
+                crate::canvas::CanvasOp::FillPath { segs, extras, .. }
+                | crate::canvas::CanvasOp::StrokePath { segs, extras, .. } => {
+                    segs.len() + extras.clips.iter().map(|c| c.segs.len()).sum::<usize>()
+                }
+                crate::canvas::CanvasOp::FillRect { extras, .. }
+                | crate::canvas::CanvasOp::FillText { extras, .. } => {
+                    extras.clips.iter().map(|c| c.segs.len()).sum::<usize>()
+                }
+            });
+            if segs > MAX_PATH_SEGS_PER_FRAME {
+                return Err(format!(
+                    "canvas path segs {segs} exceeds cap {MAX_PATH_SEGS_PER_FRAME}"
+                ));
+            }
+            out.push(op);
+        }
+        Ok(out)
     }
 }
 
