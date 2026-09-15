@@ -2934,28 +2934,15 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             h.loopInFlight = false;
         }
     }
-    // IPC bus: the Rust-owned ring head sequence selects one new line. The
-    // legacy chat_text body remains on the snapshot for older consumers.
-    if ((h.snapshot || {}).ingame === false) {
-        globalThis.__rs2b0t_last_chat_seq = undefined;
+    // Native Rust selects/deduplicates events; deliver them only after
+    // onStart has installed subscriptions.
+    const pendingEvents = globalThis.__rs2b0t_pending_native_event_batch;
+    globalThis.__rs2b0t_pending_native_event_batch = null;
+    if (pendingEvents) {
+        const dispatch = globalThis.__rs2b0t_dispatch_native_events;
+        if (typeof dispatch === 'function') dispatch(pendingEvents);
     }
-    const lines = (h.snapshot || {}).chat_lines;
-    const line = Array.isArray(lines) && lines.length ? lines[0] : null;
-    const seq = line && Number.isFinite(Number(line.seq)) ? Number(line.seq) : null;
-    if (seq !== null && seq !== globalThis.__rs2b0t_last_chat_seq) {
-        globalThis.__rs2b0t_last_chat_seq = seq;
-        const cbs = inst && inst._subs && inst._subs['chat.message'];
-        if (line && line.text && cbs) {
-            const ev = {
-                type: Number(line.type) || 0,
-                username: line.username == null ? undefined : String(line.username),
-                text: String(line.text),
-            };
-            for (let i = 0; i < cbs.length; i++) {
-                try { cbs[i](ev); } catch (_) {}
-            }
-        }
-    }
+
     // Single-flight: a never-resolving loop() must not re-enter. Tick
     // listeners, chat, and onPaint still run.
     if (h.loopInFlight) {
@@ -3607,6 +3594,26 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, wrapped, "type", type_name)?;
         let payload = v8::Object::new(scope);
         match ev {
+            crate::events::NativeEvent::ChatMessage {
+                type_,
+                username,
+                text,
+            } => {
+                let type_value = num(scope, *type_ as f64);
+                set(scope, payload, "type", type_value)?;
+                match username {
+                    Some(name) => {
+                        let value = js_string(scope, name)?;
+                        set(scope, payload, "username", value)?;
+                    }
+                    None => {
+                        let value = v8::undefined(scope).into();
+                        set(scope, payload, "username", value)?;
+                    }
+                }
+                let text_value = js_string(scope, text)?;
+                set(scope, payload, "text", text_value)?;
+            }
             crate::events::NativeEvent::SkillXp {
                 skill,
                 name,
@@ -3680,7 +3687,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         }
         runtime
             .eval::<()>(
-                "(() => { const d = globalThis.__rs2b0t_dispatch_native_events; const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; if (typeof d === 'function') d(b); })()",
+                "(() => { const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; globalThis.__rs2b0t_pending_native_event_batch = b; })()",
             )
             .map_err(|e| format!("{e}"))
     }

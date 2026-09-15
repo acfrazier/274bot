@@ -321,6 +321,8 @@ fn cant_light_is_blocked() {
     let lines = [ChatLineInput {
         seq: 4,
         text: "You can't light a fire here.",
+        type_: 0,
+        username: None,
     }];
     snap.tick = 2;
     snap.chat_lines = &lines;

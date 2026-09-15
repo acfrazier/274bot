@@ -112,6 +112,8 @@ fn welcome(seq: i32) -> ChatLineInput<'static> {
     ChatLineInput {
         seq,
         text: "Welcome to RuneScape",
+        type_: 0,
+        username: None,
     }
 }
 
@@ -119,6 +121,8 @@ fn death(seq: i32) -> ChatLineInput<'static> {
     ChatLineInput {
         seq,
         text: "Oh dear, you are dead!",
+        type_: 0,
+        username: None,
     }
 }
 

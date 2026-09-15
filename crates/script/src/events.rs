@@ -39,6 +39,11 @@ struct XpState {
 /// One public event to deliver on a gated tick.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeEvent {
+    ChatMessage {
+        type_: i32,
+        username: Option<String>,
+        text: String,
+    },
     SkillXp {
         skill: i32,
         name: String,
@@ -58,6 +63,7 @@ pub enum NativeEvent {
 impl NativeEvent {
     pub fn type_name(&self) -> &'static str {
         match self {
+            NativeEvent::ChatMessage { .. } => "chat.message",
             NativeEvent::SkillXp { .. } => "skill.xp",
             NativeEvent::InventoryChanged { .. } => "inventory.changed",
         }
@@ -83,6 +89,8 @@ pub struct NativeEventProducer {
     current_inv: Option<Vec<SlotState>>,
     current_inv_size: i32,
     current_xp: Option<Vec<XpState>>,
+    last_chat_seq: Option<i32>,
+    current_chat: Option<(i32, i32, Option<String>, String)>,
     paused: bool,
     offline: bool,
 }
@@ -128,6 +136,19 @@ impl NativeEventProducer {
                 self.last_xp = Some(current.clone());
             }
             self.current_xp = Some(current);
+        }
+
+        // Native Rust selects only the newest ring entry. Omitted chat_lines
+        // are a delta omission, not a repeated event.
+        if snap.has_chat_lines() {
+            if let Some(line) = snap.chat_lines().into_iter().next() {
+                self.current_chat = Some((
+                    line.seq(),
+                    line.type_(),
+                    line.username().map(str::to_string),
+                    line.text().to_string(),
+                ));
+            }
         }
 
         if snap.has_inv_size() {
@@ -186,6 +207,16 @@ impl NativeEventProducer {
             return ObserveResult::default();
         }
         let mut events = Vec::new();
+        if let Some((seq, type_, username, text)) = self.current_chat.take() {
+            if self.last_chat_seq != Some(seq) {
+                self.last_chat_seq = Some(seq);
+                events.push(NativeEvent::ChatMessage {
+                    type_,
+                    username,
+                    text,
+                });
+            }
+        }
         match (&self.last_xp, &self.current_xp) {
             (Some(last), Some(cur)) if last != cur => {
                 events.extend(diff_xp(last, cur));
@@ -220,6 +251,8 @@ impl NativeEventProducer {
         self.last_xp = None;
         self.reset_inv_family();
         self.current_xp = None;
+        self.last_chat_seq = None;
+        self.current_chat = None;
     }
 
     fn reset_inv_family(&mut self) {
