@@ -75,6 +75,9 @@ pub enum Proof {
     /// varp table only lists varps the server transmitted (`cache.varps`
     /// definitions), so an absent id fails closed — never a fake 0.
     Varp { id: i32, min: i32 },
+    /// `varp(id) == value`: an exact transmitted varp value. An absent id
+    /// fails closed, just like [`Proof::Varp`].
+    VarpExact { id: i32, value: i32 },
     /// `stat(id) >= min`: a decoded stat-family value. `id == 16` is run
     /// energy; every other id reads the snapshot stat table's effective
     /// level.
@@ -162,6 +165,7 @@ impl Proof {
             Proof::ChatClosed => "chat_closed".to_string(),
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
+            Proof::VarpExact { id, value } => format!("varp({id})=={value}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
@@ -376,6 +380,11 @@ impl Proof {
                 .iter()
                 .find(|v| v.index == *id)
                 .is_some_and(|v| v.value >= *min),
+            Proof::VarpExact { id, value } => snap
+                .varps()
+                .iter()
+                .find(|v| v.index == *id)
+                .is_some_and(|v| v.value == *value),
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
@@ -1058,6 +1067,35 @@ mod tests {
         // An id beyond the transmitted table fails closed too.
         assert!(!Proof::Varp { id: 500, min: 0 }.check(&s, None));
         assert_eq!(Proof::Varp { id: 101, min: 5 }.name(), "varp(101)>=5");
+
+        // Combat-style acknowledgment is exact: only the native Strength
+        // mode releases its Start wait. The old >=1 predicate would also
+        // release for the wrong native modes 2 and 3.
+        let mut combat = seeded();
+        combat.cache = Arc::new(Cache {
+            varps: (0..44).map(|_| VarpType::default()).collect(),
+            ..Default::default()
+        });
+        combat.var = vec![0; 44];
+        for value in [0, 2, 3] {
+            combat.var[43] = value;
+            combat.bump_gens(ServerProt::VARP_SYNC);
+            let snapshot = snap(&mut combat);
+            assert!(!Proof::VarpExact { id: 43, value: 1 }.check(&snapshot, None));
+            assert!(Proof::Varp { id: 43, min: 1 }.check(&snapshot, None) == (value >= 1));
+        }
+        combat.var[43] = 1;
+        combat.bump_gens(ServerProt::VARP_SYNC);
+        let selected = snap(&mut combat);
+        assert!(Proof::VarpExact { id: 43, value: 1 }.check(&selected, None));
+        assert_eq!(Proof::VarpExact { id: 43, value: 1 }.name(), "varp(43)==1");
+
+        let mut unavailable = seeded();
+        unavailable.cache = Arc::new(Cache::default());
+        unavailable.var = vec![0; 44];
+        unavailable.bump_gens(ServerProt::VARP_SYNC);
+        let unavailable_snapshot = snap(&mut unavailable);
+        assert!(!Proof::VarpExact { id: 43, value: 1 }.check(&unavailable_snapshot, None));
     }
 
     #[test]
