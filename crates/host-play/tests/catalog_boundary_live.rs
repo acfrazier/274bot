@@ -9614,6 +9614,373 @@ mod tests {
         observation
     }
 
+    fn shop_row(id: i32, count: i32) -> BoundedShopItem {
+        BoundedShopItem { id, count }
+    }
+
+    /// Production ShopBuyout frames: first detected buy is 5, earned peak is 27.
+    /// Same-tick later packets carry purchase, first loaded bank, deposit, and
+    /// funding. `top_up` then overwrites the deposit-frame Retained latch.
+    fn shop_buyout_trace(baseline: &Observation) -> ShopBuyoutTrace {
+        let mut opened = baseline.clone();
+        opened.shop_open = true;
+        opened.main_modal = SHOPMAIN;
+        opened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 30)];
+        opened.item_ids.insert(COINS_ID, 2000);
+        opened.tick = 11;
+
+        let mut bought = opened.clone();
+        bought.shop_stock[0].count = 25;
+        bought.item_ids.insert(EMPTY_VIAL_ID, 5);
+        bought.item_ids.insert(COINS_ID, 1900);
+
+        let mut peak = bought.clone();
+        peak.tick = 12;
+        peak.shop_stock[0].count = 3;
+        peak.item_ids.insert(EMPTY_VIAL_ID, 27);
+        peak.item_ids.insert(COINS_ID, 1460);
+
+        let mut loaded = peak.clone();
+        loaded.tick = 13;
+        loaded.shop_open = false;
+        loaded.main_modal = -1;
+        loaded.shop_stock.clear();
+        loaded.tile = Some(ARDOUGNE_EAST_BANK);
+        loaded.bank_open = true;
+        loaded.bank_loaded = true;
+        loaded.bank_generation = 1;
+        loaded.bank_ids.insert(COINS_ID, 18000);
+
+        let mut deposited = loaded.clone();
+        deposited.item_ids.remove(&EMPTY_VIAL_ID);
+        deposited.bank_ids.insert(EMPTY_VIAL_ID, 27);
+
+        let mut top_up = deposited.clone();
+        top_up.item_ids.insert(COINS_ID, 3460);
+        top_up.bank_ids.insert(COINS_ID, 16000);
+
+        let mut closed = top_up.clone();
+        closed.bank_open = false;
+        closed.bank_loaded = false;
+        closed.bank_generation = 2;
+
+        let mut returned = closed.clone();
+        returned.tick = 14;
+        returned.tile = Some(AEMAD_STAND);
+
+        let mut reopened = returned.clone();
+        reopened.tick = 15;
+        reopened.shop_open = true;
+        reopened.main_modal = SHOPMAIN;
+        reopened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 30)];
+
+        let mut further = reopened.clone();
+        further.tick = 16;
+        further.shop_stock[0].count = 29;
+        further.item_ids.insert(EMPTY_VIAL_ID, 1);
+        further.item_ids.insert(COINS_ID, 3440);
+
+        ShopBuyoutTrace {
+            opened,
+            bought,
+            peak,
+            loaded,
+            deposited,
+            top_up,
+            closed,
+            returned,
+            reopened,
+            further,
+        }
+    }
+
+    struct ShopBuyoutTrace {
+        opened: Observation,
+        bought: Observation,
+        peak: Observation,
+        loaded: Observation,
+        deposited: Observation,
+        top_up: Observation,
+        closed: Observation,
+        returned: Observation,
+        reopened: Observation,
+        further: Observation,
+    }
+
+    impl ShopBuyoutTrace {
+        fn top_up_cycle(&self) -> [&Observation; 10] {
+            [
+                &self.opened,
+                &self.bought,
+                &self.peak,
+                &self.loaded,
+                &self.deposited,
+                &self.top_up,
+                &self.closed,
+                &self.returned,
+                &self.reopened,
+                &self.further,
+            ]
+        }
+    }
+
+    /// ShopBuyout observer: peak earned load vs first loaded bank, same-tick
+    /// later packets, retained-on-deposit vs real TopUp, and stage-proving
+    /// negatives. Independent of the noncombat mega-test Firemaker failure.
+    #[test]
+    fn shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress() {
+        let case = CoreCase::parse("shop_buyout").unwrap();
+        assert_eq!(case.card_name(), "ShopBuyout");
+        let baseline = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(case, &baseline).unwrap();
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(EMPTY_VIAL_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+
+        let frames = shop_buyout_trace(&baseline);
+
+        let top_up = witness(case, &baseline, frames.top_up_cycle());
+        assert_eq!(top_up.shop_buyout_cycle.earned_quantity, 27);
+        assert_eq!(top_up.shop_buyout_cycle.trip_bank_product, Some(0));
+        assert_eq!(top_up.shop_buyout_cycle.bought_id, Some(EMPTY_VIAL_ID));
+        assert_eq!(
+            top_up.shop_buyout_cycle.funding,
+            Some(ShopFunding::TopUp {
+                carried_before: 1460,
+                carried_after: 3460,
+                bank_before: 18000,
+                bank_after: 16000,
+            })
+        );
+        top_up.qualify().unwrap();
+
+        let mut retained_further = frames.further.clone();
+        retained_further.item_ids.insert(COINS_ID, 1440);
+        let mut retained_closed = frames.deposited.clone();
+        retained_closed.bank_open = false;
+        retained_closed.bank_loaded = false;
+        retained_closed.bank_generation = 2;
+        let mut retained_returned = retained_closed.clone();
+        retained_returned.tick = 14;
+        retained_returned.tile = Some(AEMAD_STAND);
+        let mut retained_reopened = frames.reopened.clone();
+        retained_reopened.item_ids.insert(COINS_ID, 1460);
+        retained_further.shop_stock = retained_reopened.shop_stock.clone();
+        retained_further.shop_stock[0].count = 29;
+        let retained = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &frames.loaded,
+                &frames.deposited,
+                &retained_closed,
+                &retained_returned,
+                &retained_reopened,
+                &retained_further,
+            ],
+        );
+        assert_eq!(
+            retained.shop_buyout_cycle.funding,
+            Some(ShopFunding::Retained {
+                carried_coins: 1460
+            })
+        );
+        retained.qualify().unwrap();
+
+        // Sold-out SKU is absence while another posted row keeps the shop open.
+        let mut sold_opened = frames.opened.clone();
+        sold_opened.shop_stock = vec![shop_row(EMPTY_VIAL_ID, 5), shop_row(AIR_RUNE_ID, 8)];
+        let mut sold_bought = sold_opened.clone();
+        sold_bought.shop_stock = vec![shop_row(AIR_RUNE_ID, 8)];
+        sold_bought.item_ids.insert(EMPTY_VIAL_ID, 5);
+        sold_bought.item_ids.insert(COINS_ID, 1900);
+        let sold = witness(case, &baseline, [&sold_opened, &sold_bought]);
+        assert_eq!(sold.shop_buyout_cycle.bought_id, Some(EMPTY_VIAL_ID));
+        assert_eq!(sold.shop_buyout_cycle.earned_quantity, 5);
+        assert!(sold.qualify().is_err());
+
+        let mut backwards = frames.bought.clone();
+        backwards.tick = frames.opened.tick - 1;
+        let backwards_w = witness(case, &baseline, [&frames.opened, &backwards]);
+        assert!(backwards_w.shop_buyout_cycle.opened.is_some());
+        assert!(
+            backwards_w.shop_buyout_cycle.bought.is_none(),
+            "a backwards tick must not latch purchase"
+        );
+
+        let mut closed_purchase = frames.bought.clone();
+        closed_purchase.shop_open = false;
+        closed_purchase.main_modal = -1;
+        closed_purchase.shop_stock.clear();
+        let closed_w = witness(case, &baseline, [&frames.opened, &closed_purchase]);
+        assert!(
+            closed_w.shop_buyout_cycle.bought.is_none(),
+            "a closed shop must not latch purchase"
+        );
+
+        let mut wrong_location = frames.bought.clone();
+        wrong_location.tile = Some(VARROCK_EAST_BANK);
+        let wrong_w = witness(case, &baseline, [&frames.opened, &wrong_location]);
+        assert!(
+            wrong_w.shop_buyout_cycle.bought.is_none(),
+            "a purchase off the shop stand must not latch"
+        );
+
+        let mut queued = frames.opened.clone();
+        queued.tick = 12;
+        let queued_w = witness(case, &baseline, [&frames.opened, &queued]);
+        assert!(
+            queued_w.shop_buyout_cycle.bought.is_none(),
+            "no-delta shop replay must not manufacture a purchase"
+        );
+
+        // first 5, peak 27, only 5 deposited. Later frames keep bank 5 so a
+        // first-delta deposit rule would still let the rest of the cycle pass.
+        let mut partial = frames.deposited.clone();
+        partial.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let mut partial_top_up = frames.top_up.clone();
+        partial_top_up.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let mut partial_closed = frames.closed.clone();
+        partial_closed.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let mut partial_returned = frames.returned.clone();
+        partial_returned.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let mut partial_reopened = frames.reopened.clone();
+        partial_reopened.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let mut partial_further = frames.further.clone();
+        partial_further.bank_ids.insert(EMPTY_VIAL_ID, 5);
+        let partial_w = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &frames.loaded,
+                &partial,
+                &partial_top_up,
+                &partial_closed,
+                &partial_returned,
+                &partial_reopened,
+                &partial_further,
+            ],
+        );
+        assert_eq!(partial_w.shop_buyout_cycle.earned_quantity, 27);
+        assert!(
+            partial_w.shop_buyout_cycle.deposited.is_none(),
+            "banking the first 5 of a 27 peak must not qualify deposit"
+        );
+        assert!(partial_w.qualify().is_err());
+
+        // First loaded bank already holds leftover stock; +5 is not the peak.
+        let mut preseed_loaded = frames.loaded.clone();
+        preseed_loaded.bank_ids.insert(EMPTY_VIAL_ID, 100);
+        let mut preseed_deposited = frames.deposited.clone();
+        preseed_deposited.bank_ids.insert(EMPTY_VIAL_ID, 105);
+        let preseed_w = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &preseed_loaded,
+                &preseed_deposited,
+                &frames.top_up,
+                &frames.closed,
+                &frames.returned,
+                &frames.reopened,
+                &frames.further,
+            ],
+        );
+        assert_eq!(preseed_w.shop_buyout_cycle.trip_bank_product, Some(100));
+        assert!(
+            preseed_w.shop_buyout_cycle.deposited.is_none(),
+            "a preseeded bank plus first-delta deposit must not cover peak load"
+        );
+        assert!(preseed_w.qualify().is_err());
+
+        // First loaded bank already empty-pack: no pre-deposit baseline.
+        let miss_w = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &frames.deposited,
+                &frames.top_up,
+                &frames.closed,
+                &frames.returned,
+                &frames.reopened,
+                &frames.further,
+            ],
+        );
+        assert_eq!(miss_w.shop_buyout_cycle.trip_bank_product, None);
+        assert!(
+            miss_w.shop_buyout_cycle.deposited.is_none(),
+            "an already-empty pack on first loaded bank must fail closed"
+        );
+        assert!(miss_w.qualify().is_err());
+
+        let mut stale = frames.bought.clone();
+        stale.tick = frames.reopened.tick + 1;
+        let stale_w = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &frames.loaded,
+                &frames.deposited,
+                &frames.top_up,
+                &frames.closed,
+                &frames.returned,
+                &frames.reopened,
+                &stale,
+            ],
+        );
+        assert!(stale_w.shop_buyout_cycle.reopened.is_some());
+        assert!(
+            !stale_w.shop_buyout_cycle.further,
+            "replaying the first purchase must not count as further"
+        );
+        assert!(stale_w.qualify().is_err());
+
+        let mut no_delta = frames.reopened.clone();
+        no_delta.tick = frames.reopened.tick + 1;
+        let no_delta_w = witness(
+            case,
+            &baseline,
+            [
+                &frames.opened,
+                &frames.bought,
+                &frames.peak,
+                &frames.loaded,
+                &frames.deposited,
+                &frames.top_up,
+                &frames.closed,
+                &frames.returned,
+                &frames.reopened,
+                &no_delta,
+            ],
+        );
+        assert!(
+            !no_delta_w.shop_buyout_cycle.further,
+            "a later identical shop frame must not manufacture further"
+        );
+        assert!(no_delta_w.qualify().is_err());
+
+        let aubury = CoreCase::parse("shop_buyout_aubury").unwrap();
+        let aemad = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
+        assert!(validate_case_baseline(aubury, &aemad).is_err());
+        let aubury_ok = noncombat_obs(AUBURY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(aubury, &aubury_ok).unwrap();
+    }
+
     #[test]
     fn noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths() {
         // aio_teleport: Magic XP + Varrock land + law spend, then bank restock
@@ -9700,179 +10067,8 @@ mod tests {
         staffed.equipment_ids.insert(STAFF_OF_AIR_ID, 1);
         assert!(validate_case_baseline(case, &staffed).is_err());
 
-        // shop_buyout: posted stock down + inv up + coins down, then restock.
-        let case = CoreCase::parse("shop_buyout").unwrap();
-        assert_eq!(case.card_name(), "ShopBuyout");
-        let baseline = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
-        validate_case_baseline(case, &baseline).unwrap();
-        let mut seeded = baseline.clone();
-        seeded.item_ids.insert(EMPTY_VIAL_ID, 1);
-        assert!(validate_case_baseline(case, &seeded).is_err());
-        let mut opened = baseline.clone();
-        opened.shop_open = true;
-        opened.main_modal = SHOPMAIN;
-        opened.shop_stock = vec![BoundedShopItem {
-            id: EMPTY_VIAL_ID,
-            count: 10,
-        }];
-        opened.item_ids.insert(COINS_ID, 2000);
-        opened.tick = 11;
-        let mut bought = opened.clone();
-        bought.tick = 12;
-        bought.shop_stock[0].count = 5;
-        bought.item_ids.insert(EMPTY_VIAL_ID, 5);
-        bought.item_ids.insert(COINS_ID, 1900);
-        let mut deposited = bought.clone();
-        deposited.tick = 13;
-        deposited.shop_open = false;
-        deposited.main_modal = -1;
-        deposited.shop_stock.clear();
-        deposited.tile = Some(ARDOUGNE_EAST_BANK);
-        deposited.bank_open = true;
-        deposited.bank_loaded = true;
-        deposited.bank_generation = 1;
-        deposited.item_ids.remove(&EMPTY_VIAL_ID);
-        deposited.bank_ids.insert(EMPTY_VIAL_ID, 5);
-        deposited.bank_ids.insert(COINS_ID, 18000);
-        let mut restocked = deposited.clone();
-        restocked.tick = 14;
-        restocked.item_ids.insert(COINS_ID, 3900);
-        restocked.bank_ids.insert(COINS_ID, 16100);
-        let mut returned = restocked.clone();
-        returned.tick = 15;
-        returned.bank_open = false;
-        returned.bank_loaded = false;
-        returned.bank_generation = 2;
-        returned.tile = Some(AEMAD_STAND);
-        let mut reopened = returned.clone();
-        reopened.tick = 16;
-        reopened.shop_open = true;
-        reopened.main_modal = SHOPMAIN;
-        reopened.shop_stock = vec![BoundedShopItem {
-            id: EMPTY_VIAL_ID,
-            count: 5,
-        }];
-        let mut further = reopened.clone();
-        further.tick = 17;
-        further.shop_stock[0].count = 4;
-        further.item_ids.insert(EMPTY_VIAL_ID, 1);
-        further.item_ids.insert(COINS_ID, 3880);
-        let top_up_witness = witness(
-            case,
-            &baseline,
-            [
-                &opened, &bought, &deposited, &restocked, &returned, &reopened, &further,
-            ],
-        );
-        let top_up_ok = top_up_witness.qualify().unwrap();
-        assert_eq!(
-            top_up_ok["shop_buyout_cycle"]["funding"],
-            json!({
-                "TopUp": {
-                    "carried_before": 1900,
-                    "carried_after": 3900,
-                    "bank_before": 18000,
-                    "bank_after": 16100
-                }
-            })
-        );
-        let mut same_tick = bought.clone();
-        same_tick.tick = opened.tick;
-        assert!(witness(case, &baseline, [&opened, &same_tick]).qualify().is_err());
-        let mut backwards = bought.clone();
-        backwards.tick = opened.tick - 1;
-        assert!(witness(case, &baseline, [&opened, &backwards])
-            .qualify()
-            .is_err());
-        let mut closed_purchase = bought.clone();
-        closed_purchase.shop_open = false;
-        closed_purchase.main_modal = -1;
-        closed_purchase.shop_stock.clear();
-        assert!(witness(case, &baseline, [&opened, &closed_purchase]).qualify().is_err());
-        let mut wrong_location = bought.clone();
-        wrong_location.tile = Some(VARROCK_EAST_BANK);
-        assert!(witness(case, &baseline, [&opened, &wrong_location]).qualify().is_err());
-        let mut partial_deposit = deposited.clone();
-        partial_deposit.bank_ids.insert(EMPTY_VIAL_ID, 1);
-        assert!(witness(
-            case,
-            &baseline,
-            [&opened, &bought, &partial_deposit, &restocked, &returned, &reopened, &further]
-        )
-        .qualify()
-        .is_err());
-        let mut preseeded_baseline = baseline.clone();
-        preseeded_baseline.bank_ids.insert(EMPTY_VIAL_ID, 1);
-        assert!(witness(
-            case,
-            &preseeded_baseline,
-            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &further]
-        )
-        .qualify()
-        .is_err());
-        assert!(witness(
-            case,
-            &baseline,
-            [&opened, &bought, &deposited, &restocked, &returned, &reopened, &reopened]
-        )
-        .qualify()
-        .is_err());
-        assert!(witness(case, &baseline, [&opened, &bought])
-            .qualify()
-            .is_err());
-        let mut queued = opened.clone();
-        queued.item_ids.insert(COINS_ID, 2000);
-        assert!(witness(case, &baseline, [&opened, &queued])
-            .qualify()
-            .is_err());
-
-        // Retained funding is a separate valid branch: the bank session stays
-        // loaded, but carried and bank coins do not change before the return.
-        let mut retained = deposited.clone();
-        retained.tick = 21;
-        let mut retained_returned = retained.clone();
-        retained_returned.tick = 22;
-        retained_returned.bank_open = false;
-        retained_returned.bank_loaded = false;
-        retained_returned.bank_generation = 2;
-        retained_returned.tile = Some(AEMAD_STAND);
-        let mut retained_reopened = retained_returned.clone();
-        retained_reopened.tick = 23;
-        retained_reopened.shop_open = true;
-        retained_reopened.main_modal = SHOPMAIN;
-        retained_reopened.shop_stock = vec![BoundedShopItem {
-            id: EMPTY_VIAL_ID,
-            count: 5,
-        }];
-        let mut retained_further = retained_reopened.clone();
-        retained_further.tick = 24;
-        retained_further.shop_stock[0].count = 4;
-        retained_further.item_ids.insert(EMPTY_VIAL_ID, 1);
-        retained_further.item_ids.insert(COINS_ID, 1880);
-        let retained_witness = witness(
-            case,
-            &baseline,
-            [
-                &opened,
-                &bought,
-                &deposited,
-                &retained,
-                &retained_returned,
-                &retained_reopened,
-                &retained_further,
-            ],
-        );
-        let retained_ok = retained_witness.qualify().unwrap();
-        assert_eq!(
-            retained_ok["shop_buyout_cycle"]["funding"],
-            json!({ "Retained": { "carried_coins": 1900 } })
-        );
-
-        let case = CoreCase::parse("shop_buyout_aubury").unwrap();
-        let aemad = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
-        assert!(validate_case_baseline(case, &aemad).is_err());
-        let aubury = noncombat_obs(AUBURY_STAND, &[], &[], &[], &[], &[]);
-        validate_case_baseline(case, &aubury).unwrap();
+        // shop_buyout cycle/baseline assertions live in
+        // shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress.
 
         // smithing_bot: anvil panel row, not chat make.
         let case = CoreCase::parse("smithing_bot").unwrap();
