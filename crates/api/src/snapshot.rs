@@ -3430,21 +3430,22 @@ fn trade_partner(client: &Client) -> Option<String> {
 /// interfaces put the label in a non-clickable TYPE_TEXT sibling next to the
 /// actual button, so the label itself must never be published as the target.
 fn trade_controls(client: &Client) -> (i32, i32) {
-    let root = match client.main_modal_id {
-        TRADECONFIRM => TRADECONFIRM,
-        TRADEMAIN => TRADEMAIN,
+    let (root, accept_id, decline_id) = match client.main_modal_id {
+        TRADECONFIRM => (TRADECONFIRM, 3546, 3548),
+        TRADEMAIN => (TRADEMAIN, 3420, 3422),
         _ => return (-1, -1),
     };
-    let accept_id = trade_control_id(client, root, "Accept", ButtonType::BUTTON_OK);
-    let decline_id = trade_control_id(client, root, "Decline", ButtonType::BUTTON_CLOSE);
-    (accept_id, decline_id)
+    (
+        native_trade_control(client, root, accept_id, ButtonType::BUTTON_OK),
+        native_trade_control(client, root, decline_id, ButtonType::BUTTON_CLOSE),
+    )
 }
 
-/// Resolve one native trade control from its label sibling. This deliberately
-/// requires the label and button to share a packed parent's child list: a
-/// random button elsewhere in the modal (or text copied onto a button) is not
-/// a valid identity.
-fn trade_control_id(client: &Client, root: i32, label: &str, button_type: i32) -> i32 {
+/// Validate one canonical packed trade control. The numeric identity is part
+/// of the native interface contract; labels are separate TYPE_TEXT siblings
+/// and therefore cannot identify a replacement button. Walking the tree with
+/// visibility state also rejects controls hidden by any ancestor.
+fn native_trade_control(client: &Client, root: i32, wanted: i32, button_type: i32) -> i32 {
     let mut queue = vec![root];
     let mut head = 0;
     while head < queue.len() {
@@ -3453,24 +3454,18 @@ fn trade_control_id(client: &Client, root: i32, label: &str, button_type: i32) -
         let Some(com) = client.if_(id as usize) else {
             continue;
         };
+        if com.hide {
+            continue;
+        }
         let children = com.children.as_deref().unwrap_or(&[]);
-        for (index, child_id) in children.iter().enumerate() {
-            let Some(label_com) = client.if_(*child_id as usize) else {
+        for child_id in children {
+            let Some(candidate) = client.if_(*child_id as usize) else {
                 continue;
             };
-            if label_com.r#type != ComponentType::TYPE_TEXT
-                || label_com.hide
-                || !label_com.text.trim().eq_ignore_ascii_case(label)
+            if candidate.id == wanted
+                && candidate.r#type == ComponentType::TYPE_RECT
+                && candidate.button_type == button_type
             {
-                continue;
-            }
-            let sibling = children
-                .iter()
-                .enumerate()
-                .filter(|(sibling_index, _)| *sibling_index != index)
-                .filter_map(|(_, sibling_id)| client.if_(*sibling_id as usize))
-                .find(|candidate| !candidate.hide && candidate.button_type == button_type);
-            if let Some(candidate) = sibling {
                 return candidate.id;
             }
         }

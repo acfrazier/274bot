@@ -2134,7 +2134,7 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
             id: 3323,
             layer_id: 3323,
             r#type: ComponentType::TYPE_LAYER,
-            children: Some(vec![3420, 3421, 3422, 3423, 3999]),
+            children: Some(vec![3999, 3420, 3421, 3422, 3423]),
             ..Default::default()
         },
     );
@@ -2214,10 +2214,10 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
         (3420, 3422)
     );
 
-    // Hidden controls are not actionable.
+    // A visible label cannot authorize a hidden native control.
     set_iface_mut(
         &mut c,
-        3421,
+        3420,
         IfTypeMut {
             hide: true,
             ..Default::default()
@@ -2227,6 +2227,84 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
     assert!(snap.rebuild_family(&c, Family::Trade));
     assert_eq!(snap.trade().accept_component_id, -1);
     assert_eq!(snap.trade().decline_component_id, 3422);
+
+    // Missing canonical controls stay unavailable; a decoy must not replace
+    // them, and Close Window is not the trade Decline control.
+    let mut root = c.if_(3323).unwrap().clone();
+    root.children = Some(vec![3999, 3421, 3423, 3442]);
+    set_iface(&mut c, 3323, root);
+    set_iface_mut(
+        &mut c,
+        3422,
+        IfTypeMut {
+            hide: true,
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        3442,
+        IfType {
+            id: 3442,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_RECT,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        3442,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_CLOSE,
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(snap.trade().accept_component_id, -1);
+
+    // A wrong-role canonical slot is unavailable even when its label remains.
+    let mut root = c.if_(3323).unwrap().clone();
+    root.children = Some(vec![3999, 3420, 3421, 3423, 3442]);
+    set_iface(&mut c, 3323, root);
+    set_iface_mut(&mut c, 3420, IfTypeMut::default());
+    let mut accept = c.if_(3420).unwrap().clone();
+    accept.r#type = ComponentType::TYPE_TEXT;
+    set_iface(&mut c, 3420, accept);
+    c.bump_gens(ServerProt::IF_SETTEXT);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(snap.trade().accept_component_id, -1);
+
+    // A hidden ancestor hides a valid canonical descendant.
+    set_iface(
+        &mut c,
+        4000,
+        IfType {
+            id: 4000,
+            layer_id: 3323,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![3420, 3421]),
+            ..Default::default()
+        },
+    );
+    let mut accept = c.if_(3420).unwrap().clone();
+    accept.r#type = ComponentType::TYPE_RECT;
+    set_iface(&mut c, 3420, accept);
+    let mut root = c.if_(3323).unwrap().clone();
+    root.children = Some(vec![3999, 4000, 3422, 3423, 3442]);
+    set_iface(&mut c, 3323, root);
+    set_iface_mut(
+        &mut c,
+        4000,
+        IfTypeMut {
+            hide: true,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(&mut c, 3422, IfTypeMut::default());
+    c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
+    assert!(snap.rebuild_family(&c, Family::Trade));
+    assert_eq!(snap.trade().accept_component_id, -1);
 
     // The confirmation root is distinct; an offer-screen sibling is not used.
     set_iface(
