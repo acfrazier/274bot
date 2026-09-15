@@ -37,10 +37,13 @@ function fail(step) {
 
 function resetReq(state) {
     state.present = undefined;
+    state.hole = undefined;
+    state.row = undefined;
     state.has_kind = false;
     state.kind = null;
     state.has_name = false;
     state.name = null;
+    state.name_ok = undefined;
     state.ok = undefined;
     state.need_le_0 = undefined;
     state.avail_le_0 = undefined;
@@ -78,6 +81,8 @@ function reqRows(reqs) {
 export function hasAllTools(reqs, skillLevel, invCount) {
     const rows = reqRows(reqs);
     const inventory = typeof invCount === 'function';
+    // `.every` captures length once; later appends are not visited.
+    const reqLen = rows.length;
     const state = { index: 0 };
     resetReq(state);
     for (;;) {
@@ -85,9 +90,10 @@ export function hasAllTools(reqs, skillLevel, invCount) {
             op: 'has_all',
             mode: inventory ? 'inventory' : 'skill',
             index: state.index,
-            req_len: rows.length,
+            req_len: reqLen,
             skill_fn: typeof skillLevel === 'function',
         };
+        if (state.hole) payload.hole = true;
         if (state.present !== undefined) payload.present = state.present;
         if (state.has_kind) {
             payload.has_kind = true;
@@ -95,7 +101,7 @@ export function hasAllTools(reqs, skillLevel, invCount) {
         }
         if (state.has_name) {
             payload.has_name = true;
-            payload.name = state.name;
+            payload.name_ok = state.name_ok;
         }
         if (state.ok !== undefined) payload.ok = state.ok;
         const step = call(payload);
@@ -107,23 +113,29 @@ export function hasAllTools(reqs, skillLevel, invCount) {
             continue;
         }
         if (step.kind === 'read') {
-            const r = rows[step.index];
-            if (step.what === 'present') state.present = !!r;
-            else if (step.what === 'kind') {
+            if (step.what === 'present') {
+                // HasProperty then Get: holes skip, explicit null/undefined fail.
+                if (step.index in rows) {
+                    state.row = rows[step.index];
+                    state.present = !!state.row;
+                    state.hole = false;
+                } else {
+                    state.hole = true;
+                }
+            } else if (step.what === 'kind') {
                 state.has_kind = true;
-                state.kind = r.kind ?? null;
+                state.kind = state.row.kind ?? null;
             } else if (step.what === 'name') {
                 state.has_name = true;
-                state.name = r.name;
+                state.name_ok = !!state.row.name;
             }
             continue;
         }
         if (step.kind !== 'probe') return false;
         if (step.what === 'inv') {
-            const r = rows[step.index];
-            state.ok = invCount(step.name) >= (r.min ?? 1);
+            state.ok = invCount(state.row.name) >= (state.row.min ?? 1);
         } else {
-            state.ok = !!skillLevel(step.name);
+            state.ok = !!skillLevel(state.row.name);
         }
     }
 }
@@ -284,14 +296,14 @@ export function toolRestockPlan(reqs, skillLevel, invCount, bankCount) {
 export function hasToolReq(available, req) {
     let present;
     let hasName = false;
-    let name = null;
+    let nameOk = false;
     let ok;
     for (;;) {
         const payload = { op: 'has_req' };
         if (present !== undefined) payload.present = present;
         if (hasName) {
             payload.has_name = true;
-            payload.name = name;
+            payload.name_ok = nameOk;
         }
         if (ok !== undefined) payload.ok = ok;
         const step = call(payload);
@@ -300,12 +312,12 @@ export function hasToolReq(available, req) {
             if (step.what === 'present') present = !!req;
             else if (step.what === 'name') {
                 hasName = true;
-                name = req.name;
+                nameOk = !!req.name;
             }
             continue;
         }
         if (step.kind !== 'probe') return false;
-        ok = !!available(step.name);
+        ok = !!available(req.name);
     }
 }
 

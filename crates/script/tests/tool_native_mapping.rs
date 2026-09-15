@@ -520,3 +520,80 @@ export default class T extends LoopingBot { loop() {} }
         })
     );
 }
+
+#[test]
+fn has_all_preserves_every_holes_length_and_name_reads() {
+    let src = r#"
+import { hasAllTools } from '../../api/acquisition/Tools.js';
+const sparseCalls = [];
+const sparse = hasAllTools([, {name:'Tinderbox'}], null, name => { sparseCalls.push(name); return 1; });
+const rows = [{name:'Tinderbox'}];
+const appendCalls = [];
+const appended = hasAllTools(rows, null, name => {
+    appendCalls.push(name);
+    if (name === 'Tinderbox') rows.push({name:'Hammer'});
+    return name === 'Tinderbox' ? 1 : 0;
+});
+let reads = 0;
+const getterCalls = [];
+const named = hasAllTools([{ get name() { return ++reads === 1 ? 'Tinderbox' : 'Hammer'; } }], null, name => {
+    getterCalls.push(name); return 1;
+});
+globalThis.__everyResult = {sparse, sparseCalls, appended, appendCalls, named, reads, getterCalls};
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actual = iso.probe("__everyResult").unwrap();
+    iso.join();
+    assert_eq!(actual, serde_json::json!({
+        "sparse": true, "sparseCalls": ["Tinderbox"],
+        "appended": true, "appendCalls": ["Tinderbox"],
+        "named": true, "reads": 2, "getterCalls": ["Hammer"],
+    }));
+}
+
+#[test]
+fn has_all_and_has_req_preserve_explicit_slots_and_second_name_reads() {
+    let src = r#"
+import { hasAllTools, hasToolReq } from '../../api/acquisition/Tools.js';
+const undefCalls = [];
+const explicitUndef = hasAllTools([undefined, {name:'Tinderbox'}], null, name => { undefCalls.push(name); return 1; });
+const nullCalls = [];
+const explicitNull = hasAllTools([null, {name:'Tinderbox'}], null, name => { nullCalls.push(name); return 1; });
+const holeOnlyCalls = [];
+const holeOnly = hasAllTools(Array(2), null, name => { holeOnlyCalls.push(name); return 0; });
+const rows = [{name:'Tinderbox'}, {name:'Hammer'}];
+const deleteCalls = [];
+const deleted = hasAllTools(rows, null, name => {
+    deleteCalls.push(name);
+    if (name === 'Tinderbox') delete rows[1];
+    return 1;
+});
+let skillReads = 0;
+const skillCalls = [];
+const skillNamed = hasAllTools([{ get name() { return ++skillReads === 1 ? 'Tinderbox' : 'Hammer'; } }], (name) => { skillCalls.push(name); return 1; }, null);
+let reqReads = 0;
+const reqCalls = [];
+const reqNamed = hasToolReq(name => { reqCalls.push(name); return true; }, { get name() { return ++reqReads === 1 ? 'Tinderbox' : 'Hammer'; } });
+globalThis.__slotResult = {
+    explicitUndef, undefCalls, explicitNull, nullCalls,
+    holeOnly, holeOnlyCalls, deleted, deleteCalls,
+    skillNamed, skillReads, skillCalls, reqNamed, reqReads, reqCalls,
+};
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actual = iso.probe("__slotResult").unwrap();
+    iso.join();
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "explicitUndef": false, "undefCalls": [],
+            "explicitNull": false, "nullCalls": [],
+            "holeOnly": true, "holeOnlyCalls": [],
+            "deleted": true, "deleteCalls": ["Tinderbox"],
+            "skillNamed": true, "skillReads": 2, "skillCalls": ["Hammer"],
+            "reqNamed": true, "reqReads": 2, "reqCalls": ["Hammer"],
+        })
+    );
+}
