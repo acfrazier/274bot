@@ -34,11 +34,17 @@ blobs that only carried `lowmem` deserialize with the box unchecked; the
 panel's General config → slot "auto-login on title" checkbox reads and upserts it.
 `ProfileSettings.random_events` defaults **on** (detect + dialog act);
 off still detects and publishes `RandomStatus`. `lamp_skill` /
-`lamp_auto` persist; lamp rub is a 0.1.5 stub.
+`lamp_auto` persist with the profile.
 `ProfileSettings.tutorial_skipped` is `Option<bool>` (serde default
 `None` = unknown). The panel `getvar tutorial`s unknown profiles, then
 caches `Some(true)` once skipped (`>= 1000` or TutSkip); live
 tests can set the flag to skip the cheat.
+
+`ProfileSettings.script_assignment` optionally stores the last successful
+script Start identity (source + path/name key, optional `unavailable`
+reason when the source later disappears). `ProfileSettings.script_settings`
+holds per-card override bags keyed by card identity. See
+[script.md](script.md).
 
 Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase`
 (the file is left unmodified), `Corrupt`, `Io`. A missing file is

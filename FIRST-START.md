@@ -1,58 +1,104 @@
 # First start
 
-274bot talks to a **local Lost City engine** first. Public `--prod` is WSS + HTTPS on `w1.rs2b2t.com` and is a ship-gate login, not a substitute for local tests. This repo does not ship Jagex assets.
+274bot talks to a **local Lost City engine** first. Choose an immutable
+**server profile** for the process (`local-274`, `local-289`, or
+`public-289`). Public `public-289` / `--prod` is WSS + HTTPS on
+`w1.rs2b2t.com:443` and is a ship-gate login path, not a substitute for
+local tests. This repo does not ship Jagex assets and does not promise
+automatic asset distribution beyond the client’s ordinary `/crc` + jag
+fetch into the configured cache/unpack directory.
 
 ## Toolchain
 
-- Rust **1.98** (see `rust-toolchain.toml` if present, else `rustc --version`).
-- Git with submodules: `git clone --recurse-submodules https://github.com/acfrazier/274bot.git`
-- A local 274 engine: game TCP `:43594`, HTTP `/crc` on `:80`.
-- Point **`$ENGINE_DIR`** at the engine root (default `$HOME/experiments/Server/engine`).
+- Rust **1.98.0** (`rust-toolchain.toml` in this repo and in
+  `vendor/fr-client-rust`).
+- Git with submodules:
+  `git clone --recurse-submodules https://github.com/acfrazier/274bot.git`
+- A local engine for the revision you will run:
+  - **274:** game TCP `:43594`, HTTP `/crc` on `:80` (default engine root
+    `$HOME/experiments/Server/engine`)
+  - **289:** game TCP `:44594`, HTTP `/crc` on `:1080` (default engine root
+    `$HOME/experiments/lostcity-289/engine`)
+- Point **`$ENGINE_DIR`** or `--engine` at that engine root when it is not
+  the default.
 
 ## Cache and nav pack
 
-Pack cache for **local** is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). First `maininit` GETs `/crc` and jags from the engine HTTP into that directory; later boots reuse disk.
+Pack cache for **local** is `$ENGINE_DIR/data/pack/client` (`--cache`
+overrides). First `maininit` GETs `/crc` and jags from the engine HTTP into
+that directory; later boots reuse disk.
 
-If the cache directory is empty, run [`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from `$ENGINE_DIR` if files exist, otherwise tells you to boot once against the local engine).
+If the cache directory is empty, run
+[`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from
+`$ENGINE_DIR` if files exist, otherwise tells you to boot once against the
+local engine). That script does not download assets from the public
+internet for you.
 
-**Prod** downloads `/crc` and jags into **`~/.274bot/unpack`** (not the engine pack). Versioned model/anim snapshots from `unpack-cache` live in a child folder named the first 8 hex bytes of SHA-256(`versionlist`) — e.g. `~/.274bot/unpack/2faf336eeb0462ed/` — not the `/crc` table.
+**Prod / public-289** downloads `/crc` and jags into
+**`~/.274bot/unpack-289`** by default (274-era unpack path remains
+`~/.274bot/unpack` when that profile is selected). Versioned model/anim
+snapshots from `unpack-cache` live in a child folder named the first 8 hex
+bytes of SHA-256(`versionlist`) — not the `/crc` table.
 
-Nav pack: an ordinary build bakes and stages the selected revision's pack next to the binary (`target/<profile>/nav/289/` by default), so the app has a bound nav world with no manual step. Missing canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out; `BOT_NAV_REVISION=274` builds 274). `nav-pack` stays for custom bakes: `cargo run -p nav --bin nav-pack` over `$ENGINE_DIR/../content/maps` (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`, version byte **8**). Details: [docs/api/nav.md](docs/api/nav.md).
+Nav pack: an ordinary application build bakes and stages the selected
+**build-time** revision’s pack next to the binary
+(`target/<profile>/nav/289/` by default via `BOT_NAV_REVISION`, default
+**289**), so WalkTo has a bound nav world with no manual step. Missing
+canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
+`BOT_NAV_REVISION=274` builds 274). Runtime profile revision and
+build-time nav revision should match the world you play. `nav-pack` stays
+for custom bakes: `cargo run -p nav --bin nav-pack` over the content maps
+tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
+version byte **8**). Details: [docs/api/nav.md](docs/api/nav.md).
 
-Catalog scripts (optional): set **`$RS2B0T`** to an rs2b0t checkout so panel/TUI can Start catalog cards.
+Catalog scripts (optional): set **`$RS2B0T`** or pass `--catalog` to an
+rs2b0t checkout so panel/TUI can Browse/Start catalog cards.
 
 ## Local (TCP)
 
 ```bash
 export BOT_VAULT_PASS=bot
-export ENGINE_DIR="${ENGINE_DIR:-$HOME/experiments/Server/engine}"
+# 289 example — adjust ENGINE_DIR if your tree is not the default
+export ENGINE_DIR="${ENGINE_DIR:-$HOME/experiments/lostcity-289/engine}"
 # optional: export RS2B0T=/path/to/rs2b0t
 
-cargo run --release -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play -- --profile local-289
 # headless twin:
-cargo run --release -p tui --bin tui-play
+cargo run --release -p tui --bin tui-play -- --profile local-289
+# 274:
+# cargo run --release -p panel --bin panel-play -- --profile local-274
 ```
 
 Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):
 
 ```bash
-cargo run --release -p panel --bin panel-play -- --live script_bone_burier
-cargo run --release -p tui --bin tui-play -- --live script_bone_burier
+cargo run --release -p panel --bin panel-play -- --profile local-289 --live script_bone_burier
+cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_bone_burier
 ```
 
-`CLIENT_CHEAT`, TutSkip, mainland hop, and the debug dest strip are **local-only**.
+`CLIENT_CHEAT`, TutSkip, mainland hop, and the debug dest strip are
+**local-only**.
+
+Without `--profile`, plain local still resolves to **274** (legacy
+default). Prefer naming the profile.
 
 ## Prod (WSS + HTTPS)
 
-After local golds work. Use a real password (not username-as-password). Do not expect `give` / TutSkip / `tele` to work on the public world.
+After local golds work. Use a real password (not username-as-password). Do
+not expect `give` / TutSkip / `tele` to work on the public world.
 
 ```bash
 export BOT_VAULT_PASS=bot
 
-cargo run --release -p host-play -- --prod --user YOUR_NAME
-cargo run --release -p panel --bin panel-play -- --prod
-cargo run --release -p tui --bin tui-play -- --prod
-# or: BOT_TARGET=prod
+cargo run --release -p host-play -- --profile public-289 --user YOUR_NAME
+cargo run --release -p panel --bin panel-play -- --profile public-289
+cargo run --release -p tui --bin tui-play -- --profile public-289
+# or: --prod / BOT_TARGET=prod (selects public-289 when revision is unset)
 ```
 
-Prod fetches `/crc` and jags over **HTTPS :443** into `~/.274bot/unpack` and the game stream is **WSS** (`binary` subprotocol) on `w1.rs2b2t.com`. Local stays TCP `:43594` + HTTP `:80`. Profiles for `--prod` live in `~/.274bot/vault-prod` (local stays `~/.274bot/vault`); `--vault PATH` still wins. Live `--prod` login is the ship gate, not a unit substitute.
+`public-289` fetches `/crc` and jags over **HTTPS :443** into the unpack
+dir and the game stream is **WSS** (`binary` subprotocol) on
+`w1.rs2b2t.com:443`. Local stays TCP on the profile’s game/asset ports.
+Vault defaults: `~/.274bot/vault-prod` for public-289; local-274
+`~/.274bot/vault`; local-289 `~/.274bot/vault-289`. `--vault PATH` still
+wins. Live public login is a ship gate, not a unit substitute.

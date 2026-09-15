@@ -1,11 +1,11 @@
 # 274bot docs
 
-Product docs: [`api/`](api/README.md), the [reusable live harness](harness.md) and the
-[native suite runner](e2e-suite.md).
+Product docs: [`api/`](api/README.md), the [reusable live harness](harness.md)
+and the [native suite runner](e2e-suite.md).
 
-Start here: [README.md](../README.md), [CONTRIBUTING.md](../CONTRIBUTING.md),
-[CHANGELOG.md](../CHANGELOG.md), [NOTICE.md](../NOTICE.md). Coding-agent
-rules: [AGENTS.md](../AGENTS.md).
+Start here: [README.md](../README.md), [FIRST-START.md](../FIRST-START.md),
+[CONTRIBUTING.md](../CONTRIBUTING.md), [CHANGELOG.md](../CHANGELOG.md),
+[NOTICE.md](../NOTICE.md).
 
-Working notes (`specs/`, `plans/`) live in **this checkout’s** gitignored
-`docs/superpowers/` — not the Fairy-Ring clone, not GitHub.
+Working notes (plans, campaign state, agent checkouts) live only in a
+local checkout when present and are not published with this repository.
