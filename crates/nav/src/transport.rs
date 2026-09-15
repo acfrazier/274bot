@@ -213,6 +213,8 @@ const SKIP_TELEPORT_UNRESOLVED_RUNE: &str = "teleport rune name not in pack/obj.
 const SKIP_TELEPORT_UNRESOLVED_ITEM: &str = "jewellery item name not in pack/obj.pack";
 const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destination";
 const SKIP_WEB_NO_FAR: &str = "slashable web has no standable far side";
+const SKIP_FREE_ARM_GATE_CONFLICT: &str =
+    "door reads as both a varp-gated door and a directional free arm (gate kept)";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -512,6 +514,10 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
 /// their `[oploc1,<name>]` open script declares a varp gate; the gate is
 /// carried on every edge of the door (`varp_req`), never invented.
+/// A door whose open script instead proves a directional free arm
+/// ([`quest_door_free_arms`]) keeps only that crossing, with empty
+/// requirements: the other crossing needs a masked (bitfield) gate the v8
+/// pack cannot carry, so it is omitted rather than emitted ungated.
 fn door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -546,13 +552,25 @@ fn door_edges(
         door_ids.extend(parse_door_config(&text));
         open_ids.extend(parse_door_open_ids(&text, ids));
     }
-    let door_reqs = {
+    let (door_reqs, mut free_arms) = {
         let constants = script_constants(content_root);
         let varps = varp_ids_by_name(content_root);
         let door_names = door_config_names(content_root, ids);
-        quest_door_reqs(content_root, &door_names, ids, &constants, &varps)
+        (
+            quest_door_reqs(content_root, &door_names, ids, &constants, &varps),
+            quest_door_free_arms(content_root, &door_names, ids, &constants, &varps),
+        )
     };
+    // A door that also declares a readable direct-varp gate keeps the
+    // existing two-edge gate: the two readings would disagree about the
+    // same crossing, and the free arm is never a fallback for a gate.
+    for id in door_reqs.keys() {
+        if free_arms.remove(id).is_some() {
+            bump(skipped, SKIP_FREE_ARM_GATE_CONFLICT, 1);
+        }
+    }
     door_ids.extend(door_reqs.keys().copied());
+    door_ids.extend(free_arms.keys().copied());
 
     if door_ids.is_empty() {
         bump(skipped, SKIP_NO_DOOR_CONFIGS, 1);
@@ -563,12 +581,14 @@ fn door_edges(
         let Some(placements) = positions.get(id) else {
             continue;
         };
+        let free_arm = free_arms.get(id);
+        let varp_req = door_reqs.get(id).cloned().unwrap_or_default();
         for p in placements {
             // The collision bake (and its `standable`) is level 0 only.
             if p.level != 0 || p.shape != 0 {
                 continue;
             }
-            let Some(dir) = door_dir(p.angle) else {
+            let Some(angle_dir) = door_dir(p.angle) else {
                 continue;
             };
             let at = WorldTile {
@@ -579,7 +599,12 @@ fn door_edges(
             // A door is bidirectional: an edge in `dir` and one in its
             // opposite, each with an adjacent standable destination. A blocked
             // neighbor yields no edge; opening a door cannot erase scenery.
-            for dir in [dir, opposite(dir)] {
+            for dir in [angle_dir, opposite(angle_dir)] {
+                // A directional door keeps only the crossing its open
+                // script proves free; its gated crossing is omitted.
+                if free_arm.is_some_and(|arm| dir != arm.free_dir(angle_dir)) {
+                    continue;
+                }
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
                 };
@@ -595,7 +620,13 @@ fn door_edges(
                     skill_req: vec![],
                     item_req: vec![],
                     quest_req: vec![],
-                    varp_req: door_reqs.get(id).cloned().unwrap_or_default(),
+                    // The proven free crossing has no requirement; a door
+                    // with a readable gate carries it on both crossings.
+                    varp_req: if free_arm.is_some() {
+                        vec![]
+                    } else {
+                        varp_req.clone()
+                    },
                     worn_req: vec![],
                 });
             }
@@ -945,6 +976,301 @@ fn quest_door_reqs(
             }
         }
     });
+    out
+}
+
+/// A door whose `[oploc1,<name>]` block proves one crossing free: the block
+/// opens on a `~check_axis` side test whose other disjunct is a
+/// `~<proc> >= ^<const>` bitfield gate. The proven crossing is emitted with
+/// empty requirements; the gated one needs a masked requirement the v8 pack
+/// cannot carry, so it stays out rather than open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FreeDoorArm {
+    /// The `~check_axis(coord, loc_coord, loc_angle)` value the block opens
+    /// on without any gate.
+    free_when_check_axis: bool,
+}
+
+impl FreeDoorArm {
+    /// The crossing direction the free arm lands on, given the placement
+    /// angle's own direction (the client's always-reached neighbour side —
+    /// `test_wall` WALL_STRAIGHT EAST → destX+1, NORTH → destZ+1,
+    /// WEST → destX−1, SOUTH → destZ−1). The native hop walks the player
+    /// onto the door's own tile only for the crossing that starts on the
+    /// far side and travels that way (`changeWallStraight`'s `canTravel`
+    /// polarity lets the player step onto the loc along the angle, not
+    /// against it), and that stand is the one `~check_axis` reads `true`
+    /// for; the opposite crossing executes from the always-reached
+    /// neighbour and reads `false`.
+    fn free_dir(&self, angle_dir: DoorDir) -> DoorDir {
+        if self.free_when_check_axis {
+            angle_dir
+        } else {
+            opposite(angle_dir)
+        }
+    }
+}
+
+/// Door loc id → the directional free arm its `[oploc1,<name>]` block
+/// proves ([`free_door_arm`]). A door whose blocks disagree about the arm
+/// proves neither; a door whose block is any other shape stays out of this
+/// map (and out of the pack entirely when no gate is readable either), so
+/// an unread door is never promoted to ungated.
+fn quest_door_free_arms(
+    content_root: &Path,
+    door_names: &HashSet<String>,
+    ids: &HashMap<String, i32>,
+    constants: &HashMap<String, i32>,
+    varps: &HashMap<String, i32>,
+) -> HashMap<i32, FreeDoorArm> {
+    let mut out: HashMap<i32, FreeDoorArm> = HashMap::new();
+    let mut conflicted: HashSet<i32> = HashSet::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (op, name, block) in script_blocks(text) {
+            if op != "oploc1" || !door_names.contains(&name) {
+                continue;
+            }
+            let Some(&id) = ids.get(&name) else {
+                continue;
+            };
+            let Some(arm) = free_door_arm(&block, text, constants, varps) else {
+                continue;
+            };
+            match out.get(&id) {
+                Some(&prev) if prev != arm => {
+                    out.remove(&id);
+                    conflicted.insert(id);
+                }
+                Some(_) => {}
+                None if conflicted.contains(&id) => {}
+                None => {
+                    out.insert(id, arm);
+                }
+            }
+        }
+    });
+    out
+}
+
+/// The free arm a door's `[oploc1,<name>]` block proves, from exactly the
+/// supported shape:
+///
+/// ```text
+/// def_boolean $<b> = ~check_axis(coord, loc_coord, loc_angle);
+/// if($<b> = <true|false> | ~<proc> >= ^<const>) { …opens the door… }
+/// ```
+///
+/// `$<b>` must be the boolean that block's own `check_axis` def introduces;
+/// the opening head must have exactly two disjuncts — that boolean test and
+/// one `~<proc> >= ^<const>` compare — with no nesting and no `&`; `<const>`
+/// must resolve in the script constants; `<proc>` must be a `[proc,…]`
+/// block in the same script text whose body is exactly
+/// `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` with the varp in
+/// `pack/varp.pack` and both range constants resolving; and the arm must
+/// open ([`body_opens`]). Every other shape — a raw `%varp` compare, a
+/// different comparator, a missing or differently-shaped proc, an
+/// unresolved name, an arm that does not open — proves nothing at all, so
+/// the door keeps no free arm and is never promoted to ungated. The knock
+/// and dialogue branches are never read: only the gated opening arm the
+/// shape names.
+fn free_door_arm(
+    block: &str,
+    script_text: &str,
+    constants: &HashMap<String, i32>,
+    varps: &HashMap<String, i32>,
+) -> Option<FreeDoorArm> {
+    let axis_bool = check_axis_boolean(block)?;
+    for (head, arm) in if_arms(block) {
+        let Some((free_when_check_axis, proc, cname)) = check_axis_or_proc(&head, &axis_bool)
+        else {
+            continue;
+        };
+        // The supported head's arm must be the one that opens: a head whose
+        // arm does not (or cannot) open proves nothing at all.
+        if !constants.contains_key(&cname) || !body_opens(&arm, script_text) {
+            return None;
+        }
+        proc_bitfield_varp(script_text, &proc, constants, varps)?;
+        return Some(FreeDoorArm {
+            free_when_check_axis,
+        });
+    }
+    None
+}
+
+/// `def_boolean $<name> = ~check_axis(coord, loc_coord, loc_angle);` in a
+/// block → `$<name>` (whitespace-tolerant; any other right-hand side is not
+/// a check-axis definition).
+fn check_axis_boolean(block: &str) -> Option<String> {
+    for raw in block.lines() {
+        let Some((lhs, rhs)) = raw.trim().split_once('=') else {
+            continue;
+        };
+        let mut words = lhs.split_whitespace();
+        let (Some("def_boolean"), Some(name), None) = (words.next(), words.next(), words.next())
+        else {
+            continue;
+        };
+        if !name.starts_with('$') {
+            continue;
+        }
+        let rhs: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
+        if rhs == "~check_axis(coord,loc_coord,loc_angle);" {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Every `if (<head>) { <arm> }` in a block: the parenthesised head text and
+/// its balanced arm, in source order. The head scan mirrors
+/// [`if_varp_gate`]'s; it is kept separate so the direct-varp gate path is
+/// untouched by the directional arm derivation.
+fn if_arms(block: &str) -> Vec<(String, String)> {
+    let bytes = block.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"if") {
+            let tail = &block[i + 2..];
+            let rest = tail.trim_start();
+            let ws = tail.len() - rest.len();
+            if let Some(inner) = rest.strip_prefix('(') {
+                if let Some(close) = inner.find(')') {
+                    let arm_from = i + 2 + ws + 1 + close + 1;
+                    if let Some(arm) = balanced_arm(block, arm_from) {
+                        out.push((inner[..close].trim().to_string(), arm));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// A door head `$<b> = <true|false> | ~<proc> >= ^<const>` — exactly two
+/// disjuncts, one of each, no nesting and no `&` — → the boolean's value and
+/// the proc comparison's `(proc, const)` names.
+fn check_axis_or_proc(head: &str, axis_bool: &str) -> Option<(bool, String, String)> {
+    if head.contains(|c| c == '(' || c == ')' || c == '&') {
+        return None;
+    }
+    let mut disjuncts = head.split('|');
+    let (first, second) = (disjuncts.next()?.trim(), disjuncts.next()?.trim());
+    if disjuncts.next().is_some() {
+        return None;
+    }
+    let mut boolean = None;
+    let mut compare = None;
+    for disjunct in [first, second] {
+        if let Some(value) = boolean_value_disjunct(disjunct, axis_bool) {
+            if boolean.replace(value).is_some() {
+                return None;
+            }
+        } else if let Some(pair) = proc_const_disjunct(disjunct) {
+            if compare.replace(pair).is_some() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    let (proc, cname) = compare?;
+    Some((boolean?, proc, cname))
+}
+
+/// `$<name> = <true|false>` → the value; any other left side is not the
+/// check-axis test.
+fn boolean_value_disjunct(disjunct: &str, name: &str) -> Option<bool> {
+    let (lhs, rhs) = disjunct.split_once('=')?;
+    if lhs.trim() != name {
+        return None;
+    }
+    match rhs.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// `~<proc>` (or `~<proc>()`) `>= ^<const>` → the `(proc, const)` names.
+fn proc_const_disjunct(disjunct: &str) -> Option<(String, String)> {
+    let (lhs, rhs) = disjunct.split_once(">=")?;
+    let proc = lhs.trim().strip_prefix('~')?.trim();
+    let proc = proc.strip_suffix("()").unwrap_or(proc).trim_end();
+    let cname = rhs.trim().strip_prefix('^')?;
+    if !script_ident(proc) || !script_ident(cname) {
+        return None;
+    }
+    Some((proc.to_string(), cname.to_string()))
+}
+
+/// A script identifier: `[A-Za-z0-9_]+`.
+fn script_ident(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// The varp id of a `[proc,<name>](…)(…)` block whose body is exactly
+/// `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` (whitespace-tolerant),
+/// with `<varp>` in `pack/varp.pack` and `<lo>`/`<hi>` in the script
+/// constants. A missing, duplicated, or differently-shaped proc — another
+/// varp, another read, an extra statement — yields `None`.
+fn proc_bitfield_varp(
+    script_text: &str,
+    name: &str,
+    constants: &HashMap<String, i32>,
+    varps: &HashMap<String, i32>,
+) -> Option<i32> {
+    let bodies = proc_bodies(script_text, name);
+    let [body] = bodies.as_slice() else {
+        return None;
+    };
+    let flat: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let args = flat
+        .strip_prefix("return(getbit_range(")?
+        .strip_suffix("));")?;
+    let mut parts = args.split(',');
+    let (Some(varp), Some(lo), Some(hi)) = (parts.next(), parts.next(), parts.next()) else {
+        return None;
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let varp = varp.strip_prefix('%')?;
+    let lo = lo.strip_prefix('^')?;
+    let hi = hi.strip_prefix('^')?;
+    constants.get(lo)?;
+    constants.get(hi)?;
+    Some(*varps.get(varp)?)
+}
+
+/// Every `[proc,<name>](…)(…)` body in a script text. [`script_blocks`]
+/// cannot see these headers — a proc header carries its argument list and
+/// return type after the closing bracket — so the body is delimited here,
+/// from the header line to the next `[` line.
+fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = false;
+    let mut body = String::new();
+    for raw in script_text.lines() {
+        let line = raw.trim();
+        if let Some(rest) = line.strip_prefix("[proc,") {
+            if cur {
+                out.push(std::mem::take(&mut body));
+            }
+            cur = rest.split_once(']').is_some_and(|(n, _)| n.trim() == name);
+        } else if cur && line.starts_with('[') {
+            out.push(std::mem::take(&mut body));
+            cur = false;
+        } else if cur {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if cur {
+        out.push(body);
+    }
     out
 }
 
@@ -4051,6 +4377,28 @@ mod tests {
         bake_from_maps(&fx.path().join("maps"), defs, door_ids).unwrap()
     }
 
+    /// `(at, dir, to)` of every door edge of `loc_id`, sorted, so a
+    /// directional door's exact crossings can be asserted.
+    fn door_crossings(graph: &TransportGraph, loc_id: i32) -> Vec<((i32, i32), char, (i32, i32))> {
+        let mut out: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == loc_id)
+            .map(|e| {
+                let dir = match e.dir {
+                    Some(DoorDir::N) => 'N',
+                    Some(DoorDir::E) => 'E',
+                    Some(DoorDir::S) => 'S',
+                    Some(DoorDir::W) => 'W',
+                    None => panic!("door edge without a dir: {e:?}"),
+                };
+                ((e.at.x, e.at.z), dir, (e.to.x, e.to.z))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     #[test]
     fn door_far_side_does_not_skip_bank_return_obstacles() {
         // Captured at (2651..=2657,3292): counter/plant/bench footprints
@@ -5589,6 +5937,325 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
         assert_eq!(cannon.len(), 2);
         for d in &cannon {
             assert_eq!(d.varp_req, vec![(0, 6)]);
+        }
+    }
+
+    /// Tenzing's hut doors prove one free crossing each from the exact
+    /// check-axis / proc-bitfield open shape: 3745's exit (dir E, free
+    /// under `$leaving = true`) and 3746's entry from the north (dir S,
+    /// free under `$leaving = false`). The gated reverse crossings stay
+    /// omitted (the v8 pack carries no masked requirement), the direct-varp
+    /// castle door keeps both crossings and its gate, and the crossing the
+    /// free arm lands on follows the placement angle, not the door id.
+    #[test]
+    fn derive_transports_emits_tenzing_free_door_arms() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "3743=death_castledoor\n3745=death_sherpa_door\n3746=death_sherpa_backdoor\n",
+        );
+        fx.write("pack/varp.pack", "314=death_equiproom\n315=death_map\n");
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.loc",
+            "\
+[death_sherpa_door]
+name=Door
+active=yes
+op1=Open
+
+[death_sherpa_backdoor]
+name=Door
+active=yes
+op1=Open
+
+[death_castledoor]
+name=Door
+active=yes
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.constant",
+            "\
+^death_spoken_saba = 1
+^death_spoken_tenzing = 2
+^death_got_map = 7
+^death_unlocked_door = 70
+^death_map_lower = 0
+^death_map_upper = 3
+",
+        );
+        // The three `[oploc1,…]` blocks and the `death_get_map` proc
+        // verbatim from the 289 and 274 content roots.
+        fx.write(
+            "scripts/quests/quest_death/scripts/quest_death.rs2",
+            "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open); // open door loc isnt in this version?
+    return;
+}
+sound_synth(knock_knock, 1, 0);
+~mesbox(\"You knock on the door.\");
+if(npc_find(coord, death_sherpa, 5, 0) = true) {
+    ~chatnpc(\"<p,angry>No milk today! Thank you!\");
+}
+
+[oploc1,death_sherpa_backdoor]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = false | ~death_get_map >= ^death_got_map) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open); // open door loc isnt in this version?
+    return;
+}
+if(npc_find(coord, death_sherpa, 5, 0) = true) {
+    ~chatnpc(\"<p,angry>Where do you think you're going? This is private property!\");
+}
+
+[oploc1,death_castledoor]
+if(%death_equiproom >= ^death_unlocked_door) {
+    ~open_and_close_door2(castledoor_inactive, ~check_axis(coord, loc_coord, loc_angle), door_open); // nicedoor_open
+    return;
+}
+mes(\"The door is locked.\");
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+        );
+        // The 289/274 placements: 3745 at (2822,3555) angle 2, 3746 at
+        // (2820,3557) angle 1, plus a second 3745 placement at angle 0
+        // (mirrored) and the castle door.
+        fx.write(
+            "maps/m44_55.jm2",
+            "\
+==== MAP ====
+0 6 35: h98 f4 u64
+0 4 37: h98 f4 u64
+
+==== LOC ====
+0 6 35: 3745 0 2
+0 4 37: 3746 0 1
+0 6 10: 3745 0 0
+0 4 10: 3743 0 2
+",
+        );
+        let defs = loc_defs(&[(3743, 1, 1), (3745, 1, 1), (3746, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        assert_eq!(
+            door_crossings(&graph, 3745),
+            vec![
+                ((2822, 3530), 'W', (2821, 3530)),
+                ((2822, 3555), 'E', (2823, 3555)),
+            ],
+            "3745 proves only the free `$leaving = true` crossing, \
+             landing along the placement angle"
+        );
+        assert_eq!(
+            door_crossings(&graph, 3746),
+            vec![((2820, 3557), 'S', (2820, 3556))],
+            "3746 proves only the free `$leaving = false` crossing into the hut"
+        );
+        for e in graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && matches!(e.loc_id, 3745 | 3746))
+        {
+            assert_eq!(e.option, 1, "Open op: {e:?}");
+            assert!(
+                e.varp_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.item_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && e.skill_req.is_empty(),
+                "a proven free crossing carries no requirement: {e:?}"
+            );
+        }
+        // The direct-varp castle door is untouched: both crossings, its gate.
+        let castle: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 3743)
+            .collect();
+        assert_eq!(castle.len(), 2);
+        for e in &castle {
+            assert_eq!(e.varp_req, vec![(314, 70)]);
+        }
+    }
+
+    /// Doors whose open script only *almost* matches the supported free-arm
+    /// shape prove nothing and stay out of the pack — never ungated: a
+    /// malformed proc body, an unreachable proc, a raw `%varp` in the OR
+    /// head, an unresolved varp or constant, an arm that does not open, a
+    /// `<` compare, and a dialogue-only block.
+    #[test]
+    fn derive_transports_omits_unproven_directional_door_arms() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "5001=bad_proc_body\n5002=no_proc\n5003=raw_varp_or\n5004=no_open_arm\n\
+             5005=lt_compare\n5006=dialogue_only\n5007=unknown_varp\n5008=unknown_constant\n",
+        );
+        fx.write("pack/varp.pack", "315=death_map\n");
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.loc",
+            "\
+[bad_proc_body]
+op1=Open
+[no_proc]
+op1=Open
+[raw_varp_or]
+op1=Open
+[no_open_arm]
+op1=Open
+[lt_compare]
+op1=Open
+[dialogue_only]
+op1=Open
+[unknown_varp]
+op1=Open
+[unknown_constant]
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.constant",
+            "^death_spoken_tenzing = 2\n^death_map_lower = 0\n^death_map_upper = 3\n",
+        );
+        fx.write(
+            "scripts/quests/quest_death/scripts/quest_death.rs2",
+            "\
+[oploc1,bad_proc_body]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,no_proc]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_missing_proc >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,raw_varp_or]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | %death_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,no_open_arm]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~mesbox(\"The door is stuck.\");
+    return;
+}
+
+[oploc1,lt_compare]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map < ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,dialogue_only]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if(npc_find(coord, death_sherpa, 5, 0) = true) {
+    ~chatnpc(\"<p,angry>This is private property!\");
+}
+
+[oploc1,unknown_varp]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_unknown >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,unknown_constant]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_unknown_stage) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper) + 1);
+
+[proc,death_get_unknown]()(int)
+return (getbit_range(%death_unknown_varp, ^death_map_lower, ^death_map_upper));
+",
+        );
+        fx.write(
+            "maps/m44_55.jm2",
+            "\
+==== MAP ====
+0 6 35: h98 f4 u64
+
+==== LOC ====
+0 6 35: 5001 0 2
+0 6 36: 5002 0 2
+0 6 37: 5003 0 2
+0 6 38: 5004 0 2
+0 6 39: 5005 0 2
+0 6 40: 5006 0 2
+0 6 41: 5007 0 2
+0 6 42: 5008 0 2
+",
+        );
+        let sizes = [(5001, 1, 1), (5002, 1, 1), (5003, 1, 1), (5004, 1, 1)]
+            .into_iter()
+            .chain([(5005, 1, 1), (5006, 1, 1), (5007, 1, 1), (5008, 1, 1)])
+            .collect::<Vec<_>>();
+        let defs = loc_defs(&sizes);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        for id in 5001..=5008 {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "loc {id} proves no free arm and must not be packed"
+            );
+            assert!(
+                graph.edges.iter().all(|e| e.loc_id != id),
+                "loc {id} must not be reachable through any other edge kind"
+            );
+        }
+    }
+
+    /// The real Server content (274) carries the same two shapes: only the
+    /// free crossings derive — 3745's exit and 3746's hut entry — while the
+    /// direct-varp castle door keeps both crossings and its gate.
+    #[test]
+    fn derive_transports_tenzing_free_arms_from_real_content() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        assert_eq!(
+            door_crossings(&graph, 3745),
+            vec![((2822, 3555), 'E', (2823, 3555))],
+            "3745 proves only the free exit crossing"
+        );
+        assert_eq!(
+            door_crossings(&graph, 3746),
+            vec![((2820, 3557), 'S', (2820, 3556))],
+            "3746 proves only the free entry crossing"
+        );
+        let castle: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 3743)
+            .collect();
+        assert_eq!(castle.len(), 2, "the direct-varp door keeps both crossings");
+        for e in &castle {
+            assert_eq!(
+                e.varp_req,
+                vec![(314, 70)],
+                "unchanged `%death_equiproom` gate"
+            );
         }
     }
 
