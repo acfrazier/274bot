@@ -266,6 +266,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
             level: 0,
             radius: 6,
             allow_teleports: false,
+            request_id: 0,
         }]
     );
 
@@ -362,6 +363,7 @@ export default class T extends TaskBot {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            request_id: 0,
         }],
         "RockCrab-shaped bankTile must walk the supplied stand"
     );

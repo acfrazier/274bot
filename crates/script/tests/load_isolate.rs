@@ -2607,6 +2607,7 @@ export default class T extends LoopingBot {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            request_id: 0,
         }],
         "the supplied stand is walked near instead of being dropped"
     );
@@ -4618,6 +4619,7 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: false,
+            request_id: 1,
         }],
         "walkOpening queues Traversal.walkResilient walk"
     );
@@ -4819,6 +4821,7 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: false,
+            request_id: 1,
         }],
         "createReturnToAnchorTask queues walkResilient(tile, opts)"
     );
@@ -4907,6 +4910,7 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: true,
+            request_id: 1,
         }],
         "useTeleportCatalog maps onto FindOptions.allow_teleports"
     );

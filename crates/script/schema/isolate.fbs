@@ -300,6 +300,7 @@ table Snapshot {
   walk_outcome_level: int = 0;
   walk_outcome_radius: int = 0;
   walk_outcome_allow_teleports: bool = false;
+  walk_outcome_request_id: ulong = 0;
 }
 
 // One shim interact request, tagged by `op`:
@@ -331,6 +332,7 @@ table Interact {
   source_item_slot: int;
   target_item_id: int;
   target_item_slot: int;
+  request_id: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

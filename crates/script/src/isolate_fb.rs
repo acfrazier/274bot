@@ -190,6 +190,7 @@ const VT_SNAP_WALK_OUTCOME_Z: VOffsetT = 176;
 const VT_SNAP_WALK_OUTCOME_LEVEL: VOffsetT = 178;
 const VT_SNAP_WALK_OUTCOME_RADIUS: VOffsetT = 180;
 const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
+const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
 
 // BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
 const VT_BA_LOC_ID: VOffsetT = 4;
@@ -302,6 +303,7 @@ const VT_IN_SOURCE_ITEM_ID: VOffsetT = 32;
 const VT_IN_SOURCE_ITEM_SLOT: VOffsetT = 34;
 const VT_IN_TARGET_ITEM_ID: VOffsetT = 36;
 const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
+const VT_IN_REQUEST_ID: VOffsetT = 40;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -662,6 +664,7 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_level: i32,
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
+    pub walk_outcome_request_id: u64,
 }
 
 /// One native bank-booth dest + readiness row.
@@ -1357,6 +1360,11 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
                 false,
             )?
+            .visit_field::<u64>(
+                "walk_outcome_request_id",
+                VT_SNAP_WALK_OUTCOME_REQUEST_ID,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1723,6 +1731,9 @@ impl SnapshotReader<'_> {
                 .get::<bool>(VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS, None)
         }
         .unwrap_or(false)
+    }
+    pub fn walk_outcome_request_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -2272,6 +2283,7 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_level: i32,
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
+    pub walk_outcome_request_id: u64,
 }
 
 impl SnapshotFingerprint {
@@ -2496,6 +2508,7 @@ impl SnapshotFingerprint {
             walk_outcome_level: native.walk_outcome_level,
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
+            walk_outcome_request_id: native.walk_outcome_request_id,
         }
     }
 }
@@ -2763,7 +2776,8 @@ impl DeltaMask {
                 || next.walk_outcome_z != last.walk_outcome_z
                 || next.walk_outcome_level != last.walk_outcome_level
                 || next.walk_outcome_radius != last.walk_outcome_radius
-                || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports,
+                || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
+                || next.walk_outcome_request_id != last.walk_outcome_request_id,
         }
     }
 }
@@ -3500,6 +3514,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(
             VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS,
             native.walk_outcome_allow_teleports,
+        );
+        b.push_slot_always(
+            VT_SNAP_WALK_OUTCOME_REQUEST_ID,
+            native.walk_outcome_request_id,
         );
     }
     let root = b.end_table(tab);
@@ -4325,6 +4343,9 @@ impl InteractReader<'_> {
     pub fn target_item_slot(&self) -> Option<i32> {
         unsafe { self.tab.get::<i32>(VT_IN_TARGET_ITEM_SLOT, None) }
     }
+    pub fn request_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_REQUEST_ID, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4348,6 +4369,7 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("source_item_slot", VT_IN_SOURCE_ITEM_SLOT, false)?
             .visit_field::<i32>("target_item_id", VT_IN_TARGET_ITEM_ID, false)?
             .visit_field::<i32>("target_item_slot", VT_IN_TARGET_ITEM_SLOT, false)?
+            .visit_field::<u64>("request_id", VT_IN_REQUEST_ID, false)?
             .finish();
         Ok(())
     }
@@ -5392,6 +5414,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 z: row.z(),
                 level: row.level(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                request_id: row.request_id(),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
                 x: row.x(),
@@ -5399,6 +5422,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 radius: row.index().unwrap_or(0),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
@@ -5799,20 +5823,39 @@ fn interact_off<'b>(
             z,
             level,
             radius,
+            request_id,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
             b.push_slot_always(VT_IN_INDEX, *radius);
+            if *request_id != 0 {
+                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            }
             if let Some(off) = action_off {
                 b.push_slot_always(VT_IN_ACTION, off);
             }
         }
         InteractReq::WalkNearestBank => {}
-        InteractReq::Walk { x, z, level, .. }
-        | InteractReq::WalkTo { x, z, level }
-        | InteractReq::RecoveryAnchor { x, z, level } => {
+        InteractReq::Walk {
+            x,
+            z,
+            level,
+            request_id,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            if *request_id != 0 {
+                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            }
+            if let Some(off) = action_off {
+                b.push_slot_always(VT_IN_ACTION, off);
+            }
+        }
+        InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
@@ -6098,6 +6141,7 @@ pub(crate) mod tests {
         assert_eq!(view.walk_outcome_level(), 0);
         assert_eq!(view.walk_outcome_radius(), 0);
         assert!(!view.walk_outcome_allow_teleports());
+        assert_eq!(view.walk_outcome_request_id(), 0);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.
@@ -6321,6 +6365,7 @@ pub(crate) mod tests {
                 z: 2,
                 level: 0,
                 allow_teleports: true,
+                request_id: 9,
             },
             InteractReq::WalkNear {
                 x: 2656,
@@ -6328,6 +6373,7 @@ pub(crate) mod tests {
                 level: 0,
                 radius: 3,
                 allow_teleports: false,
+                request_id: 0,
             },
             InteractReq::WalkTo {
                 x: 3,

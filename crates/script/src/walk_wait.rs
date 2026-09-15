@@ -4,11 +4,20 @@
 //! This module decides whether that outcome, or actual arrival, settles the
 //! wait. JavaScript only marshals arguments and awaits the callback.
 //!
-//! Host invariant: `NavBot::publish_route` drops outcomes whose generation
-//! does not match the current request, so a superseded worker cannot publish
-//! a late NoPath. Isolate matching still requires a newer generation than the
-//! wait captured at begin, so a same-target outcome that only advances `seq`
-//! under the previously observed generation cannot settle a newly begun wait.
+//! Correlation is the isolate-allocated request id (`Wait.token`), carried on
+//! the existing FlatBuffer walk request and echoed in the host outcome. It is
+//! bound to this isolate thread (reset on Stop/restart) and the host uid's
+//! `NavBot`. `route_generation` stays the host worker / retained-route token
+//! and is not used to match waits.
+//!
+//! A late outcome from an earlier same-target request cannot settle a new
+//! wait: request ids differ. Coalescing keeps the in-flight id rather than
+//! assigning another caller's result. Request id `0` (old buffers / ctx.walk)
+//! never settles a wait.
+//!
+//! Mid-follow Stall / Refused / Blocked / GaveUp publish the armed request
+//! id as failed. Arrival still requires Chebyshev ≤ radius and same level.
+//! Genuinely pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::SnapshotReader;
 use serde_json::{json, Value};
@@ -36,6 +45,7 @@ struct WalkKey {
 struct HostOutcome {
     seq: u64,
     generation: u64,
+    request_id: u64,
     failed: bool,
     key: WalkKey,
 }
@@ -45,6 +55,7 @@ impl HostOutcome {
         Self {
             seq: 0,
             generation: 0,
+            request_id: 0,
             failed: false,
             key: WalkKey {
                 tile: Tile {
@@ -62,8 +73,6 @@ impl HostOutcome {
 struct Wait {
     token: u64,
     key: WalkKey,
-    seq_at_begin: u64,
-    generation_at_begin: u64,
     settled: Option<bool>,
 }
 
@@ -100,6 +109,7 @@ impl WalkSlot {
             self.outcome = HostOutcome {
                 seq: snap.walk_outcome_seq(),
                 generation: snap.walk_outcome_generation(),
+                request_id: snap.walk_outcome_request_id(),
                 failed: snap.walk_outcome_failed(),
                 key: WalkKey {
                     tile: Tile {
@@ -123,8 +133,6 @@ impl WalkSlot {
         self.wait = Some(Wait {
             token,
             key,
-            seq_at_begin: self.outcome.seq,
-            generation_at_begin: self.outcome.generation,
             settled: None,
         });
         token
@@ -138,14 +146,10 @@ impl WalkSlot {
         dist <= key.radius
     }
 
-    fn generation_is_newer(outcome: u64, at_begin: u64) -> bool {
-        outcome != at_begin && outcome.wrapping_sub(at_begin) < (u64::MAX / 2)
-    }
-
     fn fail_matches(outcome: HostOutcome, wait: &Wait) -> bool {
         outcome.failed
-            && outcome.seq != wait.seq_at_begin
-            && Self::generation_is_newer(outcome.generation, wait.generation_at_begin)
+            && outcome.request_id != 0
+            && outcome.request_id == wait.token
             && outcome.key == wait.key
     }
 
@@ -351,6 +355,7 @@ mod tests {
     fn fail_native(
         seq: u64,
         generation: u64,
+        request_id: u64,
         x: i32,
         z: i32,
         level: i32,
@@ -360,6 +365,7 @@ mod tests {
         NativeFactsInput {
             walk_outcome_seq: seq,
             walk_outcome_generation: generation,
+            walk_outcome_request_id: request_id,
             walk_outcome_failed: true,
             walk_outcome_x: x,
             walk_outcome_z: z,
@@ -381,7 +387,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
         assert!(settled(token));
         assert!(!value(token));
     }
@@ -426,7 +432,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 3200, 3200, 0, 1, false));
+        observe(input, fail_native(1, 1, 1, 3200, 3200, 0, 1, false));
         assert!(!settled(token));
     }
 
@@ -439,7 +445,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(4, 4, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(4, 4, 4, 2820, 3556, 0, 1, false));
         let token = begin(2820, 3556, 0, 1, false);
         assert!(
             !settled(token),
@@ -458,7 +464,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
         assert!(!settled(first));
         assert!(!settled(second));
         assert!(!value(first));
@@ -476,21 +482,14 @@ mod tests {
             z: 3556,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
         assert!(!settled(token));
         assert!(!value(token));
     }
 
     #[test]
-    fn same_target_wrong_generation_cannot_settle_even_when_seq_advances() {
+    fn same_target_wrong_request_id_cannot_settle() {
         on_reset();
-        let mut input = empty_input(1);
-        input.here = Some(TileInput {
-            x: 2823,
-            z: 3555,
-            level: 0,
-        });
-        observe(input, fail_native(1, 5, 2820, 3556, 0, 1, false));
         let token = begin(2820, 3556, 0, 1, false);
         let mut later = empty_input(2);
         later.here = Some(TileInput {
@@ -498,10 +497,10 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(later, fail_native(2, 5, 2820, 3556, 0, 1, false));
+        observe(later, fail_native(2, 5, 5, 2820, 3556, 0, 1, false));
         assert!(
             !settled(token),
-            "late same-target NoPath under the previously observed generation must not settle"
+            "late same-target NoPath for a different request id must not settle"
         );
         let mut newer = empty_input(3);
         newer.here = Some(TileInput {
@@ -509,9 +508,26 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(newer, fail_native(3, 6, 2820, 3556, 0, 1, false));
+        observe(newer, fail_native(3, 6, token, 2820, 3556, 0, 1, false));
         assert!(settled(token));
         assert!(!value(token));
+    }
+
+    #[test]
+    fn request_id_zero_after_empty_begin_does_not_settle() {
+        on_reset();
+        let token = begin(2820, 3556, 0, 1, false);
+        let mut input = empty_input(2);
+        input.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(input, fail_native(1, 0, 0, 2820, 3556, 0, 1, false));
+        assert!(
+            !settled(token),
+            "request id 0 is not a correlated isolate wait"
+        );
     }
 
     #[test]

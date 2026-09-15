@@ -1064,6 +1064,7 @@ fn script_observe_with_npc_boxes(
                     teleports_enabled,
                     walk_seq,
                     walk_generation,
+                    walk_request_id,
                     walk_failed,
                     walk_x,
                     walk_z,
@@ -1077,6 +1078,7 @@ fn script_observe_with_npc_boxes(
                             b.allow_teleports,
                             b.walk_outcome_seq,
                             b.walk_outcome_generation,
+                            b.walk_outcome_request_id,
                             b.walk_outcome_failed,
                             b.walk_outcome_x,
                             b.walk_outcome_z,
@@ -1084,7 +1086,7 @@ fn script_observe_with_npc_boxes(
                             b.walk_outcome_radius,
                             b.walk_outcome_allow_teleports,
                         ),
-                        None => (false, 0, 0, false, 0, 0, 0, 0, false),
+                        None => (false, 0, 0, 0, false, 0, 0, 0, 0, false),
                     }
                 };
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
@@ -1112,6 +1114,7 @@ fn script_observe_with_npc_boxes(
                     PostedWalkOutcome {
                         seq: walk_seq,
                         generation: walk_generation,
+                        request_id: walk_request_id,
                         failed: walk_failed,
                         x: walk_x,
                         z: walk_z,
@@ -1867,6 +1870,7 @@ fn dispatch_script_interact(
                 z,
                 level,
                 allow_teleports,
+                request_id,
             } => {
                 let bank_rows: Vec<(i32, i32)> = snapshot
                     .bank()
@@ -1881,7 +1885,7 @@ fn dispatch_script_interact(
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                wrote |= arm.route(
+                wrote |= arm.queue_route(
                     x,
                     z,
                     level,
@@ -1889,6 +1893,9 @@ fn dispatch_script_interact(
                         allow_teleports,
                         ..FindOptions::default()
                     },
+                    0,
+                    false,
+                    request_id,
                 );
             }
             InteractReq::WalkNear {
@@ -1897,6 +1904,7 @@ fn dispatch_script_interact(
                 level,
                 radius,
                 allow_teleports,
+                request_id,
             } => {
                 let arm = ScriptWalkArm {
                     here,
@@ -1910,7 +1918,7 @@ fn dispatch_script_interact(
                         .map(|it| (it.def.id, it.count))
                         .collect(),
                 };
-                wrote |= arm.route_with_radius(
+                wrote |= arm.queue_route(
                     x,
                     z,
                     level,
@@ -1919,6 +1927,8 @@ fn dispatch_script_interact(
                         ..FindOptions::default()
                     },
                     radius,
+                    true,
+                    request_id,
                 );
             }
             InteractReq::WalkNearestBank => {
@@ -2381,6 +2391,7 @@ fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
         bot.route_worker = None;
         bot.pending_route = None;
         bot.requested_route = None;
+        bot.walk_request_id = 0;
         bot.clear_walk_outcome();
     }
 }
@@ -2724,6 +2735,7 @@ fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 
 struct PostedWalkOutcome {
     seq: u64,
     generation: u64,
+    request_id: u64,
     failed: bool,
     x: i32,
     z: i32,
@@ -3765,6 +3777,7 @@ fn with_script_snapshot_input<R>(
         bank_approaches: Some(&bank_approach_store),
         walk_outcome_seq: walk_outcome.seq,
         walk_outcome_generation: walk_outcome.generation,
+        walk_outcome_request_id: walk_outcome.request_id,
         walk_outcome_failed: walk_outcome.failed,
         walk_outcome_x: walk_outcome.x,
         walk_outcome_z: walk_outcome.z,
@@ -3828,11 +3841,15 @@ struct NavBot {
     traveller: Traveller,
     route: Option<Route>,
     bank_fetch: Option<PendingBankFetch>,
+    /// Isolate-allocated walk request id for the armed / in-flight find.
+    /// Distinct from `route_generation`, which remains the worker / retained-route token.
+    walk_request_id: u64,
     /// Last packed-walk `allow_teleports` opt-in (`Traversal.teleportsEnabled`).
     allow_teleports: bool,
     /// Bounded published walk outcome. Seq `0` means never published.
     walk_outcome_seq: u64,
     walk_outcome_generation: u64,
+    walk_outcome_request_id: u64,
     walk_outcome_failed: bool,
     walk_outcome_x: i32,
     walk_outcome_z: i32,
@@ -3870,7 +3887,7 @@ impl ScriptWalkArm {
     /// the worker stores the outcome on the uid's nav bot. Returns whether
     /// the worker was spawned — not whether a path exists.
     fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
-        self.queue_route(x, z, level, opts, 0, false)
+        self.queue_route(x, z, level, opts, 0, false, 0)
     }
     /// Explicit WalkNear, including radius 0. Unlike [`Self::route`], an
     /// armed or in-flight route is replaced through the existing generation /
@@ -3883,12 +3900,19 @@ impl ScriptWalkArm {
         opts: FindOptions,
         radius: i32,
     ) -> bool {
-        self.queue_route(x, z, level, opts, radius, true)
+        self.queue_route(x, z, level, opts, radius, true, 0)
     }
-    fn publish_refusal(&self, to: WorldTile, radius: i32, allow_teleports: bool) {
+    fn publish_refusal(&self, to: WorldTile, radius: i32, allow_teleports: bool, request_id: u64) {
         let mut navs = self.navs.lock().unwrap();
         let bot = navs.entry(self.name.clone()).or_default();
-        bot.note_failure(bot.route_generation, to, radius, allow_teleports);
+        // Do not bump route_generation or clear a retained route / bank-fetch.
+        bot.note_failure(
+            bot.route_generation,
+            request_id,
+            to,
+            radius,
+            allow_teleports,
+        );
     }
 
     fn queue_route(
@@ -3899,14 +3923,15 @@ impl ScriptWalkArm {
         mut opts: FindOptions,
         radius: i32,
         retarget: bool,
+        request_id: u64,
     ) -> bool {
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
-            self.publish_refusal(to, radius, opts.allow_teleports);
+            self.publish_refusal(to, radius, opts.allow_teleports, request_id);
             return false;
         };
         let Some(world) = self.world.as_ref() else {
-            self.publish_refusal(to, radius, opts.allow_teleports);
+            self.publish_refusal(to, radius, opts.allow_teleports, request_id);
             return false;
         };
         let from = WorldTile {
@@ -3920,22 +3945,32 @@ impl ScriptWalkArm {
             if bot.bank_fetch.is_some()
                 || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
             {
-                bot.note_failure(bot.route_generation, to, radius, opts.allow_teleports);
+                bot.note_failure(
+                    bot.route_generation,
+                    request_id,
+                    to,
+                    radius,
+                    opts.allow_teleports,
+                );
                 return false;
             }
             let key = (to, radius, opts.allow_teleports);
             if bot.requested_route == Some(key)
                 && (bot.route_worker.is_some() || bot.route.is_some())
             {
+                // Keep the in-flight request id. A later wait with a different
+                // isolate token must not receive this result.
                 return true;
             }
             if let Some(ess) = bot.traveller.essence() {
                 opts.essence = Some(ess);
             }
             bot.route_generation = bot.route_generation.wrapping_add(1);
+            bot.walk_request_id = request_id;
             bot.requested_route = Some(key);
             bot.pending_route = Some(ScriptRouteRequest {
                 generation: bot.route_generation,
+                request_id,
                 world: Arc::clone(world),
                 from,
                 to,
@@ -3987,7 +4022,12 @@ impl ScriptWalkArm {
                 {
                     return;
                 }
-                bot.publish_route(request.generation, request.opts.allow_teleports, outcome);
+                bot.publish_route(
+                    request.generation,
+                    request.request_id,
+                    request.opts.allow_teleports,
+                    outcome,
+                );
             })
             .is_ok();
         if !spawned {
@@ -3998,7 +4038,13 @@ impl ScriptWalkArm {
                     .is_some_and(|t| Arc::ptr_eq(t, &token))
                 {
                     if let Some((to, radius, allow)) = bot.requested_route {
-                        bot.note_failure(bot.route_generation, to, radius, allow);
+                        bot.note_failure(
+                            bot.route_generation,
+                            bot.walk_request_id,
+                            to,
+                            radius,
+                            allow,
+                        );
                     }
                     bot.route_worker = None;
                     bot.pending_route = None;
@@ -4007,6 +4053,40 @@ impl ScriptWalkArm {
             }
         }
         spawned
+    }
+}
+
+/// Mid-follow Stall / Refused / Blocked / GaveUp publish a failed outcome
+/// with the armed walk's isolate request id so the matching wait returns
+/// false. Arrival still settles from `here`. Only genuinely pending follow
+/// work (None) keeps the caller timeout.
+fn apply_nav_follow_outcome(
+    bot: &mut NavBot,
+    outcome: Option<nav::traveller::TravelOutcome>,
+    walking_stand: bool,
+) {
+    match outcome {
+        Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
+            bot.route = None;
+        }
+        Some(_) => {
+            if let Some((to, radius, allow)) = bot.requested_route {
+                bot.note_failure(bot.route_generation, bot.walk_request_id, to, radius, allow);
+            } else if let Some(route) = bot.route.as_ref() {
+                bot.note_failure(
+                    bot.route_generation,
+                    bot.walk_request_id,
+                    route.dest,
+                    0,
+                    bot.allow_teleports,
+                );
+            }
+            bot.route = None;
+            if walking_stand {
+                bot.bank_fetch = None;
+            }
+        }
+        None => {}
     }
 }
 
@@ -4021,6 +4101,8 @@ impl ScriptWalkArm {
 /// armed route's dest into the status row's `walk_*` fields (`-1` when
 /// idle); any terminal outcome clears the route — arrival and stall alike
 /// — so the status flips back to idle and a script may arm a fresh walk.
+/// Mid-follow Stall / Refused / Blocked / GaveUp publish the armed walk's
+/// isolate request id as a failed outcome. Arrival still settles from `here`.
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 fn step_nav_bot<D: Driver>(
@@ -4093,19 +4175,8 @@ fn step_nav_bot<D: Driver>(
                     if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
             )
         });
-        match bot.traveller.follow(driver, snapshot, route, &mut options) {
-            Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
-                bot.route = None;
-            }
-            Some(_) => {
-                // Stall / refuse / block / give-up during stand Walk → NoPath.
-                bot.route = None;
-                if walking_stand {
-                    bot.bank_fetch = None;
-                }
-            }
-            None => {}
-        }
+        let follow_outcome = bot.traveller.follow(driver, snapshot, route, &mut options);
+        apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
         bot.route.as_ref().map(|r| r.dest)
     };
     let mut rows = statuses.lock().unwrap();
@@ -5536,6 +5607,7 @@ fn reset_slot_session_work(
         nav.traveller.clear();
         nav.route = None;
         nav.bank_fetch = None;
+        nav.walk_request_id = 0;
         nav.clear_walk_outcome();
     }
 }
@@ -6224,6 +6296,7 @@ fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32)
 
 struct ScriptRouteRequest {
     generation: u64,
+    request_id: u64,
     world: Arc<NavWorld>,
     from: WorldTile,
     to: WorldTile,
@@ -6264,9 +6337,17 @@ impl NavBot {
         }
     }
 
-    fn note_failure(&mut self, generation: u64, to: WorldTile, radius: i32, allow_teleports: bool) {
+    fn note_failure(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+    ) {
         self.bump_walk_outcome_seq();
         self.walk_outcome_generation = generation;
+        self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
@@ -6279,6 +6360,7 @@ impl NavBot {
         self.bump_walk_outcome_seq();
         self.walk_outcome_failed = false;
         self.walk_outcome_generation = self.route_generation;
+        self.walk_outcome_request_id = 0;
         self.walk_outcome_x = 0;
         self.walk_outcome_z = 0;
         self.walk_outcome_level = 0;
@@ -6286,7 +6368,13 @@ impl NavBot {
         self.walk_outcome_allow_teleports = false;
     }
 
-    fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
+    fn publish_route(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        allow_teleports: bool,
+        outcome: RouteOutcome,
+    ) {
         // Superseded workers and aborted/restarted runs keep a newer
         // route_generation. A late NoPath for the same dest must not publish.
         if self.route_generation != generation {
@@ -6297,7 +6385,7 @@ impl NavBot {
             RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
             RouteOutcome::NoPath => {
                 if let Some((to, radius, allow)) = self.requested_route {
-                    self.note_failure(generation, to, radius, allow);
+                    self.note_failure(generation, request_id, to, radius, allow);
                 }
                 // The retained route belongs to the previous request. A later
                 // request for this failed destination must be allowed to retry.
@@ -7581,10 +7669,10 @@ mod tests {
             )),
             ..Default::default()
         };
-        bot.publish_route(1, true, RouteOutcome::Routed(next.clone()));
+        bot.publish_route(1, 0, true, RouteOutcome::Routed(next.clone()));
         assert_eq!(bot.route, Some(old.clone()));
         assert!(!bot.walk_outcome_failed);
-        bot.publish_route(2, true, RouteOutcome::NoPath);
+        bot.publish_route(2, 0, true, RouteOutcome::NoPath);
         assert_eq!(bot.route, Some(old));
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_outcome_seq, 1);
@@ -7594,7 +7682,7 @@ mod tests {
         assert_eq!(bot.walk_outcome_radius, 0);
         assert!(bot.walk_outcome_allow_teleports);
         assert!(bot.requested_route.is_none());
-        bot.publish_route(2, true, RouteOutcome::Routed(next.clone()));
+        bot.publish_route(2, 0, true, RouteOutcome::Routed(next.clone()));
         assert_eq!(bot.route, Some(next));
         assert!(bot.allow_teleports);
     }
@@ -7611,14 +7699,14 @@ mod tests {
             requested_route: Some((dest, 1, false)),
             ..Default::default()
         };
-        bot.publish_route(1, false, RouteOutcome::NoPath);
+        bot.publish_route(1, 0, false, RouteOutcome::NoPath);
         assert!(
             !bot.walk_outcome_failed,
             "superseded same-target NoPath must not publish"
         );
         assert_eq!(bot.walk_outcome_seq, 0);
         assert_eq!(bot.requested_route, Some((dest, 1, false)));
-        bot.publish_route(2, false, RouteOutcome::NoPath);
+        bot.publish_route(2, 0, false, RouteOutcome::NoPath);
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_outcome_generation, 2);
         assert_eq!(bot.walk_outcome_x, dest.x);
@@ -7740,13 +7828,13 @@ mod tests {
         {
             let mut all = navs.lock().unwrap();
             let bot = all.get_mut("bank").expect("nav bot");
-            bot.publish_route(1, false, RouteOutcome::Routed(old.clone()));
+            bot.publish_route(1, 0, false, RouteOutcome::Routed(old.clone()));
             assert_eq!(
                 bot.route.as_ref().map(|r| r.dest),
                 Some(nearby),
                 "stale nearby worker result must not replace the exact request"
             );
-            bot.publish_route(2, false, pending.calculate());
+            bot.publish_route(2, 0, false, pending.calculate());
             assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(exact));
         }
 
@@ -7795,6 +7883,7 @@ mod tests {
         assert!(bot.pending_route.is_none());
         assert!(bot.requested_route.is_none());
         assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_generation, 1);
         assert_eq!(bot.walk_outcome_x, 2);
         assert_eq!(bot.walk_outcome_z, 2);
         assert_eq!(bot.walk_outcome_radius, 0);
@@ -7815,7 +7904,13 @@ mod tests {
         assert!(!arm.route_with_radius(2820, 3556, 0, FindOptions::default(), 1));
         let bot = &navs.lock().unwrap()["noworld"];
         assert!(bot.walk_outcome_failed);
+        assert_eq!(
+            bot.route_generation, 0,
+            "refuse must not bump route_generation"
+        );
         assert_eq!(bot.walk_outcome_seq, 1);
+        assert_eq!(bot.walk_outcome_generation, 0);
+        assert_eq!(bot.walk_outcome_request_id, 0);
         assert_eq!(bot.walk_outcome_x, 2820);
         assert_eq!(bot.walk_outcome_z, 3556);
         assert_eq!(bot.walk_outcome_radius, 1);
@@ -7867,11 +7962,391 @@ mod tests {
             )),
             ..Default::default()
         };
-        bot.publish_route(4, false, RouteOutcome::NoPath);
+        bot.publish_route(4, 0, false, RouteOutcome::NoPath);
         assert!(
             !bot.walk_outcome_failed,
             "stale generation after abort must not republish"
         );
+    }
+
+    fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
+        PostedWalkOutcome {
+            seq: bot.walk_outcome_seq,
+            generation: bot.walk_outcome_generation,
+            request_id: bot.walk_outcome_request_id,
+            failed: bot.walk_outcome_failed,
+            x: bot.walk_outcome_x,
+            z: bot.walk_outcome_z,
+            level: bot.walk_outcome_level,
+            radius: bot.walk_outcome_radius,
+            allow_teleports: bot.walk_outcome_allow_teleports,
+        }
+    }
+
+    fn encode_walk_snapshot(
+        tick: u64,
+        here: (i32, i32, i32),
+        outcome: PostedWalkOutcome,
+    ) -> Vec<u8> {
+        with_script_snapshot_input(
+            tick,
+            Some(here),
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            outcome,
+            |input, native| script::isolate_fb::encode_snapshot_with_native(input, native),
+        )
+    }
+
+    fn walk_resilient_src(x: i32, z: i32, radius: i32) -> String {
+        format!(
+            r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await Traversal.walkResilient(
+            {{ x: {x}, z: {z}, level: 0 }},
+            {{ radius: {radius}, timeoutMs: 300000 }},
+        );
+    }}
+}}
+"#
+        )
+    }
+
+    fn park_walk_isolate(
+        iso: &script::LoadIsolate,
+        x: i32,
+        z: i32,
+        radius: i32,
+        prior: PostedWalkOutcome,
+    ) -> u64 {
+        iso.post_snapshot(encode_walk_snapshot(1, (0, 0, 0), prior));
+        iso.on_game_tick(1);
+        assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+        let drained = iso.drain_interacts();
+        let request_id = match &drained[..] {
+            [script::shim::InteractReq::WalkNear {
+                x: dx,
+                z: dz,
+                level: 0,
+                radius: dr,
+                allow_teleports: false,
+                request_id,
+            }] if *dx == x && *dz == z && *dr == radius => *request_id,
+            other => panic!("unexpected interacts: {other:?}"),
+        };
+        assert_ne!(request_id, 0);
+        request_id
+    }
+
+    #[test]
+    fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
+        let dest = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "bank".to_string(),
+            NavBot {
+                bank_fetch: Some(PendingBankFetch {
+                    steps: VecDeque::new(),
+                    dest,
+                    opts: FindOptions::default(),
+                    final_route: Route {
+                        legs: vec![],
+                        dest,
+                        ticks: 0.0,
+                    },
+                }),
+                route_generation: 1,
+                walk_outcome_seq: 3,
+                walk_outcome_generation: 1,
+                walk_outcome_failed: true,
+                walk_outcome_x: dest.x,
+                walk_outcome_z: dest.z,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "bank".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(!arm.queue_route(2820, 3556, 0, FindOptions::default(), 1, true, 42));
+        let bot = &navs.lock().unwrap()["bank"];
+        assert_eq!(bot.route_generation, 1);
+        assert!(bot.bank_fetch.is_some());
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_seq, 4);
+        assert_eq!(bot.walk_outcome_generation, 1);
+        assert_eq!(bot.walk_outcome_request_id, 42);
+        assert_eq!(bot.walk_outcome_x, 2820);
+        assert_eq!(bot.walk_outcome_z, 3556);
+        assert_eq!(bot.walk_outcome_radius, 1);
+    }
+
+    #[test]
+    fn late_same_target_cannot_publish_when_outcome_generation_lags_route() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let mut bot = NavBot {
+            route_generation: 4,
+            requested_route: Some((dest, 1, false)),
+            walk_outcome_seq: 3,
+            walk_outcome_generation: 2,
+            walk_outcome_failed: true,
+            walk_outcome_x: dest.x,
+            walk_outcome_z: dest.z,
+            walk_outcome_radius: 1,
+            ..Default::default()
+        };
+        bot.publish_route(2, 9, false, RouteOutcome::NoPath);
+        assert_eq!(
+            bot.walk_outcome_seq, 3,
+            "lagging same-target worker must not publish"
+        );
+        assert_eq!(bot.walk_outcome_generation, 2);
+        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        bot.publish_route(4, 11, false, RouteOutcome::NoPath);
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_generation, 4);
+        assert_eq!(bot.walk_outcome_request_id, 11);
+        assert_eq!(bot.walk_outcome_seq, 4);
+        assert!(bot.requested_route.is_none());
+    }
+
+    #[test]
+    fn mid_follow_terminals_publish_the_armed_request_id() {
+        let dest = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let mut bot = NavBot {
+            route: Some(route.clone()),
+            route_generation: 4,
+            walk_request_id: 7,
+            requested_route: Some((dest, 0, false)),
+            walk_outcome_seq: 3,
+            walk_outcome_generation: 2,
+            walk_outcome_failed: false,
+            bank_fetch: Some(PendingBankFetch {
+                steps: VecDeque::from([BankStep::Walk {
+                    x: dest.x,
+                    z: dest.z,
+                    level: dest.level,
+                }]),
+                dest,
+                opts: FindOptions::default(),
+                final_route: route.clone(),
+            }),
+            ..Default::default()
+        };
+        apply_nav_follow_outcome(
+            &mut bot,
+            Some(nav::traveller::TravelOutcome::Refused {
+                at: dest,
+                reason: api::interact::SendReason::NotIngame,
+            }),
+            false,
+        );
+        assert!(bot.route.is_none());
+        assert!(
+            bot.bank_fetch.is_some(),
+            "non-stand Refused must not drop an unrelated bank-fetch"
+        );
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_request_id, 7);
+        assert_eq!(bot.walk_outcome_seq, 4);
+
+        bot.route = Some(route);
+        bot.walk_request_id = 8;
+        apply_nav_follow_outcome(
+            &mut bot,
+            Some(nav::traveller::TravelOutcome::Blocked {
+                at: dest,
+                leg: 0,
+                detail: "missing loc".into(),
+            }),
+            true,
+        );
+        assert!(bot.route.is_none());
+        assert!(bot.bank_fetch.is_none());
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_request_id, 8);
+        assert_eq!(bot.walk_outcome_seq, 5);
+    }
+
+    #[test]
+    fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: None,
+            navs: Arc::clone(&navs),
+            name: "noworld".into(),
+            state: None,
+            bank: vec![],
+        };
+        let iso = script::LoadIsolate::spawn(
+            walk_resilient_src(2820, 3556, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let request_id = park_walk_isolate(&iso, 2820, 3556, 1, PostedWalkOutcome::default());
+        assert!(!arm.queue_route(2820, 3556, 0, FindOptions::default(), 1, true, request_id));
+        let posted = posted_from_bot(&navs.lock().unwrap()["noworld"]);
+        assert_eq!(posted.generation, 0);
+        assert_eq!(posted.request_id, request_id);
+        assert_eq!(posted.seq, 1);
+        iso.post_snapshot(encode_walk_snapshot(2, (0, 0, 0), posted));
+        iso.on_game_tick(2);
+        assert_eq!(iso.probe("__rs_ok").unwrap(), false);
+        iso.join();
+    }
+
+    #[test]
+    fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: None,
+            navs: Arc::clone(&navs),
+            name: "noworld".into(),
+            state: None,
+            bank: vec![],
+        };
+        let iso = script::LoadIsolate::spawn(
+            walk_resilient_src(2820, 3556, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let first_id = park_walk_isolate(&iso, 2820, 3556, 1, PostedWalkOutcome::default());
+        assert!(!arm.queue_route(2820, 3556, 0, FindOptions::default(), 1, true, first_id));
+        let first = posted_from_bot(&navs.lock().unwrap()["noworld"]);
+        assert_eq!(first.request_id, first_id);
+        // First wait still pending. Delayed old outcome for a different id
+        // must not settle; the actual first_id refusal does.
+        iso.post_snapshot(encode_walk_snapshot(
+            2,
+            (0, 0, 0),
+            PostedWalkOutcome {
+                seq: 99,
+                generation: 0,
+                request_id: first_id.wrapping_add(3),
+                failed: true,
+                x: 2820,
+                z: 3556,
+                level: 0,
+                radius: 1,
+                allow_teleports: false,
+            },
+        ));
+        iso.on_game_tick(2);
+        assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+        iso.post_snapshot(encode_walk_snapshot(3, (0, 0, 0), first));
+        iso.on_game_tick(3);
+        assert_eq!(iso.probe("__rs_ok").unwrap(), false);
+        iso.join();
+    }
+
+    #[test]
+    fn bank_fetch_refusal_echoes_isolate_request_id() {
+        let dest = WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        };
+        let prior = PostedWalkOutcome {
+            seq: 3,
+            generation: 1,
+            request_id: 3,
+            failed: true,
+            x: dest.x,
+            z: dest.z,
+            level: 0,
+            radius: 0,
+            allow_teleports: false,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "bank".to_string(),
+            NavBot {
+                bank_fetch: Some(PendingBankFetch {
+                    steps: VecDeque::new(),
+                    dest,
+                    opts: FindOptions::default(),
+                    final_route: Route {
+                        legs: vec![],
+                        dest,
+                        ticks: 0.0,
+                    },
+                }),
+                route_generation: 1,
+                walk_outcome_seq: prior.seq,
+                walk_outcome_generation: prior.generation,
+                walk_outcome_request_id: prior.request_id,
+                walk_outcome_failed: prior.failed,
+                walk_outcome_x: prior.x,
+                walk_outcome_z: prior.z,
+                walk_outcome_level: prior.level,
+                walk_outcome_radius: prior.radius,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "bank".into(),
+            state: None,
+            bank: vec![],
+        };
+        let iso = script::LoadIsolate::spawn(
+            walk_resilient_src(2820, 3556, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let request_id = park_walk_isolate(&iso, 2820, 3556, 1, prior);
+        assert!(!arm.queue_route(2820, 3556, 0, FindOptions::default(), 1, true, request_id));
+        let posted = posted_from_bot(&navs.lock().unwrap()["bank"]);
+        assert_eq!(posted.generation, 1);
+        assert_eq!(posted.request_id, request_id);
+        assert_eq!(posted.seq, 4);
+        iso.post_snapshot(encode_walk_snapshot(2, (0, 0, 0), posted));
+        iso.on_game_tick(2);
+        assert_eq!(iso.probe("__rs_ok").unwrap(), false);
+        iso.join();
     }
 
     #[test]
@@ -7963,6 +8438,7 @@ mod tests {
         let world = Arc::new(open_world(7, 7));
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world,
             from: WorldTile {
                 x: 2,
@@ -8005,6 +8481,7 @@ mod tests {
         world.collision.blocked = blocked;
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world: Arc::new(world),
             from: WorldTile {
                 x: 4,
@@ -8056,6 +8533,7 @@ mod tests {
         world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world: Arc::new(world),
             from: WorldTile {
                 x: 2,
@@ -8103,6 +8581,7 @@ mod tests {
         world.collision.blocked = blocked;
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world: Arc::new(world),
             from: WorldTile {
                 x: 0,
@@ -8153,6 +8632,7 @@ mod tests {
         };
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world: Arc::new(world),
             from: WorldTile {
                 x: 4,
@@ -8197,6 +8677,7 @@ mod tests {
         );
         let request = ScriptRouteRequest {
             generation: 0,
+            request_id: 0,
             world: Arc::clone(&world),
             from: WorldTile {
                 x: 3252,
@@ -12272,6 +12753,7 @@ export default class T extends LoopingBot {
                 z: 4,
                 level: 0,
                 allow_teleports: false,
+                request_id: 0,
             }],
         ));
         assert!(
@@ -12294,6 +12776,7 @@ export default class T extends LoopingBot {
                 z: 4,
                 level: 0,
                 allow_teleports: true,
+                request_id: 0,
             }],
         ));
         assert!(

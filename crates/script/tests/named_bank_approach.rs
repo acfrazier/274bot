@@ -254,6 +254,7 @@ fn walk_near_dest() -> InteractReq {
         level: 0,
         radius: 0,
         allow_teleports: false,
+        request_id: 0,
     }
 }
 
@@ -426,6 +427,7 @@ fn unnamed_banking_open_from_distance_walks_producer_dest() {
             level: 0,
             radius: 0,
             allow_teleports: false,
+            request_id: 0,
         }],
         "unnamed Banking.open walks producer dest radius 0"
     );
@@ -550,6 +552,7 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            request_id: 0,
         }]
     );
 
