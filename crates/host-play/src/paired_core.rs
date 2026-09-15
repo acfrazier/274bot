@@ -1303,6 +1303,10 @@ pub struct MuleSlotRecord {
     pub partner_transfer_events: u32,
     pub post_exchange_craft_events: u32,
     pub exchange_stage: MuleExchangeStage,
+    pub episode_qty: i32,
+    pub episode_qty_air: i32,
+    pub confirm_gap_tick: Option<u32>,
+    pub transfer_close_tick: Option<u32>,
     pub second_exchange_before_bank_return: bool,
     pub second_exchange_after_bank_return: bool,
     pub saw_bank_open_loaded: bool,
@@ -1347,6 +1351,10 @@ impl MuleSlotRecord {
             partner_transfer_events: 0,
             post_exchange_craft_events: 0,
             exchange_stage: MuleExchangeStage::Offer,
+            episode_qty: 0,
+            episode_qty_air: 0,
+            confirm_gap_tick: None,
+            transfer_close_tick: None,
             second_exchange_before_bank_return: false,
             second_exchange_after_bank_return: false,
             saw_bank_open_loaded: false,
@@ -1358,6 +1366,42 @@ impl MuleSlotRecord {
             air_from_script: 0,
             xp_from_script: 0,
         }
+    }
+
+    fn drop_episode(&mut self) {
+        self.episode_qty = 0;
+        self.episode_qty_air = 0;
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.exchange_stage = MuleExchangeStage::Offer;
+    }
+
+    fn bind_episode(&mut self, observation: &AirObservation) {
+        let mine_stale = self.latest.as_ref().is_some_and(|prev| {
+            !prev.trade_offer_open
+                && prev.trade_mine_essence == observation.trade_mine_essence
+                && observation.trade_mine_essence > 0
+        });
+        let authoritative_mine = observation.trade_offer_open && !mine_stale;
+        self.episode_qty = observation.essence_unnoted
+            + if authoritative_mine {
+                observation.trade_mine_essence
+            } else {
+                0
+            };
+        self.episode_qty_air = observation.air_runes;
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.saw_offer_with_partner = true;
+        self.exchange_stage = MuleExchangeStage::Confirm;
+    }
+
+    fn partnerless_confirm(observation: &AirObservation) -> bool {
+        observation.trade_confirm_open
+            && observation
+                .trade_partner
+                .as_deref()
+                .is_none_or(|partner| partner.is_empty())
     }
 
     pub fn observe(&mut self, observation: AirObservation) {
@@ -1385,10 +1429,8 @@ impl MuleSlotRecord {
             .map(|row| row.runecraft_xp)
             .unwrap_or(self.baseline.runecraft_xp);
         let at_ruins = near(observation.tile, AIR_RUINS, 8);
-        let essence_out = (prev_ess - observation.essence_unnoted).max(0);
         let essence_in = (observation.essence_unnoted - prev_ess).max(0);
         let air_out = (prev_air - observation.air_runes).max(0);
-        let air_in = (observation.air_runes - prev_air).max(0);
         let named_partner = observation
             .trade_partner
             .as_deref()
@@ -1400,45 +1442,81 @@ impl MuleSlotRecord {
                 }
             }
         }
+        let offer_rising = observation.trade_offer_open
+            && named_partner
+            && self
+                .latest
+                .as_ref()
+                .is_none_or(|prev| !prev.trade_offer_open);
         let stage_before = self.exchange_stage;
-        match self.exchange_stage {
-            MuleExchangeStage::Offer => {
-                if observation.trade_offer_open && named_partner {
-                    self.saw_offer_with_partner = true;
-                    self.exchange_stage = MuleExchangeStage::Confirm;
+        if self.saw_wrong_partner {
+            self.drop_episode();
+        } else if offer_rising {
+            self.bind_episode(&observation);
+        } else {
+            match self.exchange_stage {
+                MuleExchangeStage::Offer => {}
+                MuleExchangeStage::Confirm => {
+                    if Self::partnerless_confirm(&observation) {
+                        self.drop_episode();
+                    } else if observation.trade_confirm_open && named_partner {
+                        match self.confirm_gap_tick {
+                            None => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = MuleExchangeStage::Transfer;
+                            }
+                            Some(tick) if tick == observation.tick => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = MuleExchangeStage::Transfer;
+                            }
+                            Some(_) => self.drop_episode(),
+                        }
+                    } else if !observation.trade_active() {
+                        match self.confirm_gap_tick {
+                            None => self.confirm_gap_tick = Some(observation.tick),
+                            Some(tick) if tick == observation.tick => {}
+                            Some(_) => self.drop_episode(),
+                        }
+                    }
                 }
-            }
-            MuleExchangeStage::Confirm => {
-                if observation.trade_confirm_open && named_partner {
-                    self.saw_confirm_with_partner = true;
-                    self.exchange_stage = MuleExchangeStage::Transfer;
-                } else if !observation.trade_active() {
-                    self.exchange_stage = MuleExchangeStage::Offer;
-                }
-            }
-            MuleExchangeStage::Transfer => {
-                if !observation.trade_active() {
-                    let completed = at_ruins
-                        && match self.role {
-                            MuleRole::Crafter => essence_in > 0 && air_out > 0,
-                            MuleRole::Mule => essence_out > 0 && air_in > 0,
-                        };
-                    if completed {
-                        if self.role == MuleRole::Mule && self.partner_transfer_events == 1 {
-                            if self.returned_to_ruins {
-                                self.second_exchange_after_bank_return = true;
-                            } else {
-                                self.second_exchange_before_bank_return = true;
+                MuleExchangeStage::Transfer => {
+                    if !observation.trade_active() {
+                        if self.transfer_close_tick.is_none() {
+                            self.transfer_close_tick = Some(observation.tick);
+                        }
+                        if self.transfer_close_tick != Some(observation.tick) {
+                            self.drop_episode();
+                        } else {
+                            let essence_out =
+                                (self.episode_qty - observation.essence_unnoted).max(0);
+                            let essence_in =
+                                (observation.essence_unnoted - self.episode_qty).max(0);
+                            let air_out = (self.episode_qty_air - observation.air_runes).max(0);
+                            let air_in = (observation.air_runes - self.episode_qty_air).max(0);
+                            let completed = at_ruins
+                                && match self.role {
+                                    MuleRole::Crafter => essence_in > 0 && air_out > 0,
+                                    MuleRole::Mule => essence_out > 0 && air_in > 0,
+                                };
+                            if completed {
+                                if self.role == MuleRole::Mule && self.partner_transfer_events == 1
+                                {
+                                    if self.returned_to_ruins {
+                                        self.second_exchange_after_bank_return = true;
+                                    } else {
+                                        self.second_exchange_before_bank_return = true;
+                                    }
+                                }
+                                self.transferred_out += essence_out;
+                                self.transferred_in += essence_in;
+                                self.air_transferred_out += air_out;
+                                self.air_transferred_in += air_in;
+                                self.partner_transfer_events =
+                                    self.partner_transfer_events.saturating_add(1);
+                                self.drop_episode();
                             }
                         }
-                        self.transferred_out += essence_out;
-                        self.transferred_in += essence_in;
-                        self.air_transferred_out += air_out;
-                        self.air_transferred_in += air_in;
-                        self.partner_transfer_events =
-                            self.partner_transfer_events.saturating_add(1);
                     }
-                    self.exchange_stage = MuleExchangeStage::Offer;
                 }
             }
         }
@@ -2036,6 +2114,9 @@ pub struct FlaxSlotRecord {
     pub transferred_in: i32,
     pub partner_transfer_events: u32,
     pub exchange_stage: FlaxExchangeStage,
+    pub episode_qty: i32,
+    pub confirm_gap_tick: Option<u32>,
+    pub transfer_close_tick: Option<u32>,
     pub second_delivery_before_bank_return: bool,
     pub second_delivery_after_bank_return: bool,
     pub saw_bank_open_loaded: bool,
@@ -2073,6 +2154,9 @@ impl FlaxSlotRecord {
             transferred_in: 0,
             partner_transfer_events: 0,
             exchange_stage: FlaxExchangeStage::Offer,
+            episode_qty: 0,
+            confirm_gap_tick: None,
+            transfer_close_tick: None,
             second_delivery_before_bank_return: false,
             second_delivery_after_bank_return: false,
             saw_bank_open_loaded: false,
@@ -2083,6 +2167,40 @@ impl FlaxSlotRecord {
             xp_from_script: 0,
             spin_events: 0,
         }
+    }
+
+    fn drop_episode(&mut self) {
+        self.episode_qty = 0;
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.exchange_stage = FlaxExchangeStage::Offer;
+    }
+
+    fn bind_episode(&mut self, observation: &FlaxObservation) {
+        let mine_stale = self.latest.as_ref().is_some_and(|prev| {
+            !prev.trade_offer_open
+                && prev.trade_mine_flax == observation.trade_mine_flax
+                && observation.trade_mine_flax > 0
+        });
+        let authoritative_mine = observation.trade_offer_open && !mine_stale;
+        self.episode_qty = observation.flax
+            + if authoritative_mine {
+                observation.trade_mine_flax
+            } else {
+                0
+            };
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.saw_offer_with_partner = true;
+        self.exchange_stage = FlaxExchangeStage::Confirm;
+    }
+
+    fn partnerless_confirm(observation: &FlaxObservation) -> bool {
+        observation.trade_confirm_open
+            && observation
+                .trade_partner
+                .as_deref()
+                .is_none_or(|partner| partner.is_empty())
     }
 
     pub fn observe(&mut self, observation: FlaxObservation) {
@@ -2110,7 +2228,6 @@ impl FlaxSlotRecord {
             .map(|row| row.crafting_xp)
             .unwrap_or(self.baseline.crafting_xp);
         let flax_out = (prev_flax - observation.flax).max(0);
-        let flax_in = (observation.flax - prev_flax).max(0);
         let string_out = (prev_string - observation.bow_string).max(0);
         let named_partner = observation
             .trade_partner
@@ -2123,44 +2240,77 @@ impl FlaxSlotRecord {
                 }
             }
         }
+        let offer_rising = observation.trade_offer_open
+            && named_partner
+            && self
+                .latest
+                .as_ref()
+                .is_none_or(|prev| !prev.trade_offer_open);
         let stage_before = self.exchange_stage;
-        match self.exchange_stage {
-            FlaxExchangeStage::Offer => {
-                if observation.trade_offer_open && named_partner {
-                    self.saw_offer_with_partner = true;
-                    self.exchange_stage = FlaxExchangeStage::Confirm;
+        if self.saw_wrong_partner {
+            self.drop_episode();
+        } else if offer_rising {
+            self.bind_episode(&observation);
+        } else {
+            match self.exchange_stage {
+                FlaxExchangeStage::Offer => {}
+                FlaxExchangeStage::Confirm => {
+                    if Self::partnerless_confirm(&observation) {
+                        self.drop_episode();
+                    } else if observation.trade_confirm_open && named_partner {
+                        match self.confirm_gap_tick {
+                            None => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = FlaxExchangeStage::Transfer;
+                            }
+                            Some(tick) if tick == observation.tick => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = FlaxExchangeStage::Transfer;
+                            }
+                            Some(_) => self.drop_episode(),
+                        }
+                    } else if !observation.trade_active() {
+                        match self.confirm_gap_tick {
+                            None => self.confirm_gap_tick = Some(observation.tick),
+                            Some(tick) if tick == observation.tick => {}
+                            Some(_) => self.drop_episode(),
+                        }
+                    }
                 }
-            }
-            FlaxExchangeStage::Confirm => {
-                if observation.trade_confirm_open && named_partner {
-                    self.saw_confirm_with_partner = true;
-                    self.exchange_stage = FlaxExchangeStage::Transfer;
-                } else if !observation.trade_active() {
-                    self.exchange_stage = FlaxExchangeStage::Offer;
-                }
-            }
-            FlaxExchangeStage::Transfer => {
-                if !observation.trade_active() {
-                    let at_meet = near(observation.tile, FLAX_MEET, 8);
-                    let completed = at_meet
-                        && match self.role {
-                            FlaxRole::Runner => flax_out > 0,
-                            FlaxRole::Spinner => flax_in > 0,
-                        };
-                    if completed {
-                        if self.role == FlaxRole::Spinner && self.partner_transfer_events == 1 {
-                            if self.returned_to_meet {
-                                self.second_delivery_after_bank_return = true;
-                            } else {
-                                self.second_delivery_before_bank_return = true;
+                FlaxExchangeStage::Transfer => {
+                    if !observation.trade_active() {
+                        if self.transfer_close_tick.is_none() {
+                            self.transfer_close_tick = Some(observation.tick);
+                        }
+                        if self.transfer_close_tick != Some(observation.tick) {
+                            self.drop_episode();
+                        } else {
+                            let at_meet = near(observation.tile, FLAX_MEET, 8);
+                            let flax_out = (self.episode_qty - observation.flax).max(0);
+                            let flax_in = (observation.flax - self.episode_qty).max(0);
+                            let completed = at_meet
+                                && match self.role {
+                                    FlaxRole::Runner => flax_out > 0,
+                                    FlaxRole::Spinner => flax_in > 0,
+                                };
+                            if completed {
+                                if self.role == FlaxRole::Spinner
+                                    && self.partner_transfer_events == 1
+                                {
+                                    if self.returned_to_meet {
+                                        self.second_delivery_after_bank_return = true;
+                                    } else {
+                                        self.second_delivery_before_bank_return = true;
+                                    }
+                                }
+                                self.transferred_out += flax_out;
+                                self.transferred_in += flax_in;
+                                self.partner_transfer_events =
+                                    self.partner_transfer_events.saturating_add(1);
+                                self.drop_episode();
                             }
                         }
-                        self.transferred_out += flax_out;
-                        self.transferred_in += flax_in;
-                        self.partner_transfer_events =
-                            self.partner_transfer_events.saturating_add(1);
                     }
-                    self.exchange_stage = FlaxExchangeStage::Offer;
                 }
             }
         }
