@@ -1,23 +1,37 @@
 //! JS Load: shape detection, the picker library of loaded JS cards, and the
 //! out-of-tree `LoadIsolate` (rustyscript V8 on its own thread).
 //!
+//! The classify surface (`detect_shape`, `LoadShape`, `is_reserved`,
+//! `is_catalog_dim`, import scans, fingerprints, `JsCard`) compiles without
+//! the `load` feature; the cache-backed `JsLibrary`, sibling resolve and the
+//! isolate need it.
+//!
 //! Loading (`JsLibrary::load`) only reads, classifies, validates the source
 //! in a throwaway Runtime (dropped before `load()` returns), registers the
 //! card, and persists `{name, path}`. The isolate is spawned **only** on
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
-use std::collections::{HashMap, HashSet};
+#[cfg(feature = "load")]
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "load")]
 use std::sync::mpsc::{self, Receiver, Sender};
+#[cfg(feature = "load")]
 use std::sync::{Mutex, Once, OnceLock};
+#[cfg(feature = "load")]
 use std::time::{Duration, Instant};
 
+// Cache/transpile types exist only with the isolate feature; the pure
+// classify/scan/fingerprint surface below stays V8-free.
+#[cfg(feature = "load")]
 use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
+#[cfg(feature = "load")]
 use crate::rs2b0t_registry::{
-    parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path, ScriptKind,
-    ScriptSource, SettingDef,
+    parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
 };
+use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
 /// Which loader a JS source belongs to.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -145,6 +159,7 @@ pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
 
 /// One persisted library record: only the name and the source path (the
 /// source itself is re-read from disk on restore).
+#[cfg(feature = "load")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StoreEntry {
     name: String,
@@ -155,6 +170,7 @@ struct StoreEntry {
 /// `$RS2B0T` catalog, persisted to `store`, with origin bytes cached
 /// under `cache`. Same `(source, name)` overwrites; only WalkTo is
 /// reserved; non-bot shapes are rejected at Load.
+#[cfg(feature = "load")]
 pub struct JsLibrary {
     store: PathBuf,
     cache: JsCache,
@@ -164,6 +180,7 @@ pub struct JsLibrary {
     fingerprints: HashMap<String, String>,
 }
 
+#[cfg(feature = "load")]
 impl JsLibrary {
     pub fn new(store: PathBuf) -> Self {
         Self::with_cache(store, default_js_cache_root())
@@ -887,6 +904,7 @@ fn specifier_js(spec: &str) -> String {
     }
 }
 
+#[cfg(feature = "load")]
 fn strip_relative_prefix(spec: &str) -> &str {
     let mut p = spec;
     loop {
@@ -1063,6 +1081,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
 /// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
 /// for extra rustyscript modules at Start.
+#[cfg(feature = "load")]
 pub fn resolve_sibling_modules(
     card_path: &Path,
     origin: &str,
@@ -1141,6 +1160,7 @@ pub fn raw_content_fingerprint(card_path: &Path, origin: &str) -> String {
 
 /// rustyscript evaluates side modules in vec order. An importer whose
 /// `./dep.js` is later in the list gets "module … is not loaded".
+#[cfg(feature = "load")]
 fn order_siblings_deps_first(
     nodes: Vec<(String, String, String, String)>,
 ) -> Vec<(String, String)> {
@@ -1223,6 +1243,7 @@ pub fn is_catalog_dim(name: &str) -> bool {
     CATALOG_DIM.contains(&name)
 }
 
+#[cfg(feature = "load")]
 fn catalog_unloadable(
     name: &str,
     source: ScriptSource,
@@ -1248,6 +1269,7 @@ fn catalog_unloadable(
 
 /// A diagnosed foreign-script defect applies only to the exact audited pair.
 /// A changed card or helper is a different version, not a global name ban.
+#[cfg(feature = "load")]
 fn catalog_defect_reason(name: &str, origin_sha: &str, path: &Path) -> Option<&'static str> {
     if name != "BrimhavenAgility"
         || origin_sha != "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859"
@@ -1286,12 +1308,14 @@ pub struct PreparedCard {
     pub fingerprint: String,
 }
 
-/// Catalog refresh diff. `incoming` is the parsed replacement set.
+/// Catalog refresh diff. `incoming` is the parsed replacement set, read
+/// only by the cache-backed apply step.
 pub struct CatalogDiff {
     pub added: Vec<String>,
     pub changed: Vec<String>,
     pub removed: Vec<String>,
     pub failed: Vec<(String, String)>,
+    #[cfg(feature = "load")]
     incoming: HashMap<String, (crate::rs2b0t_registry::RegistryCard, PathBuf, String)>,
 }
 
@@ -1334,6 +1358,7 @@ impl CatalogApplyReport {
     }
 }
 
+#[cfg(feature = "load")]
 fn shape_to_kind(shape: LoadShape) -> ScriptKind {
     match shape {
         LoadShape::NativeTick => ScriptKind::NativeTick,
@@ -1342,6 +1367,7 @@ fn shape_to_kind(shape: LoadShape) -> ScriptKind {
     }
 }
 
+#[cfg(feature = "load")]
 fn shape_label(shape: LoadShape) -> &'static str {
     match shape {
         LoadShape::CompatDefineBot => "CompatDefineBot",
@@ -2647,20 +2673,22 @@ mod isolate {
                         .and_then(|v| v.as_array())
                         .map(|rows| rows.iter().filter_map(|row| row.as_str()).collect())
                         .unwrap_or_default();
-                    Ok(serde_json::Value::Bool(api::content::is_hostile_attacker(
-                        payload.get("name").and_then(|v| v.as_str()),
-                        payload
-                            .get("inCombat")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        payload
-                            .get("targetsAnotherPlayer")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        distance,
-                        &actions,
-                        max_distance,
-                    )))
+                    Ok(serde_json::Value::Bool(
+                        crate::content::is_hostile_attacker(
+                            payload.get("name").and_then(|v| v.as_str()),
+                            payload
+                                .get("inCombat")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                            payload
+                                .get("targetsAnotherPlayer")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                            distance,
+                            &actions,
+                            max_distance,
+                        ),
+                    ))
                 },
             )
             .map_err(|e| format!("register hostile attacker: {e}"))?;
@@ -2697,10 +2725,9 @@ mod isolate {
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
-                    Ok(serde_json::Value::Bool(
-                        json_tile(args.get(1))
-                            .is_some_and(|tile| api::ent::ent_npc_on_tile(npcs, tile)),
-                    ))
+                    Ok(serde_json::Value::Bool(json_tile(args.get(1)).is_some_and(
+                        |tile| crate::ent::ent_npc_on_tile(npcs, tile),
+                    )))
                 },
             )
             .map_err(|e| format!("register ent npc on tile: {e}"))?;

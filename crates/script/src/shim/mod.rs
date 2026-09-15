@@ -615,8 +615,9 @@ pub(crate) fn content_json(
     game_data: Option<&api::game_data::SelectedGameData>,
     named_banks: &api::named_banks::NamedBankFacts,
 ) -> String {
+    use crate::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
-    use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES};
+    use api::content::ROCK_TYPE_NAMES;
     let items = game_data
         .map(|data| {
             data.items()

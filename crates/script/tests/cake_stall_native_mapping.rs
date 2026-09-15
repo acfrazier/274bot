@@ -503,7 +503,7 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
 }
 
 #[test]
-fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
+fn native_cake_owner_selects_with_native_predicate_and_posts_food_gain() {
     let iso = LoadIsolate::spawn(
         "export default class T extends LoopingBot { loop() {} }".to_string(),
         LoadShape::CompatClass,

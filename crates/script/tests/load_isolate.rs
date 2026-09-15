@@ -6788,9 +6788,12 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
-    let cow_names: Vec<&str> = api::content::COW_FIELDS.iter().map(|f| f.name).collect();
-    let fire_names: Vec<&str> = api::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
-    let cook_names: Vec<&str> = api::content::COOK_STANDS.iter().map(|s| s.name).collect();
+    let cow_names: Vec<&str> = script::content::COW_FIELDS.iter().map(|f| f.name).collect();
+    let fire_names: Vec<&str> = script::content::FIRE_PLOTS.iter().map(|p| p.name).collect();
+    let cook_names: Vec<&str> = script::content::COOK_STANDS
+        .iter()
+        .map(|s| s.name)
+        .collect();
     assert_eq!(
         probe
             .get("cows")
@@ -6823,7 +6826,7 @@ export default class T extends LoopingBot {
         Some(api::content::ROCK_TYPE_NAMES.to_vec()),
         "handle.content.rock_type_names must be the Rust table: {probe:?}"
     );
-    let ve = api::content::FIRE_PLOTS
+    let ve = script::content::FIRE_PLOTS
         .iter()
         .find(|p| p.name == "Varrock East")
         .expect("Varrock East");
