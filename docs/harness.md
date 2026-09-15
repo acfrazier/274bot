@@ -28,7 +28,6 @@ export RS2B0T=/absolute/path/to/rs2b0t
 # export NAV_FLAGS=/absolute/output/274bot.navflags
 # cargo run --locked --release -p nav --bin nav-pack
 
-LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
 ```
@@ -39,6 +38,13 @@ Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 player must reach the exact destination. Pack format is version 8:
 **rebake old v8 packs** to receive the adjacent-door edge fix. A new
 executable does not rewrite an existing override pack.
+
+The `nav_door` integration test uses the local-274 engine and the fixed
+`$HOME/experiments/Server/engine/data/pack/client` cache path:
+
+```sh
+BOT_TARGET=local BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+```
 
 Some existing integration-test helpers use the default
 `HOME/experiments/Server/engine/data/pack/client` layout. Check the

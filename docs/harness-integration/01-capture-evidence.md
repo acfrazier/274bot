@@ -1,17 +1,15 @@
 # Capture and evidence — application integration
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Architect: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: architecture only for brief 46 section A.
 Not implementation, not LIVE, not catalog/frontend acceptance, not a
 second capture backend, not a restart of the memory campaign.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, `docs/compat/briefs/46-harness-architecture.md`,
-and the named current seams. Branch checked first:
-`codex/rs2b0t-multirevision` (not `main`). Work is this report only.
-No product edits, LIVE, fixtures, STATE, matrix, other workers' files,
-stash, reset, restore, checkout, merge, remotes, gitlink, or release
-actions.
 
 ## Verdict
 

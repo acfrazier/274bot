@@ -18,7 +18,7 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 - Content-addressed JS/TS transpile cache under `~/.274bot/js-cache`
   (raw-origin SHA-256). Per-profile script assignment and settings bags
   persist in the vault on successful Start.
-- Panel/TUI: manual **Reload**, catalog **Refresh catalog**, MultiBox
+- Native panel: manual **Reload**, catalog **Refresh catalog**, MultiBox
   **Start all / Stop all** (separate from Login all / Logout all). Reload
   confirm restarts matching running bots and Stops matching paused bots;
   unchanged origins skip transpile.
@@ -108,12 +108,12 @@ and advanced campaign capture/controllers are excluded.
   and headless `tui-play --live script_bone_burier` pass the same
   runner.
 
-### Public world
+### Public world docs
 
-- `public-289` / `BOT_TARGET=prod` (alias `live`) / `--prod` →
-  `w1.rs2b2t.com:443` (WSS game + HTTPS assets) with the baked public RSA.
-  Local engines stay the tested path. Cargo `TARGET` is the rustc triple,
-  not a world switch. Not Jagex, not a hosted wall, no public-world CI.
+- `BOT_TARGET=prod` (alias `live`) / `host-play --prod` → `w1.rs2b2t.com:43594`
+  with the baked public RSA; the local engine stays the default. Cargo
+  `TARGET` is the rustc triple, not a world switch. Not Jagex, not a
+  hosted wall, no w1 CI.
 
 ## [0.1.2] — 2026-09-01
 

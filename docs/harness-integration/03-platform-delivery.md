@@ -1,22 +1,15 @@
 # Three-OS harness diagnostics and delivery
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Reviewer: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: bounded architecture for brief 46 section C.
 Not implementation, not LIVE, not native startup acceptance, not a
 release tag, not a remote-control product.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, `docs/compat/01-session-profile.md`,
-`docs/compat/06b-panel-startup-trace.md`,
-`docs/compat/06c-panel-startup-design.md`,
-`docs/compat/06d-panel-startup-preparation.md`,
-`docs/compat/platform-preparation.md`, and
-`docs/compat/briefs/46-harness-architecture.md`. Branch checked first:
-`codex/rs2b0t-multirevision` (not `main`). Work was read-only except
-this report. No product edits, LIVE, fixtures, STATE, sibling A/B/D/E
-files, subagents, stash, reset, restore, checkout, merge, remotes, or
-release actions. Concurrent uncommitted catalog/game-data WIP is not
-this report's product.
 
 Operator request: integrate useful external harness capabilities into
 the application for macOS, Windows and Linux release binaries. Current
@@ -158,10 +151,9 @@ consume the committed JSON; they must not shell out to Node or git
 against the operator's engine checkouts.
 
 Workspace `Cargo.toml` has no release profile beyond client
-`opt-level=3` in dev. No zip/msi/dmg/appimage. No code signing. Product
-README documents `local-274` / `local-289` / `public-289` (public on
-`w1.rs2b2t.com:443`); older campaign notes that still said 274-only
-`43594` for public are superseded.
+`opt-level=3` in dev. No zip/msi/dmg/appimage. No code signing. README
+still describes a 274-only public `43594` world; current code's public
+profile is 289 at `w1.rs2b2t.com:443`. README is not this report's edit.
 
 ## External helpers: keep vs fold
 

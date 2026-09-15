@@ -1,20 +1,17 @@
 # Integrated scenario and fleet run controls
 
+> Historical design snapshot from 2026-09-10. Proposals and source inventories
+> below describe that date, not current availability or qualification. See the
+> [current harness guide](../harness.md) and [suite runner](../e2e-suite.md).
+> References to private campaign files are historical provenance; they are
+> not prerequisites for using this repository.
+
 Reviewer: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
 Date: 2026-09-10. Kind: bounded pre-implementation design of brief 46
 section B against committed source and a bounded historical harness
 snapshot. Not runtime evidence, not LIVE, not source acceptance, not
 release, not a second scenario engine, not a distributed campaign
 framework.
-
-Read once: `AGENTS.md`, `docs/execution.md`, `docs/harness.md`,
-`docs/compat/STATE.md`, `docs/compat/05a-catalog-live-harness.md`,
-`docs/compat/01-session-profile.md`, plan step 8 in
-`docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`,
-and the named brief. Branch checked first: `codex/rs2b0t-multirevision`
-(not `main`). Work was read-only except this report. No product edits,
-LIVE, fixtures, STATE, matrix, subagents, stash, reset, restore,
-checkout, merge, remotes, or other workers' files.
 
 Current shipped code is authoritative. `codex/memory-diagnostics` was
 inspected with `git show` / `git ls-tree` only. Old reports are

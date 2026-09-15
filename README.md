@@ -30,7 +30,7 @@ Default engine roots (override with `--engine` / `ENGINE_DIR`):
 - 274: `$HOME/experiments/Server/engine`
 - 289: `$HOME/experiments/lostcity-289/engine`
 
-Pack cache for local is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). Prod/public unpack defaults under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289`. This repo does **not** ship or download Jagex assets; you bring engine and pack.
+Pack cache for local is `$ENGINE_DIR/data/pack/client` (`--cache` overrides). Public-289 uses `~/.274bot/unpack-289` by default. This repo ships no Jagex assets; the client can fetch `/crc` and jags from the selected engine or public asset endpoint.
 
 Alpha’s **tested** path is the **local** engine for the profile you run. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
 
@@ -62,7 +62,7 @@ export BOT_VAULT_PASS=bot
 # Prefer an explicit profile. Example: local 289 engine.
 cargo run --release -p panel --bin panel-play -- --profile local-289
 # Local 274:
-# cargo run --release -p panel --bin panel-play -- --profile local-274
+# BOT_NAV_REVISION=274 ENGINE_DIR="$HOME/experiments/Server/engine" cargo run --release -p panel --bin panel-play -- --profile local-274
 
 # CLI: run one or more vaulted profiles (upserts --user; default test/test)
 cargo run --release -p host-play -- --profile local-289 --user test
