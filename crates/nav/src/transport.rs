@@ -524,9 +524,11 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// their `[oploc1,<name>]` open script declares a varp gate; the gate is
 /// carried on every edge of the door (`varp_req`), never invented.
 /// A door whose open script instead proves a directional free arm
-/// ([`quest_door_free_arms`]) keeps only that crossing, with empty
-/// requirements: the other crossing needs a masked (bitfield) gate the v8
-/// pack cannot carry, so it is omitted rather than emitted ungated.
+/// ([`quest_door_free_arms`]) keeps that crossing with empty requirements.
+/// The gated reverse is omitted unless [`completed_quest_reverse`] proves a
+/// conservative completed-quest requirement for that loc (Death Plateau hut
+/// doors only); a missing or incomplete quest fact still fails closed. The
+/// v8 pack carries no masked bitfield, so raw varp 315 is never the gate.
 /// Closed fence-gate members declared outside `gates.loc` (the quest/area
 /// configs) join the door set only through [`inherited_closed_gates`] —
 /// the closed gate categories whose effective handler is the verified
@@ -620,10 +622,15 @@ fn door_edges(
             // A door is bidirectional: an edge in `dir` and one in its
             // opposite, each with an adjacent standable destination. A blocked
             // neighbor yields no edge; opening a door cannot erase scenery.
+            let quest_reverse = free_arm.and_then(|arm| completed_quest_reverse(*id, arm, ids));
             for dir in [angle_dir, opposite(angle_dir)] {
-                // A directional door keeps only the crossing its open
-                // script proves free; its gated crossing is omitted.
-                if free_arm.is_some_and(|arm| dir != arm.free_dir(angle_dir)) {
+                let is_free = free_arm.is_some_and(|arm| dir == arm.free_dir(angle_dir));
+                let is_gated_reverse = free_arm.is_some() && !is_free;
+                // A directional door keeps the crossing its open script
+                // proves free. The gated reverse is emitted only with the
+                // conservative completed-quest mapping; otherwise it stays
+                // omitted rather than ungated.
+                if is_gated_reverse && quest_reverse.is_none() {
                     continue;
                 }
                 let Some(to) = door_far_side(at, dir, collision) else {
@@ -640,9 +647,16 @@ fn door_edges(
                     open_loc_id: open_ids.get(id).copied(),
                     skill_req: vec![],
                     item_req: vec![],
-                    quest_req: vec![],
+                    quest_req: if is_gated_reverse {
+                        quest_reverse
+                            .map(|q| vec![q.to_string()])
+                            .unwrap_or_default()
+                    } else {
+                        vec![]
+                    },
                     // The proven free crossing has no requirement; a door
                     // with a readable gate carries it on both crossings.
+                    // The quest-gated reverse is not a varp gate.
                     varp_req: if free_arm.is_some() {
                         vec![]
                     } else {
@@ -771,6 +785,34 @@ fn gate_category_handlers(text: &str) -> Vec<(bool, String)> {
         out.push(done);
     }
     out
+}
+
+/// Loc names targeted by `[oploc1,<name>]` in a script text, including
+/// same-line bodies (`[oploc1,foo] ~open_gate;`) that [`script_blocks`]
+/// cannot see.
+fn oploc1_names(text: &str, into: &mut HashSet<String>) {
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
+        };
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix('[') else {
+            continue;
+        };
+        let Some((header, _)) = rest.split_once(']') else {
+            continue;
+        };
+        let Some((op, name)) = header.split_once(',') else {
+            continue;
+        };
+        if op.trim() == "oploc1" {
+            let name = name.trim();
+            if !name.is_empty() {
+                into.insert(name.to_string());
+            }
+        }
+    }
 }
 
 /// The closed-gate categories this content actually supports, as the
@@ -1017,13 +1059,11 @@ fn inherited_closed_gates(
         }
     });
     // Loc-specific `[oploc1,<name>]` blocks, the resolver's first priority.
+    // Same-line bodies (`[oploc1,foo] ~open_gate;`) are included:
+    // [`script_blocks`] cannot see a header that is not alone on the line.
     let mut overridden: HashSet<String> = HashSet::new();
     visit_rs2(&scripts, &mut |text| {
-        for (op, name, _) in script_blocks(text) {
-            if op == "oploc1" {
-                overridden.insert(name);
-            }
-        }
+        oploc1_names(text, &mut overridden);
     });
     // Every placed loc id per tile, for the pair check.
     let mut placed: HashMap<(i32, i32, i32), Vec<i32>> = HashMap::new();
@@ -1445,13 +1485,16 @@ fn quest_door_reqs(
 /// A door whose `[oploc1,<name>]` block proves one crossing free: the block
 /// opens on a `~check_axis` side test whose other disjunct is a
 /// `~<proc> >= ^<const>` bitfield gate. The proven crossing is emitted with
-/// empty requirements; the gated one needs a masked requirement the v8 pack
-/// cannot carry, so it stays out rather than open.
+/// empty requirements. The gated reverse is emitted only when
+/// [`completed_quest_reverse`] can prove a conservative completed-quest
+/// requirement for that loc; otherwise it stays out rather than open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FreeDoorArm {
     /// The `~check_axis(coord, loc_coord, loc_angle)` value the block opens
     /// on without any gate.
     free_when_check_axis: bool,
+    /// Resolved `^const` minimum on the gated disjunct.
+    gated_min: i32,
 }
 
 impl FreeDoorArm {
@@ -1516,100 +1559,291 @@ fn quest_door_free_arms(
 }
 
 /// The free arm a door's `[oploc1,<name>]` block proves, from exactly the
-/// supported shape:
+/// supported top-level sequence:
 ///
 /// ```text
 /// def_boolean $<b> = ~check_axis(coord, loc_coord, loc_angle);
-/// if($<b> = <true|false> | ~<proc> >= ^<const>) { …opens the door… }
+/// if($<b> = <true|false> | ~<proc> >= ^<const>) { …opens the door directly… }
 /// ```
 ///
-/// `$<b>` must be the boolean that block's own `check_axis` def introduces;
-/// the opening head must have exactly two disjuncts — that boolean test and
-/// one `~<proc> >= ^<const>` compare — with no nesting and no `&`; `<const>`
-/// must resolve in the script constants; `<proc>` must be a `[proc,…]`
-/// block in the same script text whose body is exactly
+/// The def must be the first top-level statement and the `if` the second;
+/// extra statements before that pair (an outer guard, an earlier return, a
+/// reassignment of `$<b>`) prove nothing. `$<b>` must be the boolean that
+/// statement's own `check_axis` def introduces; the opening head must have
+/// exactly two disjuncts — that boolean test and one `~<proc> >= ^<const>`
+/// compare — with no nesting and no `&`; `<const>` must resolve in the
+/// script constants; `<proc>` must be a `[proc,…]` block in the same script
+/// text whose body is exactly
 /// `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` with the varp in
 /// `pack/varp.pack` and both range constants resolving; and the arm must
-/// open ([`body_opens`]). Every other shape — a raw `%varp` compare, a
-/// different comparator, a missing or differently-shaped proc, an
-/// unresolved name, an arm that does not open — proves nothing at all, so
-/// the door keeps no free arm and is never promoted to ungated. The knock
-/// and dialogue branches are never read: only the gated opening arm the
-/// shape names.
+/// open directly (a top-level `~open_` / `open_and_close` call, no nested
+/// braces). Every other shape — a raw `%varp` compare, a different
+/// comparator, a missing or differently-shaped proc, an unresolved name, an
+/// arm that opens only inside a nested gate, an `else` on the opening `if`
+/// — proves nothing at all, so the door keeps no free arm and is never
+/// promoted to ungated. Knock and dialogue branches after the opening `if`
+/// are never read.
 fn free_door_arm(
     block: &str,
     script_text: &str,
     constants: &HashMap<String, i32>,
     varps: &HashMap<String, i32>,
 ) -> Option<FreeDoorArm> {
-    let axis_bool = check_axis_boolean(block)?;
-    for (head, arm) in if_arms(block) {
-        let Some((free_when_check_axis, proc, cname)) = check_axis_or_proc(&head, &axis_bool)
-        else {
-            continue;
-        };
-        // The supported head's arm must be the one that opens: a head whose
-        // arm does not (or cannot) open proves nothing at all.
-        if !constants.contains_key(&cname) || !body_opens(&arm, script_text) {
-            return None;
-        }
-        proc_bitfield_varp(script_text, &proc, constants, varps)?;
-        return Some(FreeDoorArm {
-            free_when_check_axis,
-        });
+    let stmts = top_level_statements(block);
+    let axis_bool = check_axis_def(stmts.first()?)?;
+    let (head, arm) = if_head_and_arm(stmts.get(1)?)?;
+    let (free_when_check_axis, proc, cname) = check_axis_or_proc(&head, &axis_bool)?;
+    let gated_min = *constants.get(&cname)?;
+    if !arm_opens_directly(&arm) {
+        return None;
+    }
+    proc_bitfield_varp(script_text, &proc, constants, varps)?;
+    Some(FreeDoorArm {
+        free_when_check_axis,
+        gated_min,
+    })
+}
+
+/// Journal name of Death Plateau as the client stores a completed quest.
+const DEATH_PLATEAU_QUEST: &str = "Death Plateau";
+/// Front hut door (`death_sherpa_door`): gated min is `^death_spoken_tenzing`.
+const DEATH_FRONT_DOOR: &str = "death_sherpa_door";
+const DEATH_FRONT_GATED_MIN: i32 = 2;
+/// Rear hut door (`death_sherpa_backdoor`): gated min is `^death_got_map`.
+const DEATH_BACK_DOOR: &str = "death_sherpa_backdoor";
+const DEATH_BACK_GATED_MIN: i32 = 7;
+
+/// Conservative completed-quest requirement for a directional door's gated
+/// reverse, from an explicit source-backed mapping: only the two Death
+/// Plateau hut doors whose proven free-arm shape still carries the current
+/// thresholds (front entry ≥ 2, garden exit ≥ 7). Completion is reachable
+/// only after `death_get_map >= death_scouted_area` (8), so a completed
+/// journal row implies both thresholds; in-progress map stages stay
+/// unsupported. Loc ids resolve from the selected content's `loc.pack`.
+/// This is not a general quest-implication engine and does not read varp
+/// 315.
+fn completed_quest_reverse(
+    id: i32,
+    arm: &FreeDoorArm,
+    ids: &HashMap<String, i32>,
+) -> Option<&'static str> {
+    if ids.get(DEATH_FRONT_DOOR) == Some(&id) && arm.gated_min == DEATH_FRONT_GATED_MIN {
+        return Some(DEATH_PLATEAU_QUEST);
+    }
+    if ids.get(DEATH_BACK_DOOR) == Some(&id) && arm.gated_min == DEATH_BACK_GATED_MIN {
+        return Some(DEATH_PLATEAU_QUEST);
     }
     None
 }
 
-/// `def_boolean $<name> = ~check_axis(coord, loc_coord, loc_angle);` in a
-/// block → `$<name>` (whitespace-tolerant; any other right-hand side is not
-/// a check-axis definition).
-fn check_axis_boolean(block: &str) -> Option<String> {
+/// Comment-stripped top-level statements of a script block, in source
+/// order. An `if (…) { … }` (with any attached `else`) is one statement;
+/// other statements end at a depth-0 `;`. Nested braces stay inside their
+/// statement, so a wrapping `if` is not scanned for an inner free arm.
+fn top_level_statements(block: &str) -> Vec<String> {
+    let mut text = String::new();
     for raw in block.lines() {
-        let Some((lhs, rhs)) = raw.trim().split_once('=') else {
-            continue;
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
         };
-        let mut words = lhs.split_whitespace();
-        let (Some("def_boolean"), Some(name), None) = (words.next(), words.next(), words.next())
-        else {
-            continue;
-        };
-        if !name.starts_with('$') {
-            continue;
-        }
-        let rhs: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
-        if rhs == "~check_axis(coord,loc_coord,loc_angle);" {
-            return Some(name.to_string());
-        }
+        text.push_str(line);
+        text.push('\n');
     }
-    None
-}
-
-/// Every `if (<head>) { <arm> }` in a block: the parenthesised head text and
-/// its balanced arm, in source order. The head scan mirrors
-/// [`if_varp_gate`]'s; it is kept separate so the direct-varp gate path is
-/// untouched by the directional arm derivation.
-fn if_arms(block: &str) -> Vec<(String, String)> {
-    let bytes = block.as_bytes();
     let mut out = Vec::new();
     let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"if") {
-            let tail = &block[i + 2..];
-            let rest = tail.trim_start();
-            let ws = tail.len() - rest.len();
-            if let Some(inner) = rest.strip_prefix('(') {
-                if let Some(close) = inner.find(')') {
-                    let arm_from = i + 2 + ws + 1 + close + 1;
-                    if let Some(arm) = balanced_arm(block, arm_from) {
-                        out.push((inner[..close].trim().to_string(), arm));
+    while i < text.len() {
+        while i < text.len() && text.as_bytes()[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= text.len() {
+            break;
+        }
+        let start = i;
+        if starts_with_if_kw(&text[i..]) {
+            let Some(end) = if_statement_end(&text, i) else {
+                break;
+            };
+            i = end;
+        } else {
+            let mut depth = 0i32;
+            while i < text.len() {
+                match text.as_bytes()[i] {
+                    b'{' => depth += 1,
+                    b'}' => depth -= 1,
+                    b';' if depth == 0 => {
+                        i += 1;
+                        break;
                     }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+        let stmt = text[start..i].trim();
+        if !stmt.is_empty() {
+            out.push(stmt.to_string());
+        }
+    }
+    out
+}
+
+/// True when `s` starts with the `if` keyword, not `if_settext` / `if_openmain`.
+fn starts_with_if_kw(s: &str) -> bool {
+    let s = s.trim_start();
+    s.starts_with("if")
+        && s[2..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || c == '(')
+}
+
+/// Byte index just past an `if (…) { … }` starting at `from`, including an
+/// attached `else` / `else if` chain so a trailing else cannot be mistaken
+/// for a later independent statement.
+fn if_statement_end(text: &str, from: usize) -> Option<usize> {
+    let mut i = skip_ws(text, from);
+    i = parse_if_chunk(text, i)?;
+    loop {
+        let j = skip_ws(text, i);
+        if !text[j..].starts_with("else") {
+            return Some(i);
+        }
+        let after = &text[j + 4..];
+        if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+            return Some(i);
+        }
+        let k = skip_ws(text, j + 4);
+        if starts_with_if_kw(&text[k..]) {
+            i = parse_if_chunk(text, k)?;
+            continue;
+        }
+        if k < text.len() && text.as_bytes()[k] == b'{' {
+            i = matching_delim(text, k, b'{', b'}')? + 1;
+            continue;
+        }
+        return None;
+    }
+}
+
+fn skip_ws(text: &str, mut i: usize) -> usize {
+    while i < text.len() && text.as_bytes()[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// `if (…) { … }` starting at `from` (already trimmed) → index past the arm.
+fn parse_if_chunk(text: &str, from: usize) -> Option<usize> {
+    if !starts_with_if_kw(&text[from..]) {
+        return None;
+    }
+    let mut i = from + 2;
+    i = skip_ws(text, i);
+    if i >= text.len() || text.as_bytes()[i] != b'(' {
+        return None;
+    }
+    i = matching_delim(text, i, b'(', b')')? + 1;
+    i = skip_ws(text, i);
+    if i >= text.len() || text.as_bytes()[i] != b'{' {
+        return None;
+    }
+    Some(matching_delim(text, i, b'{', b'}')? + 1)
+}
+
+/// Index of the matching closer for `text[open]` (`open`/`close` pair).
+fn matching_delim(text: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if open >= bytes.len() || bytes[open] != open_ch {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        if b == open_ch {
+            depth += 1;
+        } else if b == close_ch {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// `def_boolean $<name> = ~check_axis(coord, loc_coord, loc_angle);` as a
+/// whole statement → `$<name>`. Nested defs inside another statement do
+/// not match.
+fn check_axis_def(stmt: &str) -> Option<String> {
+    let stmt = stmt.trim();
+    let (lhs, rhs) = stmt.split_once('=')?;
+    let mut words = lhs.split_whitespace();
+    let (Some("def_boolean"), Some(name), None) = (words.next(), words.next(), words.next()) else {
+        return None;
+    };
+    if !name.starts_with('$') {
+        return None;
+    }
+    let rhs: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
+    if rhs == "~check_axis(coord,loc_coord,loc_angle);"
+        || rhs == "~check_axis(coord,loc_coord,loc_angle)"
+    {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+/// `if (<head>) { <arm> }` as a whole statement → the head and arm. A
+/// trailing `else` or any other remainder fails closed.
+fn if_head_and_arm(stmt: &str) -> Option<(String, String)> {
+    let s = stmt.trim();
+    if !starts_with_if_kw(s) {
+        return None;
+    }
+    let after_if = s[2..].trim_start();
+    let inner = after_if.strip_prefix('(')?;
+    let close = matching_delim(inner, 0, b'(', b')').or_else(|| {
+        // `inner` is already past the opening `(`, so match as if the
+        // opener sat just before index 0 by scanning depth from 1.
+        let mut depth = 1i32;
+        for (i, b) in inner.bytes().enumerate() {
+            if b == b'(' {
+                depth += 1;
+            } else if b == b')' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
                 }
             }
         }
-        i += 1;
+        None
+    })?;
+    let head = inner[..close].trim().to_string();
+    let after_head = inner[close + 1..].trim_start();
+    if !after_head.starts_with('{') {
+        return None;
     }
-    out
+    let arm_end = matching_delim(after_head, 0, b'{', b'}')?;
+    let arm = after_head[..=arm_end].to_string();
+    if !after_head[arm_end + 1..].trim().is_empty() {
+        return None;
+    }
+    Some((head, arm))
+}
+
+/// True when the `if` arm opens the door directly: a top-level `~open_` /
+/// `open_and_close` call and no nested braces (nested opening gates and
+/// extra conditions fail closed). Labels are not followed.
+fn arm_opens_directly(arm: &str) -> bool {
+    let inner = arm.trim();
+    let Some(inner) = inner.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return false;
+    };
+    if inner.contains('{') {
+        return false;
+    }
+    inner.contains("open_and_close") || inner.contains("~open_")
 }
 
 /// A door head `$<b> = <true|false> | ~<proc> >= ^<const>` — exactly two
@@ -4535,6 +4769,7 @@ fn int_or_null(text: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
 
     use super::*;
@@ -6406,10 +6641,11 @@ if (%mcannon >= ^mcannon_tasked_with_fixing_cannon) {
     /// Tenzing's hut doors prove one free crossing each from the exact
     /// check-axis / proc-bitfield open shape: 3745's exit (dir E, free
     /// under `$leaving = true`) and 3746's entry from the north (dir S,
-    /// free under `$leaving = false`). The gated reverse crossings stay
-    /// omitted (the v8 pack carries no masked requirement), the direct-varp
-    /// castle door keeps both crossings and its gate, and the crossing the
-    /// free arm lands on follows the placement angle, not the door id.
+    /// free under `$leaving = false`). The gated reverse crossings carry
+    /// completed `Death Plateau` (front entry W min 2, garden exit N min 7)
+    /// and never a raw varp-315 gate. The direct-varp castle door keeps both
+    /// crossings and its gate, and the crossing the free arm lands on follows
+    /// the placement angle, not the door id.
     #[test]
     fn derive_transports_emits_tenzing_free_door_arms() {
         let fx = Fixture::new();
@@ -6510,17 +6746,25 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
         assert_eq!(
             door_crossings(&graph, 3745),
             vec![
+                ((2822, 3530), 'E', (2823, 3530)),
                 ((2822, 3530), 'W', (2821, 3530)),
                 ((2822, 3555), 'E', (2823, 3555)),
+                ((2822, 3555), 'W', (2821, 3555)),
             ],
-            "3745 proves only the free `$leaving = true` crossing, \
-             landing along the placement angle"
+            "3745 emits the free `$leaving = true` crossing along the \
+             placement angle and the gated reverse"
         );
         assert_eq!(
             door_crossings(&graph, 3746),
-            vec![((2820, 3557), 'S', (2820, 3556))],
-            "3746 proves only the free `$leaving = false` crossing into the hut"
+            vec![
+                ((2820, 3557), 'N', (2820, 3558)),
+                ((2820, 3557), 'S', (2820, 3556)),
+            ],
+            "3746 emits the free `$leaving = false` crossing into the hut \
+             and the gated garden exit"
         );
+        let free_3745 = [((2822, 3530), DoorDir::W), ((2822, 3555), DoorDir::E)];
+        let gated_3745 = [((2822, 3530), DoorDir::E), ((2822, 3555), DoorDir::W)];
         for e in graph
             .edges
             .iter()
@@ -6529,13 +6773,71 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
             assert_eq!(e.option, 1, "Open op: {e:?}");
             assert!(
                 e.varp_req.is_empty()
-                    && e.quest_req.is_empty()
                     && e.item_req.is_empty()
                     && e.worn_req.is_empty()
                     && e.skill_req.is_empty(),
-                "a proven free crossing carries no requirement: {e:?}"
+                "Tenzing hut doors never carry a raw varp/item/wear/skill gate: {e:?}"
             );
+            let at = (e.at.x, e.at.z);
+            let free = match e.loc_id {
+                3745 => free_3745.contains(&(at, e.dir.unwrap())),
+                3746 => e.dir == Some(DoorDir::S),
+                _ => false,
+            };
+            let gated = match e.loc_id {
+                3745 => gated_3745.contains(&(at, e.dir.unwrap())),
+                3746 => e.dir == Some(DoorDir::N),
+                _ => false,
+            };
+            if free {
+                assert!(
+                    e.quest_req.is_empty(),
+                    "a proven free crossing carries no requirement: {e:?}"
+                );
+            } else if gated {
+                assert_eq!(
+                    e.quest_req,
+                    vec!["Death Plateau".to_string()],
+                    "gated reverse requires completed Death Plateau: {e:?}"
+                );
+            } else {
+                panic!("unexpected Tenzing crossing: {e:?}");
+            }
         }
+        // High unrelated raw 315 bits do not satisfy the gated reverse:
+        // the mapping is the completed journal row, not varp 315.
+        let gated = graph
+            .edges
+            .iter()
+            .find(|e| e.loc_id == 3745 && e.dir == Some(DoorDir::W) && e.at.z == 3555)
+            .expect("3745 W front entry");
+        let empty = crate::world_state::WorldState::empty();
+        assert!(!empty.allows(gated), "absent quest rejects the gated entry");
+        let high_bits = crate::world_state::WorldState {
+            varps: HashMap::from([(315, i32::MAX)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        assert!(
+            !high_bits.allows(gated),
+            "high raw 315 bits do not bypass the completed-quest gate"
+        );
+        let incomplete = crate::world_state::WorldState {
+            quests: HashSet::from(["Imp Catcher".to_string()]),
+            varps: HashMap::from([(315, i32::MAX)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        assert!(
+            !incomplete.allows(gated),
+            "an unrelated completed quest does not open the gated entry"
+        );
+        let done = crate::world_state::WorldState {
+            quests: HashSet::from(["Death Plateau".to_string()]),
+            ..crate::world_state::WorldState::empty()
+        };
+        assert!(
+            done.allows(gated),
+            "completed Death Plateau allows the gated entry"
+        );
         // The direct-varp castle door is untouched: both crossings, its gate.
         let castle: Vec<_> = graph
             .edges
@@ -6545,6 +6847,16 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
         assert_eq!(castle.len(), 2);
         for e in &castle {
             assert_eq!(e.varp_req, vec![(314, 70)]);
+            assert!(e.quest_req.is_empty());
+            assert!(
+                empty.allows(e) == false,
+                "the castle door still fails closed without varp 314"
+            );
+            let with_varp = crate::world_state::WorldState {
+                varps: HashMap::from([(314, 70)]),
+                ..crate::world_state::WorldState::empty()
+            };
+            assert!(with_varp.allows(e), "direct-varp castle gate unchanged");
         }
     }
 
@@ -6689,9 +7001,148 @@ return (getbit_range(%death_unknown_varp, ^death_map_lower, ^death_map_upper));
         }
     }
 
-    /// The real Server content (274) carries the same two shapes: only the
-    /// free crossings derive — 3745's exit and 3746's hut entry — while the
-    /// direct-varp castle door keeps both crossings and its gate.
+    /// Extra conditions on an otherwise-valid canonical block/proc must not
+    /// prove a free arm: a wrapping outer `if`, an earlier conditional
+    /// return, a reassigned check-axis boolean, and an open call nested
+    /// inside the opening arm. The control loc uses the same valid
+    /// `death_get_map` proc as Tenzing and must still emit its free crossing,
+    /// so each negative is a refusal of extra conditions, not a dead pipeline.
+    #[test]
+    fn derive_transports_omits_extra_condition_directional_door_arms() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "5010=good_door\n5011=nested_outer\n5012=earlier_return\n\
+             5013=reassigned_axis\n5014=nested_open\n",
+        );
+        fx.write("pack/varp.pack", "315=death_map\n");
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.loc",
+            "\
+[good_door]
+op1=Open
+[nested_outer]
+op1=Open
+[earlier_return]
+op1=Open
+[reassigned_axis]
+op1=Open
+[nested_open]
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.constant",
+            "^death_spoken_tenzing = 2\n^death_map_lower = 0\n^death_map_upper = 3\n",
+        );
+        fx.write(
+            "scripts/quests/quest_death/scripts/quest_death.rs2",
+            "\
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,nested_outer]
+if(inv_total(inv, coins) > 0) {
+    def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+    if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+        ~open_and_close_door2(loc_1532, $leaving, door_open);
+        return;
+    }
+}
+
+[oploc1,earlier_return]
+if(inv_total(inv, coins) = 0) {
+    return;
+}
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,reassigned_axis]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+$leaving = false;
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,nested_open]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    if(inv_total(inv, coins) > 0) {
+        ~open_and_close_door2(loc_1532, $leaving, door_open);
+        return;
+    }
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+        );
+        fx.write(
+            "maps/m44_55.jm2",
+            "\
+==== MAP ====
+0 6 35: h98 f4 u64
+
+==== LOC ====
+0 6 35: 5010 0 2
+0 6 36: 5011 0 2
+0 6 37: 5012 0 2
+0 6 38: 5013 0 2
+0 6 39: 5014 0 2
+",
+        );
+        let defs = loc_defs(&[
+            (5010, 1, 1),
+            (5011, 1, 1),
+            (5012, 1, 1),
+            (5013, 1, 1),
+            (5014, 1, 1),
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        assert_eq!(
+            door_crossings(&graph, 5010),
+            vec![((2822, 3555), 'E', (2823, 3555))],
+            "the valid control must still prove its free arm from the same proc"
+        );
+        for (id, why) in [
+            (
+                5011,
+                "a wrapping outer if must not prove the inner free arm",
+            ),
+            (
+                5012,
+                "an earlier conditional return must not prove a later free arm",
+            ),
+            (
+                5013,
+                "a reassigned check-axis boolean must not prove a free arm",
+            ),
+            (
+                5014,
+                "an open nested inside the opening arm must not prove a free arm",
+            ),
+        ] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "loc {id} must not be packed: {why}"
+            );
+        }
+    }
+
+    /// The real Server content (274) carries the same four Tenzing
+    /// directions: 3745's free exit E and gated entry W (completed Death
+    /// Plateau), 3746's free garden-to-hut S and gated garden exit N, while
+    /// the direct-varp castle door keeps both crossings and its gate.
     #[test]
     fn derive_transports_tenzing_free_arms_from_real_content() {
         let Some((graph, _)) = derive_from_real_content() else {
@@ -6699,14 +7150,40 @@ return (getbit_range(%death_unknown_varp, ^death_map_lower, ^death_map_upper));
         };
         assert_eq!(
             door_crossings(&graph, 3745),
-            vec![((2822, 3555), 'E', (2823, 3555))],
-            "3745 proves only the free exit crossing"
+            vec![
+                ((2822, 3555), 'E', (2823, 3555)),
+                ((2822, 3555), 'W', (2821, 3555)),
+            ],
+            "3745 free exit E and gated front entry W"
         );
         assert_eq!(
             door_crossings(&graph, 3746),
-            vec![((2820, 3557), 'S', (2820, 3556))],
-            "3746 proves only the free entry crossing"
+            vec![
+                ((2820, 3557), 'N', (2820, 3558)),
+                ((2820, 3557), 'S', (2820, 3556)),
+            ],
+            "3746 gated garden exit N and free garden-to-hut S"
         );
+        for e in graph.edges.iter().filter(|e| e.loc_id == 3745) {
+            match e.dir {
+                Some(DoorDir::E) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
+                Some(DoorDir::W) => {
+                    assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
+                    assert!(e.varp_req.is_empty());
+                }
+                other => panic!("unexpected 3745 dir {other:?}"),
+            }
+        }
+        for e in graph.edges.iter().filter(|e| e.loc_id == 3746) {
+            match e.dir {
+                Some(DoorDir::S) => assert!(e.quest_req.is_empty() && e.varp_req.is_empty()),
+                Some(DoorDir::N) => {
+                    assert_eq!(e.quest_req, vec!["Death Plateau".to_string()]);
+                    assert!(e.varp_req.is_empty());
+                }
+                other => panic!("unexpected 3746 dir {other:?}"),
+            }
+        }
         let castle: Vec<_> = graph
             .edges
             .iter()
@@ -6719,6 +7196,7 @@ return (getbit_range(%death_unknown_varp, ^death_map_lower, ^death_map_upper));
                 vec![(314, 70)],
                 "unchanged `%death_equiproom` gate"
             );
+            assert!(e.quest_req.is_empty());
         }
     }
 
@@ -7120,10 +7598,11 @@ p_delay(1);
 
     /// The derived fence-gate crossing must route the recorded start
     /// (2823,3555, the hut's front-door passage) out to the road and back:
-    /// both legs hop loc 3725 through the fence. The recorded ClimbingBoots
-    /// target (2820,3556, the hut's front room) stays `NoPath` under v8 —
-    /// that entry needs the deliberately omitted masked `3745` W arm, so it
-    /// is an expected result, not something to fix through 3746 S.
+    /// both legs hop loc 3725 through the fence. Incomplete / empty state
+    /// still cannot enter the hut (3745 W requires completed Death Plateau);
+    /// with that quest the recorded ClimbingBoots walk routes through 3745 W.
+    /// Hut → road stays free via 3745 E. 3746 S remains the garden return,
+    /// not a road entry.
     #[test]
     fn tenzing_passage_and_road_route_through_the_inherited_gate() {
         use crate::router::{find_with, FindOptions, Leg};
@@ -7180,7 +7659,7 @@ p_delay(1);
                     root.display()
                 );
             }
-            // The hut's front room is still sealed by the omitted masked arm.
+            // Incomplete state: the hut's front room stays sealed.
             let hut = WorldTile {
                 x: 2820,
                 z: 3556,
@@ -7188,14 +7667,126 @@ p_delay(1);
             };
             assert!(
                 find_with(&wc, &graph, passage, hut, FindOptions::default(), &state).is_err(),
-                "passage -> hut stays NoPath under v8 ({}): the recorded ClimbingBoots \
-                 walk must not be 'fixed' by a free reverse fence crossing",
+                "passage -> hut stays NoPath without completed Death Plateau ({})",
                 root.display()
             );
-            // And 3746 S remains the garden return leg, not a road entry.
+            let high_bits = crate::world_state::WorldState {
+                varps: HashMap::from([(315, i32::MAX)]),
+                ..crate::world_state::WorldState::empty()
+            };
             assert!(
-                door_crossings(&graph, 3746) == vec![((2820, 3557), 'S', (2820, 3556))],
-                "3746 keeps exactly its garden -> hut crossing ({})",
+                find_with(
+                    &wc,
+                    &graph,
+                    passage,
+                    hut,
+                    FindOptions::default(),
+                    &high_bits
+                )
+                .is_err(),
+                "high raw 315 bits do not open 3745 W ({})",
+                root.display()
+            );
+            let done = crate::world_state::WorldState {
+                quests: HashSet::from(["Death Plateau".to_string()]),
+                ..crate::world_state::WorldState::empty()
+            };
+            let entry = find_with(&wc, &graph, passage, hut, FindOptions::default(), &done)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "passage -> hut must route with completed Death Plateau ({e:?}) ({})",
+                        root.display()
+                    )
+                });
+            let hop_3745 = entry
+                .legs
+                .iter()
+                .find_map(|l| match l {
+                    Leg::Transport { edge } if edge.loc_id == 3745 => Some(edge.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("passage -> hut must hop 3745 W ({})", root.display()));
+            assert_eq!(hop_3745.dir, Some(DoorDir::W), "{}", root.display());
+            assert_eq!(
+                (hop_3745.at.x, hop_3745.at.z, hop_3745.to.x, hop_3745.to.z),
+                (2822, 3555, 2821, 3555),
+                "{}",
+                root.display()
+            );
+            assert_eq!(
+                hop_3745.quest_req,
+                vec!["Death Plateau".to_string()],
+                "{}",
+                root.display()
+            );
+            // Hut -> road does not need the quest: free 3745 E then 3725 E.
+            let exit = find_with(&wc, &graph, hut, road, FindOptions::default(), &state)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "hut -> road must route without a quest ({e:?}) ({})",
+                        root.display()
+                    )
+                });
+            assert!(
+                exit.legs.iter().any(|l| matches!(
+                    l,
+                    Leg::Transport { edge } if edge.loc_id == 3745 && edge.dir == Some(DoorDir::E)
+                )),
+                "hut -> road hops 3745 E ({})",
+                root.display()
+            );
+            assert!(
+                exit.legs.iter().any(|l| matches!(
+                    l,
+                    Leg::Transport { edge } if edge.loc_id == 3725 && edge.dir == Some(DoorDir::E)
+                )),
+                "hut -> road hops the fence ({})",
+                root.display()
+            );
+            // Taverley is south of the compound gates on the road toward
+            // Falador; empty state can leave the passage. Falador's interior
+            // pin is a separate city-wall problem — the fence is not the seal
+            // once passage -> road routes.
+            let taverley = WorldTile {
+                x: 2895,
+                z: 3435,
+                level: 0,
+            };
+            find_with(
+                &wc,
+                &graph,
+                passage,
+                taverley,
+                FindOptions::default(),
+                &state,
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "passage -> Taverley must no longer be sealed by the missing compound gates ({e:?}) ({})",
+                    root.display()
+                )
+            });
+            find_with(&wc, &graph, taverley, hut, FindOptions::default(), &done).unwrap_or_else(
+                |e| {
+                    panic!(
+                        "Taverley -> hut with completed Death Plateau ({e:?}) ({})",
+                        root.display()
+                    )
+                },
+            );
+            assert!(
+                find_with(&wc, &graph, taverley, hut, FindOptions::default(), &state).is_err(),
+                "Taverley -> hut stays NoPath without the quest ({})",
+                root.display()
+            );
+            // 3746 S remains the garden return; N is the gated reverse.
+            assert_eq!(
+                door_crossings(&graph, 3746),
+                vec![
+                    ((2820, 3557), 'N', (2820, 3558)),
+                    ((2820, 3557), 'S', (2820, 3556)),
+                ],
+                "3746 keeps garden -> hut free and the gated reverse ({})",
                 root.display()
             );
         }
