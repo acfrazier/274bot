@@ -215,6 +215,15 @@ const SKIP_SPIRIT_NO_DEST: &str = "spirit tree block lists no resolvable destina
 const SKIP_WEB_NO_FAR: &str = "slashable web has no standable far side";
 const SKIP_FREE_ARM_GATE_CONFLICT: &str =
     "door reads as both a varp-gated door and a directional free arm (gate kept)";
+const SKIP_GATE_MEMBER_OVERRIDE: &str =
+    "closed gate member has a loc-specific open script (named override wins)";
+const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no verified generic open handler";
+const SKIP_GATE_MEMBER_SHAPE: &str = "closed gate member declares no Open op (unsupported shape)";
+const SKIP_GATE_MEMBER_STAGE: &str =
+    "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
+const SKIP_GATE_MEMBER_PAIR: &str =
+    "closed gate member has no adjacent paired open-stage placement";
+const SKIP_GATE_MEMBER_CONFLICT: &str = "closed gate member is defined twice with different data";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -518,6 +527,10 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// ([`quest_door_free_arms`]) keeps only that crossing, with empty
 /// requirements: the other crossing needs a masked (bitfield) gate the v8
 /// pack cannot carry, so it is omitted rather than emitted ungated.
+/// Closed fence-gate members declared outside `gates.loc` (the quest/area
+/// configs) join the door set only through [`inherited_closed_gates`] —
+/// the closed gate categories whose effective handler is the verified
+/// generic one.
 fn door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
@@ -552,6 +565,15 @@ fn door_edges(
         door_ids.extend(parse_door_config(&text));
         open_ids.extend(parse_door_open_ids(&text, ids));
     }
+    // Closed gate members declared outside `gates.loc` (the quest/area
+    // configs) join the same set only while their effective handler is the
+    // verified generic category open behavior.
+    let positions = loc_positions(content_root);
+    let supported_handlers = generic_gate_handlers(content_root);
+    let inherited =
+        inherited_closed_gates(content_root, ids, &positions, &supported_handlers, skipped);
+    door_ids.extend(inherited.keys().copied());
+    open_ids.extend(inherited.iter().map(|(&id, &open)| (id, open)));
     let (door_reqs, mut free_arms) = {
         let constants = script_constants(content_root);
         let varps = varp_ids_by_name(content_root);
@@ -576,7 +598,6 @@ fn door_edges(
         bump(skipped, SKIP_NO_DOOR_CONFIGS, 1);
         return;
     }
-    let positions = loc_positions(content_root);
     for id in &door_ids {
         let Some(placements) = positions.get(id) else {
             continue;
@@ -632,6 +653,448 @@ fn door_edges(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Inherited closed fence gates (quest/area configs).
+// ---------------------------------------------------------------------------
+
+/// The two closed fence-gate categories and their generic category handlers
+/// in `scripts/general_use/scripts/gates.rs2`:
+/// `[oploc1,_gate_main_closed] ~open_gate;` (main) and
+/// `[oploc1,_gate_outer_closed] ~open_outer_gate;` (outer). The engine
+/// resolves a loc's open script as loc-specific `[oploc1,<name>]` >
+/// category `[oploc1,<category>]` > global, so a member with no
+/// loc-specific block inherits the category handler; `open_gate` opens the
+/// main gate plus the adjacent paired outer (`get_pair_coord`), and
+/// `open_outer_gate` resolves the adjacent main. Those two forwarding
+/// bodies plus the two procs are the whole supported behavior.
+const GATE_MAIN_CLOSED: &str = "gate_main_closed";
+const GATE_OUTER_CLOSED: &str = "gate_outer_closed";
+const GATE_MAIN_OPEN: &str = "gate_main_open";
+const GATE_OUTER_OPEN: &str = "gate_outer_open";
+const GATE_MAIN_HANDLER: &str = "~open_gate;";
+const GATE_OUTER_HANDLER: &str = "~open_outer_gate;";
+const GATE_MAIN_PROC: &str = "open_gate";
+const GATE_OUTER_PROC: &str = "open_outer_gate";
+
+/// A closed-gate `category=` value → the flavor (`false` main, `true`
+/// outer). Every other category is `None`: an unknown category has no
+/// verified handler and is never inherited.
+fn closed_gate_category(value: &str) -> Option<bool> {
+    match value.trim() {
+        GATE_MAIN_CLOSED => Some(false),
+        GATE_OUTER_CLOSED => Some(true),
+        _ => None,
+    }
+}
+
+/// The open leaf's category for a closed-gate flavor (`gate_main_open` /
+/// `gate_outer_open`).
+fn open_gate_category(outer: bool) -> &'static str {
+    if outer {
+        GATE_OUTER_OPEN
+    } else {
+        GATE_MAIN_OPEN
+    }
+}
+
+/// A block body normalized for exact comparison: `//` comments dropped and
+/// all whitespace removed.
+fn normalized_body(body: &str) -> String {
+    let mut out = String::new();
+    for raw in body.lines() {
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
+        };
+        out.extend(line.chars().filter(|c| !c.is_whitespace()));
+    }
+    out
+}
+
+/// Every `.loc` config text under `scripts`, recursively.
+fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
+                if let Ok(text) = fs::read_to_string(&path) {
+                    cb(&text);
+                }
+            }
+        }
+    }
+}
+
+/// The `[oploc1,_gate_main_closed]` / `[oploc1,_gate_outer_closed]`
+/// category handlers in a script text → `(outer, body)`. `gates.rs2`
+/// writes them as one line (`[oploc1,_gate_main_closed] ~open_gate;`), a
+/// shape [`script_blocks`] cannot see (its header must be alone on the
+/// line), so both the inline and the next-line body forms are read here.
+/// Any other header closes the previous body.
+fn gate_category_handlers(text: &str) -> Vec<(bool, String)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(bool, String)> = None;
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
+        };
+        let line = line.trim();
+        if let Some((header, body)) = line.strip_prefix('[').and_then(|l| l.split_once(']')) {
+            if let Some(done) = cur.take() {
+                out.push(done);
+            }
+            let (op, name) = match header.split_once(',') {
+                Some(parts) => parts,
+                None => continue,
+            };
+            let outer = match name.trim() {
+                "_gate_main_closed" if op.trim() == "oploc1" => false,
+                "_gate_outer_closed" if op.trim() == "oploc1" => true,
+                _ => continue,
+            };
+            cur = Some((outer, body.to_string()));
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push('\n');
+            body.push_str(line);
+        }
+    }
+    if let Some(done) = cur {
+        out.push(done);
+    }
+    out
+}
+
+/// The closed-gate categories this content actually supports, as the
+/// verified generic open behavior: the `[oploc1,_gate_*_closed]` body must
+/// be exactly the forwarding call (whitespace/comments ignored) and the
+/// forwarded `[proc,…]` must be defined somewhere under `scripts`. A
+/// category with no such block, a differently shaped body (any extra
+/// statement proves nothing), a disagreeing duplicate, or a missing proc
+/// is not supported — nothing inherits from it.
+fn generic_gate_handlers(content_root: &Path) -> HashSet<bool> {
+    let mut bodies: HashMap<bool, bool> = HashMap::new();
+    let mut procs: HashSet<&'static str> = HashSet::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (outer, body) in gate_category_handlers(text) {
+            let expected = if outer {
+                GATE_OUTER_HANDLER
+            } else {
+                GATE_MAIN_HANDLER
+            };
+            let ok = normalized_body(&body) == expected;
+            bodies
+                .entry(outer)
+                .and_modify(|prev| *prev &= ok)
+                .or_insert(ok);
+        }
+        for proc in [GATE_MAIN_PROC, GATE_OUTER_PROC] {
+            if !proc_bodies(text, proc).is_empty() {
+                procs.insert(proc);
+            }
+        }
+    });
+    [false, true]
+        .into_iter()
+        .filter(|&outer| {
+            let proc = if outer {
+                GATE_OUTER_PROC
+            } else {
+                GATE_MAIN_PROC
+            };
+            bodies.get(&outer).copied().unwrap_or(false) && procs.contains(proc)
+        })
+        .collect()
+}
+
+/// One `.loc` block that declares a closed gate category, as read from the
+/// quest/area config trees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InheritedGate {
+    /// The block's closed category (`false` main, `true` outer); `None`
+    /// when the block declares neither.
+    category: Option<bool>,
+    /// The block's `op1=Open` line.
+    op_open: bool,
+    /// The `next_loc_stage` open leaf id, resolved through `pack/loc.pack`.
+    open: Option<i32>,
+}
+
+impl InheritedGate {
+    fn new() -> Self {
+        InheritedGate {
+            category: None,
+            op_open: false,
+            open: None,
+        }
+    }
+}
+
+/// A `param=next_loc_stage,<value>` value → the open leaf id (`loc_N`
+/// parses numerically, a bare name resolves through `pack/loc.pack`) — the
+/// same rule [`crate::pack::parse_door_open_ids`] applies.
+fn stage_open_loc_id(value: &str, ids: &HashMap<String, i32>) -> Option<i32> {
+    if let Some(n) = value.strip_prefix("loc_") {
+        n.parse().ok()
+    } else {
+        ids.get(value).copied()
+    }
+}
+
+/// Every closed-gate declaration in one `.loc` text: `(id, gate)` per block
+/// that names one of the two closed gate categories, with the block's
+/// `op1=Open` line and its resolved `next_loc_stage` open leaf. Numeric
+/// `[loc_N]` and `pack/loc.pack`-resolved `[name]` headers both count;
+/// unresolved headers and blocks whose category is `gate_*_open` (the open
+/// leaves) yield nothing.
+fn closed_gate_blocks(text: &str, ids: &HashMap<String, i32>) -> Vec<(i32, InheritedGate)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(i32, InheritedGate)> = None;
+    for raw in text.lines() {
+        let line = raw.trim();
+        let header = config_header(line).and_then(|n| ids.get(n).copied());
+        if let Some(id) = header {
+            if let Some(done) = cur.take() {
+                out.push(done);
+            }
+            cur = Some((id, InheritedGate::new()));
+            continue;
+        }
+        let Some((_, gate)) = cur.as_mut() else {
+            continue;
+        };
+        if line == "op1=Open" {
+            gate.op_open = true;
+        } else if let Some(value) = line.strip_prefix("category=") {
+            if let Some(outer) = closed_gate_category(value) {
+                gate.category = Some(outer);
+            }
+        } else if let Some(rest) = line.strip_prefix("param=") {
+            if let Some((key, value)) = rest.split_once(',') {
+                if key.trim() == "next_loc_stage" {
+                    gate.open = stage_open_loc_id(value.trim(), ids);
+                }
+            }
+        }
+    }
+    if let Some(done) = cur {
+        out.push(done);
+    }
+    out
+}
+
+/// The tile of a closed gate's paired counterpart, from the
+/// `[proc,get_pair_coord]` rule in `scripts/general_use/scripts/gates.rs2`:
+/// the offset runs along the gate's wall (`west`→z+1, `north`→x+1, the
+/// south/east cases mirrored) and `$outer` flips it. A gate member cannot
+/// be read as the generic pair without it.
+fn gate_pair_tile(at: WorldTile, angle_dir: DoorDir, outer: bool) -> WorldTile {
+    let dir = if outer { -1 } else { 1 };
+    match angle_dir {
+        DoorDir::W => WorldTile {
+            x: at.x,
+            z: at.z + dir,
+            level: at.level,
+        },
+        DoorDir::N => WorldTile {
+            x: at.x + dir,
+            z: at.z,
+            level: at.level,
+        },
+        DoorDir::E => WorldTile {
+            x: at.x,
+            z: at.z - dir,
+            level: at.level,
+        },
+        DoorDir::S => WorldTile {
+            x: at.x - dir,
+            z: at.z,
+            level: at.level,
+        },
+    }
+}
+
+/// Closed fence-gate members declared outside
+/// `scripts/general_use/configs/gates.loc` (the `scripts/quests` and
+/// `scripts/areas` config trees), `loc id → next_loc_stage open leaf id`.
+/// A member is admitted only while its whole generic inheritance is
+/// provable from the same canonical data:
+///
+/// - the block declares one of the two closed gate categories with
+///   `op1=Open` (both, not either: a member without the open op is a shape
+///   this derivation does not support);
+/// - that category's generic handler is verified in the content
+///   ([`generic_gate_handlers`], handler body plus proc);
+/// - a `next_loc_stage` open leaf resolves, and when that leaf's own config
+///   is present its category is the matching `gate_*_open`;
+/// - no loc-specific `[oploc1,<name>]` block exists anywhere under
+///   `scripts` (the resolver's first priority — a named override, gated or
+///   denied, is never promoted);
+/// - every level-0 placement resolves its paired counterpart
+///   ([`gate_pair_tile`]) to a placement of the complementary closed
+///   category, so the pair the generic handler walks is really there;
+/// - the member is not defined twice with disagreeing data.
+///
+/// Anything unresolved, unsupported or malformed is counted and left out,
+/// never promoted to an ungated crossing.
+fn inherited_closed_gates(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    supported: &HashSet<bool>,
+    skipped: &mut HashMap<&'static str, usize>,
+) -> HashMap<i32, i32> {
+    let mut defs: HashMap<i32, InheritedGate> = HashMap::new();
+    let mut conflicted: HashSet<i32> = HashSet::new();
+    let mut names: HashMap<i32, HashSet<String>> = HashMap::new();
+    let scripts = content_root.join("scripts");
+    let mut pending = vec![scripts.join("quests"), scripts.join("areas")];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("loc") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            for raw in text.lines() {
+                let line = raw.trim();
+                if let Some(name) = config_header(line) {
+                    if let Some(&id) = ids.get(name) {
+                        names.entry(id).or_default().insert(name.to_string());
+                    }
+                }
+            }
+            for (id, gate) in closed_gate_blocks(&text, ids) {
+                match defs.get(&id) {
+                    Some(prev) if *prev != gate => {
+                        defs.remove(&id);
+                        conflicted.insert(id);
+                    }
+                    Some(_) => {}
+                    None if conflicted.contains(&id) => {}
+                    None => {
+                        defs.insert(id, gate);
+                    }
+                }
+            }
+        }
+    }
+    // Every loc id any `.loc` under `scripts` names → its category, for the
+    // open-leaf and pair checks (the leaf of a `gates.loc` member is
+    // defined there, not in the member's own config).
+    let mut categories: HashMap<i32, String> = HashMap::new();
+    visit_loc_configs(&scripts, &mut |text| {
+        let mut cur: Option<i32> = None;
+        for raw in text.lines() {
+            let line = raw.trim();
+            let header = config_header(line).and_then(|n| ids.get(n).copied());
+            if let Some(id) = header {
+                cur = Some(id);
+            } else if let Some(id) = cur {
+                if let Some(value) = line.strip_prefix("category=") {
+                    categories
+                        .entry(id)
+                        .or_insert_with(|| value.trim().to_string());
+                }
+            }
+        }
+    });
+    // Loc-specific `[oploc1,<name>]` blocks, the resolver's first priority.
+    let mut overridden: HashSet<String> = HashSet::new();
+    visit_rs2(&scripts, &mut |text| {
+        for (op, name, _) in script_blocks(text) {
+            if op == "oploc1" {
+                overridden.insert(name);
+            }
+        }
+    });
+    // Every placed loc id per tile, for the pair check.
+    let mut placed: HashMap<(i32, i32, i32), Vec<i32>> = HashMap::new();
+    for (&id, ps) in positions {
+        for p in ps {
+            placed.entry((p.x, p.z, p.level)).or_default().push(id);
+        }
+    }
+    let mut out = HashMap::new();
+    for (id, gate) in defs {
+        let Some(outer) = gate.category else {
+            continue;
+        };
+        if conflicted.contains(&id) {
+            bump(skipped, SKIP_GATE_MEMBER_CONFLICT, 1);
+            continue;
+        }
+        if !gate.op_open {
+            bump(skipped, SKIP_GATE_MEMBER_SHAPE, 1);
+            continue;
+        }
+        let Some(open) = gate.open else {
+            bump(skipped, SKIP_GATE_MEMBER_STAGE, 1);
+            continue;
+        };
+        if !supported.contains(&outer) {
+            bump(skipped, SKIP_GATE_MEMBER_HANDLER, 1);
+            continue;
+        }
+        if names
+            .get(&id)
+            .is_some_and(|ns| ns.iter().any(|n| overridden.contains(n)))
+        {
+            bump(skipped, SKIP_GATE_MEMBER_OVERRIDE, 1);
+            continue;
+        }
+        if categories
+            .get(&open)
+            .is_some_and(|c| c != open_gate_category(outer))
+        {
+            bump(skipped, SKIP_GATE_MEMBER_STAGE, 1);
+            continue;
+        }
+        let paired = positions.get(&id).is_none_or(|ps| {
+            ps.iter().filter(|p| p.level == 0).all(|p| {
+                let Some(angle_dir) = door_dir(p.angle) else {
+                    return false;
+                };
+                let at = WorldTile {
+                    x: p.x,
+                    z: p.z,
+                    level: p.level,
+                };
+                let pair = gate_pair_tile(at, angle_dir, outer);
+                placed
+                    .get(&(pair.x, pair.z, pair.level))
+                    .is_some_and(|ids| {
+                        ids.iter().any(|lid| {
+                            categories.get(lid).and_then(|c| closed_gate_category(c))
+                                == Some(!outer)
+                        })
+                    })
+            })
+        });
+        if !paired {
+            bump(skipped, SKIP_GATE_MEMBER_PAIR, 1);
+            continue;
+        }
+        out.insert(id, open);
+    }
+    out
 }
 
 /// `DoorDir` for a placement angle (0=west, 1=north, 2=east, 3=south —
@@ -6537,5 +7000,519 @@ p_delay(1);
 
         // The placeholder `at` never enters the `at` index.
         assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
+    }
+
+    /// Derive the transport graph from one real content root (the same
+    /// collision bake the graph's doors walk against); `None` when the
+    /// client cache is absent.
+    fn derive_from_root(root: &Path) -> Option<(TransportGraph, WorldCollision)> {
+        let defs = real_loc_defs()?;
+        let wc =
+            bake_from_maps(&root.join("maps"), &defs, &HashSet::new()).expect("real content bakes");
+        let graph = derive_transports(root, &defs, &wc);
+        Some((graph, wc))
+    }
+
+    /// The canonical 289 and 274 content roots this machine bakes against
+    /// (the same defaults `bundle.rs` resolves). Each present root runs the
+    /// assertions; an absent root is reported, never a silent pass.
+    fn real_content_roots() -> Vec<PathBuf> {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        let mut out = Vec::new();
+        for root in [
+            home.join("experiments/lostcity-289/content"),
+            home.join("experiments/Server/content"),
+        ] {
+            if root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file() {
+                out.push(root);
+            } else {
+                eprintln!(
+                    "SKIP: content root {} not found (assertions not run for it)",
+                    root.display()
+                );
+            }
+        }
+        out
+    }
+
+    /// The real 289 and 274 content must derive the closed fence-gate pair
+    /// behind Tenzing's passage (3725 `death_fencegate_l` at (2824,3555),
+    /// 3726 `death_fencegate_r` at (2824,3554)) as ordinary closed-gate
+    /// crossings: both members declare `category=gate_main_closed` /
+    /// `gate_outer_closed` with `op1=Open` in
+    /// `scripts/quests/quest_death/configs/quest_death.loc`, have no
+    /// loc-specific `[oploc1,…]` block anywhere, and inherit
+    /// `[oploc1,_gate_main_closed] ~open_gate;` /
+    /// `[oploc1,_gate_outer_closed] ~open_outer_gate;` from
+    /// `scripts/general_use/scripts/gates.rs2`. The Paterdomus pair
+    /// (memberfencegate_l/_r, loc 1598/1599) carries the same categories and
+    /// `op1=Open` but has loc-specific open scripts
+    /// (`scripts/areas/area_paterdomus/scripts/paterdomus_members_gate.rs2`,
+    /// the members gate), so it must never be inherited. The previously
+    /// supported `gates.loc` members keep their crossings.
+    #[test]
+    fn derive_transports_tenzing_gate_pair_from_real_content() {
+        let roots = real_content_roots();
+        assert!(!roots.is_empty(), "no real content root present");
+        for root in roots {
+            let Some((graph, _)) = derive_from_root(&root) else {
+                eprintln!("SKIP: client cache config jag missing ({})", root.display());
+                continue;
+            };
+            assert_eq!(
+                door_crossings(&graph, 3725),
+                vec![
+                    ((2824, 3555), 'E', (2825, 3555)),
+                    ((2824, 3555), 'W', (2823, 3555)),
+                ],
+                "3725 must cross both ways ({})",
+                root.display()
+            );
+            assert_eq!(
+                door_crossings(&graph, 3726),
+                vec![((2824, 3554), 'E', (2825, 3554))],
+                "3726 keeps only its standable east crossing ({})",
+                root.display()
+            );
+            let gates: Vec<_> = graph
+                .edges
+                .iter()
+                .filter(|e| matches!(e.loc_id, 3725 | 3726))
+                .collect();
+            assert_eq!(gates.len(), 3, "({})", root.display());
+            for e in gates {
+                assert_eq!(e.option, 1, "{e:?} ({})", root.display());
+                assert_eq!(
+                    e.open_loc_id,
+                    Some(if e.loc_id == 3725 { 3727 } else { 3728 }),
+                    "the stage leaf of {e:?} ({})",
+                    root.display()
+                );
+                assert!(
+                    e.varp_req.is_empty()
+                        && e.quest_req.is_empty()
+                        && e.item_req.is_empty()
+                        && e.worn_req.is_empty()
+                        && e.skill_req.is_empty(),
+                    "an inherited generic gate carries no requirement: {e:?} ({})",
+                    root.display()
+                );
+            }
+            // The named-override members stay out of the pack entirely.
+            for id in [1598, 1599] {
+                assert!(
+                    door_crossings(&graph, id).is_empty(),
+                    "Paterdomus loc {id} has a loc-specific open script and must not \
+                     be inherited ({})",
+                    root.display()
+                );
+            }
+            // The generic `gates.loc` members keep their existing crossings.
+            for id in [1551, 1553] {
+                assert!(
+                    !door_crossings(&graph, id).is_empty(),
+                    "generic fence gate loc {id} lost its crossings ({})",
+                    root.display()
+                );
+            }
+        }
+    }
+
+    /// The derived fence-gate crossing must route the recorded start
+    /// (2823,3555, the hut's front-door passage) out to the road and back:
+    /// both legs hop loc 3725 through the fence. The recorded ClimbingBoots
+    /// target (2820,3556, the hut's front room) stays `NoPath` under v8 —
+    /// that entry needs the deliberately omitted masked `3745` W arm, so it
+    /// is an expected result, not something to fix through 3746 S.
+    #[test]
+    fn tenzing_passage_and_road_route_through_the_inherited_gate() {
+        use crate::router::{find_with, FindOptions, Leg};
+        let roots = real_content_roots();
+        assert!(!roots.is_empty(), "no real content root present");
+        for root in roots {
+            let Some((graph, wc)) = derive_from_root(&root) else {
+                eprintln!("SKIP: client cache config jag missing ({})", root.display());
+                continue;
+            };
+            let state = crate::world_state::WorldState::empty();
+            let passage = WorldTile {
+                x: 2823,
+                z: 3555,
+                level: 0,
+            };
+            let road = WorldTile {
+                x: 2826,
+                z: 3556,
+                level: 0,
+            };
+            for (label, from, to, dir) in [
+                ("passage -> road", passage, road, DoorDir::E),
+                ("road -> passage", road, passage, DoorDir::W),
+            ] {
+                let route = find_with(&wc, &graph, from, to, FindOptions::default(), &state)
+                    .unwrap_or_else(|e| panic!("{label} must route ({e:?})"));
+                assert_eq!(route.dest, to, "{label} ({})", root.display());
+                let hop = route
+                    .legs
+                    .iter()
+                    .find_map(|l| match l {
+                        Leg::Transport { edge } if edge.loc_id == 3725 => Some(edge.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("{label} must hop the fence gate ({})", root.display())
+                    });
+                assert_eq!(hop.dir, Some(dir), "{label} ({})", root.display());
+                assert_eq!(
+                    (hop.at.x, hop.at.z),
+                    (2824, 3555),
+                    "{label} ({})",
+                    root.display()
+                );
+                assert_eq!(
+                    (hop.to.x, hop.to.z),
+                    if dir == DoorDir::E {
+                        (2825, 3555)
+                    } else {
+                        (2823, 3555)
+                    },
+                    "{label}: the landing on the crossing's far side ({})",
+                    root.display()
+                );
+            }
+            // The hut's front room is still sealed by the omitted masked arm.
+            let hut = WorldTile {
+                x: 2820,
+                z: 3556,
+                level: 0,
+            };
+            assert!(
+                find_with(&wc, &graph, passage, hut, FindOptions::default(), &state).is_err(),
+                "passage -> hut stays NoPath under v8 ({}): the recorded ClimbingBoots \
+                 walk must not be 'fixed' by a free reverse fence crossing",
+                root.display()
+            );
+            // And 3746 S remains the garden return leg, not a road entry.
+            assert!(
+                door_crossings(&graph, 3746) == vec![((2820, 3557), 'S', (2820, 3556))],
+                "3746 keeps exactly its garden -> hut crossing ({})",
+                root.display()
+            );
+        }
+    }
+
+    /// The closed-gate inheritance is admitted from a quest config with the
+    /// real source shapes: the two category members, their `op1=Open`, the
+    /// named `next_loc_stage` leaves and the adjacent pair all resolve, and
+    /// the members cross both ways with no requirement (the generic
+    /// category handler opens them).
+    #[test]
+    fn derive_transports_emits_inherited_closed_gate_crossings() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "\
+3725=death_fencegate_l
+3726=death_fencegate_r
+3727=death_openfencegate_l
+3728=death_openfencegate_r
+",
+        );
+        fx.write(
+            "scripts/general_use/scripts/gates.rs2",
+            "\
+[proc,open_gate]
+def_coord $main_open = ~movecoord_loc_return(~gate_set_close(loc_angle, 1));
+return;
+
+[proc,open_outer_gate]
+loc_findallzone(~get_pair_coord(loc_coord, loc_angle, true));
+return;
+
+[oploc1,_gate_main_closed] ~open_gate;
+[oploc1,_gate_outer_closed] ~open_outer_gate;
+",
+        );
+        // Both closed members and both open leaves, verbatim shapes from
+        // `scripts/quests/quest_death/configs/quest_death.loc`.
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.loc",
+            "\
+[death_fencegate_l]
+name=Gate
+op1=Open
+active=yes
+blockrange=no
+category=gate_main_closed
+param=next_loc_stage,death_openfencegate_l
+
+[death_fencegate_r]
+name=Gate
+op1=Open
+active=yes
+blockrange=no
+mirror=yes
+category=gate_outer_closed
+param=next_loc_stage,death_openfencegate_r
+
+[death_openfencegate_l]
+name=Gate
+op1=Close
+active=yes
+blockrange=no
+category=gate_main_open
+param=next_loc_stage,death_fencegate_l
+
+[death_openfencegate_r]
+name=Gate
+op1=Close
+active=yes
+blockrange=no
+mirror=yes
+category=gate_outer_open
+param=next_loc_stage,death_fencegate_r
+",
+        );
+        // The m44_55 placements: 3726 at (2824,3554), 3725 at (2824,3555),
+        // both angle 2, with (2823,3554) blocked exactly as the real map is.
+        fx.write(
+            "maps/m44_55.jm2",
+            "\
+==== MAP ====
+0 7 34: f1 u48
+
+==== LOC ====
+0 8 34: 3726 0 2
+0 8 35: 3725 0 2
+",
+        );
+        let defs = loc_defs(&[(3725, 1, 1), (3726, 1, 1), (3727, 1, 1), (3728, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        assert_eq!(
+            door_crossings(&graph, 3725),
+            vec![
+                ((2824, 3555), 'E', (2825, 3555)),
+                ((2824, 3555), 'W', (2823, 3555)),
+            ],
+            "the main member crosses both ways"
+        );
+        assert_eq!(
+            door_crossings(&graph, 3726),
+            vec![((2824, 3554), 'E', (2825, 3554))],
+            "the outer member keeps only its standable east crossing"
+        );
+        for id in [3727, 3728] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "the open leaf {id} is not a crossing"
+            );
+        }
+        let mut leaves = HashSet::new();
+        for e in graph
+            .edges
+            .iter()
+            .filter(|e| matches!(e.loc_id, 3725 | 3726))
+        {
+            assert_eq!(e.option, 1, "Open op: {e:?}");
+            assert!(
+                e.varp_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.item_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && e.skill_req.is_empty(),
+                "the inherited category handler carries no requirement: {e:?}"
+            );
+            leaves.insert(e.open_loc_id);
+        }
+        assert_eq!(
+            leaves,
+            HashSet::from([Some(3727), Some(3728)]),
+            "each member carries its own stage leaf"
+        );
+    }
+
+    /// Every near-miss below shares the closed categories with the admitted
+    /// pair but breaks one part of the inheritance: a loc-specific open
+    /// script (named override), a category with no verified handler, a
+    /// member without the `Open` op, an unresolvable `next_loc_stage`, a
+    /// member with no adjacent paired placement, and a member defined twice
+    /// with disagreeing data. None may be promoted, and an unrelated
+    /// `op1=Open` quest door is not admitted either. The valid control pair
+    /// (5071/5072) is admitted from the same fixture, so every negative
+    /// below is a refusal, not a dead pipeline. Only the main category
+    /// handler is verified here: the outer handler is missing entirely, so
+    /// the control's outer member (the pair the main needs) is exactly the
+    /// unsupported-handler case.
+    #[test]
+    fn derive_transports_omits_unproven_inherited_gate_members() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "\
+5001=death_gate_override
+5002=death_gate_override_outer
+5003=death_gate_override_open
+5004=death_gate_override_outer_open
+5021=death_gate_noop
+5025=death_gate_noop_open
+5031=death_gate_nostage
+5041=death_gate_unpaired
+5045=death_gate_unpaired_open
+5051=death_gate_conflict
+5059=death_gate_conflict_open
+5061=death_plainopen
+5071=death_gate_control_main
+5072=death_gate_control_outer
+5073=death_gate_control_open
+",
+        );
+        // Only the main category handler is verified here: the outer handler
+        // is missing entirely, so `gate_outer_closed` has nothing to
+        // inherit.
+        fx.write(
+            "scripts/general_use/scripts/gates.rs2",
+            "\
+[proc,open_gate]
+return;
+
+[oploc1,_gate_main_closed] ~open_gate;
+",
+        );
+        fx.write(
+            "scripts/quests/quest_neg/configs/neg.loc",
+            "\
+[death_gate_override]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,death_gate_override_open
+
+[death_gate_override_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,death_gate_override_outer_open
+
+[death_gate_noop]
+op1=Climb
+category=gate_main_closed
+param=next_loc_stage,death_gate_noop_open
+
+[death_gate_nostage]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,death_gate_absent_leaf
+
+[death_gate_unpaired]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,death_gate_unpaired_open
+
+[death_gate_conflict]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,death_gate_conflict_open
+
+[death_plainopen]
+op1=Open
+
+[death_gate_control_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,death_gate_control_open
+
+[death_gate_control_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,death_gate_control_open
+",
+        );
+        // The same member again, with a different category and stage.
+        fx.write(
+            "scripts/quests/quest_neg/configs/neg_again.loc",
+            "\
+[death_gate_conflict]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,death_gate_conflict_open
+",
+        );
+        // The loc-specific open scripts the resolver prefers, and an
+        // unrelated free-standing `Open` door.
+        fx.write(
+            "scripts/quests/quest_neg/scripts/neg.rs2",
+            "\
+[oploc1,death_gate_override]
+mes(^mes_members_gate);
+return;
+
+[oploc1,death_gate_override_outer]
+mes(^mes_members_gate);
+return;
+
+[oploc1,death_plainopen]
+~open_and_close_door2(loc_1532, true, door_open);
+return;
+",
+        );
+        // Pairs sit at (x, z) + (x, z+1) for angle 2 (outer at z, main at
+        // z+1, the `get_pair_coord` rule); the unpaired member has no
+        // partner placement at all.
+        fx.write(
+            "maps/m44_53.jm2",
+            "\
+==== MAP ====
+0 0 0: f0 u48
+
+==== LOC ====
+0 1 3: 5002 0 2
+0 1 4: 5001 0 2
+0 2 3: 5072 0 2
+0 2 4: 5071 0 2
+0 4 4: 5021 0 2
+0 5 4: 5031 0 2
+0 6 4: 5041 0 2
+0 7 4: 5051 0 2
+0 8 4: 5061 0 2
+",
+        );
+        let defs = loc_defs(&[
+            (5001, 1, 1),
+            (5002, 1, 1),
+            (5021, 1, 1),
+            (5031, 1, 1),
+            (5041, 1, 1),
+            (5051, 1, 1),
+            (5061, 1, 1),
+            (5071, 1, 1),
+            (5072, 1, 1),
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        // The control: the same shapes without any flaw do cross.
+        assert_eq!(
+            door_crossings(&graph, 5071),
+            vec![
+                ((2818, 3396), 'E', (2819, 3396)),
+                ((2818, 3396), 'W', (2817, 3396)),
+            ],
+            "the valid control member must be admitted from the same fixture"
+        );
+        for (id, why) in [
+            (5001, "the main member has a loc-specific open script"),
+            (5002, "the outer member has a loc-specific open script"),
+            (5072, "the outer category handler is missing"),
+            (5021, "the member has no Open op"),
+            (5031, "the next_loc_stage leaf does not resolve"),
+            (5041, "the member has no paired placement"),
+            (5051, "the member is defined twice with different data"),
+            (5061, "an unrelated op1=Open door without a gate category"),
+        ] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "loc {id} must not be promoted: {why}"
+            );
+        }
     }
 }
