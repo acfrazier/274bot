@@ -1036,6 +1036,14 @@ pub enum DuelClaim {
     ResetAndFurther,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AirExchangeStage {
+    Offer,
+    Confirm,
+    Transfer,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AirSlotRecord {
     pub role: AirRole,
@@ -1054,10 +1062,24 @@ pub struct AirSlotRecord {
     pub min_essence_after_start: i32,
     pub transferred_out: i32,
     pub transferred_in: i32,
+    pub partner_transfer_events: u32,
+    pub post_transfer_craft_events: u32,
+    pub exchange_stage: AirExchangeStage,
+    pub episode_qty: i32,
+    pub confirm_gap_tick: Option<u32>,
+    pub transfer_close_tick: Option<u32>,
+    pub second_transfer_before_bank_return: bool,
+    pub second_transfer_after_bank_return: bool,
     pub saw_bank_open_loaded: bool,
     pub saw_bank_at_falador: bool,
     pub restock_withdraw: bool,
     pub returned_to_ruins: bool,
+    pub craft_events: u32,
+    pub craft_input_from_exchange: i32,
+    pub craft_consumed: i32,
+    pub craft_xp_at_consume: i32,
+    pub craft_air_at_consume: i32,
+    pub craft_from_exchange: bool,
     pub air_from_script: i32,
     pub xp_from_script: i32,
 }
@@ -1088,13 +1110,61 @@ impl AirSlotRecord {
             saw_wrong_partner: false,
             transferred_out: 0,
             transferred_in: 0,
+            partner_transfer_events: 0,
+            post_transfer_craft_events: 0,
+            exchange_stage: AirExchangeStage::Offer,
+            episode_qty: 0,
+            confirm_gap_tick: None,
+            transfer_close_tick: None,
+            second_transfer_before_bank_return: false,
+            second_transfer_after_bank_return: false,
             saw_bank_open_loaded: false,
             saw_bank_at_falador: false,
             restock_withdraw: false,
             returned_to_ruins: false,
+            craft_events: 0,
+            craft_input_from_exchange: 0,
+            craft_consumed: 0,
+            craft_xp_at_consume: 0,
+            craft_air_at_consume: 0,
+            craft_from_exchange: false,
             air_from_script: 0,
             xp_from_script: 0,
         }
+    }
+
+    fn drop_episode(&mut self) {
+        self.episode_qty = 0;
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.exchange_stage = AirExchangeStage::Offer;
+    }
+
+    fn bind_episode(&mut self, observation: &AirObservation) {
+        let mine_stale = self.latest.as_ref().is_some_and(|prev| {
+            !prev.trade_offer_open
+                && prev.trade_mine_essence == observation.trade_mine_essence
+                && observation.trade_mine_essence > 0
+        });
+        let authoritative_mine = observation.trade_offer_open && !mine_stale;
+        self.episode_qty = observation.essence_unnoted
+            + if authoritative_mine {
+                observation.trade_mine_essence
+            } else {
+                0
+            };
+        self.confirm_gap_tick = None;
+        self.transfer_close_tick = None;
+        self.saw_offer_with_partner = true;
+        self.exchange_stage = AirExchangeStage::Confirm;
+    }
+
+    fn partnerless_confirm(observation: &AirObservation) -> bool {
+        observation.trade_confirm_open
+            && observation
+                .trade_partner
+                .as_deref()
+                .is_none_or(|partner| partner.is_empty())
     }
 
     pub fn observe(&mut self, observation: AirObservation) {
@@ -1106,35 +1176,145 @@ impl AirSlotRecord {
         {
             self.mixed_identity = true;
         }
-        if observation.trade_active() {
-            if let Some(partner) = observation.trade_partner.as_deref() {
-                if !partner.is_empty() && !account_identity_eq(partner, &self.partner) {
-                    self.saw_wrong_partner = true;
-                }
-                if account_identity_eq(partner, &self.partner) {
-                    if observation.trade_offer_open {
-                        self.saw_offer_with_partner = true;
-                    }
-                    if observation.trade_confirm_open {
-                        self.saw_confirm_with_partner = true;
-                    }
-                }
-            } else if observation.trade_offer_open {
-                self.saw_offer_with_partner = true;
-            } else if observation.trade_confirm_open {
-                self.saw_confirm_with_partner = true;
-            }
-        }
         let prev_ess = self
             .latest
             .as_ref()
             .map(|row| row.essence_unnoted)
             .unwrap_or(self.baseline.essence_unnoted);
-        if observation.essence_unnoted < prev_ess {
-            self.transferred_out += prev_ess - observation.essence_unnoted;
+        let prev_air = self
+            .latest
+            .as_ref()
+            .map(|row| row.air_runes)
+            .unwrap_or(self.baseline.air_runes);
+        let prev_xp = self
+            .latest
+            .as_ref()
+            .map(|row| row.runecraft_xp)
+            .unwrap_or(self.baseline.runecraft_xp);
+        let named_partner = observation
+            .trade_partner
+            .as_deref()
+            .is_some_and(|partner| account_identity_eq(partner, &self.partner));
+        if observation.trade_active() {
+            if let Some(partner) = observation.trade_partner.as_deref() {
+                if !partner.is_empty() && !account_identity_eq(partner, &self.partner) {
+                    self.saw_wrong_partner = true;
+                }
+            }
         }
-        if observation.essence_unnoted > prev_ess {
-            self.transferred_in += observation.essence_unnoted - prev_ess;
+        let offer_rising = observation.trade_offer_open
+            && self
+                .latest
+                .as_ref()
+                .is_none_or(|prev| !prev.trade_offer_open);
+        let stage_before = self.exchange_stage;
+        if self.saw_wrong_partner {
+            self.drop_episode();
+        } else if offer_rising {
+            // A new offer ends the old episode even before its partner is known.
+            self.drop_episode();
+            expire_runecraft_work(self);
+            if named_partner {
+                self.bind_episode(&observation);
+            }
+        } else {
+            match self.exchange_stage {
+                AirExchangeStage::Offer => {}
+                AirExchangeStage::Confirm => {
+                    if Self::partnerless_confirm(&observation) {
+                        self.drop_episode();
+                    } else if observation.trade_confirm_open && named_partner {
+                        match self.confirm_gap_tick {
+                            None => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = AirExchangeStage::Transfer;
+                            }
+                            Some(tick) if tick == observation.tick => {
+                                self.saw_confirm_with_partner = true;
+                                self.exchange_stage = AirExchangeStage::Transfer;
+                            }
+                            Some(_) => self.drop_episode(),
+                        }
+                    } else if !observation.trade_active() {
+                        match self.confirm_gap_tick {
+                            None => self.confirm_gap_tick = Some(observation.tick),
+                            Some(tick) if tick == observation.tick => {}
+                            Some(_) => self.drop_episode(),
+                        }
+                    }
+                }
+                AirExchangeStage::Transfer => {
+                    if !observation.trade_active() {
+                        if self.transfer_close_tick.is_none() {
+                            self.transfer_close_tick = Some(observation.tick);
+                        }
+                        if self.transfer_close_tick != Some(observation.tick) {
+                            self.drop_episode();
+                        } else {
+                            let at_ruins = near(observation.tile, AIR_RUINS, 8);
+                            let essence_out =
+                                (self.episode_qty - observation.essence_unnoted).max(0);
+                            let essence_in =
+                                (observation.essence_unnoted - self.episode_qty).max(0);
+                            let completed = at_ruins
+                                && match self.role {
+                                    AirRole::Runner => essence_out > 0,
+                                    AirRole::Master => essence_in > 0,
+                                };
+                            if completed {
+                                if self.role == AirRole::Runner && self.partner_transfer_events == 1
+                                {
+                                    if self.returned_to_ruins {
+                                        self.second_transfer_after_bank_return = true;
+                                    } else {
+                                        self.second_transfer_before_bank_return = true;
+                                    }
+                                }
+                                self.transferred_out += essence_out;
+                                self.transferred_in += essence_in;
+                                self.partner_transfer_events =
+                                    self.partner_transfer_events.saturating_add(1);
+                                if self.role == AirRole::Master {
+                                    self.craft_input_from_exchange =
+                                        self.craft_input_from_exchange.saturating_add(essence_in);
+                                }
+                                self.drop_episode();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        debug_trade_edge_air(
+            &self.account,
+            &self.latest,
+            &observation,
+            stage_before,
+            self.exchange_stage,
+        );
+        let expire_craft = !observation.ingame
+            || observation.scene_state != 2
+            || self.mixed_identity
+            || self.saw_wrong_partner
+            || observation.bank_open;
+        if self.role == AirRole::Master {
+            observe_runecraft_work(
+                &observation,
+                prev_ess,
+                prev_air,
+                prev_xp,
+                expire_craft,
+                &mut self.craft_input_from_exchange,
+                &mut self.craft_consumed,
+                &mut self.craft_xp_at_consume,
+                &mut self.craft_air_at_consume,
+                &mut self.craft_from_exchange,
+                &mut self.craft_events,
+                &mut self.post_transfer_craft_events,
+                self.partner_transfer_events,
+            );
+        } else if expire_craft {
+            expire_runecraft_work(self);
         }
         self.peak_essence = self.peak_essence.max(observation.essence_unnoted);
         self.min_essence_after_start = self
@@ -1164,6 +1344,100 @@ impl AirSlotRecord {
     }
 }
 
+fn expire_runecraft_work(slot: &mut AirSlotRecord) {
+    slot.craft_input_from_exchange = 0;
+    slot.craft_consumed = 0;
+    slot.craft_xp_at_consume = 0;
+    slot.craft_air_at_consume = 0;
+    slot.craft_from_exchange = false;
+}
+
+fn observe_runecraft_work(
+    observation: &AirObservation,
+    prev_ess: i32,
+    prev_air: i32,
+    prev_xp: i32,
+    expire: bool,
+    input_from_exchange: &mut i32,
+    consumed: &mut i32,
+    xp_at_consume: &mut i32,
+    air_at_consume: &mut i32,
+    from_exchange: &mut bool,
+    craft_events: &mut u32,
+    post_exchange_craft_events: &mut u32,
+    partner_transfer_events: u32,
+) {
+    if expire {
+        *input_from_exchange = 0;
+        *consumed = 0;
+        *xp_at_consume = 0;
+        *air_at_consume = 0;
+        *from_exchange = false;
+        return;
+    }
+    let ess_drop = (prev_ess - observation.essence_unnoted).max(0);
+    if observation.in_temple
+        && !observation.trade_active()
+        && !observation.bank_open
+        && ess_drop > 0
+    {
+        if *consumed == 0 {
+            *xp_at_consume = prev_xp;
+            *air_at_consume = prev_air;
+        }
+        if *input_from_exchange > 0 {
+            let take = ess_drop.min(*input_from_exchange);
+            *input_from_exchange -= take;
+            *from_exchange = true;
+        }
+        *consumed = consumed.saturating_add(ess_drop);
+    }
+    if *consumed > 0
+        && observation.runecraft_xp > *xp_at_consume
+        && observation.air_runes > *air_at_consume
+    {
+        *craft_events = craft_events.saturating_add(1);
+        if *from_exchange && *post_exchange_craft_events < partner_transfer_events {
+            *post_exchange_craft_events = post_exchange_craft_events.saturating_add(1);
+        }
+        *consumed = 0;
+        *xp_at_consume = 0;
+        *air_at_consume = 0;
+        *from_exchange = false;
+    }
+}
+
+fn debug_trade_edge_air(
+    actor: &str,
+    previous: &Option<AirObservation>,
+    observation: &AirObservation,
+    stage_before: AirExchangeStage,
+    stage_after: AirExchangeStage,
+) {
+    if std::env::var_os("BOT_DEBUG").is_none() {
+        return;
+    }
+    let changed = previous.as_ref().is_none_or(|prev| {
+        prev.trade_offer_open != observation.trade_offer_open
+            || prev.trade_confirm_open != observation.trade_confirm_open
+            || prev.trade_partner != observation.trade_partner
+            || prev.trade_accept_id != observation.trade_accept_id
+            || stage_before != stage_after
+    });
+    if changed {
+        eprintln!(
+            "PAIR_TRADE_EDGE actor={actor} tick={} offer={} confirm={} partner={} accept_id={} held_ess={} held_air={} stage={stage_before:?}->{stage_after:?}",
+            observation.tick,
+            observation.trade_offer_open,
+            observation.trade_confirm_open,
+            observation.trade_partner.as_deref().unwrap_or("<none>"),
+            observation.trade_accept_id,
+            observation.essence_unnoted,
+            observation.air_runes,
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AirPairWitness {
     pub master: AirSlotRecord,
@@ -1179,21 +1453,21 @@ impl AirPairWitness {
         if !self.master.saw_confirm_with_partner || !self.runner.saw_confirm_with_partner {
             return Err("one-sided confirmation: both actors never observed the confirm phase with the partner".into());
         }
+        if self.master.partner_transfer_events == 0 || self.runner.partner_transfer_events == 0 {
+            return Err(
+                "missing conservation: no inventory transfer immediately followed a confirmed counterpart trade"
+                    .into(),
+            );
+        }
         if self.runner.transferred_out <= 0 {
             return Err(
                 "missing conservation: runner unnoted essence 1436 did not leave the pack".into(),
             );
         }
-        if self.master.transferred_in <= 0 && self.master.air_from_script <= 0 {
-            return Err(
-                "missing conservation: master did not receive unnoted 1436 and did not craft Air 556"
-                    .into(),
-            );
+        if self.master.transferred_in <= 0 {
+            return Err("missing conservation: master did not receive unnoted 1436".into());
         }
-        if self.master.transferred_in > 0
-            && self.master.transferred_in != self.runner.transferred_out
-            && self.master.air_from_script <= 0
-        {
+        if self.master.transferred_in != self.runner.transferred_out {
             return Err(format!(
                 "missing conservation: runner sent {} unnoted 1436, master received {}",
                 self.runner.transferred_out, self.master.transferred_in
@@ -1207,6 +1481,12 @@ impl AirPairWitness {
         if self.master.xp_from_script <= 0 {
             return Err(
                 "seed-only inventory/XP: master Runecraft XP did not increase after Start".into(),
+            );
+        }
+        if self.master.post_transfer_craft_events == 0 {
+            return Err(
+                "no fresh post-exchange work: seeded raw input/first craft cannot qualify the exchange"
+                    .into(),
             );
         }
         if self.master.baseline.air_runes > 0 {
@@ -1234,10 +1514,19 @@ impl AirPairWitness {
         if !self.runner.returned_to_ruins {
             return Err("no further work for full-cycle claims: runner did not return to the Air ruins after restock".into());
         }
+        if self.runner.second_transfer_before_bank_return {
+            return Err("no further work for full-cycle claims: second transfer occurred before the runner bank restock/return".into());
+        }
+        if self.master.partner_transfer_events < 2
+            || self.runner.partner_transfer_events < 2
+            || !self.runner.second_transfer_after_bank_return
+        {
+            return Err("no further work for full-cycle claims: no second transfer after a fresh counterpart offer/confirm and runner bank return".into());
+        }
         if self.runner.transferred_out <= self.runner.baseline.essence_unnoted {
             return Err("no further work for full-cycle claims: only the seeded first load left the runner; no second transfer".into());
         }
-        if self.master.air_from_script < 2 && self.master.xp_from_script <= 5 {
+        if self.master.post_transfer_craft_events < 2 {
             return Err(
                 "no further work for full-cycle claims: no second master craft after restock"
                     .into(),
@@ -1315,6 +1604,11 @@ pub struct MuleSlotRecord {
     pub deposited_received_air: bool,
     pub returned_to_ruins: bool,
     pub craft_events: u32,
+    pub craft_input_from_exchange: i32,
+    pub craft_consumed: i32,
+    pub craft_xp_at_consume: i32,
+    pub craft_air_at_consume: i32,
+    pub craft_from_exchange: bool,
     pub air_from_script: i32,
     pub xp_from_script: i32,
 }
@@ -1363,6 +1657,11 @@ impl MuleSlotRecord {
             deposited_received_air: false,
             returned_to_ruins: false,
             craft_events: 0,
+            craft_input_from_exchange: 0,
+            craft_consumed: 0,
+            craft_xp_at_consume: 0,
+            craft_air_at_consume: 0,
+            craft_from_exchange: false,
             air_from_script: 0,
             xp_from_script: 0,
         }
@@ -1453,6 +1752,11 @@ impl MuleSlotRecord {
         } else if offer_rising {
             // A new offer ends the old episode even before its partner is known.
             self.drop_episode();
+            self.craft_input_from_exchange = 0;
+            self.craft_consumed = 0;
+            self.craft_xp_at_consume = 0;
+            self.craft_air_at_consume = 0;
+            self.craft_from_exchange = false;
             if named_partner {
                 self.bind_episode(&observation);
             }
@@ -1516,6 +1820,10 @@ impl MuleSlotRecord {
                                 self.air_transferred_in += air_in;
                                 self.partner_transfer_events =
                                     self.partner_transfer_events.saturating_add(1);
+                                if self.role == MuleRole::Crafter {
+                                    self.craft_input_from_exchange =
+                                        self.craft_input_from_exchange.saturating_add(essence_in);
+                                }
                                 self.drop_episode();
                             }
                         }
@@ -1530,13 +1838,33 @@ impl MuleSlotRecord {
             stage_before,
             self.exchange_stage,
         );
-        if observation.essence_unnoted < prev_ess && observation.runecraft_xp > prev_xp {
-            self.craft_events = self.craft_events.saturating_add(1);
-            if self.role == MuleRole::Crafter
-                && self.post_exchange_craft_events < self.partner_transfer_events
-            {
-                self.post_exchange_craft_events = self.post_exchange_craft_events.saturating_add(1);
-            }
+        let expire_craft = !observation.ingame
+            || observation.scene_state != 2
+            || self.mixed_identity
+            || self.saw_wrong_partner
+            || observation.bank_open;
+        if self.role == MuleRole::Crafter {
+            observe_runecraft_work(
+                &observation,
+                prev_ess,
+                prev_air,
+                prev_xp,
+                expire_craft,
+                &mut self.craft_input_from_exchange,
+                &mut self.craft_consumed,
+                &mut self.craft_xp_at_consume,
+                &mut self.craft_air_at_consume,
+                &mut self.craft_from_exchange,
+                &mut self.craft_events,
+                &mut self.post_exchange_craft_events,
+                self.partner_transfer_events,
+            );
+        } else if expire_craft {
+            self.craft_input_from_exchange = 0;
+            self.craft_consumed = 0;
+            self.craft_xp_at_consume = 0;
+            self.craft_air_at_consume = 0;
+            self.craft_from_exchange = false;
         }
         self.peak_essence = self.peak_essence.max(observation.essence_unnoted);
         self.peak_air = self.peak_air.max(observation.air_runes);

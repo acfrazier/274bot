@@ -1,6 +1,7 @@
 use host_play::paired_core::{
-    pair_settings, AirObservation, AirRole, DuelObservation, FlaxExchangeStage, FlaxObservation,
-    FlaxRole, FlaxSlotRecord, MuleExchangeStage, MuleRole, MuleSlotRecord, PairCase, PairWatch,
+    pair_settings, AirClaim, AirExchangeStage, AirObservation, AirPairWitness, AirRole,
+    AirSlotRecord, DuelObservation, FlaxExchangeStage, FlaxObservation, FlaxRole, FlaxSlotRecord,
+    MuleClaim, MuleExchangeStage, MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PairWatch,
     PairWatchStatus, StartBarrier, AIR_RUINS, DUEL_CHALLENGE_ANCHOR, FALADOR_EAST, FLAX_FIELD,
     FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
 };
@@ -1592,4 +1593,523 @@ fn mule_partnerless_new_offer_invalidates_previous_episode() {
             assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
         }
     }
+}
+
+const AIR_TEMPLE: (i32, i32, i32) = (2841, 4834, 0);
+const AIR_CRAFT_XP: i32 = 125;
+const MULE_CRAFT_XP: i32 = 135;
+
+fn air_slot(role: AirRole) -> AirSlotRecord {
+    let (account, partner) = match role {
+        AirRole::Master => ("master", "runner"),
+        AirRole::Runner => ("runner", "master"),
+    };
+    AirSlotRecord::new(
+        role,
+        account.into(),
+        account.into(),
+        partner.into(),
+        serde_json::Map::new(),
+        air_ready(account, role),
+    )
+}
+
+fn air_trade(
+    role: AirRole,
+    tick: u32,
+    essence: i32,
+    offer: bool,
+    confirm: bool,
+    partner: Option<&str>,
+    accept: i32,
+    mine: i32,
+) -> AirObservation {
+    let player = match role {
+        AirRole::Master => "master",
+        AirRole::Runner => "runner",
+    };
+    AirObservation {
+        tick,
+        essence_unnoted: essence,
+        tile: Some(AIR_RUINS),
+        trade_offer_open: offer,
+        trade_confirm_open: confirm,
+        trade_partner: partner.map(str::to_string),
+        trade_accept_id: accept,
+        trade_mine_essence: mine,
+        ..air_ready(player, role)
+    }
+}
+
+fn air_offer(role: AirRole, tick: u32, essence: i32, mine: i32) -> AirObservation {
+    let partner = match role {
+        AirRole::Master => "runner",
+        AirRole::Runner => "master",
+    };
+    air_trade(
+        role,
+        tick,
+        essence,
+        true,
+        false,
+        Some(partner),
+        TRADE_OFFER_ACCEPT,
+        mine,
+    )
+}
+
+fn air_inactive(role: AirRole, tick: u32, essence: i32) -> AirObservation {
+    air_trade(role, tick, essence, false, false, None, -1, 0)
+}
+
+fn air_confirm(role: AirRole, tick: u32, essence: i32) -> AirObservation {
+    let partner = match role {
+        AirRole::Master => "runner",
+        AirRole::Runner => "master",
+    };
+    air_trade(
+        role,
+        tick,
+        essence,
+        false,
+        true,
+        Some(partner),
+        TRADE_CONFIRM_ACCEPT,
+        0,
+    )
+}
+
+fn air_close(role: AirRole, tick: u32, essence: i32) -> AirObservation {
+    air_trade(role, tick, essence, false, false, None, -1, 0)
+}
+
+fn air_temple(role: AirRole, tick: u32, essence: i32, air: i32, xp: i32) -> AirObservation {
+    let player = match role {
+        AirRole::Master => "master",
+        AirRole::Runner => "runner",
+    };
+    AirObservation {
+        tick,
+        essence_unnoted: essence,
+        air_runes: air,
+        runecraft_xp: xp,
+        tile: Some(AIR_TEMPLE),
+        in_temple: true,
+        ..air_ready(player, role)
+    }
+}
+
+fn air_keep(mut observation: AirObservation, air: i32, xp: i32) -> AirObservation {
+    observation.air_runes = air;
+    observation.runecraft_xp = xp;
+    observation
+}
+
+fn nature_first_close(master: &mut AirSlotRecord, runner: &mut AirSlotRecord) {
+    master.observe(air_offer(AirRole::Master, 10, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 10, TRADE_CAP, 0));
+    master.observe(air_inactive(AirRole::Master, 14, 0));
+    runner.observe(air_inactive(AirRole::Runner, 14, 0));
+    master.observe(air_confirm(AirRole::Master, 14, 0));
+    runner.observe(air_confirm(AirRole::Runner, 14, 0));
+    master.observe(air_close(AirRole::Master, 16, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 16, 0));
+}
+
+fn nature_first_craft(master: &mut AirSlotRecord) {
+    master.observe(air_temple(AirRole::Master, 20, 0, 0, 0));
+    master.observe(air_temple(AirRole::Master, 21, 0, 0, AIR_CRAFT_XP));
+    master.observe(air_temple(AirRole::Master, 22, 0, TRADE_CAP, AIR_CRAFT_XP));
+}
+
+fn nature_runner_bank_return(runner: &mut AirSlotRecord, tick: u32, essence: i32) {
+    let mut bank = air_close(AirRole::Runner, tick, essence);
+    bank.tile = Some(FALADOR_EAST);
+    bank.bank_open = true;
+    bank.bank_loaded = true;
+    runner.observe(bank);
+    runner.observe(air_close(AirRole::Runner, tick + 2, essence));
+}
+
+fn mule_temple(role: MuleRole, tick: u32, essence: i32, air: i32, xp: i32) -> AirObservation {
+    AirObservation {
+        tick,
+        essence_unnoted: essence,
+        air_runes: air,
+        runecraft_xp: xp,
+        tile: Some(AIR_TEMPLE),
+        in_temple: true,
+        ..mule_baseline(role)
+    }
+}
+
+fn assert_air_transfer(master: &AirSlotRecord, runner: &AirSlotRecord, events: u32, qty: i32) {
+    assert!(master.saw_offer_with_partner && runner.saw_offer_with_partner);
+    assert!(master.saw_confirm_with_partner && runner.saw_confirm_with_partner);
+    assert_eq!(master.partner_transfer_events, events);
+    assert_eq!(runner.partner_transfer_events, events);
+    assert_eq!(master.transferred_in, qty);
+    assert_eq!(runner.transferred_out, qty);
+    assert_eq!(master.exchange_stage, AirExchangeStage::Offer);
+    assert_eq!(runner.exchange_stage, AirExchangeStage::Offer);
+}
+
+#[test]
+fn nature_first25_bankrefill_second_offer_gap_is_not_full_cycle() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    nature_first_craft(&mut master);
+    nature_runner_bank_return(&mut runner, 40, TRADE_CAP);
+    assert_air_transfer(&master, &runner, 1, TRADE_CAP);
+    runner.observe(air_offer(AirRole::Runner, 50, TRADE_CAP, 0));
+    master.observe(air_keep(
+        air_offer(AirRole::Master, 50, 0, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_offer(AirRole::Runner, 50, 0, TRADE_CAP));
+    master.observe(air_keep(
+        air_inactive(AirRole::Master, 54, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_inactive(AirRole::Runner, 54, 0));
+    assert_eq!(master.partner_transfer_events, 1);
+    assert_eq!(runner.partner_transfer_events, 1);
+    assert_eq!(master.transferred_in, TRADE_CAP);
+    assert_eq!(runner.transferred_out, TRADE_CAP);
+    assert_eq!(master.transferred_out, 0);
+    assert_eq!(runner.transferred_in, 0);
+    assert_eq!(master.post_transfer_craft_events, 1);
+    assert_eq!(master.craft_events, 1);
+    assert!(runner.restock_withdraw && runner.returned_to_ruins);
+    let pair = AirPairWitness { master, runner };
+    assert_eq!(
+        pair.qualify_supported().unwrap(),
+        AirClaim::FirstTransferCraft
+    );
+    let err = pair
+        .qualify_full_cycle()
+        .expect_err("first 25 craft plus restock plus second-offer staging is not a second cycle");
+    assert!(
+        err.contains("no further work") || err.contains("second"),
+        "{err}"
+    );
+}
+
+#[test]
+fn nature_second_receipt_and_fresh_second_craft_qualifies_full_cycle() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    nature_first_craft(&mut master);
+    nature_runner_bank_return(&mut runner, 40, TRADE_CAP);
+    master.observe(air_keep(
+        air_offer(AirRole::Master, 60, 0, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_offer(AirRole::Runner, 60, TRADE_CAP, 0));
+    master.observe(air_keep(
+        air_confirm(AirRole::Master, 62, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_confirm(AirRole::Runner, 62, 0));
+    master.observe(air_keep(
+        air_close(AirRole::Master, 64, TRADE_CAP),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_close(AirRole::Runner, 64, 0));
+    master.observe(air_temple(AirRole::Master, 70, 0, TRADE_CAP, AIR_CRAFT_XP));
+    master.observe(air_temple(
+        AirRole::Master,
+        71,
+        0,
+        TRADE_CAP,
+        AIR_CRAFT_XP * 2,
+    ));
+    master.observe(air_temple(
+        AirRole::Master,
+        72,
+        0,
+        TRADE_CAP * 2,
+        AIR_CRAFT_XP * 2,
+    ));
+    assert_air_transfer(&master, &runner, 2, TRADE_CAP * 2);
+    assert!(runner.second_transfer_after_bank_return);
+    assert_eq!(master.post_transfer_craft_events, 2);
+    let pair = AirPairWitness { master, runner };
+    assert_eq!(
+        pair.qualify_full_cycle().unwrap(),
+        AirClaim::BankReturnSecondCycle
+    );
+}
+
+#[test]
+fn nature_no_second_craft_after_second_receipt_is_not_full_cycle() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    nature_first_close(&mut master, &mut runner);
+    nature_first_craft(&mut master);
+    nature_runner_bank_return(&mut runner, 40, TRADE_CAP);
+    master.observe(air_keep(
+        air_offer(AirRole::Master, 60, 0, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_offer(AirRole::Runner, 60, TRADE_CAP, 0));
+    master.observe(air_keep(
+        air_confirm(AirRole::Master, 62, 0),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_confirm(AirRole::Runner, 62, 0));
+    master.observe(air_keep(
+        air_close(AirRole::Master, 64, TRADE_CAP),
+        TRADE_CAP,
+        AIR_CRAFT_XP,
+    ));
+    runner.observe(air_close(AirRole::Runner, 64, 0));
+    let pair = AirPairWitness { master, runner };
+    assert_eq!(
+        pair.qualify_supported().unwrap(),
+        AirClaim::FirstTransferCraft
+    );
+    let err = pair
+        .qualify_full_cycle()
+        .expect_err("second receipt without a fresh craft is not a full cycle");
+    assert!(
+        err.contains("no further work") || err.contains("second"),
+        "{err}"
+    );
+}
+
+#[test]
+fn nature_staging_is_not_actual_close() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_offer(AirRole::Master, 1, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 1, TRADE_CAP, 0));
+    runner.observe(air_offer(AirRole::Runner, 1, 0, TRADE_CAP));
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(runner.transferred_out, 0);
+    assert_eq!(master.transferred_in, 0);
+}
+
+#[test]
+fn nature_missing_or_wrong_partner_does_not_count() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    let mut master_offer = air_offer(AirRole::Master, 1, 0, 0);
+    master_offer.trade_partner = None;
+    master.observe(master_offer);
+    runner.observe(air_offer(AirRole::Runner, 1, TRADE_CAP, 0));
+    master.observe(air_confirm(AirRole::Master, 2, 0));
+    runner.observe(air_confirm(AirRole::Runner, 2, 0));
+    master.observe(air_close(AirRole::Master, 3, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 3, 0));
+    assert_eq!(master.partner_transfer_events, 0);
+    assert_eq!(runner.partner_transfer_events, 1);
+
+    let mut wrong = air_slot(AirRole::Master);
+    let mut stranger = air_offer(AirRole::Master, 1, 0, 0);
+    stranger.trade_partner = Some("stranger".into());
+    wrong.observe(stranger);
+    assert!(wrong.saw_wrong_partner);
+    assert_eq!(wrong.partner_transfer_events, 0);
+}
+
+#[test]
+fn nature_partnerless_new_offer_invalidates_previous_episode() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_offer(AirRole::Master, 1, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 1, TRADE_CAP, 0));
+    master.observe(air_confirm(AirRole::Master, 2, 0));
+    runner.observe(air_confirm(AirRole::Runner, 2, 0));
+    let mut master_offer = air_offer(AirRole::Master, 3, 0, 0);
+    let mut runner_offer = air_offer(AirRole::Runner, 3, TRADE_CAP, 0);
+    master_offer.trade_partner = None;
+    runner_offer.trade_partner = None;
+    master.observe(master_offer);
+    runner.observe(runner_offer);
+    master.observe(air_offer(AirRole::Master, 4, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 4, TRADE_CAP, 0));
+    master.observe(air_confirm(AirRole::Master, 5, 0));
+    runner.observe(air_confirm(AirRole::Runner, 5, 0));
+    master.observe(air_close(AirRole::Master, 6, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 6, 0));
+    assert_eq!(master.partner_transfer_events, 0);
+    assert_eq!(runner.partner_transfer_events, 0);
+}
+
+#[test]
+fn nature_seed_and_bank_motion_is_not_a_transfer() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_temple(AirRole::Master, 1, 0, TRADE_CAP, AIR_CRAFT_XP));
+    nature_runner_bank_return(&mut runner, 2, TRADE_CAP);
+    assert_eq!(master.partner_transfer_events, 0);
+    assert_eq!(runner.partner_transfer_events, 0);
+    assert_eq!(master.post_transfer_craft_events, 0);
+    assert_eq!(runner.transferred_out, 0);
+    assert_eq!(master.transferred_in, 0);
+    let pair = AirPairWitness { master, runner };
+    assert!(pair.qualify_supported().is_err());
+    assert!(pair.qualify_full_cycle().is_err());
+}
+
+#[test]
+fn mule_separated_consume_xp_air_after_trade_counts_once() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, 0, 0, 0));
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+    crafter.observe(mule_temple(MuleRole::Crafter, 111, 0, 0, MULE_CRAFT_XP));
+    assert_eq!(crafter.craft_events, 0);
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        112,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.craft_events, 1);
+    assert_eq!(crafter.post_exchange_craft_events, 1);
+}
+
+#[test]
+fn mule_seed_craft_excluded_from_postexchange() {
+    let mut baseline = mule_baseline(MuleRole::Crafter);
+    baseline.essence_unnoted = MULE_TRADE_CAP;
+    let mut crafter = MuleSlotRecord::new(
+        MuleRole::Crafter,
+        "crafter".into(),
+        "crafter".into(),
+        "mule".into(),
+        serde_json::Map::new(),
+        baseline,
+    );
+    crafter.observe(mule_temple(MuleRole::Crafter, 1, 0, 0, 0));
+    crafter.observe(mule_temple(MuleRole::Crafter, 2, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        3,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.craft_events, 1);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+}
+
+#[test]
+fn mule_stale_unrelated_later_delta_does_not_count() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_close(MuleRole::Crafter, 110, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 111, 0, MULE_TRADE_CAP));
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+    let mut later = mule_close(MuleRole::Crafter, 200, 0, MULE_TRADE_CAP);
+    later.runecraft_xp = MULE_CRAFT_XP;
+    crafter.observe(later);
+    assert_eq!(crafter.craft_events, 0);
+    assert_eq!(crafter.post_exchange_craft_events, 0);
+}
+
+#[test]
+fn mule_bank_input_is_not_old_exchange_craft() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, 0, 0, 0));
+    crafter.observe(mule_temple(MuleRole::Crafter, 111, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        112,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    assert_eq!(crafter.post_exchange_craft_events, 1);
+    let mut bank = mule_close(MuleRole::Crafter, 150, MULE_TRADE_CAP, 0);
+    bank.tile = Some(FALADOR_EAST);
+    bank.bank_open = true;
+    bank.bank_loaded = true;
+    crafter.observe(bank);
+    crafter.observe(mule_temple(MuleRole::Crafter, 160, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(MuleRole::Crafter, 161, 0, 0, MULE_CRAFT_XP * 2));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        162,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP * 2,
+    ));
+    assert_eq!(crafter.craft_events, 2);
+    assert_eq!(crafter.post_exchange_craft_events, 1);
+}
+
+#[test]
+fn mule_full_cycle_still_requires_second_exchange_and_craft() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    mule_gap_close(&mut crafter, &mut mule);
+    crafter.observe(mule_temple(MuleRole::Crafter, 110, 0, 0, 0));
+    crafter.observe(mule_temple(MuleRole::Crafter, 111, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        112,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP,
+    ));
+    let mut deposit = mule_close(MuleRole::Mule, 130, 0, 0);
+    deposit.tile = Some(FALADOR_EAST);
+    deposit.bank_open = true;
+    deposit.bank_loaded = true;
+    mule.observe(deposit);
+    let mut restock = mule_close(MuleRole::Mule, 132, MULE_TRADE_CAP, 0);
+    restock.tile = Some(FALADOR_EAST);
+    restock.bank_open = true;
+    restock.bank_loaded = true;
+    mule.observe(restock);
+    mule.observe(mule_close(MuleRole::Mule, 134, MULE_TRADE_CAP, 0));
+    let mut crafter_offer = mule_offer(MuleRole::Crafter, 140, 0, MULE_TRADE_CAP, 0);
+    crafter_offer.runecraft_xp = MULE_CRAFT_XP;
+    crafter.observe(crafter_offer);
+    mule.observe(mule_offer(MuleRole::Mule, 140, MULE_TRADE_CAP, 0, 0));
+    let mut crafter_confirm = mule_confirm(MuleRole::Crafter, 142, 0, MULE_TRADE_CAP);
+    crafter_confirm.runecraft_xp = MULE_CRAFT_XP;
+    crafter.observe(crafter_confirm);
+    mule.observe(mule_confirm(MuleRole::Mule, 142, MULE_TRADE_CAP, 0));
+    let mut crafter_close = mule_close(MuleRole::Crafter, 144, MULE_TRADE_CAP, 0);
+    crafter_close.runecraft_xp = MULE_CRAFT_XP;
+    crafter.observe(crafter_close);
+    mule.observe(mule_close(MuleRole::Mule, 144, 0, MULE_TRADE_CAP));
+    crafter.observe(mule_temple(MuleRole::Crafter, 150, 0, 0, MULE_CRAFT_XP));
+    crafter.observe(mule_temple(MuleRole::Crafter, 151, 0, 0, MULE_CRAFT_XP * 2));
+    crafter.observe(mule_temple(
+        MuleRole::Crafter,
+        152,
+        0,
+        MULE_TRADE_CAP,
+        MULE_CRAFT_XP * 2,
+    ));
+    assert_mule_transfer(&crafter, &mule, 2, MULE_TRADE_CAP * 2);
+    assert!(mule.second_exchange_after_bank_return);
+    assert_eq!(crafter.post_exchange_craft_events, 2);
+    let pair = MulePairWitness { crafter, mule };
+    assert_eq!(
+        pair.qualify_full_cycle().unwrap(),
+        MuleClaim::MuleBankReturnSecondCycle
+    );
 }
