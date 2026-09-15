@@ -9766,6 +9766,48 @@ mod tests {
             .qualify()
             .is_err());
 
+        // Retained funding is a separate valid branch: the bank session stays
+        // loaded, but carried and bank coins do not change before the return.
+        let mut retained = deposited.clone();
+        retained.tick = 11;
+        let mut retained_returned = retained.clone();
+        retained_returned.tick = 12;
+        retained_returned.bank_open = false;
+        retained_returned.bank_loaded = false;
+        retained_returned.bank_generation = 2;
+        retained_returned.tile = Some(AEMAD_STAND);
+        let mut retained_reopened = retained_returned.clone();
+        retained_reopened.tick = 13;
+        retained_reopened.shop_open = true;
+        retained_reopened.main_modal = SHOPMAIN;
+        retained_reopened.shop_stock = vec![BoundedShopItem {
+            id: EMPTY_VIAL_ID,
+            count: 5,
+        }];
+        let mut retained_further = retained_reopened.clone();
+        retained_further.tick = 14;
+        retained_further.shop_stock[0].count = 4;
+        retained_further.item_ids.insert(EMPTY_VIAL_ID, 1);
+        retained_further.item_ids.insert(COINS_ID, 1880);
+        let retained_witness = witness(
+            case,
+            &baseline,
+            [
+                &opened,
+                &bought,
+                &deposited,
+                &retained,
+                &retained_returned,
+                &retained_reopened,
+                &retained_further,
+            ],
+        );
+        let retained_ok = retained_witness.qualify().unwrap();
+        assert_eq!(
+            retained_ok["shop_buyout_cycle"]["funding"],
+            json!({ "Retained": { "carried_coins": 1900 } })
+        );
+
         let case = CoreCase::parse("shop_buyout_aubury").unwrap();
         let aemad = noncombat_obs(AEMAD_STAND, &[], &[], &[], &[], &[]);
         assert!(validate_case_baseline(case, &aemad).is_err());
