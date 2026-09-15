@@ -2220,6 +2220,7 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
         3420,
         IfTypeMut {
             hide: true,
+            button_type: ButtonType::BUTTON_OK,
             ..Default::default()
         },
     );
@@ -2238,6 +2239,7 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
         3422,
         IfTypeMut {
             hide: true,
+            button_type: ButtonType::BUTTON_CLOSE,
             ..Default::default()
         },
     );
@@ -2262,6 +2264,7 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
     c.bump_gens(ServerProt::IF_OPENMAIN_SIDE);
     assert!(snap.rebuild_family(&c, Family::Trade));
     assert_eq!(snap.trade().accept_component_id, -1);
+    assert_eq!(snap.trade().decline_component_id, -1);
 
     // A wrong-role canonical slot is unavailable even when its label remains.
     let mut root = c.if_(3323).unwrap().clone();
@@ -2290,6 +2293,14 @@ fn trade_controls_resolve_real_sibling_buttons_only() {
     let mut accept = c.if_(3420).unwrap().clone();
     accept.r#type = ComponentType::TYPE_RECT;
     set_iface(&mut c, 3420, accept);
+    set_iface_mut(
+        &mut c,
+        3420,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
     let mut root = c.if_(3323).unwrap().clone();
     root.children = Some(vec![3999, 4000, 3422, 3423, 3442]);
     set_iface(&mut c, 3323, root);

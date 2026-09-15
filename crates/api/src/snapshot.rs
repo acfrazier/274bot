@@ -3463,6 +3463,7 @@ fn native_trade_control(client: &Client, root: i32, wanted: i32, button_type: i3
                 continue;
             };
             if candidate.id == wanted
+                && !candidate.hide
                 && candidate.r#type == ComponentType::TYPE_RECT
                 && candidate.button_type == button_type
             {
