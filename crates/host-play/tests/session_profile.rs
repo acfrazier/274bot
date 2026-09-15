@@ -1169,6 +1169,28 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
         )
         .unwrap_err();
     assert!(error.contains("binding does not match"), "{error}");
+
+    // Same policy and pack, different mask: the former policy-only binding
+    // admitted this stale file. The real-map bake regression in nav proves
+    // such a mask-only change is possible for active nonblocking locs.
+    let same_policy_new_mask = [BundledNavIdentity {
+        canlight_identity: Some(nav::pack::sha256_hex(&nav::canlight::identity_digest(
+            289,
+            b"fixture-bank-zones",
+            &[1u64],
+        ))),
+        ..table[0].clone()
+    }];
+    let error = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &same_policy_new_mask,
+            Some(root.as_path()),
+        )
+        .unwrap_err();
+    assert!(error.contains("binding does not match"), "{error}");
 }
 
 #[test]
