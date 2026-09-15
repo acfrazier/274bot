@@ -9849,7 +9849,7 @@ fn flax_spinner_scenario() -> Scenario {
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "setstat crafting 1");
+                cheat(c, "setstat crafting 10");
                 cheat(c, &format!("givebank flax {FLAX_SPIN_SEED}"));
                 cheat(c, &tele_args(bank.level, bank.x, bank.z));
                 true
@@ -9867,10 +9867,10 @@ fn flax_spinner_scenario() -> Scenario {
     });
     for (step_name, arm) in [
         (
-            "confirm Crafting 1 before Start",
+            "confirm Crafting 10 before Start",
             Proof::Stat {
                 id: CRAFTING_STAT,
-                min: 1,
+                min: 10,
             },
         ),
         (
@@ -10008,10 +10008,10 @@ fn flax_spinner_scenario() -> Scenario {
 fn flax_aio_empty_pack_confirms() -> Vec<(&'static str, Proof)> {
     vec![
         (
-            "confirm Crafting 1 before Start",
+            "confirm Crafting 10 before Start",
             Proof::Stat {
                 id: CRAFTING_STAT,
-                min: 1,
+                min: 10,
             },
         ),
         (
@@ -10077,7 +10077,7 @@ fn flax_aio_scenario() -> Scenario {
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "setstat crafting 1");
+                cheat(c, "setstat crafting 10");
                 cheat(c, &tele_args(field.level, field.x, field.z));
                 true
             }),
@@ -10308,7 +10308,7 @@ fn flax_aio_spin_scenario() -> Scenario {
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "setstat crafting 1");
+                cheat(c, "setstat crafting 10");
                 cheat(c, &format!("givebank flax {FLAX_SPIN_SEED}"));
                 cheat(c, &tele_args(bank.level, bank.x, bank.z));
                 true
@@ -20136,7 +20136,7 @@ mod tests {
         }));
         assert!(spin_seed.contains(&Proof::Stat {
             id: CRAFTING_STAT,
-            min: 1,
+            min: 10,
         }));
         assert!(spin_seed.contains(&Proof::BankItemId {
             id: FLAX_ID,
@@ -20202,7 +20202,7 @@ mod tests {
         }));
         assert!(seed.contains(&Proof::Stat {
             id: CRAFTING_STAT,
-            min: 1,
+            min: 10,
         }));
         assert!(seed.contains(&Proof::ItemIdAtMost {
             id: FLAX_ID,
