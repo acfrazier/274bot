@@ -1,9 +1,13 @@
-//! Named BANK_LOCATIONS are import-time facts from bound-world resolve.
+//! Named BANK_LOCATIONS are import-time facts: the catalog alias
+//! configuration resolved against the bound world's packed booths and walk
+//! surface, posted once onto the isolate's content.
 
 use std::sync::Arc;
 
-use api::named_banks::{resolve, NamedBankFacts, CANDIDATES};
+use api::named_banks::NamedBankFacts;
 use api::snapshot::WorldTile;
+use nav::named_banks::resolve;
+use script::content::BANK_ALIASES;
 use script::isolate_fb::{NearestBoothInput, ReachViewInput, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 
@@ -88,8 +92,10 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
+/// The shipped catalog alias configuration's own cluster booths, used as the
+/// bound world's packed booth set.
 fn packed_booths() -> Vec<WorldTile> {
-    CANDIDATES
+    BANK_ALIASES
         .iter()
         .flat_map(|c| c.booths.iter().copied())
         .collect()
@@ -161,7 +167,7 @@ fn import_probe(iso: &LoadIsolate) -> serde_json::Value {
 
 #[test]
 fn import_time_find_sees_falador_without_a_snapshot() {
-    let facts = resolve(&packed_booths(), |_| true);
+    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
     let iso = spawn(PROBE, facts);
     let probe = import_probe(&iso);
     assert_eq!(
@@ -219,20 +225,20 @@ fn absent_world_facts_leave_bank_locations_empty() {
 
 #[test]
 fn independent_isolates_do_not_share_named_bank_facts() {
-    let falador_only: Vec<WorldTile> = CANDIDATES
+    let falador_only: Vec<WorldTile> = BANK_ALIASES
         .iter()
         .find(|c| c.name == "Falador East")
         .unwrap()
         .booths
         .to_vec();
-    let varrock_only: Vec<WorldTile> = CANDIDATES
+    let varrock_only: Vec<WorldTile> = BANK_ALIASES
         .iter()
         .find(|c| c.name == "Varrock East")
         .unwrap()
         .booths
         .to_vec();
-    let a = spawn(PROBE, resolve(&falador_only, |_| true));
-    let b = spawn(PROBE, resolve(&varrock_only, |_| true));
+    let a = spawn(PROBE, resolve(BANK_ALIASES, &falador_only, |_| true));
+    let b = spawn(PROBE, resolve(BANK_ALIASES, &varrock_only, |_| true));
     let pa = import_probe(&a);
     let pb = import_probe(&b);
     assert_eq!(pa.get("names"), Some(&serde_json::json!(["Falador East"])));
@@ -247,7 +253,7 @@ fn independent_isolates_do_not_share_named_bank_facts() {
 
 #[test]
 fn nearest_bank_follows_posted_booth_not_the_alias_list() {
-    let facts = resolve(&packed_booths(), |_| true);
+    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
     let iso = spawn(PROBE, facts);
     let booth = NearestBoothInput {
         x: 3222,

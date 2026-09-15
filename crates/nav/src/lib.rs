@@ -13,6 +13,7 @@ pub mod collision;
 pub mod essence;
 pub mod grid;
 pub mod manifest;
+pub mod named_banks;
 pub mod pack;
 pub mod paint;
 pub mod router;
