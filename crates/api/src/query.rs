@@ -2088,6 +2088,10 @@ pub struct ReachQueryView {
     /// One byte per in-scene tile (`lx * height + lz`); bit `i` is
     /// DIRS[i] from that tile. Empty when unavailable.
     pub step: Vec<u8>,
+    /// Scene-window crop of the shared static canlight plane, packed as
+    /// JS-safe u32 words at `lx * height + lz`. Empty means unavailable
+    /// (distinct from a present all-zero mask of the window length).
+    pub canlight: Vec<u32>,
 }
 
 impl ReachQueryView {
@@ -2108,15 +2112,17 @@ impl ReachQueryView {
             exact_rank: Vec::new(),
             adjacent_rank: Vec::new(),
             step: Vec::new(),
+            canlight: Vec::new(),
         }
     }
 
-    /// Bitset bytes for one posted view (walkable + reachable + adj).
+    /// Bitset bytes for one posted view (walkable + reachable + adj + canlight).
     pub fn bitset_bytes(&self) -> usize {
         self.walkable
             .len()
             .saturating_add(self.reachable.len())
             .saturating_add(self.reachable_adj.len())
+            .saturating_add(self.canlight.len())
             .saturating_mul(4)
     }
 
@@ -2283,13 +2289,87 @@ pub fn pack_step_masks(scene: &SceneView) -> Vec<u8> {
     masks
 }
 
+/// Borrowed world-scale static canlight plane. Index is
+/// `level * width * height + z * width + x` packed 64 cells per `u64`,
+/// matching the 274L sidecar. Not a scene retain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanlightPlane<'a> {
+    pub bits: &'a [u64],
+    pub origin_x: i32,
+    pub origin_z: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Crop the shared world canlight plane onto the posted Reach window
+/// (`lx * height + lz` u32 words). `None` or non-positive window/plane
+/// geometry posts an empty vector (unavailable), not an all-lightable
+/// mask. A present all-zero vector of the window length is a valid mask
+/// with no eligible tiles.
+pub fn pack_canlight_u32(
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    width: i32,
+    height: i32,
+    plane: Option<CanlightPlane<'_>>,
+) -> Vec<u32> {
+    let Some(plane) = plane else {
+        return Vec::new();
+    };
+    if width <= 0 || height <= 0 || plane.width <= 0 || plane.height <= 0 {
+        return Vec::new();
+    }
+    let n = (width as usize).saturating_mul(height as usize);
+    let mut words = vec![0u32; n.div_ceil(32)];
+    let plane_cells = (plane.width as usize).saturating_mul(plane.height as usize);
+    if plane_cells == 0 {
+        return Vec::new();
+    }
+    for lx in 0..width as usize {
+        for lz in 0..height as usize {
+            let world_lx = (base_x + lx as i32) - plane.origin_x;
+            let world_lz = (base_z + lz as i32) - plane.origin_z;
+            if world_lx < 0 || world_lz < 0 || world_lx >= plane.width || world_lz >= plane.height {
+                continue;
+            }
+            if level < 0 {
+                continue;
+            }
+            let Some(world_idx) = (level as usize).checked_mul(plane_cells).and_then(|base| {
+                base.checked_add((world_lz as usize) * (plane.width as usize) + world_lx as usize)
+            }) else {
+                continue;
+            };
+            let set = plane
+                .bits
+                .get(world_idx / 64)
+                .is_some_and(|word| word & (1u64 << (world_idx % 64)) != 0);
+            if set {
+                let i = lx * (height as usize) + lz;
+                words[i / 32] |= 1u32 << (i % 32);
+            }
+        }
+    }
+    words
+}
+
 /// One compact query view from the scene + the flood already computed
 /// for entity row bits. `flood == None` posts unavailable / empty dims.
 /// Posted `level` is the flood/scene plane (the same `here.level` observe
 /// already bound, including `minusedlevel`); this is not a new player-plane
 /// decode. Adjacent-step masks are packed from the same scene; they are
-/// not a second flood.
+/// not a second flood. `canlight == None` posts an empty canlight vector.
 pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQueryView {
+    pack_reach_query_plane(scene, flood, None)
+}
+
+/// [`pack_reach_query`] plus an optional borrowed world canlight plane.
+pub fn pack_reach_query_plane(
+    scene: &SceneView,
+    flood: Option<&ReachFlood>,
+    canlight: Option<CanlightPlane<'_>>,
+) -> ReachQueryView {
     let Some(flood) = flood else {
         return ReachQueryView::unavailable();
     };
@@ -2311,6 +2391,14 @@ pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQ
         exact_rank: exact_rank.to_vec(),
         adjacent_rank: adjacent_rank.to_vec(),
         step: pack_step_masks(scene),
+        canlight: pack_canlight_u32(
+            flood.base_x,
+            flood.base_z,
+            flood.level,
+            flood.width,
+            flood.height,
+            canlight,
+        ),
     }
 }
 

@@ -147,6 +147,7 @@ table Reach {
   step: [ubyte];
   exact_rank: [ushort];
   adjacent_rank: [ushort];
+  canlight: [uint];
 }
 
 // One selected-world widget text row. Absent from the posted list is not
