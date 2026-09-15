@@ -202,6 +202,7 @@ const VT_REACH_REACHABLE_ADJ: VOffsetT = 20;
 const VT_REACH_STEP: VOffsetT = 22;
 const VT_REACH_EXACT_RANK: VOffsetT = 24;
 const VT_REACH_ADJACENT_RANK: VOffsetT = 26;
+const VT_REACH_CANLIGHT: VOffsetT = 28;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -322,6 +323,7 @@ pub struct ReachViewInput<'a> {
     pub exact_rank: &'a [u16],
     pub adjacent_rank: &'a [u16],
     pub step: &'a [u8],
+    pub canlight: &'a [u32],
 }
 
 impl ReachViewInput<'static> {
@@ -339,6 +341,7 @@ impl ReachViewInput<'static> {
         exact_rank: &[],
         adjacent_rank: &[],
         step: &[],
+        canlight: &[],
     };
 }
 
@@ -700,6 +703,9 @@ impl ReachReader<'_> {
     pub fn step(&self) -> Vec<u8> {
         u8_vec(&self.tab, VT_REACH_STEP)
     }
+    pub fn canlight(&self) -> Vec<u32> {
+        u32_vec(&self.tab, VT_REACH_CANLIGHT)
+    }
 }
 
 impl Verifiable for ReachReader<'_> {
@@ -725,6 +731,7 @@ impl Verifiable for ReachReader<'_> {
                 VT_REACH_ADJACENT_RANK,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<Vector<u32>>>("canlight", VT_REACH_CANLIGHT, false)?
             .finish();
         Ok(())
     }
@@ -1962,6 +1969,7 @@ pub struct ReachViewFp {
     pub exact_rank: Vec<u16>,
     pub adjacent_rank: Vec<u16>,
     pub step: Vec<u8>,
+    pub canlight: Vec<u32>,
 }
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
@@ -2235,6 +2243,7 @@ impl SnapshotFingerprint {
                 exact_rank: input.reach.exact_rank.to_vec(),
                 adjacent_rank: input.reach.adjacent_rank.to_vec(),
                 step: input.reach.step.to_vec(),
+                canlight: input.reach.canlight.to_vec(),
             },
             attacked_by_player: input.attacked_by_player,
             widgets: input
@@ -3234,6 +3243,7 @@ fn reach_off<'b>(
     let step = b.create_vector(r.step);
     let exact_rank = b.create_vector(r.exact_rank);
     let adjacent_rank = b.create_vector(r.adjacent_rank);
+    let canlight = b.create_vector(r.canlight);
     let tab = b.start_table();
     b.push_slot_always(VT_REACH_AVAILABLE, r.available);
     b.push_slot_always(VT_REACH_BASE_X, r.base_x);
@@ -3247,6 +3257,7 @@ fn reach_off<'b>(
     b.push_slot_always(VT_REACH_STEP, step);
     b.push_slot_always(VT_REACH_EXACT_RANK, exact_rank);
     b.push_slot_always(VT_REACH_ADJACENT_RANK, adjacent_rank);
+    b.push_slot_always(VT_REACH_CANLIGHT, canlight);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5391,6 +5402,7 @@ pub(crate) mod tests {
             exact_rank: &exact_rank,
             adjacent_rank: &adjacent_rank,
             step: &[],
+            canlight: &walkable,
         };
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
@@ -5413,6 +5425,7 @@ pub(crate) mod tests {
         assert_eq!(reach.exact_rank(), exact_rank);
         assert_eq!(reach.adjacent_rank(), adjacent_rank);
         assert_eq!(reach.step(), Vec::<u8>::new());
+        assert_eq!(reach.canlight(), walkable);
         assert_eq!(reach.walkable()[0] & (1 << 31), 1 << 31, "bit 31 in word 0");
         assert_eq!(reach.walkable()[1] & 1, 1, "bit 32 in word 1");
         assert_eq!(reach.walkable()[1] & (1 << 21), 1 << 21, "bit 53 in word 1");
@@ -5439,6 +5452,7 @@ pub(crate) mod tests {
             exact_rank: &rank,
             adjacent_rank: &rank,
             step: &step,
+            canlight: &[],
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
@@ -5468,6 +5482,7 @@ pub(crate) mod tests {
             exact_rank: &rank,
             adjacent_rank: &rank,
             step: &[2],
+            canlight: &[],
         };
         let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
         input.reach = ReachViewInput::UNAVAILABLE;
@@ -5481,5 +5496,45 @@ pub(crate) mod tests {
         assert!(reach.exact_rank().is_empty());
         assert!(reach.adjacent_rank().is_empty());
         assert!(reach.step().is_empty());
+        assert!(reach.canlight().is_empty());
+    }
+
+    #[test]
+    fn canlight_present_zeros_are_not_omitted_and_unavailable_clears_stale_bits() {
+        let walkable = reach_words(&[0]);
+        let rank = vec![0u16];
+        let zeros = vec![0u32; 1];
+        let lit = vec![1u32];
+        let mut input = empty_input(1);
+        input.reach = ReachViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 1,
+            width: 9,
+            height: 8,
+            walkable: &walkable,
+            reachable: &walkable,
+            reachable_adj: &walkable,
+            exact_rank: &rank,
+            adjacent_rank: &rank,
+            step: &[2],
+            canlight: &lit,
+        };
+        let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert_eq!(kf.reach().expect("reach").canlight(), lit);
+
+        input.reach.canlight = &zeros;
+        let (delta, fp2) = encode_snapshot_delta(Some(&fp), &input, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_reach(), "canlight change must post reach");
+        assert_eq!(view.reach().expect("reach").canlight(), zeros);
+
+        input.reach = ReachViewInput::UNAVAILABLE;
+        let (cleared, _) = encode_snapshot_delta(Some(&fp2), &input, false);
+        let view = decode_snapshot(&cleared).expect("cleared");
+        assert!(view.has_reach());
+        assert!(view.reach().expect("cleared").canlight().is_empty());
     }
 }

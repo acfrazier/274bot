@@ -57,6 +57,7 @@ struct ReachBits {
     height: i32,
     walkable: Vec<u32>,
     step: Vec<u8>,
+    canlight: Vec<u32>,
 }
 
 impl ReachBits {
@@ -70,6 +71,7 @@ impl ReachBits {
             height: 0,
             walkable: Vec::new(),
             step: Vec::new(),
+            canlight: Vec::new(),
         }
     }
 
@@ -77,6 +79,28 @@ impl ReachBits {
         self.available
             && ReachQueryView::bit_at(
                 &self.walkable,
+                self.width,
+                self.height,
+                self.base_x,
+                self.base_z,
+                self.level,
+                WorldTile {
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level,
+                },
+            )
+    }
+
+    fn canlight_available(&self) -> bool {
+        !self.canlight.is_empty()
+    }
+
+    fn canlight_at(&self, tile: Tile) -> bool {
+        self.available
+            && self.canlight_available()
+            && ReachQueryView::bit_at(
+                &self.canlight,
                 self.width,
                 self.height,
                 self.base_x,
@@ -231,6 +255,7 @@ fn reach_bits(reach: crate::isolate_fb::ReachReader<'_>) -> ReachBits {
         height: reach.height(),
         walkable: reach.walkable(),
         step: reach.step(),
+        canlight: reach.canlight(),
     }
 }
 
@@ -697,6 +722,7 @@ fn run_length(
         || refused.contains(&(start.x, start.z))
         || fire_at(fire_locs, start)
         || !reach.walkable_at(start)
+        || !reach.canlight_at(start)
     {
         return 0;
     }
@@ -715,6 +741,7 @@ fn run_length(
             || refused.contains(&(next.x, next.z))
             || fire_at(fire_locs, next)
             || !reach.walkable_at(next)
+            || !reach.canlight_at(next)
             || !reach.can_step(current, next)
         {
             break;
@@ -760,6 +787,9 @@ fn select_burn_tile(
                 continue;
             }
             if !reach.walkable_at(tile) {
+                continue;
+            }
+            if !reach.canlight_at(tile) {
                 continue;
             }
             for &direction in directions {
@@ -812,6 +842,9 @@ fn next_tile(input: &Value) -> Value {
     });
     if !reach.available {
         return json!({ "kind": "notImpl", "reason": "missing walkable" });
+    }
+    if !reach.canlight_available() {
+        return json!({ "kind": "notImpl", "reason": "missing canlight" });
     }
     match select_burn_tile(plot, here, &refused, &fire_locs, &reach, want, &directions) {
         Some((tile, direction, run)) => json!({
@@ -883,6 +916,9 @@ fn run_in_dir(input: &Value) -> Value {
             let o = o.borrow();
             (o.reach.clone(), o.fire_locs.clone())
         });
+        if reach.available && !reach.canlight_available() {
+            return json!({ "kind": "notImpl", "reason": "missing canlight" });
+        }
         return json!({
             "kind": "run",
             "run": if cap > 0 { run_length(from, direction, cap, &refused_keys(input.get("occupied")), &fire_locs, &reach, plot) } else { 0 },
@@ -918,10 +954,14 @@ fn run_in_dir(input: &Value) -> Value {
             let o = o.borrow();
             (o.reach.clone(), o.fire_locs.clone())
         });
-        json!({ "kind": "run", "run": run_length(
-            from, direction, cap, &refused_keys(input.get("occupied")),
-            &fire_locs, &reach, plot
-        ) })
+        if reach.available && !reach.canlight_available() {
+            json!({ "kind": "notImpl", "reason": "missing canlight" })
+        } else {
+            json!({ "kind": "run", "run": run_length(
+                from, direction, cap, &refused_keys(input.get("occupied")),
+                &fire_locs, &reach, plot
+            ) })
+        }
     }
 }
 
@@ -1009,6 +1049,7 @@ mod tests {
             level: 0,
             width,
             height,
+            canlight: walkable.clone(),
             walkable,
             step: vec![0xff; n],
         }
@@ -1259,5 +1300,119 @@ mod tests {
         assert_eq!(rt.token, before.wrapping_add(1));
         assert_eq!(rt.phase, Phase::Idle);
         assert!(rt.log_name.is_empty());
+    }
+
+    fn unset_canlight(reach: &mut ReachBits, x: i32, z: i32) {
+        let lx = x - reach.base_x;
+        let lz = z - reach.base_z;
+        let i = (lx as usize) * (reach.height as usize) + (lz as usize);
+        reach.canlight[i / 32] &= !(1u32 << (i % 32));
+    }
+
+    #[test]
+    fn bank_floor_walkable_nearest_loses_to_canlight_tile() {
+        let mut reach = reach_covering(&[(3252, 3420), (3261, 3429)], 3250, 3418, 16, 16);
+        unset_canlight(&mut reach, 3252, 3420);
+        let here = Tile {
+            x: 3252,
+            z: 3420,
+            level: 0,
+        };
+        let picked = select_burn_tile(
+            Plot {
+                x0: 3250,
+                x1: 3262,
+                z0: 3418,
+                z1: 3430,
+                level: 0,
+            },
+            Some(here),
+            &HashSet::new(),
+            &[],
+            &reach,
+            1,
+            &[(-1, 0)],
+        )
+        .expect("outside-bank tile");
+        assert_eq!(
+            picked.0,
+            Tile {
+                x: 3261,
+                z: 3429,
+                level: 0
+            }
+        );
+    }
+
+    #[test]
+    fn denied_start_and_interior_canlight_shorten_west_run() {
+        let mut reach = reach_covering(
+            &[(3235, 3418), (3236, 3418), (3237, 3418)],
+            3235,
+            3418,
+            4,
+            3,
+        );
+        let plot = Plot {
+            x0: 3235,
+            x1: 3237,
+            z0: 3418,
+            z1: 3418,
+            level: 0,
+        };
+        let start = Tile {
+            x: 3237,
+            z: 3418,
+            level: 0,
+        };
+        assert_eq!(
+            run_length(start, (-1, 0), 3, &HashSet::new(), &[], &reach, plot),
+            3
+        );
+        unset_canlight(&mut reach, 3237, 3418);
+        assert_eq!(
+            run_length(start, (-1, 0), 3, &HashSet::new(), &[], &reach, plot),
+            0
+        );
+        unset_canlight(&mut reach, 3236, 3418);
+        reach.canlight[0] |= 1u32 << 6;
+        assert_eq!(
+            run_length(start, (-1, 0), 3, &HashSet::new(), &[], &reach, plot),
+            1,
+            "interior canlight denial must stop the west run"
+        );
+    }
+
+    #[test]
+    fn missing_canlight_is_not_a_walkable_rank() {
+        let mut reach = reach_covering(&[(3235, 3418)], 3235, 3418, 4, 3);
+        reach.canlight.clear();
+        NATIVE_OBSERVATION.with(|o| o.borrow_mut().reach = reach.clone());
+        let result = next_tile(&json!({
+            "plot": { "x0": 3235, "x1": 3237, "z0": 3418, "z1": 3419, "bank": { "x": 3235, "z": 3420, "level": 0 } },
+            "here": { "x": 3235, "z": 3418, "level": 0 },
+            "want": 1,
+            "directions": [{ "dx": -1, "dz": 0 }],
+        }));
+        assert_eq!(result["kind"], "notImpl");
+        assert_eq!(result["reason"], "missing canlight");
+    }
+
+    #[test]
+    fn valid_all_zero_canlight_has_no_candidate() {
+        let mut reach = reach_covering(&[(3235, 3418), (3236, 3418)], 3235, 3418, 4, 3);
+        for word in &mut reach.canlight {
+            *word = 0;
+        }
+        assert!(reach.canlight_available());
+        assert!(
+            select_burn_tile(plot(), None, &HashSet::new(), &[], &reach, 1, &[(-1, 0)]).is_none()
+        );
+        NATIVE_OBSERVATION.with(|o| o.borrow_mut().reach = reach);
+        let result = next_tile(&json!({
+            "plot": { "x0": 3235, "x1": 3237, "z0": 3418, "z1": 3419, "bank": { "x": 3235, "z": 3420, "level": 0 } },
+            "want": 1,
+        }));
+        assert_eq!(result["kind"], "none");
     }
 }

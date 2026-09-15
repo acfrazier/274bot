@@ -470,6 +470,7 @@ fn find_burn_lane_and_run_use_posted_native_steps_and_validate_start() {
         exact_rank: &ranks,
         adjacent_rank: &ranks,
         step: &steps,
+        canlight: &words,
     };
     post(&iso, &snap);
     tick(&iso, 1);
@@ -556,6 +557,125 @@ fn find_burn_lane_without_walkable_is_explicit() {
         probe.as_str().unwrap_or("").contains("not impl"),
         "missing walkable stays explicit, got {probe:?}"
     );
+    iso.join();
+}
+
+#[test]
+fn find_burn_lane_without_canlight_is_explicit() {
+    let iso = spawn(LANE);
+    iso.probe(
+        r#"
+        globalThis.__plot = { bank: { x: 3235, z: 3420, level: 0 }, x0: 3235, x1: 3237, z0: 3418, z1: 3419 };
+        globalThis.__here = { x: 3235, z: 3418, level: 0 };
+        "#,
+    )
+    .unwrap();
+    let words = walkable_words(
+        4,
+        3,
+        3235,
+        3418,
+        &[(3235, 3418), (3236, 3418), (3237, 3418)],
+    );
+    let scene = api::snapshot::SceneView {
+        available: true,
+        base_x: 3235,
+        base_z: 3418,
+        level: 0,
+        width: 4,
+        height: 3,
+        collision_flags: vec![0; 4 * 3],
+    };
+    let steps = api::query::pack_step_masks(&scene);
+    let ranks = vec![u16::MAX; 4 * 3];
+    let mut snap = base();
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3235,
+        base_z: 3418,
+        level: 0,
+        width: 4,
+        height: 3,
+        walkable: &words,
+        reachable: &words,
+        reachable_adj: &words,
+        exact_rank: &ranks,
+        adjacent_rank: &ranks,
+        step: &steps,
+        canlight: &[],
+    };
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let probe = iso.probe("__ok").unwrap();
+    assert!(
+        probe.as_str().unwrap_or("").contains("not impl"),
+        "missing canlight stays explicit, got {probe:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn find_burn_lane_denies_walkable_bank_floor_from_cropped_mask() {
+    let iso = spawn(LANE);
+    iso.probe(
+        r#"
+        globalThis.__plot = { bank: { x: 3253, z: 3420, level: 0 }, x0: 3250, x1: 3261, z0: 3418, z1: 3429 };
+        globalThis.__here = { x: 3252, z: 3420, level: 0 };
+        "#,
+    )
+    .unwrap();
+    let origin_x = 3240;
+    let origin_z = 3410;
+    let world_w = 32;
+    let world_h = 32;
+    let cells: usize = 4 * world_w * world_h;
+    let mut bits = vec![0u64; cells.div_ceil(64)];
+    let lit_x = 3261;
+    let lit_z = 3429;
+    let idx = (lit_z - origin_z) as usize * world_w + (lit_x - origin_x) as usize;
+    bits[idx / 64] |= 1u64 << (idx % 64);
+    let plane = api::query::CanlightPlane {
+        bits: &bits,
+        origin_x,
+        origin_z,
+        width: world_w as i32,
+        height: world_h as i32,
+    };
+    let canlight = api::query::pack_canlight_u32(3250, 3418, 0, 16, 16, Some(plane));
+    let walkable = walkable_words(16, 16, 3250, 3418, &[(3252, 3420), (3261, 3429)]);
+    let scene = api::snapshot::SceneView {
+        available: true,
+        base_x: 3250,
+        base_z: 3418,
+        level: 0,
+        width: 16,
+        height: 16,
+        collision_flags: vec![0; 16 * 16],
+    };
+    let steps = api::query::pack_step_masks(&scene);
+    let ranks = vec![u16::MAX; 16 * 16];
+    let mut snap = base();
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3250,
+        base_z: 3418,
+        level: 0,
+        width: 16,
+        height: 16,
+        walkable: &walkable,
+        reachable: &walkable,
+        reachable_adj: &walkable,
+        exact_rank: &ranks,
+        adjacent_rank: &ranks,
+        step: &steps,
+        canlight: &canlight,
+    };
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    let found = iso.probe("__found").unwrap();
+    assert_eq!(found["start"]["x"], 3261);
+    assert_eq!(found["start"]["z"], 3429);
     iso.join();
 }
 

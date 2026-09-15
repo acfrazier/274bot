@@ -4116,6 +4116,7 @@ fn posted_reach<'a>(
         exact_rank,
         adjacent_rank,
         step,
+        canlight: &[],
     }
 }
 

@@ -108,6 +108,7 @@ fn posted_scene(
         exact_rank: &[],
         adjacent_rank: &[],
         step: &[],
+        canlight: &[],
     }
 }
 

@@ -845,6 +845,7 @@ fn script_observe_with_npc_boxes(
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     ours: bool,
+    canlight: Option<&[u64]>,
 ) -> bool {
     let mut wrote = false;
     let mut interact = Vec::new();
@@ -1072,6 +1073,7 @@ fn script_observe_with_npc_boxes(
                     withdraw_load_result,
                     bank_op_result_seq,
                     bank_op_result,
+                    canlight,
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -1587,7 +1589,7 @@ fn script_observe(
 ) -> bool {
     script_observe_with_npc_boxes(
         driver, name, up, tick_edge, tick, here, inv, state, snapshot, None, obj_names, scripts,
-        cheats, navs, world, hold, ours,
+        cheats, navs, world, hold, ours, None,
     )
 }
 
@@ -2617,6 +2619,7 @@ fn script_snapshot_fb(
         false,
         0,
         false,
+        None,
         |input, native| {
             script::isolate_fb::encode_snapshot_delta_with_native(last, input, native, force_banks)
         },
@@ -2666,6 +2669,7 @@ fn with_script_snapshot_input<R>(
     withdraw_load_result: bool,
     bank_op_result_seq: u64,
     bank_op_result: bool,
+    canlight: Option<&[u64]>,
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
         script::isolate_fb::NativeFactsInput<'_>,
@@ -2685,8 +2689,17 @@ fn with_script_snapshot_input<R>(
         }
         api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
     });
+    let canlight_plane = canlight.and_then(|bits| {
+        world.map(|w| api::query::CanlightPlane {
+            bits,
+            origin_x: w.collision.origin.x,
+            origin_z: w.collision.origin.z,
+            width: w.collision.width as i32,
+            height: w.collision.height as i32,
+        })
+    });
     let reach_pack = snapshot
-        .map(|s| api::query::pack_reach_query(s.scene(), flood.as_ref()))
+        .map(|s| api::query::pack_reach_query_plane(s.scene(), flood.as_ref(), canlight_plane))
         .unwrap_or_else(api::query::ReachQueryView::unavailable);
     let reach = ReachViewInput {
         available: reach_pack.available,
@@ -2701,6 +2714,7 @@ fn with_script_snapshot_input<R>(
         exact_rank: &reach_pack.exact_rank,
         adjacent_rank: &reach_pack.adjacent_rank,
         step: &reach_pack.step,
+        canlight: &reach_pack.canlight,
     };
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
@@ -5617,6 +5631,7 @@ fn spawn_slot_thread(
                         let slot_obj_names = Arc::clone(&slot_obj_names);
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_world = slot_world.clone();
+                        let slot_canlight = connection.profile().and_then(|p| p.canlight());
                         let mut pump = Pump::new();
                         let script_tick = &mut script_tick;
                         // Last `(player gen, here)` the nav bot stepped:
@@ -5740,6 +5755,7 @@ fn spawn_slot_thread(
                                 &slot_world,
                                 hold,
                                 status.ours,
+                                slot_canlight.as_deref(),
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
@@ -6348,6 +6364,7 @@ mod tests {
             false,
             0,
             false,
+            None,
             script::isolate_fb::encode_snapshot_with_native,
         );
         let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -10217,7 +10234,18 @@ export default class T extends LoopingBot {
             .expect("bank-side id 1");
         assert_eq!(side.component_id, 701);
         let (bytes, _) = script_snapshot_fb(
-            None, false, 1, None, true, None, Some(&snap), None, None, false, false, false,
+            None,
+            false,
+            1,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
         );
         let view = script::isolate_fb::decode_snapshot(&bytes).expect("posted snap");
         let posted = view.bank_side();
@@ -11886,6 +11914,124 @@ export default class T extends LoopingBot {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    #[test]
+    fn script_snapshot_crops_shared_canlight_from_profile_plane() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.ingame = true;
+        c.scene_state = 2;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.minusedlevel = 1;
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        assert!(snap.scene().available, "scene must materialize for crop");
+        let origin_x = 3100;
+        let origin_z = 3100;
+        let world_w = 200usize;
+        let world_h = 200usize;
+        let cells = 4 * world_w * world_h;
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: origin_x,
+                z: origin_z,
+                level: 0,
+            },
+            width: world_w,
+            height: world_h,
+            walk: vec![0; cells],
+            blocked: vec![0; cells.div_ceil(64)],
+            flags: None,
+        };
+        let world =
+            NavWorld::from_parts(collision, nav::transport::TransportGraph::default(), vec![]);
+        let mut bits = vec![0u64; cells.div_ceil(64)];
+        let lit = WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 1,
+        };
+        let idx = 1 * world_w * world_h
+            + (lit.z - origin_z) as usize * world_w
+            + (lit.x - origin_x) as usize;
+        bits[idx / 64] |= 1u64 << (idx % 64);
+        let bytes = with_script_snapshot_input(
+            1,
+            Some((3205, 3205, 1)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            Some(&world),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            Some(bits.as_slice()),
+            script::isolate_fb::encode_snapshot_with_native,
+        );
+        let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        let reach = view.reach().expect("reach posted");
+        assert!(reach.available());
+        assert_eq!(reach.level(), 1);
+        assert!(!reach.canlight().is_empty(), "profile plane must publish");
+        assert!(
+            api::query::ReachQueryView::bit_at(
+                &reach.canlight(),
+                reach.width(),
+                reach.height(),
+                reach.base_x(),
+                reach.base_z(),
+                reach.level(),
+                lit,
+            ),
+            "host packing must crop the shared plane, not omit it"
+        );
+        let missing = with_script_snapshot_input(
+            1,
+            Some((3205, 3205, 1)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            Some(&world),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            script::isolate_fb::encode_snapshot_with_native,
+        );
+        let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");
+        assert!(
+            missing.reach().expect("reach").canlight().is_empty(),
+            "missing profile plane posts empty canlight, not all-allowed"
+        );
     }
 
     #[test]
