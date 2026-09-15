@@ -2752,6 +2752,16 @@ mod isolate {
             })
             .map_err(|e| format!("register tool step: {e}"))?;
         runtime
+            .register_function(
+                "__rs2b0t_boost_potions_step",
+                |args: &[serde_json::Value]| {
+                    Ok(crate::boost_potions::dispatch(
+                        args.first().unwrap_or(&serde_json::Value::Null),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register boost potions step: {e}"))?;
+        runtime
             .register_function("__rs2b0t_target_step", |args: &[serde_json::Value]| {
                 Ok(crate::targets::dispatch(
                     args.first().unwrap_or(&serde_json::Value::Null),

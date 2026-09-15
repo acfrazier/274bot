@@ -3,6 +3,8 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+/// Native boost-potion descriptors, planning and sip selection.
+pub mod boost_potions;
 #[cfg(feature = "load")]
 pub mod canvas;
 /// Curated script site configuration and the hostile-attacker predicate.
