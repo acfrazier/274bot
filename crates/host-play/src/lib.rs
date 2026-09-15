@@ -7617,10 +7617,12 @@ mod tests {
         };
         flags[3 * 7 + 3] = client::dash3d::CollisionFlag::W_S as u32
             | client::dash3d::CollisionFlag::W_E as u32;
-        flags[4 * 7 + 3] |= client::dash3d::CollisionFlag::W_W as u32;
-        flags[3 * 7 + 2] |= client::dash3d::CollisionFlag::W_N as u32;
-        flags[4 * 7 + 2] |= client::dash3d::CollisionFlag::W_S as u32;
-        flags[4 * 7 + 4] |= client::dash3d::CollisionFlag::W_N as u32;
+        // Close the east-side pocket: the east neighbour's W_W face blocks
+        // both direct and diagonal entry, while its north/south faces keep
+        // a route from walking around the pocket inside radius one.
+        flags[3 * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32
+            | client::dash3d::CollisionFlag::W_N as u32
+            | client::dash3d::CollisionFlag::W_S as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         world.collision.walk = walk;
         world.collision.blocked = blocked;
@@ -7639,12 +7641,15 @@ mod tests {
             bank: vec![],
         };
         let component = nav::router::local_step_component(&request.world.collision, target, 1);
-        assert!(component.contains(&WorldTile { x: 2, z: 3, level: 0 }));
+        let same_side = WorldTile { x: 2, z: 3, level: 0 };
+        let far_side = WorldTile { x: 4, z: 3, level: 0 };
+        assert!(component.contains(&same_side));
+        assert!(!component.contains(&far_side), "component={component:?}");
         let RouteOutcome::Routed(route) = request.calculate() else {
             panic!("same-side WALL_L approach should route");
         };
         assert!(component.contains(&route.dest));
-        assert_ne!(route.dest, WorldTile { x: 4, z: 3, level: 0 });
+        assert_ne!(route.dest, far_side);
     }
 
     #[test]
