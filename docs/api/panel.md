@@ -10,12 +10,18 @@ It does **not** reimplement the client UI — there is **no Present**, no client
 window feature. The client rasters into a frame (wgpu GPU 3D by default,
 CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
+Bind one immutable **server profile** for the process
+(`--profile local-274|local-289|public-289`; see [README.md](../../README.md)).
+Shared flags match host-play (`--engine`, `--cache`, `--vault`, `--catalog`,
+`--lowmem`/`--highmem`, `--nav-paints on|off`, `--live`, optional
+`--external-ts` for the dedicated loader smoke).
+
 ## Run
 
 ```bash
 export BOT_VAULT_PASS=bot
-cargo run --release -p panel --bin panel-play
-# 50-head RAM:  cargo run --release -p panel --bin panel-play -- --live stress50
+cargo run --release -p panel --bin panel-play -- --profile local-289
+# 50-head RAM:  cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50
 # 50-head 50fps Game+sidecar: --live stress50_full
 ```
 
@@ -130,7 +136,9 @@ extra rasters (`wall_open = false`); every slot keeps running.
 ### Rail
 
 A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
-**Login all** / **Logout all**, an **only render selected** checkbox, one
+**Login all** / **Logout all**, then **Start all** / **Stop all** (script
+bulk — separate from login bulk; see [script.md](script.md)), an
+**only render selected** checkbox, one
 tile per wall member, **+ add bot**, and the 1 Hz resource card. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
@@ -167,10 +175,12 @@ the vault.
 ### Resource honesty
 
 The resource card is the operator measurement surface: **bots**, **CPU**,
-**RAM**, **traffic**, and **draw**, sampled once a second. The first CPU and
-traffic samples read "measuring…". Traffic is the sum of each live slot’s
-`ClientStream` payload `bytes_in + bytes_out` over that second — never a fake
-`0 B/s` before two samples, and never `0 B/s` when there are no slots (still
+**RAM**, **traffic**, and **draw**, sampled once a second. These are live
+samples for the current process, not published performance guarantees or
+historical benchmark claims. The first CPU and traffic samples read
+"measuring…". Traffic is the sum of each live slot’s `ClientStream`
+payload `bytes_in + bytes_out` over that second — never a fake `0 B/s`
+before two samples, and never `0 B/s` when there are no slots (still
 measuring…). If a slot drops (or the byte sum shrinks), traffic
 **re-baselines** instead of inventing a wrap spike. A failed process sampler
 shows "monitor error" for CPU/RAM; it does not invent traffic. Process RSS is
@@ -195,8 +205,8 @@ Two-slot headed twin of the headless e2e test. Waits until both slots are
 unfocused-`game_draw` freeze is the **headless** twin only.
 
 ```bash
-cargo run --release -p panel --bin panel-play -- --live null_raster
-# or: BOT_LIVE=null_raster cargo run --release -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play -- --profile local-289 --live null_raster
+# or: BOT_LIVE=null_raster cargo run --release -p panel --bin panel-play -- --profile local-289
 ```
 
 Headless twin:
@@ -237,8 +247,8 @@ up (`ingame && scene_state==2`); at 50 prints
 address cap); a 50-head run still waits out the rolling window.
 
 ```bash
-cargo run --release -p panel --bin panel-play -- --live stress50
-# or: BOT_LIVE=stress50 cargo run --release -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50
+# or: BOT_LIVE=stress50 cargo run --release -p panel --bin panel-play -- --profile local-289
 ```
 
 ### `--live stress50_full`
@@ -249,8 +259,8 @@ selected off, live full-rate overlay so Game **and** sidecar run at 50 fps
 PASS line is `PASS: live stress50_full rss=… up=50/50`.
 
 ```bash
-cargo run --release -p panel --bin panel-play -- --live stress50_full
-# or: BOT_LIVE=stress50_full cargo run --release -p panel --bin panel-play
+cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50_full
+# or: BOT_LIVE=stress50_full cargo run --release -p panel --bin panel-play -- --profile local-289
 ```
 
 ## Amber
@@ -283,19 +293,25 @@ config → slot.
 not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
-**Script** Browse / Start / Pause / Stop are wired ([script.md](script.md)).
-Load is enabled except while a script is active. Parameters **Edit** is
-live for a loaded card with a settings schema (typed editors honour
-`showIf` / `group`; File Load parses `export const SETTINGS` with no V8).
-Uncollapse shows merged rows, or `(no parameters)` when the schema is
-empty. **Nav config** is live (debug paints / labels / FindOptions
-toggles) as its own non-blocking window. **General config** (under WalkTo, above profile)
-is **slot** (capture, auto-login on title), **render** (none/GPU/CPU;
-click the lowmem/highmem button for a sticky picker like Teles), and
-**global** (sidecar 50 / only-render-selected).
-**Loadouts** is a live window (CRUD presets; `optionsFrom: 'loadouts'`
-combos in Parameters). Text and buttons wrap or equal-width-squish — **no horizontal
-scroll**.
+**Script** Browse / Load / Reload / Start / Pause / Stop are wired
+([script.md](script.md)). Load is enabled except while a script is active.
+**Reload** hashes the selected File/catalog card; unchanged origins skip
+transpile; confirm restarts matching running bots and **Stops** matching
+paused bots. Browse’s **Refresh catalog** re-scans the catalog root with
+the same confirm policy when owners are affected. MultiBox rail
+**Start all / Stop all** are script bulk controls (not login). Parameters
+**Edit** is live for a loaded card with a settings schema (typed editors
+honour `showIf` / `group`; File Load parses `export const SETTINGS` with
+no V8) and writes the focused profile’s vault settings bag. Uncollapse
+shows merged rows, or `(no parameters)` when the schema is empty.
+Successful Start persists the per-profile script assignment. **Nav config**
+is live (debug paints / labels / FindOptions toggles) as its own
+non-blocking window. **General config** (under WalkTo, above profile) is
+**slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
+the lowmem/highmem button for a sticky picker like Teles), and **global**
+(sidecar 50 / only-render-selected). **Loadouts** is a live window (CRUD
+presets; `optionsFrom: 'loadouts'` combos in Parameters). Text and buttons
+wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
 is a live toggle), dim **build line** (`alpha 1 ·` git short SHA,
 `-dirty` when the tree was dirty; hover is crate version then full

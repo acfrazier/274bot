@@ -1,37 +1,52 @@
 # Reusable live harness
 
-The harness runs real revision-274 clients against your local engine. It keeps
-scenario preparation, proof predicates and failure exits in Rust so preservation
-projects can reuse the same behavior through `host-play`, the TUI or the panel.
-No engine assets or external catalog scripts are included in this repository.
+The harness runs real revision clients against your local engine for the
+bound **server profile**. It keeps scenario preparation, proof predicates
+and failure exits in Rust so preservation projects can reuse the same
+behavior through `host-play`, the TUI or the panel. No engine assets or
+external catalog scripts are included in this repository.
+
+For ordered multi-case native runs with ledgers, receipts and process-tree
+ownership, prefer the tracked suite entrypoint
+[`e2e-suite`](e2e-suite.md). A green child or zero exit is an observation
+record — not automatic script qualification. Captures that require human
+readback stay `pending_visual_review`; raw failures stay preserved.
 
 ## Ordinary scenarios
 
-Start the local engine, provide its client cache, and bake a navigation pack:
+Start the local engine for the profile under test and provide its client
+cache. Application builds already bake and stage nav for the selected
+**build-time** revision (`BOT_NAV_REVISION`, default **289**) next to the
+binary — no manual pack step for ordinary WalkTo. Use `nav-pack` only for
+deliberate custom-input bakes:
 
 ```sh
-export ENGINE_DIR=/absolute/path/to/Server/engine
+export ENGINE_DIR=/absolute/path/to/engine
 export RS2B0T=/absolute/path/to/rs2b0t
-export NAV_PACK=/absolute/output/274bot.navpack
-export NAV_FLAGS=/absolute/output/274bot.navflags
-cargo run --locked --release -p nav --bin nav-pack
+# optional custom bake (not required for default bundled nav):
+# export NAV_PACK=/absolute/output/274bot.navpack
+# export NAV_FLAGS=/absolute/output/274bot.navflags
+# cargo run --locked --release -p nav --bin nav-pack
 
-LIVE=1 BOT_TARGET=local cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
-cargo run --locked --release -p tui --bin tui-play -- --live script_thiever
-cargo run --locked --release -p panel --bin panel-play -- --live script_thiever
+LIVE=1 cargo test --locked --release -p e2e --test nav_door -- --ignored --test-threads=1
+cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
+cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
 ```
 
-The door test also accepts `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains
-active while the driven player must reach the exact destination. The pack is
-still version 8: **rebake old v8 packs** to receive the adjacent-door edge fix.
-A new executable does not rewrite an existing pack.
+Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
+289: `:44594`/`:1080`). The door test also accepts
+`BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
+player must reach the exact destination. Pack format is version 8:
+**rebake old v8 packs** to receive the adjacent-door edge fix. A new
+executable does not rewrite an existing override pack.
 
 Some existing integration-test helpers use the default
-`HOME/experiments/Server/engine/data/pack/client` layout. Check the relevant test's
-cache options when running it on another machine; setting `ENGINE_DIR` is not a
-universal override for those older helpers. Frontend harnesses use the configured
-engine/cache path. Windows uses `USERPROFILE` only when `HOME` is unavailable;
-an explicitly blank `HOME` remains explicit.
+`HOME/experiments/Server/engine/data/pack/client` layout. Check the
+relevant test's cache options when running it on another machine; setting
+`ENGINE_DIR` is not a universal override for those older helpers. Frontend
+harnesses use the configured engine/cache path from the resolved profile.
+Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
+blank `HOME` remains explicit.
 
 ## Fleet preparation and basic samples
 
@@ -48,7 +63,7 @@ LIVE=1 BOT_TARGET=local \
 BOT_MEMORY_N=1 BOT_MEMORY_WORKLOAD=active BOT_MEMORY_SUSTAIN=1 \
 BOT_MEMORY_WARMUP_S=30 BOT_MEMORY_OBSERVE_S=240 \
 BOT_MEMORY_OUTPUT=/absolute/new-run/samples.jsonl \
-target/release/tui-play
+target/release/tui-play --profile local-289
 ```
 
 Use a real terminal for `tui-play`. Substitute `panel-play` for a native window.
@@ -113,3 +128,6 @@ assumption that can exceed five seconds. The modal restoration addresses a
 separate black-modal defect. Some older panel unit fixtures create real network
 workers and need a reachable local fixture for prompt teardown; this remains a
 test isolation limitation.
+
+Runner completion is not script qualification. Prefer capability language over
+copying rapidly changing pass/fail inventory counts into product docs.

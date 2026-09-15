@@ -5,6 +5,11 @@ login rate limits. `LoginQueue::request_permit(uid, now)` returns
 `Permit::Grant` or `Permit::Wait(duration)` — retry after `duration`. Only
 the FIFO head may be granted.
 
+A process binds one **server profile** (`local-274`, `local-289`,
+`public-289`) before sockets open. Profile defaults (ports, vault path,
+engine root) are documented in [README.md](../../README.md). This page is
+the FIFO and handshake policy shared by every profile.
+
 ## Where the server stores this
 
 In the engine checkout (`$ENGINE_DIR`, default `$HOME/experiments/Server/engine`):
@@ -73,19 +78,23 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-## Public world (`w1.rs2b2t.com:43594`)
+## Public world (`public-289` / `w1.rs2b2t.com:443`)
 
-`BOT_TARGET=prod` (alias `live`) or `host-play --prod` switches the login
-host to **`w1.rs2b2t.com:43594`** and uses the **baked public RSA** — no
-`LOGIN_RSAN`/`LOGIN_RSAE`, no `private.pem`. Port stays 43594. This is a
-client `bot_target.rs` world switch (Cargo `TARGET` remains the rustc
-triple), not a hosted wall and not a w1 CI. Alpha's tested path is the
-local engine; the public world is built in for a later bin, and the login
-FIFO stays under the production throttle numbers above either way.
+`BOT_TARGET=prod` (alias `live`), `host-play --prod`, or
+`--profile public-289` switches the login host to **`w1.rs2b2t.com:443`**
+(WSS game + HTTPS assets on **443**) and uses the **baked public RSA** —
+no `LOGIN_RSAN`/`LOGIN_RSAE`, no `private.pem`. This is a client
+`bot_target.rs` + host profile world switch (Cargo `TARGET` remains the
+rustc triple), not a hosted wall and not public-world CI. Alpha's tested
+path is the local engine for `local-274` / `local-289`; the public world is
+built in for a later bin, and the login FIFO stays under the production
+throttle numbers above either way.
 
-`$ENGINE_DIR` defaults to `$HOME/experiments/Server/engine`. Cache and
-nav-pack paths follow it. Cargo `TARGET` is the rustc triple, not a world
-switch. Alpha’s supported scenario is the local engine.
+`$ENGINE_DIR` defaults depend on revision (274:
+`$HOME/experiments/Server/engine`; 289:
+`$HOME/experiments/lostcity-289/engine`). Cache and nav-pack paths follow
+the resolved profile. Prefer an explicit `--profile`. Cargo `TARGET` is
+the rustc triple, not a world switch.
 
 ## Wiring
 

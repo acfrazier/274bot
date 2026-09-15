@@ -5,6 +5,28 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 
 ## [Unreleased] — 0.1.5
 
+### Server profiles and operator script controls
+
+- Immutable per-process server profiles: `local-274`, `local-289`,
+  `public-289` (`--profile` / `BOT_SERVER_PROFILE`) with revision-specific
+  default engine roots, game/asset ports, vault paths and unpack dirs.
+  `public-289` uses WSS/HTTPS on `w1.rs2b2t.com:443` with the baked public
+  RSA. Conflicting profile/revision/prod combinations fail closed.
+- Build-time nav bake/stage defaults to revision **289** next to the
+  binary (`BOT_NAV_REVISION`, `BOT_NAV_BUILD=skip` opt-out); `nav-pack`
+  remains for custom-input bakes.
+- Content-addressed JS/TS transpile cache under `~/.274bot/js-cache`
+  (raw-origin SHA-256). Per-profile script assignment and settings bags
+  persist in the vault on successful Start.
+- Panel/TUI: manual **Reload**, catalog **Refresh catalog**, MultiBox
+  **Start all / Stop all** (separate from Login all / Logout all). Reload
+  confirm restarts matching running bots and Stops matching paused bots;
+  unchanged origins skip transpile.
+- Native ordered suite runner `e2e-suite` (profile/catalog selection,
+  content-bound identity, process-tree ownership, capture contracts).
+  Runner completion is not script qualification; visual captures remain
+  `pending_visual_review` until readback. See [docs/e2e-suite.md](docs/e2e-suite.md).
+
 ### Selected allocation, gameplay and portability corrections
 
 - Reuse completed dynamic sprite slots; read animation delay without cloning
@@ -86,12 +108,12 @@ and advanced campaign capture/controllers are excluded.
   and headless `tui-play --live script_bone_burier` pass the same
   runner.
 
-### Public world docs
+### Public world
 
-- `BOT_TARGET=prod` (alias `live`) / `host-play --prod` → `w1.rs2b2t.com:43594`
-  with the baked public RSA; the local engine stays the default. Cargo
-  `TARGET` is the rustc triple, not a world switch. Not Jagex, not a
-  hosted wall, no w1 CI.
+- `public-289` / `BOT_TARGET=prod` (alias `live`) / `--prod` →
+  `w1.rs2b2t.com:443` (WSS game + HTTPS assets) with the baked public RSA.
+  Local engines stay the tested path. Cargo `TARGET` is the rustc triple,
+  not a world switch. Not Jagex, not a hosted wall, no public-world CI.
 
 ## [0.1.2] — 2026-09-01
 

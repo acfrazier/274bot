@@ -158,9 +158,10 @@ consume the committed JSON; they must not shell out to Node or git
 against the operator's engine checkouts.
 
 Workspace `Cargo.toml` has no release profile beyond client
-`opt-level=3` in dev. No zip/msi/dmg/appimage. No code signing. README
-still describes a 274-only public `43594` world; current code's public
-profile is 289 at `w1.rs2b2t.com:443`. README is not this report's edit.
+`opt-level=3` in dev. No zip/msi/dmg/appimage. No code signing. Product
+README documents `local-274` / `local-289` / `public-289` (public on
+`w1.rs2b2t.com:443`); older campaign notes that still said 274-only
+`43594` for public are superseded.
 
 ## External helpers: keep vs fold
 
