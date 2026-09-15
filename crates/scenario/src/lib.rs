@@ -10809,7 +10809,11 @@ struct CombatCorePlan {
     wear: Option<(&'static str, i32)>,
     loot_empty: &'static [i32],
     inject: &'static [ScriptSettingInject],
-    complete_quest: Option<&'static str>,
+    /// The native quest prerequisite completed before the stat/inventory
+    /// reset and the hostile-field teleport (never a fabricated stage: the
+    /// quest's own completion script runs and its journal row is
+    /// acknowledged before Start).
+    complete_quest: Option<NativeQuestPrereq>,
     thieving: i32,
     agility: i32,
 }
@@ -10838,28 +10842,8 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         min: 1,
     };
     let mut steps = script_live_seed_steps();
-    if let Some(quest) = complete_quest {
-        steps.push(Step {
-            name: "complete required quests before Start",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    cheat(c, "~completequests");
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::ChatChoice,
-                budget_ticks: 20,
-            },
-        });
-        steps.push(Step {
-            name: "answer the quest-seed dialogs until the journal is green",
-            kind: StepKind::DrainDialogs { choice: 1 },
-            wait: Wait {
-                arm: Proof::QuestDone { name: quest },
-                budget_ticks: 600,
-            },
-        });
+    if let Some(prereq) = complete_quest {
+        steps.extend(quest_prereq_steps(prereq));
     }
     steps.push(Step {
         name: "prepare melee stats, food and gear on the safe tile before Start",
@@ -11006,6 +10990,201 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             ..Default::default()
         },
     }
+}
+
+/// A quest prerequisite the fixture completes through the **native** debug
+/// quest-journal command `~quest` (`_test/scripts/cheats/cheat_quest.rs2`
+/// `@debug_quests`): "Select Individual Quest." → the quest's row on the
+/// paginated `p_choice5_header` list → "Complete.", which queues that
+/// quest's own `[queue,<quest>_complete]` script. The path is targeted: the
+/// required quest's completion is the only script queued, so no *other*
+/// completion's rewards can arrive after Start (the demonstrated
+/// `~completequests` leak: `QuestDone(Waterfall)` returned while ~60 queued
+/// completions still owed stats/items/dialogs).
+///
+/// `dialog` is the quest's `quest_names_enum` label
+/// (`content/scripts/general/configs/quest.enum`: index 34 `Lost City`,
+/// index 50 `Waterfall Quest`) — the text the native list renders as
+/// `<index>. <label>`; `journal` is the quest-tab row the native
+/// `~send_quest_complete` helper paints green
+/// (`content/scripts/player/interfaces/questlist.if` `[zanaris]`/`[waterfall]`,
+/// `content/scripts/general/scripts/quests.rs2`), the acknowledgement the
+/// fixture waits for.
+///
+/// The acknowledgement is the completion boundary itself, verified in clean
+/// native content: `quest_zanaris.rs2` `[queue,zanaris_quest_complete]` sets
+/// `%zanaris = ^zanaris_complete` (the var `levelrequire_zanaris_quest` gates
+/// `opheld2 dragon_dagger` on, `levelrequire/scripts/levelrequire.rs2`) and
+/// then calls `~send_quest_complete(questlist:zanaris, …)`; the FireGiant
+/// counterpart `[queue,waterfall_quest_complete]`
+/// (`quest_waterfall/scripts/quest_waterfall.rs2`) banks 2 diamonds, 2 gold
+/// bars, 40 mithril seeds and 137,500 attack + strength XP before the same
+/// helper. Every reward statement precedes the green, and `send_quest_complete`
+/// is the last call in both scripts, so a fixture that waits for the green and
+/// then resets stats/inventory cannot have quest rewards land after Start.
+#[derive(Clone, Copy)]
+struct NativeQuestPrereq {
+    dialog: &'static str,
+    journal: &'static str,
+}
+
+/// Waterfall Quest (`quest_names_enum` 50, journal row `[waterfall]`) — the
+/// FireGiant dungeon entry's requirement.
+const WATERFALL_QUEST_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
+    dialog: "Waterfall Quest",
+    journal: "Waterfall Quest",
+};
+
+/// Lost City Of Zanaris (`quest_names_enum` 34, journal row `[zanaris]`):
+/// `levelrequire_zanaris_quest_attack(60, last_slot)` gates
+/// `opheld2 dragon_dagger` (`content/scripts/levelrequire/scripts/tier60.rs2`,
+/// `content/scripts/levelrequire/scripts/levelrequire.rs2`).
+const LOST_CITY_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
+    dialog: "Lost City",
+    journal: "Lost City",
+};
+
+/// The native quest-journal command and the labels of its individual-quest
+/// path: the first dialog's "Select Individual Quest." branch button, the
+/// paginated list's "Next." button and the per-quest "Complete."
+/// confirmation. The labels are the dialog's own resume-button texts, so
+/// the machine presses a button by what it says, never by page arithmetic.
+const QUEST_JOURNAL_CHEAT: &str = "~quest";
+const QUEST_SELECT_INDIVIDUAL: &str = "Select Individual Quest.";
+const QUEST_PAGE_NEXT: &str = "Next.";
+const QUEST_COMPLETE_LABEL: &str = "Complete.";
+
+/// The dialog this machine has already answered: the chat modal it was
+/// rendered in and the option texts it carried. `chat.rs2` reuses one
+/// interface per dialog shape (`multi4`, `multi5`, `multi3`) and
+/// re-registers the *same* components as resume buttons for the question
+/// that follows (`if_addresumebutton(multi5:com_5)`), and the engine
+/// resumes a paused script with the clicked component
+/// (`IfButtonHandler` → `p_pausebutton` → `last_com`). A press repeated
+/// into the replaced dialog is therefore not inert — the page list's
+/// `Next.` would advance a second page. One press per distinct dialog;
+/// the step then waits for the next one, like the player it stands in for.
+#[derive(Default)]
+struct QuestJournalState {
+    answered: Option<(i32, String)>,
+}
+
+/// One tick of the native quest-journal dialog machine: continue a
+/// `BUTTON_CONTINUE` chat IF (the completion's level-ups), else answer the
+/// option dialog the individual-quest path waits on (Select Individual
+/// Quest. → the required quest's page row → Complete.), else close the
+/// modal a completion opened (the quest scroll `send_quest_complete` opens
+/// just before it paints the row green). Returns `false` when an option
+/// dialog cannot be placed: the preparation step fails explicitly instead
+/// of guessing a button.
+fn answer_quest_journal_dialogs(
+    client: &mut Client,
+    snapshot: &GameSnapshot,
+    prereq: NativeQuestPrereq,
+    state: &mut QuestJournalState,
+) -> bool {
+    if snapshot.chat_continue_component_id() != -1 {
+        let mut ix = Interactions::new(snapshot, client);
+        return matches!(
+            ix.continue_dialog(),
+            SendResult::Sent { .. } | SendResult::Refused { .. }
+        );
+    }
+    if !snapshot.chat_options().is_empty() {
+        let identity = (
+            snapshot.modals().chat,
+            snapshot
+                .chat_options()
+                .iter()
+                .map(|option| option.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        if state.answered.as_ref() == Some(&identity) {
+            // Already answered this dialog; the next one has not landed.
+            return true;
+        }
+        let choose = |wanted: &dyn Fn(&str) -> bool| {
+            snapshot
+                .chat_options()
+                .iter()
+                .position(|option| wanted(option.text.as_str()))
+        };
+        let choice = choose(&|text| text == QUEST_SELECT_INDIVIDUAL)
+            .or_else(|| choose(&|text| text == QUEST_COMPLETE_LABEL))
+            .or_else(|| choose(&|text| text.ends_with(prereq.dialog)))
+            .or_else(|| choose(&|text| text == QUEST_PAGE_NEXT));
+        let Some(choice) = choice else {
+            return false;
+        };
+        let mut ix = Interactions::new(snapshot, client);
+        return match ix.answer_choice(choice as i32 + 1) {
+            SendResult::Sent { .. } => {
+                state.answered = Some(identity);
+                true
+            }
+            // Nothing pressable in that snapshot: retry on the next tick.
+            SendResult::Refused { .. } => true,
+        };
+    }
+    let m = snapshot.modals();
+    if m.main == -1 && m.side == -1 && m.chat == -1 && m.tutorial == -1 {
+        return true;
+    }
+    let mut ix = Interactions::new(snapshot, client);
+    matches!(
+        ix.close_modal(),
+        SendResult::Sent { .. } | SendResult::Refused { .. }
+    )
+}
+
+/// Pre-Start native quest prerequisite: send `~quest`, answer its
+/// individual-quest dialogs until the required quest's "Complete." queued
+/// that quest's own completion script, then drain the completion's
+/// scroll/level-up dialogs until the native helper paints the quest's
+/// journal row green. That green row is the completion boundary: the stat
+/// and inventory reset, the prepared-gear acknowledgements and the
+/// hostile-field teleport all follow it, so no quest reward can arrive
+/// after Start. The step's tick budget bounds a preparation that never
+/// acknowledges — the run fails before Start instead of starting without
+/// the prerequisite.
+fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
+    // The machine is re-entered once per tick by the runner's `Repeat`
+    // arm; its "already answered this dialog" state is behind a mutex so
+    // the step closure stays `Fn + Send + Sync` (the `StepKind` bound).
+    let state = std::sync::Mutex::new(QuestJournalState::default());
+    [
+        Step {
+            name: "open the native quest-journal prerequisite dialog before Start",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, QUEST_JOURNAL_CHEAT);
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ChatChoice,
+                budget_ticks: 20,
+            },
+        },
+        Step {
+            name: "answer the quest-journal dialogs until the required quest is acknowledged",
+            kind: StepKind::Repeat {
+                send: Box::new(move |c, snapshot| {
+                    let Ok(mut state) = state.lock() else {
+                        return false;
+                    };
+                    answer_quest_journal_dialogs(c, snapshot, prereq, &mut state)
+                }),
+            },
+            wait: Wait {
+                arm: Proof::QuestDone {
+                    name: prereq.journal,
+                },
+                budget_ticks: 600,
+            },
+        },
+    ]
 }
 
 fn wear_combat_item_step(name: &'static str, id: i32) -> Step {
@@ -11592,7 +11771,7 @@ fn green_dragon_special_scenario() -> Scenario {
         )),
         loot_empty: GREEN_DRAGON_LOOT_EMPTY,
         inject: GREEN_DRAGON_SPECIAL_INJECT,
-        complete_quest: None,
+        complete_quest: Some(LOST_CITY_PREREQ),
         thieving: 0,
         agility: 0,
     });
@@ -11745,7 +11924,7 @@ fn fire_giant_scenario() -> Scenario {
         wear: None,
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
-        complete_quest: Some("Waterfall Quest"),
+        complete_quest: Some(WATERFALL_QUEST_PREREQ),
         thieving: 0,
         agility: 0,
     })
@@ -11917,7 +12096,13 @@ fn combat_bank_scenario(
                 }
                 cheat(c, "~clearinv");
                 cheat(c, &format!("give {weapon_alias} 1"));
-                cheat(c, &format!("give {food_alias} {food_count}"));
+                // Zero-count food is a declared empty baseline, never a
+                // `give`: the native `::give` handler clamps to at least
+                // one (`Math.max(1, …)`), so `give cake 0` seeded the Cake
+                // the ardy_fighter_bank baseline is supposed to lack.
+                if food_count > 0 {
+                    cheat(c, &format!("give {food_alias} {food_count}"));
+                }
                 for &(alias, _, count) in extra_give {
                     cheat(c, &format!("give {alias} {count}"));
                 }
@@ -12325,40 +12510,18 @@ fn ardy_fighter_bank_scenario() -> Scenario {
 const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_ID];
 const GREEN_DRAGON_BANK_DEPOSIT: [i32; 2] = [DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID];
 
+/// FireGiant's Waterfall Quest prerequisite via the native individual-quest
+/// path, ahead of the stat/inventory reset — the same targeted completion
+/// `combat_core_scenario` runs for its `complete_quest` cells.
 fn insert_waterfall_quest(scenario: &mut Scenario) {
     let prepare = scenario
         .steps
         .iter()
         .position(|step| step.name.starts_with("prepare melee stats"))
         .expect("combat bank/core prepares stats");
-    scenario.steps.splice(
-        prepare..prepare,
-        [
-            Step {
-                name: "complete required quests before Start",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        cheat(c, "~completequests");
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::ChatChoice,
-                    budget_ticks: 20,
-                },
-            },
-            Step {
-                name: "answer the quest-seed dialogs until the journal is green",
-                kind: StepKind::DrainDialogs { choice: 1 },
-                wait: Wait {
-                    arm: Proof::QuestDone {
-                        name: "Waterfall Quest",
-                    },
-                    budget_ticks: 600,
-                },
-            },
-        ],
-    );
+    scenario
+        .steps
+        .splice(prepare..prepare, quest_prereq_steps(WATERFALL_QUEST_PREREQ));
 }
 
 fn wear_shield_before_hostile_teleport(scenario: &mut Scenario) {
@@ -12642,7 +12805,7 @@ fn fire_giant_approach_scenario() -> Scenario {
         wear: None,
         loot_empty: FIRE_GIANT_LOOT_EMPTY,
         inject: FIRE_GIANT_INJECT,
-        complete_quest: Some("Waterfall Quest"),
+        complete_quest: Some(WATERFALL_QUEST_PREREQ),
         thieving: 0,
         agility: 0,
     });
@@ -22000,5 +22163,568 @@ mod tests {
             client.main_modal_id, -1,
             "native close clears local modal state"
         );
+    }
+
+    // ---- P4 combat fixture repair: quest prerequisite + trip food ----
+
+    /// Whether the client's outbound buffer holds `needle` as plaintext —
+    /// `cheat()` writes the `::` command through `pjstr`, so the emitted
+    /// command stream is readable (only the opcode is ISAAC-encrypted).
+    fn emitted_has(client: &Client, needle: &str) -> bool {
+        let bytes = &client.out.data()[..client.out.pos];
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    /// Run the fixture's safe-tile preparation step against a synthetic
+    /// client so the emitted seed commands can be inspected.
+    fn run_prepare_step(scenario: &Scenario, client: &mut Client) -> bool {
+        let step = scenario
+            .steps
+            .iter()
+            .find(|step| step.name.starts_with("prepare melee stats"))
+            .expect("the combat fixtures prepare on the safe tile");
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        match &step.kind {
+            StepKind::Perform { send } => send(client, &snapshot),
+            _ => panic!("the preparation step is a Perform"),
+        }
+    }
+
+    /// A synthetic connected client (the api's sends require an attached
+    /// session) whose chat modal carries `options` as the native
+    /// `multi4`/`multi5` BUTTON_OK resume buttons.
+    fn chat_options_client(options: &[&str]) -> (Client, GameSnapshot) {
+        let mut client = synthetic_client();
+        set_chat_dialog(&mut client, options);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        (client, snapshot)
+    }
+
+    /// The connected ingame client the dialog helpers build on.
+    fn synthetic_client() -> Client {
+        use client::client::{Client, ClientConfig};
+        use client::dash3d::ClientPlayer;
+        use client::io::ClientStream;
+        use std::net::TcpListener;
+
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(ClientPlayer::at(20, 20));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let _peer = listener.accept().unwrap();
+        client
+    }
+
+    /// Re-render `client`'s chat modal as `options` — the native
+    /// `if_openchat(multiN)`: the same layer id and child component ids as
+    /// every other chat dialog, with the new question's texts and the
+    /// `IF_OPENCHAT` iface generation the snapshot's option gate tracks.
+    fn set_chat_dialog(client: &mut Client, options: &[&str]) {
+        use client::config::if_type::{ButtonType, IfType, IfTypeMut};
+        use client::io::ServerProt;
+
+        for (i, text) in options.iter().enumerate() {
+            let id = 101 + i;
+            client.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 100,
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                id,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    text: (*text).to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+        client.set_iface(
+            100,
+            IfType {
+                id: 100,
+                layer_id: 100,
+                children: Some((0..options.len() as i32).map(|i| 101 + i).collect()),
+                ..Default::default()
+            },
+        );
+        client.chat_modal_id = 100;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
+    /// The bytes the machine sends for `options` (empty when it refuses the
+    /// dialog instead of guessing a button).
+    fn machine_press(options: &[&str], prereq: NativeQuestPrereq) -> (bool, Vec<u8>) {
+        let (mut client, snapshot) = chat_options_client(options);
+        let mut state = QuestJournalState::default();
+        let answered = answer_quest_journal_dialogs(&mut client, &snapshot, prereq, &mut state);
+        (answered, client.out.data()[..client.out.pos].to_vec())
+    }
+
+    /// The bytes an equal synthetic client sends when it presses the
+    /// `option`-th (1-based) chat button directly.
+    fn reference_choice_bytes(options: &[&str], option: i32) -> Vec<u8> {
+        let (mut client, snapshot) = chat_options_client(options);
+        let mut ix = Interactions::new(&snapshot, &mut client);
+        assert!(
+            matches!(ix.answer_choice(option), SendResult::Sent { .. }),
+            "reference option {option} is pressable"
+        );
+        client.out.data()[..client.out.pos].to_vec()
+    }
+
+    #[test]
+    fn zero_count_trip_food_is_not_emitted_and_positive_counts_still_are() {
+        // ardy_fighter_bank declares food_count 0: the native `::give`
+        // handler clamps to at least one (`Math.max(1, …)`), so `give cake
+        // 0` seeded the Cake the empty-food baseline is supposed to lack.
+        let bank = get("ardy_fighter_bank").expect("ardy_fighter_bank is registered");
+        let mut client = native_seed_client();
+        assert!(run_prepare_step(&bank, &mut client));
+        assert!(
+            !emitted_has(&client, "give cake"),
+            "a zero-count trip food emits no give at all"
+        );
+        assert!(emitted_has(&client, "~clearinv"));
+        assert!(emitted_has(&client, "give adamant_scimitar 1"));
+        assert!(emitted_has(&client, "setstat attack 40"));
+        assert!(emitted_has(&client, "setstat thieving 5"));
+
+        // The positive-count cells keep their seeded trip food.
+        let crab = get("rock_crab_bank").expect("rock_crab_bank is registered");
+        let mut client = native_seed_client();
+        assert!(run_prepare_step(&crab, &mut client));
+        assert!(
+            emitted_has(&client, &format!("give lobster {ROCK_CRAB_FOOD}")),
+            "positive food counts keep their give"
+        );
+    }
+
+    #[test]
+    fn quest_prereq_machine_presses_the_native_individual_quest_path() {
+        // cheat_quest.rs2 @debug_quests: the first dialog is
+        // Complete All Quests. / Reset All Quests. / Select Individual
+        // Quest. / Cancel. — the machine takes the individual row, never
+        // the complete-all branch whose queued completions leak past Start.
+        let first = [
+            "Complete All Quests.",
+            "Reset All Quests.",
+            "Select Individual Quest.",
+            "Cancel.",
+        ];
+        let (answered, sent) = machine_press(&first, LOST_CITY_PREREQ);
+        assert!(answered);
+        assert_eq!(sent, reference_choice_bytes(&first, 3));
+
+        // The paginated list: the quest's own row by its enum label, and
+        // "Next." on a page that does not carry it.
+        let page = [
+            "Prev.",
+            "33. Legends Quest",
+            "34. Lost City",
+            "35. Merlin's Crystal",
+            "Next.",
+        ];
+        let (answered, sent) = machine_press(&page, LOST_CITY_PREREQ);
+        assert!(answered);
+        assert_eq!(sent, reference_choice_bytes(&page, 3));
+        let (answered, sent) = machine_press(&page, WATERFALL_QUEST_PREREQ);
+        assert!(answered);
+        assert_eq!(sent, reference_choice_bytes(&page, 5));
+
+        // The per-quest confirmation is Complete. (never Reset.).
+        let confirm = ["Complete.", "Reset.", "Cancel."];
+        let (answered, sent) = machine_press(&confirm, WATERFALL_QUEST_PREREQ);
+        assert!(answered);
+        assert_eq!(sent, reference_choice_bytes(&confirm, 1));
+
+        // An unplaceable dialog fails the preparation explicitly.
+        let strange = ["Bribe the guard.", "Walk away."];
+        let (answered, sent) = machine_press(&strange, LOST_CITY_PREREQ);
+        assert!(!answered, "an unknown dialog is never guessed");
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn quest_prereq_machine_presses_each_native_dialog_once() {
+        // The runner re-sends a `Repeat` step every tick, so the machine sees
+        // the same dialog until the reply lands. `chat.rs2` re-registers the
+        // same components as resume buttons for the question that follows
+        // (`if_addresumebutton(multi5:com_5)`) and the engine resumes with the
+        // clicked component, so a second press into the replaced dialog is not
+        // inert: the page list's `Next.` would advance two pages at once.
+        let page = [
+            "Prev.",
+            "33. Legends Quest",
+            "34. Lost City",
+            "35. Merlin's Crystal",
+            "Next.",
+        ];
+        let (mut client, snapshot) = chat_options_client(&page);
+        let mut state = QuestJournalState::default();
+        assert!(answer_quest_journal_dialogs(
+            &mut client,
+            &snapshot,
+            LOST_CITY_PREREQ,
+            &mut state
+        ));
+        assert_eq!(
+            client.out.data()[..client.out.pos],
+            reference_choice_bytes(&page, 3)[..],
+            "the required quest's own row is pressed"
+        );
+        // The identical dialog on the next tick sends nothing: the machine
+        // waits for the dialog its press produces.
+        let pressed = client.out.pos;
+        assert!(answer_quest_journal_dialogs(
+            &mut client,
+            &snapshot,
+            LOST_CITY_PREREQ,
+            &mut state
+        ));
+        assert_eq!(client.out.pos, pressed, "the same dialog is pressed once");
+        // A later page, then the confirmation, are answered.
+        let next_page = [
+            "Prev.",
+            "36. Merlin's Crystal",
+            "37. Murder Mystery",
+            "38. Observatory Quest",
+            "Next.",
+        ];
+        set_chat_dialog(&mut client, &next_page);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert!(answer_quest_journal_dialogs(
+            &mut client,
+            &snapshot,
+            LOST_CITY_PREREQ,
+            &mut state
+        ));
+        assert_eq!(
+            client.out.data()[pressed..client.out.pos],
+            reference_choice_bytes(&next_page, 5)[..],
+            "a page without the quest advances with Next."
+        );
+    }
+
+    #[test]
+    fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
+        use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+        use client::io::ServerProt;
+
+        // The native completion's own traffic — the reward messages, the
+        // quest scroll `send_quest_complete` opens just before it paints the
+        // row green, and the green itself — settles while the fixture is
+        // still on the prerequisite step; the machine closes that scroll and
+        // only then does the acknowledged run reach the stat/inventory reset
+        // and Start. The demonstrated live failure started the script while
+        // completion rewards and modal 297 were still arriving.
+        const QUEST_SCROLL: i32 = 297;
+        let kickoff = [
+            "Complete All Quests.",
+            "Reset All Quests.",
+            "Select Individual Quest.",
+            "Cancel.",
+        ];
+        let page = [
+            "Prev.",
+            "33. Legends Quest",
+            "34. Lost City",
+            "35. Merlin's Crystal",
+            "Next.",
+        ];
+        let confirm = ["Complete.", "Reset.", "Cancel."];
+
+        let mut scenario = get("green_dragon_special").expect("green_dragon_special is registered");
+        let quest = scenario
+            .steps
+            .iter()
+            .position(|step| step.name.starts_with("open the native quest-journal"))
+            .expect("the fixture carries the native quest prerequisite");
+        let prepare = scenario
+            .steps
+            .iter()
+            .position(|step| step.name.starts_with("prepare melee stats"))
+            .expect("the fixture resets stats and inventory");
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("the fixture starts the frozen script");
+        scenario.steps.drain(..quest);
+        scenario.steps.truncate(start - quest + 1);
+        scenario.seed.mainland = false;
+        scenario.settings.require_mainland_base = false;
+        let (kickoff_step, prepare_step) = (0usize, prepare - quest);
+
+        let mut client = synthetic_client();
+        set_chat_dialog(&mut client, &kickoff);
+        // The quest journal's Lost City row, red until the completion's
+        // `if_setcolour(questlist:zanaris, ^green_rgb)`.
+        client.side_icon[2] = 700;
+        client.set_iface(
+            700,
+            IfType {
+                children: Some(vec![701, 702]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            702,
+            IfType {
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            702,
+            IfTypeMut {
+                text: "Lost City".into(),
+                colour: 0xF80000,
+                ..Default::default()
+            },
+        );
+        client.bump_gens(ServerProt::IF_OPENMAIN);
+
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        let mut phase = 0;
+        let (mut rewards_tick, mut close_tick, mut green_tick, mut reset_tick) =
+            (None, None, None, None);
+        let mut step_at_rewards = None;
+        for tick in 0..400 {
+            let from = client.out.pos;
+            runner.tick(&mut client);
+            let sent = client.out.data()[from..client.out.pos].to_vec();
+            let sent_has = |needle: &str| {
+                sent.windows(needle.len())
+                    .any(|window| window == needle.as_bytes())
+            };
+            let step = match runner.status() {
+                RunnerStatus::Running { step, .. } => Some(step),
+                _ => None,
+            };
+            if reset_tick.is_none() && step == Some(prepare_step) && sent_has("~clearinv") {
+                reset_tick = Some(tick);
+            }
+            if reset_tick.is_some() && green_tick.is_some() {
+                break;
+            }
+            match phase {
+                0 if sent == reference_choice_bytes(&kickoff, 3) => {
+                    set_chat_dialog(&mut client, &page);
+                    phase = 1;
+                }
+                1 if sent == reference_choice_bytes(&page, 3) => {
+                    set_chat_dialog(&mut client, &confirm);
+                    phase = 2;
+                }
+                2 if sent == reference_choice_bytes(&confirm, 1) => {
+                    // The completion ran: rewards, then the scroll (which
+                    // replaces the chat modal), then the green row.
+                    client.chat_text[0] =
+                        "You have completed the Lost City Of Zanaris Quest!".into();
+                    client.chat_modal_id = -1;
+                    client.main_modal_id = QUEST_SCROLL;
+                    client.bump_gens(ServerProt::IF_OPENMAIN);
+                    client.bump_gens(ServerProt::MESSAGE_GAME);
+                    rewards_tick = Some(tick);
+                    step_at_rewards = step;
+                    phase = 3;
+                }
+                3 if sent == reference_close_bytes(QUEST_SCROLL) => {
+                    client.main_modal_id = -1;
+                    client.set_iface_mut(
+                        702,
+                        IfTypeMut {
+                            text: "Lost City".into(),
+                            colour: 0xF800,
+                            ..Default::default()
+                        },
+                    );
+                    client.bump_gens(ServerProt::IF_SETCOLOUR);
+                    close_tick = Some(tick);
+                    green_tick = Some(tick);
+                    phase = 4;
+                }
+                _ => {}
+            }
+            assert!(
+                step_at_rewards.is_none_or(|s| s == kickoff_step + 1),
+                "step {step:?}: nothing advanced while the completion was live"
+            );
+        }
+
+        assert_eq!(phase, 4, "the machine answered every native dialog in turn");
+        assert_eq!(
+            step_at_rewards,
+            Some(kickoff_step + 1),
+            "reward traffic and the completion scroll arrive on the prerequisite step"
+        );
+        let green_tick = green_tick.expect("the completion painted the row green");
+        let close_tick = close_tick.expect("the machine closed the completion's scroll");
+        let rewards_tick = rewards_tick.expect("the completion's scroll opened");
+        assert!(
+            close_tick > rewards_tick,
+            "the scroll the completion opened is closed on the next tick (opened {rewards_tick}, closed {close_tick})"
+        );
+        assert_eq!(
+            green_tick, close_tick,
+            "the green follows the scroll's close, still on the prerequisite step"
+        );
+        let reset_tick = reset_tick.expect("the acknowledged run resets stats and inventory");
+        assert!(
+            reset_tick > green_tick,
+            "the reset follows the journal acknowledgement (green {green_tick}, reset {reset_tick})"
+        );
+    }
+
+    /// The bytes a client in the same state sends to close the open modal
+    /// (the native `CLOSE_MODAL`, no payload).
+    fn reference_close_bytes(main_modal: i32) -> Vec<u8> {
+        let mut client = synthetic_client();
+        client.main_modal_id = main_modal;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        let mut ix = Interactions::new(&snapshot, &mut client);
+        assert!(
+            matches!(ix.close_modal(), SendResult::Sent { .. }),
+            "the open modal is closable"
+        );
+        client.out.data()[..client.out.pos].to_vec()
+    }
+
+    #[test]
+    fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
+        for (name, journal) in [
+            ("fire_giant", "Waterfall Quest"),
+            ("fire_giant_approach", "Waterfall Quest"),
+            ("fire_giant_bank", "Waterfall Quest"),
+            ("green_dragon_special", "Lost City"),
+        ] {
+            let scenario = get(name).expect("the combat fixture is registered");
+            let index = |prefix: &str| {
+                scenario
+                    .steps
+                    .iter()
+                    .position(|step| step.name.starts_with(prefix))
+                    .unwrap_or_else(|| panic!("{name}: no step starts with {prefix}"))
+            };
+            let load = index("open the native quest-journal prerequisite dialog");
+            let ack = index("answer the quest-journal dialogs until the required quest");
+            let prepare = index("prepare melee stats");
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name}: no Start step"));
+            assert!(
+                load + 1 == ack,
+                "{name}: the kickoff precedes its dialog machine"
+            );
+            assert!(
+                matches!(scenario.steps[ack].kind, StepKind::Repeat { .. }),
+                "{name}: the dialog machine re-sends every tick"
+            );
+            assert!(
+                matches!(scenario.steps[ack].wait.arm, Proof::QuestDone { name: row } if row == journal),
+                "{name}: the boundary is the required quest's journal acknowledgement"
+            );
+            assert!(
+                scenario.steps[ack].wait.budget_ticks > 0,
+                "{name}: a preparation that never acknowledges times out"
+            );
+            assert!(
+                load < ack && ack < prepare,
+                "{name}: the quest acknowledgement precedes the stat/inventory reset"
+            );
+            assert!(prepare < start, "{name}: the reset precedes Start");
+            // The kickoff sends the native individual-quest command, never
+            // the complete-all debugproc whose queued completions leak.
+            let mut client = native_seed_client();
+            let mut snapshot = GameSnapshot::new();
+            snapshot.rebuild(&mut client);
+            match &scenario.steps[load].kind {
+                StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
+                _ => panic!("{name}: the kickoff step is a Perform"),
+            }
+            assert!(emitted_has(&client, "~quest"), "{name}: native command");
+            assert!(
+                !emitted_has(&client, "~completequests"),
+                "{name}: the complete-all debugproc is not used"
+            );
+        }
+    }
+
+    #[test]
+    fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
+        use client::io::ServerProt;
+        // Late quest traffic keeps arriving (chat + rewards) while the
+        // required quest is unacknowledged: the run must fail at the
+        // preparation step, bounded, instead of resetting stats and
+        // starting the frozen script without its prerequisite.
+        let mut scenario = get("green_dragon_special").expect("green_dragon_special is registered");
+        let quest = scenario
+            .steps
+            .iter()
+            .position(|step| step.name.starts_with("open the native quest-journal"))
+            .expect("the fixture carries the native quest prerequisite");
+        scenario.steps.drain(..quest);
+        scenario.steps.truncate(2);
+        scenario.seed.mainland = false;
+        scenario.settings.require_mainland_base = false;
+
+        let (mut client, _) = chat_options_client(&[
+            "Complete All Quests.",
+            "Reset All Quests.",
+            "Select Individual Quest.",
+            "Cancel.",
+        ]);
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+        for tick in 0..700 {
+            client.chat_text[0] = format!("Congratulations! Quest complete! {tick}");
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+            if matches!(runner.status(), RunnerStatus::Failed(_)) {
+                break;
+            }
+        }
+        match runner.status() {
+            RunnerStatus::Failed(message) => {
+                assert!(
+                    message.contains("answer the quest-journal dialogs"),
+                    "the failure names the preparation step: {message}"
+                );
+                assert!(
+                    message.contains("quest_done(Lost City)"),
+                    "the failure names the missing acknowledgement: {message}"
+                );
+            }
+            RunnerStatus::Seeding => panic!("the run never left seeding"),
+            RunnerStatus::Running { step, total } => {
+                panic!("the run never failed the preparation step ({step}/{total})")
+            }
+            RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+        }
     }
 }
