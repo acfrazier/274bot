@@ -7568,6 +7568,114 @@ mod tests {
                 .max((route.dest.z - request.to.z).abs())
                 <= 1
         );
+        assert!(
+            nav::router::local_step_component(&request.world.collision, request.to, 1)
+                .contains(&route.dest),
+            "selected destination must be step-connected to the target"
+        );
+    }
+
+    #[test]
+    fn radius_calculate_uses_occupied_target_approach_candidates() {
+        let mut world = open_world(7, 7);
+        let target = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
+        world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world: Arc::new(world),
+            from: WorldTile {
+                x: 2,
+                z: 3,
+                level: 0,
+            },
+            to: target,
+            radius: 1,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("occupied target should route to a neighbour");
+        };
+        assert_ne!(route.dest, target);
+        assert!((route.dest.x - target.x).abs().max((route.dest.z - target.z).abs()) <= 1);
+        assert!(request.world.collision.standable(route.dest));
+    }
+
+    #[test]
+    fn radius_calculate_respects_wall_l_diagonal_geometry() {
+        let mut world = open_world(7, 7);
+        let mut flags = vec![0u32; 49];
+        let target = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
+        flags[3 * 7 + 3] = client::dash3d::CollisionFlag::W_S as u32
+            | client::dash3d::CollisionFlag::W_E as u32;
+        flags[4 * 7 + 3] |= client::dash3d::CollisionFlag::W_W as u32;
+        flags[3 * 7 + 2] |= client::dash3d::CollisionFlag::W_N as u32;
+        flags[4 * 7 + 2] |= client::dash3d::CollisionFlag::W_S as u32;
+        flags[4 * 7 + 4] |= client::dash3d::CollisionFlag::W_N as u32;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        world.collision.walk = walk;
+        world.collision.blocked = blocked;
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world: Arc::new(world),
+            from: WorldTile {
+                x: 0,
+                z: 3,
+                level: 0,
+            },
+            to: target,
+            radius: 1,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let component = nav::router::local_step_component(&request.world.collision, target, 1);
+        assert!(component.contains(&WorldTile { x: 2, z: 3, level: 0 }));
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("same-side WALL_L approach should route");
+        };
+        assert!(component.contains(&route.dest));
+        assert_ne!(route.dest, WorldTile { x: 4, z: 3, level: 0 });
+    }
+
+    #[test]
+    fn radius_calculate_drops_detour_outside_radius() {
+        let mut world = open_world(7, 7);
+        let mut flags = vec![0u32; 49];
+        for z in 1..=5 {
+            flags[z * 7 + 3] |= client::dash3d::CollisionFlag::W_E as u32;
+            flags[z * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        world.collision.walk = walk;
+        world.collision.blocked = blocked;
+        let target = WorldTile { x: 3, z: 3, level: 0 };
+        let request = ScriptRouteRequest {
+            generation: 0,
+            world: Arc::new(world),
+            from: WorldTile { x: 4, z: 3, level: 0 },
+            to: target,
+            radius: 1,
+            opts: FindOptions::default(),
+            state: None,
+            bank: vec![],
+        };
+        let component = nav::router::local_step_component(&request.world.collision, target, 1);
+        assert!(!component.contains(&WorldTile { x: 4, z: 3, level: 0 }));
+        let RouteOutcome::Routed(route) = request.calculate() else {
+            panic!("global detour should still leave a local approach");
+        };
+        assert!(component.contains(&route.dest));
+        assert_ne!(route.dest, WorldTile { x: 4, z: 3, level: 0 });
     }
 
     #[test]
