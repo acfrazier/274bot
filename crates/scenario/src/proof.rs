@@ -67,6 +67,12 @@ pub enum Proof {
     /// Chat modal is closed (`modals.chat == -1`) — DrainDialogs after
     /// `advancestat` waits here once the level-up IF is gone.
     ChatClosed,
+    /// No active chat continue: the published continue id is absent, the
+    /// chat modal root is closed, and no open-root widget still publishes
+    /// `BUTTON_CONTINUE`. Stronger than [`Proof::ChatClosed`] alone when a
+    /// level-up IF tree remains reachable from an open root while
+    /// `main_modal` is already -1 (setstat FireGiant prep).
+    NoActiveContinue,
     /// Side tab `index` is bound (`side_icon[i] != -1`). rs2b0t
     /// `mainlandAccount` checks tab 3 after relog — the tutorial UI lock
     /// refresh. The overlay can stay up even when the skip varp stuck.
@@ -163,6 +169,7 @@ impl Proof {
             Proof::QuestDone { name } => format!("quest_done({name})"),
             Proof::TutorialClosed => "tutorial_closed".to_string(),
             Proof::ChatClosed => "chat_closed".to_string(),
+            Proof::NoActiveContinue => "no_active_continue".to_string(),
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::VarpExact { id, value } => format!("varp({id})=={value}"),
@@ -370,6 +377,16 @@ impl Proof {
             }
             Proof::TutorialClosed => snap.modals().tutorial == -1,
             Proof::ChatClosed => snap.modals().chat == -1,
+            Proof::NoActiveContinue => {
+                // BUTTON_CONTINUE == 6 (client::config::if_type::ButtonType).
+                const BUTTON_CONTINUE: i32 = 6;
+                snap.chat_continue_component_id() == -1
+                    && snap.modals().chat == -1
+                    && !snap
+                        .widgets()
+                        .iter()
+                        .any(|w| w.button_type == BUTTON_CONTINUE)
+            }
             Proof::SideTabAvailable { index } => snap
                 .side_tabs()
                 .iter()
@@ -809,6 +826,67 @@ mod tests {
         let s = snap(&mut c);
         assert!(Proof::ChatClosed.check(&s, None));
         assert_eq!(Proof::ChatClosed.name(), "chat_closed");
+    }
+
+    #[test]
+    fn no_active_continue_fails_on_open_continue_and_passes_when_settled() {
+        use client::config::if_type::ButtonType;
+
+        let mut c = seeded();
+        let s = snap(&mut c);
+        assert!(
+            Proof::NoActiveContinue.check(&s, None),
+            "seed has no chat continue"
+        );
+        assert_eq!(Proof::NoActiveContinue.name(), "no_active_continue");
+
+        // Open chat modal with a nested BUTTON_CONTINUE (setstat level-up shape).
+        c.set_iface(
+            6206,
+            IfType {
+                id: 6206,
+                layer_id: 6206,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![6210]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            6210,
+            IfType {
+                id: 6210,
+                layer_id: 6206,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            6210,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = 6206;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+        let s = snap(&mut c);
+        assert!(
+            !Proof::NoActiveContinue.check(&s, None),
+            "open level-up continue must not pass drain"
+        );
+        assert_ne!(
+            s.chat_continue_component_id(),
+            -1,
+            "nested continue is published while the chat modal is open"
+        );
+
+        c.chat_modal_id = -1;
+        c.bump_gens(ServerProt::IF_CLOSE);
+        let s = snap(&mut c);
+        assert!(
+            Proof::NoActiveContinue.check(&s, None),
+            "settled chat with no continue widgets passes"
+        );
     }
 
     #[test]
