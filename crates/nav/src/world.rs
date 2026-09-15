@@ -40,18 +40,23 @@ impl NavWorld {
         &self.banks
     }
 
-    /// Resolve the five catalog bank aliases against this bound world's
+    /// Resolve the catalog bank aliases (the host injects
+    /// `script::content::BANK_ALIASES` here) against this bound world's
     /// packed booth tiles and walk surface. Missing booths, wrong plane,
     /// or a blocked stand with no adjacent replacement omit that alias.
-    /// The packed stand table is not copied into the published facts.
-    pub fn named_bank_facts(&self) -> api::named_banks::NamedBankFacts {
+    /// The packed stand table is not copied into the published facts, and
+    /// [`Self::banks`] keeps returning the packed stands.
+    pub fn named_bank_facts(
+        &self,
+        candidates: &[api::named_banks::BankAliasCandidate],
+    ) -> api::named_banks::NamedBankFacts {
         let packed: Vec<WorldTile> = self
             .banks
             .iter()
             .filter(|stand| matches!(stand.access, BankAccess::Booth { .. }))
             .map(|stand| stand.tile)
             .collect();
-        api::named_banks::resolve(&packed, |tile| self.collision.walkable(tile))
+        crate::named_banks::resolve(candidates, &packed, |tile| self.collision.walkable(tile))
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

@@ -2,19 +2,20 @@
 
 use std::sync::Arc;
 
-use api::named_banks::{resolve, CANDIDATES};
 use api::snapshot::WorldTile;
+use nav::named_banks::resolve;
+use script::content::BANK_ALIASES;
 use script::{LoadIsolate, LoadShape};
 
 fn packed_booths() -> Vec<WorldTile> {
-    CANDIDATES
+    BANK_ALIASES
         .iter()
         .flat_map(|c| c.booths.iter().copied())
         .collect()
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    let facts = resolve(&packed_booths(), |_| true);
+    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
     LoadIsolate::spawn_with_content(
         src.to_string(),
         LoadShape::CompatClass,

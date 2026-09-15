@@ -4501,7 +4501,8 @@ pub struct Play {
     connection: PlayConnection,
     /// Generated facts only when the profile cache matches a checked-in asset.
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
-    /// Bound-world named bank aliases, resolved once with the nav world.
+    /// Bound-world named bank aliases, resolved once with the nav world and
+    /// the catalog alias configuration (`script::content::BANK_ALIASES`).
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`
@@ -4637,7 +4638,7 @@ impl Play {
         let named_banks = Arc::new(
             world
                 .as_deref()
-                .map(NavWorld::named_bank_facts)
+                .map(|world| world.named_bank_facts(script::content::BANK_ALIASES))
                 .unwrap_or_default(),
         );
         Play {
