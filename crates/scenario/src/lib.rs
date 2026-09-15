@@ -13755,16 +13755,25 @@ fn climbing_boots_teleport_scenario() -> Scenario {
 }
 
 /// Clean pack at Tenzing's hut: Death Plateau completed through the authentic
-/// `setvar death_equiproom 80` with a native `getvar` readback, a relog so
-/// the journal repaints, then the exact carried trip money (plus the rune
-/// stack for the teleport cell) and a bank stock for later withdrawals.
+/// primary `setvar death_equiproom 80` **and** retained map progress
+/// `setvar death_map 8`, each with its own native `getvar` Chat receipt, a
+/// relog so the journal repaints, then the exact carried trip money (plus the
+/// rune stack for the teleport cell) and a bank stock for later withdrawals.
 ///
-/// The `getvar death_equiproom` readback, the `Death Plateau` journal row and
-/// the framed `Tenzing` NPC are the fixture's fail-closed prerequisite: they
-/// read the *running pack's* own varp/NPC/journal content, so a pack that does
-/// not provide them times this cell out before Start instead of seeding a
-/// shortcut. There is no revision switch in this runner and none is invented
-/// here; the guard is the authenticated content those steps resolve.
+/// Authentic completion keeps map progress: the commander path reaches
+/// `denulth_has_map` only when primary is 70 and `death_get_map >= 8`
+/// (`death_scouted_area`); the completion queue then sets primary 80 and
+/// leaves `death_map` unchanged. Tenzing door gates read bits 0..3 of that
+/// same varp. Seeding primary alone leaves map 0 and is not a completed state.
+///
+/// Both `getvar` readbacks (`get death_equiproom: 80` and `get death_map: 8`),
+/// the `Death Plateau` journal row and the framed `Tenzing` NPC are the
+/// fixture's fail-closed prerequisite: they are exact server Chat replies to
+/// the cheat path, not a client varp snapshot (default published 315 stays 0
+/// and does not prove transmission). A pack that does not provide them times
+/// this cell out before Start instead of seeding a shortcut. There is no
+/// revision switch in this runner and none is invented here; the guard is the
+/// authenticated content those steps resolve.
 ///
 /// The pack itself carries zero boots. The bank stock is a real booth session
 /// (the ordinary window, the inventory's bulk deposit op, a real close) — not
@@ -13773,7 +13782,8 @@ fn climbing_boots_teleport_scenario() -> Scenario {
 /// before close, so leftover banked boots cannot hide behind a closed-bank
 /// Start snapshot. Start is the real frozen script; nothing intervenes after
 /// it, and the purchase, return, deposit and further stages are watched
-/// separately.
+/// separately. No boots, extra cash, reward XP, or unrelated progress is
+/// granted in preparation.
 fn climbing_boots_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -13801,8 +13811,11 @@ fn climbing_boots_variant(
         radius: 8,
     };
     let mut steps: Vec<Step> = Vec::new();
+    // Authentic completed Death Plateau: primary 80 + retained map progress 8
+    // (bits 0..3). Separate setvar/getvar + Chat receipts so each value is
+    // proven by the server reply before relog/Start — not a client snapshot.
     steps.push(Step {
-        name: "complete Death Plateau by the authentic setvar and read it back",
+        name: "complete Death Plateau primary by the authentic setvar and read it back",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "setvar death_equiproom 80");
@@ -13813,6 +13826,22 @@ fn climbing_boots_variant(
         wait: Wait {
             arm: Proof::Chat {
                 needle: "get death_equiproom: 80",
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "retain Death Plateau map progress by the authentic setvar and read it back",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "setvar death_map 8");
+                cheat(c, "getvar death_map");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat {
+                needle: "get death_map: 8",
             },
             budget_ticks: 200,
         },
@@ -23012,6 +23041,246 @@ mod tests {
                 panic!("the run never failed the preparation step ({step}/{total})")
             }
             RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+        }
+    }
+
+    #[test]
+    fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_start() {
+        // Authentic completed Death Plateau retains death_map 8; primary 80
+        // alone is incomplete. Both cells share the prep and keep their
+        // walk/teleport differences. Readbacks are server Chat arms from
+        // getvar, proven by the emitted CLIENT_CHEAT stream — not a client
+        // varp snapshot (default 315 = 0 does not establish transmission).
+        for (name, use_teleport, pack_coins) in [
+            ("climbing_boots", false, CLIMBING_BOOTS_WALK_PACK_COINS),
+            ("climbing_boots_teleport", true, CLIMBING_BOOTS_TELE_PACK_COINS),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(scenario.settings.start_script, Some("ClimbingBoots"));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(
+                inject.get("useTeleport"),
+                Some(&Value::Bool(use_teleport))
+            );
+            assert_eq!(inject.get("runeStock"), Some(&Value::from(1.0)));
+
+            let index = |needle: &str| {
+                scenario
+                    .steps
+                    .iter()
+                    .position(|step| step.name == needle)
+                    .unwrap_or_else(|| panic!("{name}: missing step {needle}"))
+            };
+            let primary = index(
+                "complete Death Plateau primary by the authentic setvar and read it back",
+            );
+            let map =
+                index("retain Death Plateau map progress by the authentic setvar and read it back");
+            let journal = index("acknowledge Death Plateau complete before Start");
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap_or_else(|| panic!("{name}: no StartScript"));
+            let relog = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::Relog))
+                .unwrap_or_else(|| panic!("{name}: seed relog missing"));
+
+            assert!(
+                primary + 1 == map,
+                "{name}: map progress follows the primary setvar"
+            );
+            assert!(
+                map < relog && relog < journal && journal < start,
+                "{name}: both readbacks precede relog, QuestDone, and Start (primary={primary} map={map} relog={relog} journal={journal} start={start})"
+            );
+            assert_eq!(
+                scenario.steps[primary].wait.arm,
+                Proof::Chat {
+                    needle: "get death_equiproom: 80"
+                }
+            );
+            assert_eq!(
+                scenario.steps[map].wait.arm,
+                Proof::Chat {
+                    needle: "get death_map: 8"
+                }
+            );
+            assert_eq!(
+                scenario.steps[journal].wait.arm,
+                Proof::QuestDone {
+                    name: "Death Plateau"
+                }
+            );
+            assert!(
+                scenario.steps[primary].wait.budget_ticks > 0
+                    && scenario.steps[map].wait.budget_ticks > 0,
+                "{name}: missing getvar receipts fail closed on budget"
+            );
+
+            let mut snapshot = GameSnapshot::new();
+            let mut client = native_seed_client();
+            snapshot.rebuild(&mut client);
+            match &scenario.steps[primary].kind {
+                StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
+                _ => panic!("{name}: primary Death Plateau step is a Perform"),
+            }
+            assert!(
+                emitted_has(&client, "setvar death_equiproom 80"),
+                "{name}: primary setvar is emitted"
+            );
+            assert!(
+                emitted_has(&client, "getvar death_equiproom"),
+                "{name}: primary getvar is emitted"
+            );
+            assert!(
+                !emitted_has(&client, "setvar death_map"),
+                "{name}: map setvar is a separate step"
+            );
+            assert!(
+                !emitted_has(&client, "give climbing") && !emitted_has(&client, "3105"),
+                "{name}: preparation does not grant boots"
+            );
+
+            let mut client = native_seed_client();
+            snapshot.rebuild(&mut client);
+            match &scenario.steps[map].kind {
+                StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
+                _ => panic!("{name}: map progress step is a Perform"),
+            }
+            assert!(
+                emitted_has(&client, "setvar death_map 8"),
+                "{name}: map setvar is emitted"
+            );
+            assert!(
+                emitted_has(&client, "getvar death_map"),
+                "{name}: map getvar is emitted"
+            );
+            assert!(
+                !emitted_has(&client, "setvar death_equiproom"),
+                "{name}: primary setvar stays on its own step"
+            );
+
+            let seed = scenario.steps[..start]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(seed.contains(&Proof::ArrivedNear {
+                x: TENZING_DOOR.x,
+                z: TENZING_DOOR.z,
+                level: TENZING_DOOR.level,
+                radius: 4,
+            }));
+            assert!(seed.contains(&Proof::NpcNameNear {
+                name: TENZING_NAME,
+                x: TENZING_INSIDE.x,
+                z: TENZING_INSIDE.z,
+                level: TENZING_INSIDE.level,
+                radius: 12,
+            }));
+            assert!(seed.contains(&Proof::ItemIdAtMost {
+                id: CLIMBING_BOOTS_ID,
+                count: 0,
+            }));
+            assert!(seed.contains(&Proof::BankItemIdAtMost {
+                id: CLIMBING_BOOTS_ID,
+                count: 0,
+            }));
+            assert!(seed.contains(&Proof::BankItemId {
+                id: COINS_ID,
+                count: CLIMBING_BOOTS_BANK_TRIPS * pack_coins,
+            }));
+
+            let watches: Vec<_> = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect();
+            if use_teleport {
+                assert!(
+                    seed.iter().any(|p| matches!(
+                        p,
+                        Proof::BankItemId {
+                            id: LAW_RUNE_ID,
+                            count: 1
+                        }
+                    )),
+                    "{name}: teleport bank restock Law is acknowledged"
+                );
+                assert!(
+                    seed.iter().any(|p| matches!(
+                        p,
+                        Proof::BankItemId {
+                            id: AIR_RUNE_ID,
+                            count: 3
+                        }
+                    )),
+                    "{name}: teleport bank restock Air is acknowledged"
+                );
+                assert!(
+                    seed.iter().any(|p| matches!(
+                        p,
+                        Proof::BankItemId {
+                            id: WATER_RUNE_ID,
+                            count: 1
+                        }
+                    )),
+                    "{name}: teleport bank restock Water is acknowledged"
+                );
+                assert_eq!(
+                    watches.first(),
+                    Some(&Proof::ArrivedNear {
+                        x: FALADOR_TELE_LAND.x,
+                        z: FALADOR_TELE_LAND.z,
+                        level: FALADOR_TELE_LAND.level,
+                        radius: 8,
+                    }),
+                    "{name}: teleport cell watches the Falador cast first"
+                );
+                assert_eq!(
+                    scenario.proof,
+                    Proof::StatXpGain {
+                        id: MAGIC_STAT,
+                        min: 1,
+                    }
+                );
+            } else {
+                assert!(
+                    !seed.iter().any(|p| matches!(
+                        p,
+                        Proof::BankItemId {
+                            id: LAW_RUNE_ID,
+                            ..
+                        } | Proof::BankItemId {
+                            id: AIR_RUNE_ID,
+                            ..
+                        } | Proof::BankItemId {
+                            id: WATER_RUNE_ID,
+                            ..
+                        }
+                    )),
+                    "{name}: walking cell does not seed teleport runes"
+                );
+                assert_ne!(
+                    watches.first(),
+                    Some(&Proof::ArrivedNear {
+                        x: FALADOR_TELE_LAND.x,
+                        z: FALADOR_TELE_LAND.z,
+                        level: FALADOR_TELE_LAND.level,
+                        radius: 8,
+                    }),
+                    "{name}: walking cell does not require a Falador cast"
+                );
+                assert_eq!(
+                    scenario.proof,
+                    Proof::ItemId {
+                        id: CLIMBING_BOOTS_ID,
+                        count: 2,
+                    }
+                );
+            }
         }
     }
 
