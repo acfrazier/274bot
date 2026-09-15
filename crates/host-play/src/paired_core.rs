@@ -1443,7 +1443,6 @@ impl MuleSlotRecord {
             }
         }
         let offer_rising = observation.trade_offer_open
-            && named_partner
             && self
                 .latest
                 .as_ref()
@@ -1452,7 +1451,11 @@ impl MuleSlotRecord {
         if self.saw_wrong_partner {
             self.drop_episode();
         } else if offer_rising {
-            self.bind_episode(&observation);
+            // A new offer ends the old episode even before its partner is known.
+            self.drop_episode();
+            if named_partner {
+                self.bind_episode(&observation);
+            }
         } else {
             match self.exchange_stage {
                 MuleExchangeStage::Offer => {}
@@ -2241,7 +2244,6 @@ impl FlaxSlotRecord {
             }
         }
         let offer_rising = observation.trade_offer_open
-            && named_partner
             && self
                 .latest
                 .as_ref()
@@ -2250,7 +2252,11 @@ impl FlaxSlotRecord {
         if self.saw_wrong_partner {
             self.drop_episode();
         } else if offer_rising {
-            self.bind_episode(&observation);
+            // A new offer ends the old episode even before its partner is known.
+            self.drop_episode();
+            if named_partner {
+                self.bind_episode(&observation);
+            }
         } else {
             match self.exchange_stage {
                 FlaxExchangeStage::Offer => {}
