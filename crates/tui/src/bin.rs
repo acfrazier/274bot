@@ -1252,6 +1252,15 @@ impl TuiSession {
     /// alternate-screen restore.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
         let name = self.live_name.as_deref().unwrap_or("script");
+        if let Some(message) = self.terminal_startup_failure() {
+            return (
+                Some(1),
+                vec![
+                    ProofLine::Stderr(format!("FAIL: live {name} startup: {message}")),
+                    ProofLine::Stderr(format!("FAIL: {message}")),
+                ],
+            );
+        }
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
         let evidence = self
             .scenario
@@ -1266,6 +1275,16 @@ impl TuiSession {
             live_proof(name, status, &evidence, soaking, self.live_announced_pass);
         self.live_announced_pass = announced;
         (code, lines)
+    }
+
+    /// Return a producer-marked terminal asset-init failure for a slot owned
+    /// by this scenario. Retryable login errors intentionally remain pending.
+    fn terminal_startup_failure(&self) -> Option<String> {
+        let runner = self.scenario.lock().unwrap();
+        let runner = runner.as_ref()?;
+        let owned = runner.owned_profile_names();
+        let statuses = self.play.as_ref()?.statuses();
+        host_play::owned_terminal_startup_error(&statuses, &owned)
     }
 }
 

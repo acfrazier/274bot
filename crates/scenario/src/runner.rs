@@ -255,6 +255,20 @@ impl ScenarioRunner {
         self.seed_name(0)
     }
 
+    /// Names of every slot owned by this run, including companion seeds.
+    /// Frontends use this to inspect producer status without matching
+    /// unrelated user slots.
+    pub fn owned_profile_names(&self) -> Vec<String> {
+        let mut names = vec![self.profile_name().to_string()];
+        names.extend(
+            self.scenario
+                .companions
+                .iter()
+                .map(|companion| self.seed_name(companion.profile).to_string()),
+        );
+        names
+    }
+
     /// Whether `name` is the slot this runner drives.
     pub fn drives(&self, name: &str) -> bool {
         name == self.profile_name()

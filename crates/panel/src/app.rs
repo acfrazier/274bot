@@ -1715,6 +1715,22 @@ fn live_script_tick(
             }
         }
     };
+    // Preparation can fail before the scenario runner receives its first
+    // client tick. Surface only the runner-owned slots' producer-marked,
+    // terminal asset-init fact; ordinary retryable login errors stay pending.
+    let terminal_startup_failure = {
+        let guard = session.scenario.lock().unwrap();
+        guard.as_ref().and_then(|runner| {
+            let owned = runner.owned_profile_names();
+            host_play::owned_terminal_startup_error(&session.statuses(), &owned)
+        })
+    };
+    if let Some(message) = terminal_startup_failure {
+        emit_proof(false);
+        eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
+        live.failed = Some(message.clone());
+        return Some(message);
+    }
     if let CoreGate::Failed(message) = &core_gate {
         request_native_failure_capture(live, session, shots, terminal_shot);
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
