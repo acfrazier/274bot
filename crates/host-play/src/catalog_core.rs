@@ -3391,6 +3391,21 @@ impl AlcherSwarmDrainCycle {
             && !self.wrong_staff
             && self.baseline_staff.is_none()
     }
+
+    /// Compact named-phase receipt for timeout/stop diagnosis. Does not
+    /// serialize world snapshots or grow an observation history.
+    pub fn phase_status(&self) -> Value {
+        json!({
+            "firstcast": self.first_cast.is_some(),
+            "swarm_hit": self.swarm_hit.is_some(),
+            "guardianhold": self.guardian_hold.is_some(),
+            "fled": self.fled.is_some(),
+            "released": self.released.is_some(),
+            "further": self.further_cast.is_some(),
+            "richretired": self.rich_retired.is_some(),
+            "poor": self.poor_consumed,
+        })
+    }
 }
 
 /// Two observed dart actions: exact product id, both inputs down, XP, no wrong tier.
@@ -7984,6 +7999,37 @@ impl CoreWitness {
         }
     }
 
+    fn incomplete_delta_error(&self) -> String {
+        if self.case == CoreCase::AlcherSwarmDrain {
+            format!(
+                "{} core post-Start delta incomplete {}",
+                self.case.scenario_name(),
+                self.alcher_swarm_cycle.phase_status()
+            )
+        } else {
+            format!(
+                "{} core post-Start delta incomplete",
+                self.case.scenario_name()
+            )
+        }
+    }
+
+    fn swarm_stopped_without_recovery(&self, observation: &Observation) -> Option<String> {
+        if self.case != CoreCase::AlcherSwarmDrain || self.qualified() {
+            return None;
+        }
+        let stopped = observation
+            .script_lifecycle
+            .as_ref()
+            .is_some_and(|receipt| receipt.state == script::ScriptTerminalState::Stopped);
+        stopped.then(|| {
+            format!(
+                "alcher_swarm_drain stopped without ordered recovery {}",
+                self.alcher_swarm_cycle.phase_status()
+            )
+        })
+    }
+
     pub fn peak_item(&self, name: &str) -> i32 {
         self.max_items.get(name).copied().unwrap_or(0)
     }
@@ -8170,10 +8216,7 @@ impl CoreWitness {
         }
         let ok = self.qualified();
         if !ok {
-            return Err(format!(
-                "{} core post-Start delta incomplete",
-                self.case.scenario_name()
-            ));
+            return Err(self.incomplete_delta_error());
         }
         Ok(json!({
             "case": self.case,
@@ -8457,9 +8500,19 @@ impl CoreWatch {
                     }
                 } else {
                     witness.observe(&observation);
-                    CoreWatchState::Running {
-                        account: expected,
-                        witness,
+                    if let Some(error) = witness.swarm_stopped_without_recovery(&observation) {
+                        CoreWatchState::Failed {
+                            case: witness.case,
+                            account: expected,
+                            error,
+                            latest: Some(observation),
+                            witness: Some(witness),
+                        }
+                    } else {
+                        CoreWatchState::Running {
+                            account: expected,
+                            witness,
+                        }
                     }
                 }
             }
