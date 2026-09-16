@@ -10065,9 +10065,14 @@ export default class T extends LoopingBot {{
             cache.locs[2213].op = vec![None, Some("Use-quickly".into()), None, None, None];
         }
         // The booth: a wall at scene (5, 6) whose typecode encodes loc 2213.
+        // typecode2 is the snapshot loc `info` byte: shape lives in the low
+        // 5 bits. OpenBooth readiness (`loc_approach::can_operate_from`) only
+        // models footprint shapes 10/11/22 — a 0 shape is not operable, so
+        // the fixture must plant shape 10 (same contract as api interact booth
+        // fixtures and script_snapshot_fb_projects_authoritative_bank_approach).
         let booth_typecode = 0x4000_0000 + (2213 << 14) + 1 + (2 << 7);
         c.world
-            .set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 0, 0, 0, 0, 0);
+            .set_wall(0, 5, 6, 0, 0, 0, booth_typecode, 10, 0, 0, 0, 0);
         // Bank: main modal 600 wrapping the withdraw component 601
         // (Bones × 20, ops `[Withdraw 1, ...]`).
         c.main_modal_id = 600;
