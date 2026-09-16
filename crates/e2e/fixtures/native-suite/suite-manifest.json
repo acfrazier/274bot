@@ -2069,7 +2069,7 @@
    "script": "HerbCleaner",
    "script_key": "HerbCleaner",
    "primary": true,
-   "status": "vetted",
+   "status": "unvetted",
    "manual": false,
    "budget_min": 8,
    "runner": "core",
@@ -2090,16 +2090,10 @@
     "paths": []
    },
    "variants": [
-    "herb_cleaner_named"
+    "herb_cleaner_named",
+    "herb_cleaner_empty_bank"
    ],
-   "reference_cases": [
-    {
-     "id": "herbcleaner-empty-bank-live",
-     "status": "vetted",
-     "manual": false,
-     "budget_min": 8
-    }
-   ]
+   "reference_cases": []
   },
   {
    "id": "herb_cleaner_named",
@@ -2129,6 +2123,42 @@
    },
    "variants": [],
    "reference_cases": []
+  },
+  {
+   "id": "herb_cleaner_empty_bank",
+   "kind": "native",
+   "script": "HerbCleaner",
+   "script_key": "HerbCleaner",
+   "primary": false,
+   "status": "vetted",
+   "manual": false,
+   "budget_min": 7,
+   "runner": "core",
+   "live": "script_herb_cleaner_empty_bank",
+   "scenario": "herb_cleaner_empty_bank",
+   "core_case": "herb_cleaner_empty_bank",
+   "pair_case": null,
+   "options": [
+    "eventual empty-bank Stop"
+   ],
+   "unsupported": [],
+   "covers": {
+    "scripts": [
+     "HerbCleaner"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "herbcleaner-empty-bank-live",
+     "status": "vetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ],
+   "budget_note": "outer budget is the frozen harness 420s window; the native fixture preserves Herblore 20, banked guam x20 and selected-but-absent Marrentill"
   },
   {
    "id": "potion_maker",

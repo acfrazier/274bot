@@ -407,6 +407,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "dart_fletcher_iron" => Some(dart_fletcher_iron_scenario()),
         "herb_cleaner" => Some(herb_cleaner_scenario()),
         "herb_cleaner_named" => Some(herb_cleaner_named_scenario()),
+        "herb_cleaner_empty_bank" => Some(herb_cleaner_empty_bank_scenario()),
         "gem_cutter" => Some(gem_cutter_scenario()),
         "gem_cutter_named" => Some(gem_cutter_named_scenario()),
         "door_opener" => Some(door_opener_scenario()),
@@ -530,6 +531,7 @@ pub fn names() -> Vec<&'static str> {
         "dart_fletcher_iron",
         "herb_cleaner",
         "herb_cleaner_named",
+        "herb_cleaner_empty_bank",
         "gem_cutter",
         "gem_cutter_named",
         "door_opener",
@@ -4283,6 +4285,11 @@ const HERB_CLEANER_NAMED_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject 
     value: ScriptInjectValue::StrList(&["Guam leaf"]),
 }];
 
+const HERB_CLEANER_EMPTY_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "herbs",
+    value: ScriptInjectValue::StrList(&["Guam leaf", "Marrentill"]),
+}];
+
 const GEM_CUTTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "gems",
     value: ScriptInjectValue::StrList(&[]),
@@ -4468,6 +4475,125 @@ fn herb_cleaner_scenario() -> Scenario {
 
 fn herb_cleaner_named_scenario() -> Scenario {
     herb_cleaner_variant("herb_cleaner_named", HERB_CLEANER_NAMED_INJECT, 5, true)
+}
+
+/// Frozen reference fixture: one sub-full pack of guam, Marrentill selected
+/// but absent, then the script's own eventual empty-bank Stop.
+fn herb_cleaner_empty_bank_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: HERBLORE_STAT,
+        min: 1,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Herblore 20 and exactly 20 unidentified guam before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat herblore 20");
+                cheat(c, "givebank unidentified_guam 20");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(drain_advancestat());
+    for (step_name, arm) in [
+        (
+            "confirm Herblore 20 before Start",
+            Proof::Stat {
+                id: HERBLORE_STAT,
+                min: 20,
+            },
+        ),
+        (
+            "confirm no unidentified guam in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_GUAM_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no clean guam in pack before Start",
+            Proof::ItemIdAtMost {
+                id: GUAM_LEAF_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no unidentified marrentill in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_MARENTILL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no clean marrentill in pack before Start",
+            Proof::ItemIdAtMost {
+                id: MARRENTILL_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge exactly 20 unidentified guam",
+        Proof::BankItemId {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 20,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge Marrentill is absent from the loaded seed bank",
+        Proof::BankItemIdAtMost {
+            id: UNIDENTIFIED_MARENTILL_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    steps.push(bank_fletcher_watch(
+        "watch script-created clean guam without requiring a full pack",
+        Proof::ItemId {
+            id: GUAM_LEAF_ID,
+            count: 1,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch Herblore XP from post-Start guam cleaning",
+        xp,
+    ));
+    Scenario {
+        name: "herb_cleaner_empty_bank",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(420),
+            start_script: Some("HerbCleaner"),
+            script_settings_inject: Some(HERB_CLEANER_EMPTY_INJECT),
+            terminal_shot: Some("herb_cleaner_empty_bank"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// Empty pack, banked unidentified guam. Named also banks marrentill unids
@@ -17028,6 +17154,7 @@ mod tests {
                 "dart_fletcher_iron",
                 "herb_cleaner",
                 "herb_cleaner_named",
+                "herb_cleaner_empty_bank",
                 "gem_cutter",
                 "gem_cutter_named",
                 "door_opener",
@@ -18609,6 +18736,46 @@ mod tests {
             id: UNIDENTIFIED_MARENTILL_ID,
             count: 0,
         }));
+
+        let empty_herb = get("herb_cleaner_empty_bank").expect("herb_cleaner_empty_bank");
+        assert_eq!(empty_herb.settings.start_script, Some("HerbCleaner"));
+        assert_eq!(empty_herb.settings.deadline, Duration::from_secs(420));
+        let inject = settings_inject_map(empty_herb.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("herbs"),
+            Some(&Value::Array(vec![
+                Value::String("Guam leaf".into()),
+                Value::String("Marrentill".into()),
+            ]))
+        );
+        let empty_start = empty_herb
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let empty_seed = empty_herb.steps[..empty_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(empty_seed.contains(&Proof::Stat {
+            id: HERBLORE_STAT,
+            min: 20,
+        }));
+        assert!(empty_seed.contains(&Proof::BankItemId {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 20,
+        }));
+        assert!(empty_seed.contains(&Proof::BankItemIdAtMost {
+            id: UNIDENTIFIED_MARENTILL_ID,
+            count: 0,
+        }));
+        assert_eq!(
+            empty_herb.proof,
+            Proof::StatXpGain {
+                id: HERBLORE_STAT,
+                min: 1
+            }
+        );
 
         let gems = get("gem_cutter").expect("gem_cutter");
         assert_eq!(gems.settings.start_script, Some("GemCutter"));
