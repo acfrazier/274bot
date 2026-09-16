@@ -71,7 +71,7 @@ type Args = {
 function usage(msg?: string): never {
     if (msg) console.error(`error: ${msg}`);
     console.error(
-        'usage: write_player_fixture --username NAME --output PATH.sav [--fixture thiever] [--profile main] [--overwrite] [--receipt PATH.json]'
+        'usage: write_player_fixture --username NAME --output PATH.sav [--fixture thiever] [--profile main] [--overwrite] [--receipt PATH.json] [--server-root PATH]'
     );
     process.exit(2);
 }
