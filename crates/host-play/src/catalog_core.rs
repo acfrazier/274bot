@@ -3268,7 +3268,8 @@ fn rich_chainbody_exhausted(observation: &Observation) -> bool {
 /// native guardian hold, actual flee under that hold, native hold release
 /// independent of bank proximity, further rich cast from that release baseline
 /// that exhausts remaining notes, bank return and loaded rich retirement near
-/// Varrock West, then poor-item consumption.
+/// Varrock West, then a complete poor restock (noted poor and Nature fuel)
+/// before bank-closed consumption.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AlcherSwarmDrainCycle {
     pub withdrawn: Option<Observation>,
@@ -3369,9 +3370,11 @@ impl AlcherSwarmDrainCycle {
         }
         if self.rich_retired.is_some()
             && self.poor_withdrawn.is_none()
+            && now.bank_generation > baseline.bank_generation
             && now.item_id(CERT_YEW_LONGBOW_ID) >= 1
             && now.item_id(YEW_LONGBOW_ID) == 0
             && now.item_id(CERT_YEW_LONGBOW_ID) > baseline.item_id(CERT_YEW_LONGBOW_ID)
+            && now.item_id(NATURE_RUNE_ID) >= 1
         {
             self.poor_withdrawn = Some(now.clone());
         }
