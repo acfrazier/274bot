@@ -18,6 +18,7 @@ pub use nav_identity::{
 };
 pub use profile::{
     parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
+    WorldMembersFact, WorldMembersSource,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -3799,9 +3800,10 @@ fn nav_world_state_for_observe(
     snapshot: &GameSnapshot,
     script_running: bool,
     nav_armed: bool,
+    map_members: bool,
 ) -> Option<WorldState> {
     if here.is_some() && (script_running || nav_armed) {
-        Some(WorldState::from_snapshot(snapshot))
+        Some(WorldState::from_snapshot(snapshot).with_map_members(map_members))
     } else {
         None
     }
@@ -4139,6 +4141,7 @@ fn step_nav_bot<D: Driver>(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<&NavWorld>,
     hold: bool,
+    map_members: bool,
 ) {
     // The random-event freeze: the follow is not stepped while the
     // guardian holds the slot, and the armed route stays latched so it
@@ -4150,7 +4153,7 @@ fn step_nav_bot<D: Driver>(
         let mut all = navs.lock().unwrap();
         if let Some(bot) = all.get_mut(name) {
             if bot.bank_fetch.is_some() {
-                step_bank_fetch_on_bot(driver, snapshot, bot, world, here);
+                step_bank_fetch_on_bot(driver, snapshot, bot, world, here, map_members);
                 // Freeze follow for Open / Deposit / Withdraw / Wear /
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
@@ -4234,6 +4237,7 @@ fn step_bank_fetch_on_bot<D: Driver>(
     bot: &mut NavBot,
     world: Option<&NavWorld>,
     here: Option<(i32, i32, i32)>,
+    map_members: bool,
 ) -> bool {
     let Some(pending) = bot.bank_fetch.as_mut() else {
         return false;
@@ -4269,7 +4273,7 @@ fn step_bank_fetch_on_bot<D: Driver>(
                 let to = WorldTile { x, z, level };
                 // Live snapshot facts (same fail-closed gates as execute),
                 // not an empty WorldState that would refuse gated walks.
-                let state = WorldState::from_snapshot(snapshot);
+                let state = WorldState::from_snapshot(snapshot).with_map_members(map_members);
                 let opts = FindOptions {
                     allow_bank_fetch: false,
                     ..pending.opts
@@ -4367,6 +4371,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
     arm: &mut WalkArm,
     world: Option<&NavWorld>,
     here: Option<(i32, i32, i32)>,
+    map_members: bool,
 ) -> bool {
     // Reuse NavBot stepping by temporarily viewing the arm as the same
     // shape of pending session + route.
@@ -4377,7 +4382,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
         allow_teleports: false,
         ..Default::default()
     };
-    let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here);
+    let wrote = step_bank_fetch_on_bot(driver, snapshot, &mut bot, world, here, map_members);
     arm.bank_fetch = bot.bank_fetch;
     // Walk-to-stand may have armed a temporary route on the bot; abort
     // clears both session and route.
@@ -4859,6 +4864,14 @@ impl Play {
     /// The immutable process profile, absent only for the legacy 274 entry.
     pub fn server_profile(&self) -> Option<&Arc<ServerProfile>> {
         self.connection.profile()
+    }
+
+    /// WORLD membership bound to this process profile. Unknown is false.
+    pub fn map_members(&self) -> bool {
+        self.connection
+            .profile()
+            .map(|p| p.map_members())
+            .unwrap_or(false)
     }
 
     /// Make `name` the focused slot — the one the panel samples (the old
@@ -5906,6 +5919,10 @@ fn spawn_slot_thread(
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_world = slot_world.clone();
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
+                        let map_members = connection
+                            .profile()
+                            .map(|p| p.map_members())
+                            .unwrap_or(false);
                         let mut pump = Pump::new();
                         let script_tick = &mut script_tick;
                         // Last `(player gen, here)` the nav bot stepped:
@@ -6004,6 +6021,7 @@ fn spawn_slot_thread(
                                 &nav_snapshot,
                                 running,
                                 nav_armed,
+                                map_members,
                             );
                             let npc_boxes = project_npc_boxes_for_isolate_snapshot(
                                 &slot_scripts,
@@ -6074,6 +6092,7 @@ fn spawn_slot_thread(
                                         &slot_statuses,
                                         slot_world.as_deref(),
                                         hold,
+                                        map_members,
                                     );
                                 }
                             }
@@ -13376,6 +13395,7 @@ export default class T extends LoopingBot {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = Some(Arc::new(NavWorld::from_parts(
@@ -13753,7 +13773,7 @@ export default class T extends LoopingBot {
         };
         let snap = GameSnapshot::new();
         let mut driver = bank_fetch_client();
-        step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 1)));
+        step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 1)), false);
         assert_eq!(
             bot.route,
             Some(final_route.clone()),
@@ -13775,7 +13795,7 @@ export default class T extends LoopingBot {
             final_route: final_route.clone(),
         });
         bot.route = None;
-        step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)));
+        step_bank_fetch_on_bot(&mut driver, &snap, &mut bot, None, Some((10, 20, 0)), false);
         assert!(
             bot.route.is_none(),
             "ground-plane here must not complete an upstairs stand Walk"
@@ -13813,6 +13833,7 @@ export default class T extends LoopingBot {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![knife_id],
+            members_req: false,
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
@@ -14000,7 +14021,14 @@ export default class T extends LoopingBot {
             if bot.bank_fetch.is_none() {
                 break;
             }
-            step_bank_fetch_on_bot(&mut c, &snap, bot, Some(world.as_ref()), Some((0, 4, 0)));
+            step_bank_fetch_on_bot(
+                &mut c,
+                &snap,
+                bot,
+                Some(world.as_ref()),
+                Some((0, 4, 0)),
+                false,
+            );
         }
         assert!(
             c.out.pos > out_before,
@@ -14081,6 +14109,7 @@ export default class T extends LoopingBot {
             &navs,
             &statuses,
             Some(world.as_ref()),
+            false,
             false,
         );
         let all = navs.lock().unwrap();
@@ -14293,15 +14322,15 @@ export default class T extends LoopingBot {
         snap.rebuild(&c);
         let here = Some((3200, 3200, 0));
         assert!(
-            nav_world_state_for_observe(here, &snap, false, false).is_none(),
+            nav_world_state_for_observe(here, &snap, false, false, false).is_none(),
             "idle slot with no armed nav must not build WorldState"
         );
         assert!(
-            nav_world_state_for_observe(here, &snap, true, false).is_some(),
+            nav_world_state_for_observe(here, &snap, true, false, false).is_some(),
             "Running script must get WorldState for the walk arm"
         );
         assert!(
-            nav_world_state_for_observe(here, &snap, false, true).is_some(),
+            nav_world_state_for_observe(here, &snap, false, true, false).is_some(),
             "armed nav bot must get WorldState for interact walks"
         );
     }
@@ -17541,6 +17570,7 @@ export default class T extends LoopingBot {
             &statuses,
             world.as_deref(),
             true,
+            false,
         );
         assert_eq!(d.walked, None, "hold freezes the follow");
         assert!(
@@ -17557,6 +17587,7 @@ export default class T extends LoopingBot {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
             false,
         );
         assert_eq!(d.walked, Some((4, 0)), "the hop resumes after the hold");
@@ -18098,6 +18129,7 @@ export default class T extends LoopingBot {
             &statuses,
             world.as_deref(),
             false,
+            false,
         );
         assert_eq!(d.walked, Some((4, 0)), "the hop targets the dest tile");
         {
@@ -18118,6 +18150,7 @@ export default class T extends LoopingBot {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
             false,
         );
         assert_eq!(queued(&navs), None, "arrival clears the armed route");
@@ -18157,6 +18190,7 @@ export default class T extends LoopingBot {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -18336,6 +18370,7 @@ export default class T extends LoopingBot {
             &statuses,
             world.as_deref(),
             false,
+            false,
         );
         assert_eq!(d.held_ops, 1, "one OP_HELD4 rub sent");
         assert!(queued(&navs).is_some(), "the route stays armed");
@@ -18352,6 +18387,7 @@ export default class T extends LoopingBot {
             &navs,
             &statuses,
             world.as_deref(),
+            false,
             false,
         );
         assert_eq!(
@@ -18391,6 +18427,7 @@ export default class T extends LoopingBot {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);

@@ -102,6 +102,7 @@ pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> Transport
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
+        members_req: false,
     }
 }
 
@@ -214,6 +215,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         assert!(
             !is_essence_entry_edge(&cart),

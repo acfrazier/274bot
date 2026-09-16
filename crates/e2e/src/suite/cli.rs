@@ -99,6 +99,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
         vault: None,
         lowmem: true,
         mainland: false,
+        world_members: None,
         nav_paints: true,
         exec_core: None,
         exec_pair: None,
@@ -180,6 +181,13 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
                 catalog_given = true;
             }
             "--vault" => config.vault = Some(PathBuf::from(value("--vault")?)),
+            "--world-members" => {
+                config.world_members = Some(match value("--world-members")?.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err("--world-members needs true or false".into()),
+                });
+            }
             "--lowmem" | "--highmem" => {
                 let requested = arg == "--lowmem";
                 if memory_choice.is_some_and(|current| current != requested) {
@@ -393,6 +401,7 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
         nav_flags: identity::bind_input(Path::new(&resolved.nav_flags)),
         content: identity::bind_content(Path::new(&resolved.content)),
         unpack: identity::bind_unpack(Path::new(&resolved.unpack), revision, unpack_overridden),
+        world_members: options.world_members.or(config.world_members),
         lowmem: config.lowmem,
         mainland: config.mainland,
         jobs: 1,

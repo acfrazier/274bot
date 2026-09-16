@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 8, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 9, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
 //! packed walk surface — first the `u8` face byte per tile per level,
 //! four planes, level-major, each `width × height` (row-major z then x),
@@ -21,8 +21,8 @@
 //! count u32le and per edge `(kind u8, at x/z/level, to x/z/level,
 //! loc_id, option, ticks, dir u8, open_loc_id)` i32le plus the five
 //! requirement vectors (count u32le, then `(id, value)` i32le pairs;
-//! quest names as length-prefixed UTF-8; `worn_req` as plain i32le ids).
-//! `dir` encodes [`DoorDir`] as `0=None,
+//! quest names as length-prefixed UTF-8; `worn_req` as plain i32le ids;
+//! then `members_req` as a `u8` `0`/`1`). `dir` encodes [`DoorDir`] as `0=None,
 //! 1=N, 2=E, 3=S, 4=W`; `open_loc_id` is `-1` for `None`. The any-tile
 //! teleport layer (`TransportGraph::teleports`) round-trips inside
 //! the same edges array as kind-4 edges; [`decode`] splits them back out
@@ -43,11 +43,11 @@
 //! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
 //! [`BankAccess::Npc`] length-prefixed npc name + `op` i32le + an optional
 //! dialog choice as a presence `u8` then a length-prefixed string), see
-//! [`derive_banks`]. [`decode`] accepts version 8 only — a v7 stream (or
+//! [`derive_banks`]. [`decode`] accepts version 9 only — a v8 stream (or
 //! any earlier one, the v6 packed u16 words included) is
 //! [`PackError::BadVersion`];
 //! there is no flags→walk compat load. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v8.
+//! old `.navpack` files; `nav-pack` now writes v9.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -73,15 +73,17 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// compact packed u16 walk words (no resident u32 flags; the flags
 /// sidecar is separate). v7 splits that u16 walk
 /// word into the `u8` face byte per cell plus the packed `SQ_BLOCKED`
-/// bit-plane (9 bits per cell instead of 16). v8 — the current wire —
-/// appends the content-derived bank stand table ([`BankStand`], baked by
+/// bit-plane (9 bits per cell instead of 16). v8 appends the
+/// content-derived bank stand table ([`BankStand`], baked by
 /// [`derive_banks`]) after the transport edges; the v4 wire also carries
 /// the spirit-tree (7) and reserved NPC (8) transport kinds on the same
-/// kind byte — no version bump. [`decode`] accepts version 8 only; 7, 6,
-/// 5, and older streams are rejected rather than compat-loaded.
+/// kind byte — no version bump. v9 — the current wire — appends a
+/// per-edge `members_req` `u8` (`0`/`1`) after `worn_req`. [`decode`]
+/// accepts version 9 only; 8, 7, 6, 5, and older streams are rejected
+/// rather than compat-loaded.
 /// Rebake with `nav-pack` over `$ENGINE_DIR/../content/maps` whenever the
 /// Server content changes (new loc/NPC placements, pack bumps).
-const VERSION: u8 = 8;
+const VERSION: u8 = 9;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Flags sidecar format version.
@@ -97,10 +99,10 @@ const VERSION_CANLIGHT: u8 = 1;
 /// Static canlight sidecar magic.
 const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
 /// Pack format identity as it appears in bundled navigation identities: the
-/// file magic followed by the format version (`274V8` for the current wire).
+/// file magic followed by the format version (`274V9` for the current wire).
 /// A format improvement changes this identity and therefore invalidates
 /// staged build artifacts.
-pub const FORMAT_ID: &str = "274V8";
+pub const FORMAT_ID: &str = "274V9";
 /// Mapsquare edge length in tiles.
 const SQUARE: usize = 64;
 /// Bytes per door entry.
@@ -317,6 +319,7 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         write_req_strings(&mut out, &e.quest_req);
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
+        out.push(if e.members_req { 1 } else { 0 });
     }
     write_bank_stands(&mut out, banks);
     out
@@ -325,11 +328,11 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
 /// Deserialize the whole-world pack, validating magic, version, and
 /// lengths. The `at` index is rebuilt from the decoded edges; kind-4
 /// (teleport) edges split back into [`TransportGraph::teleports`] and are
-/// excluded from it. Version 8 is the only accepted wire: the collision
+/// excluded from it. Version 9 is the only accepted wire: the collision
 /// decodes as the `u8` face bytes plus the packed `SQ_BLOCKED`
 /// bit-plane with no resident flags (`flags` is
 /// `None` until the sidecar is loaded), and the trailing bank stand table
-/// (see [`BankStand`]) decodes after the edges; any other version — 7, 6,
+/// (see [`BankStand`]) decodes after the edges; any other version — 8, 7, 6,
 /// 5, or older — is rejected rather than mis-read or compat-loaded.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
@@ -410,6 +413,15 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
             quest_req: read_req_strings(&mut r)?,
             varp_req: read_req_pairs(&mut r)?,
             worn_req: read_req_ids(&mut r)?,
+            members_req: match read_u8(&mut r)? {
+                0 => false,
+                1 => true,
+                other => {
+                    return Err(PackError::BadLength(format!(
+                        "members_req flag {other} is not 0 or 1"
+                    )));
+                }
+            },
         };
         if edge.kind == TransportKind::Teleport {
             graph.teleports.push(edge);
@@ -1580,6 +1592,8 @@ mod tests {
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(5))));
         bytes[4] = 4;
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(4))));
+        bytes[4] = 8;
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
     }
 
     #[test]
@@ -1931,6 +1945,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![772], // dramen_staff on the Zanaris shed door
+            members_req: false,
         };
         let ladder = TransportEdge {
             kind: TransportKind::Ladder,
@@ -1954,6 +1969,7 @@ mod tests {
             quest_req: vec!["Restless Ghost".into()],
             varp_req: vec![(4, 1)],
             worn_req: vec![],
+            members_req: false,
         };
         let di = graph.edges.len();
         graph.edges.push(door);
@@ -1981,6 +1997,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![(150, 160)],
             worn_req: vec![],
+            members_req: false,
         };
         let gi = graph.edges.len();
         graph.edges.push(glider);
@@ -2008,6 +2025,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![(150, 160)],
             worn_req: vec![],
+            members_req: false,
         };
         let si = graph.edges.len();
         graph.edges.push(spirit);
@@ -2033,6 +2051,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let ni = graph.edges.len();
         graph.edges.push(npc);
@@ -2060,6 +2079,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
         graph.at.entry(graph.edges[di].at).or_default().push(di);
         graph.at.entry(graph.edges[li].at).or_default().push(li);
@@ -2174,6 +2194,7 @@ mod tests {
             quest_req: vec!["Lost City".into()],
             varp_req: vec![],
             worn_req: vec![772],
+            members_req: false,
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(door.clone());
@@ -2187,6 +2208,128 @@ mod tests {
         assert_eq!(g.at, graph.at);
         assert_eq!(c.walk, collision.walk);
         assert!(c.flags.is_none());
+    }
+
+    #[test]
+    fn v9_roundtrips_members_req_true_and_false() {
+        let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let edge = |members_req| TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 0,
+                level: 0,
+            },
+            loc_id: 1596,
+            option: 1,
+            ticks: 1,
+            dir: Some(DoorDir::E),
+            open_loc_id: Some(1560),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req,
+        };
+        for members_req in [true, false] {
+            let mut graph = TransportGraph::default();
+            graph.edges.push(edge(members_req));
+            let bytes = encode(&collision, &graph, &[]);
+            assert_eq!(bytes[4], VERSION);
+            assert_eq!(FORMAT_ID, "274V9");
+            let (_, g, _) = decode(&bytes).unwrap();
+            assert_eq!(g.edges[0].members_req, members_req);
+        }
+    }
+
+    #[test]
+    fn v9_decode_rejects_v8_bytes() {
+        let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
+        bytes[4] = 8;
+        assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
+    }
+
+    #[test]
+    fn v9_decode_rejects_invalid_members_req_flag() {
+        let flags = vec![0u32; 4 * 2 * 2];
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let door = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 1,
+                z: 0,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2,
+                z: 0,
+                level: 0,
+            },
+            loc_id: 1596,
+            option: 1,
+            ticks: 1,
+            dir: Some(DoorDir::E),
+            open_loc_id: Some(1560),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        };
+        let mut graph = TransportGraph::default();
+        graph.edges.push(door);
+        let mut bytes = encode(&collision, &graph, &[]);
+        // members_req is the last byte of the single edge, immediately
+        // before the bank-stand count u32.
+        let flag_at = bytes.len() - 4 - 1;
+        bytes[flag_at] = 2;
+        assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
     }
 
     #[test]

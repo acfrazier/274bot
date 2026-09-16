@@ -2506,6 +2506,9 @@ impl Session {
         self.sync_sidecar_cadence();
         let world = self.play.as_ref().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+        if let Some(play) = &self.play {
+            runner.set_map_members(play.map_members());
+        }
         if let Some(budget) = scenario::budget_s_from_env() {
             runner.set_deadline(budget);
         }
@@ -2648,6 +2651,11 @@ impl Session {
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
         let scatter_template = self.template.clone();
+        let map_members = self
+            .template
+            .as_ref()
+            .map(|t| t.profile().map_members())
+            .unwrap_or(false);
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
             let session_boundary = publish_frontend_slot(
                 name,
@@ -2855,6 +2863,7 @@ impl Session {
                         &mut arm,
                         world.as_deref(),
                         Some((here.x, here.z, here.level)),
+                        map_members,
                     );
                     if host_play::walk_arm_bank_fetch_freezes_follow(&arm) {
                         return;
@@ -3081,6 +3090,10 @@ impl Session {
 
     pub fn focused_name(&self) -> Option<String> {
         self.focus.lock().unwrap().focused.clone()
+    }
+
+    fn map_members(&self) -> bool {
+        self.play.as_ref().map(|p| p.map_members()).unwrap_or(false)
     }
 
     /// Queue a `CLIENT_CHEAT` on the focused slot. No-op without play/focus.
@@ -4078,9 +4091,9 @@ impl Session {
                     .lock()
                     .unwrap()
                     .get(&name)
-                    .map(|(_, w)| w.clone())
+                    .map(|(_, w)| w.clone().with_map_members(self.map_members()))
             })
-            .unwrap_or_else(WorldState::empty)
+            .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
     /// Open bank rows (obj id, count) from the focused slot's last
@@ -5607,6 +5620,7 @@ mod tests {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    members_req: false,
                 }],
                 ..Default::default()
             },
@@ -5860,6 +5874,7 @@ mod tests {
                         quest_req: vec![],
                         varp_req: vec![],
                         worn_req: vec![],
+                        members_req: false,
                     },
                 },
             ],
@@ -6083,6 +6098,7 @@ mod tests {
                         quest_req: vec![],
                         varp_req: vec![],
                         worn_req: vec![],
+                        members_req: false,
                     },
                 },
             ],
@@ -6670,6 +6686,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
@@ -6880,6 +6897,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
@@ -6973,6 +6991,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(

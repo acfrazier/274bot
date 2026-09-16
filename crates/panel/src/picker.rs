@@ -1584,6 +1584,7 @@ mod tests {
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    members_req: false,
                 }],
                 ..Default::default()
             },

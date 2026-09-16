@@ -577,6 +577,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
+        members_req: false,
     });
     let bytes = nav::pack::encode(&collision, &graph, &[]);
     let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
@@ -786,7 +787,7 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
-        format: "274V8".into(),
+        format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
@@ -857,7 +858,7 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
-        format: "274V8".into(),
+        format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: None,
@@ -898,7 +899,7 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
-        format: "274V8".into(),
+        format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
         reach_sha256: Some(reach_sha256),
@@ -1073,7 +1074,7 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
     let missing_identity = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
-        format: "274V8".into(),
+        format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: None,
@@ -1149,7 +1150,7 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
-        format: "274V8".into(),
+        format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
@@ -1214,4 +1215,153 @@ fn external_pack_does_not_load_a_sibling_reach_sidecar() {
     assert!(profile.canlight().is_none());
     assert_eq!(profile.nav_load_counters().reach_reads, 0);
     assert_eq!(profile.nav_load_counters().canlight_reads, 0);
+}
+
+fn write_world_json(engine: &Path, revision: u64, port: u64, members: &str) {
+    let dir = engine.join("data/config");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("world.json"),
+        format!(
+            r#"{{"engine":{{"revision":{revision}}},"node":{{"port":{port},"members":{members}}}}}"#
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn world_members_parses_true_false_and_rejects_invalid() {
+    let (ok, _) = parse_profile_args(["--world-members", "true"]).unwrap();
+    assert_eq!(ok.world_members, Some(true));
+    let (ok, _) = parse_profile_args(["--world-members", "false"]).unwrap();
+    assert_eq!(ok.world_members, Some(false));
+    let err = parse_profile_args(["--world-members", "yes"]).unwrap_err();
+    assert!(err.contains("--world-members"), "{err}");
+}
+
+#[test]
+fn local_world_json_binds_only_when_revision_port_and_bool_match() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json(&engine, 274, 43594, "true");
+    let env = fixture.env();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-274",
+        "--engine",
+        engine.to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(selected.map_members());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::LocalWorldJson { .. }
+        }
+    ));
+
+    write_world_json(&engine, 274, 43594, "false");
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(!selected.map_members());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known { members: false, .. }
+    ));
+
+    write_world_json(&engine, 289, 43594, "true");
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(!selected.map_members());
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+
+    write_world_json(&engine, 274, 1, "true");
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+
+    write_world_json(&engine, 274, 43594, "1");
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+}
+
+#[test]
+fn public_profile_never_inherits_local_world_json() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json(&engine, 289, 443, "true");
+    let env = fixture.env();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "public-289",
+        "--engine",
+        engine.to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(!selected.map_members());
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+}
+
+#[test]
+fn explicit_world_members_beats_local_file_and_declares_public() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json(&engine, 274, 43594, "true");
+    let env = fixture.env();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-274",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--world-members",
+        "false",
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(!selected.map_members());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: false,
+            source: host_play::WorldMembersSource::ExplicitOverride
+        }
+    ));
+
+    let (options, _) =
+        parse_profile_args(["--profile", "public-289", "--world-members", "true"]).unwrap();
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(selected.map_members());
+}
+
+#[test]
+fn missing_world_json_is_unknown_not_default_true() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("empty-engine");
+    std::fs::create_dir_all(&engine).unwrap();
+    let env = fixture.env();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-274",
+        "--engine",
+        engine.to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &env).unwrap();
+    assert!(!selected.map_members());
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
 }

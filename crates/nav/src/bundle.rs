@@ -317,7 +317,7 @@ pub fn artifact_layout(revision: u16) -> ArtifactLayout {
 pub struct BakeStamp {
     /// Generator identity of the bake, from [`crate::bake::generator_identity`].
     pub generator: String,
-    /// Pack format identity (`274V8`); a format bump invalidates.
+    /// Pack format identity (`274V9`); a format bump invalidates.
     pub format: String,
     pub revision: u16,
     pub cache_id: String,

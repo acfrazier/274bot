@@ -26,6 +26,7 @@ fn usage() -> ! {
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] \
+         [--world-members true|false] \
          [--vault-pass PASS] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"
     );

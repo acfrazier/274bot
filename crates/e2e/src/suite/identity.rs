@@ -906,6 +906,8 @@ pub struct ProfileIdentity {
     pub content: InputDigest,
     #[serde(default)]
     pub unpack: InputDigest,
+    #[serde(default)]
+    pub world_members: Option<bool>,
     pub lowmem: bool,
     pub mainland: bool,
     pub jobs: u32,

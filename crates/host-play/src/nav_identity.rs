@@ -235,7 +235,7 @@ mod tests {
         BundledNavIdentity {
             revision: 289,
             cache_id: "cache".into(),
-            format: "274V8".into(),
+            format: nav::pack::FORMAT_ID.into(),
             nav_sha256: "ab".repeat(32),
             flags_sha256: None,
             reach_sha256: None,
@@ -389,7 +389,7 @@ mod tests {
             Path::new("/tmp/x")
         )
         .unwrap_err()
-        .contains("274V8"));
+        .contains(nav::pack::FORMAT_ID));
         let table = [identity("a.navpack"), identity("b.navpack")];
         assert!(select_nav_origin(
             &table,

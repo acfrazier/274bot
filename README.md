@@ -21,7 +21,9 @@ A session binds **one** server profile for the whole process. Named profiles are
 | `local-289` | 289 | local engine | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
 | `public-289` | 289 | public WSS/HTTPS | `w1.rs2b2t.com:443` | HTTPS `:443` | `~/.274bot/vault-prod` |
 
-Select with `--profile local-274|local-289|public-289` on `host-play`, `panel-play`, and `tui-play` (or `BOT_SERVER_PROFILE`). Related knobs: `--revision 274|289`, `BOT_REVISION`, `--prod` / `BOT_TARGET=prod|live`, `--engine`, `--cache`, `--vault`, `--catalog`. Conflicting combinations fail closed (for example `--prod` with a local profile, or `public-274`).
+Select with `--profile local-274|local-289|public-289` on `host-play`, `panel-play`, and `tui-play` (or `BOT_SERVER_PROFILE`). Related knobs: `--revision 274|289`, `BOT_REVISION`, `--prod` / `BOT_TARGET=prod|live`, `--engine`, `--cache`, `--vault`, `--catalog`, `--world-members true|false`. Conflicting combinations fail closed (for example `--prod` with a local profile, or `public-274`).
+
+`--world-members true|false` is an operator-declared property of the selected endpoint, held immutable with the profile. It is not a client/server packet observation and not `NODE_MEMBERS`. Explicit `false` beats a local `world.json` `members: true`. Omission uses a guarded bind: only `local-274` / `local-289` loopback profiles whose `engine_dir/data/config/world.json` has matching typed `engine.revision`, `node.port`, and a JSON bool `node.members` inherit that bool. Missing, malformed, mismatched, or public-289 records stay **unknown** and route as not-members. Public-289 never inherits the local engine file; it may still be declared explicitly through `--world-members`. Cache/account membership flags are a different fact.
 
 Without an explicit profile, legacy resolution still applies: plain local defaults to **274**; `--prod` / `BOT_TARGET=prod` without a revision selects **public-289**. Prefer naming the profile.
 
@@ -38,7 +40,7 @@ Alpha’s **tested** path is the **local** engine for the profile you run. The p
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **8**), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **9**), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -126,7 +128,7 @@ table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). **Rebake existing v8 packs after updating:** corrected door edges now land on an adjacent standable tile and do not jump blocked scenery. Loading an old v8 pack does not apply this correction; v7 files remain `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **9**). **Rebake existing v8 packs after updating:** v9 adds per-edge `members_req` and `decode` rejects v8 as `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests and suite runner
 

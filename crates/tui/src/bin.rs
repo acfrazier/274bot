@@ -222,9 +222,10 @@ fn step_walk_arm_follow<D: api::interact::Driver>(
     arm: &mut WalkArm,
     world: Option<&nav::world::NavWorld>,
     here: (i32, i32, i32),
+    map_members: bool,
 ) -> bool {
     if arm.bank_fetch.is_some() {
-        step_walk_arm_bank_fetch(driver, snapshot, arm, world, Some(here));
+        step_walk_arm_bank_fetch(driver, snapshot, arm, world, Some(here), map_members);
         if walk_arm_bank_fetch_freezes_follow(arm) {
             return false;
         }
@@ -536,6 +537,11 @@ impl TuiSession {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
+        let map_members = self
+            .template
+            .as_ref()
+            .map(|t| t.profile().map_members())
+            .unwrap_or(false);
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
             // Clear facts and externally armed work at the actual session
             // boundary before scenario/local-player/Guardian early returns.
@@ -592,7 +598,7 @@ impl TuiSession {
                 };
                 let mut arm = arm.lock().unwrap();
                 let world = nav_world.lock().unwrap().clone();
-                step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here)
+                step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here, map_members)
             };
             if finished {
                 walk_clear.store(true, Ordering::Relaxed);
@@ -758,6 +764,14 @@ impl TuiSession {
         Ok(())
     }
 
+    fn map_members(&self) -> bool {
+        self.play
+            .as_ref()
+            .map(|p| p.map_members())
+            .or_else(|| self.template.as_ref().map(|t| t.profile().map_members()))
+            .unwrap_or(false)
+    }
+
     /// The focused slot's last published [`WorldState`] (inv/equipment/
     /// stats/varps/quests), or the fail-closed empty state when the slot
     /// has not published yet.
@@ -768,9 +782,9 @@ impl TuiSession {
                     .lock()
                     .unwrap()
                     .get(n)
-                    .map(WorldState::from_snapshot)
+                    .map(|s| WorldState::from_snapshot(s).with_map_members(self.map_members()))
             })
-            .unwrap_or_else(WorldState::empty)
+            .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
     }
 
     /// Map Walk-confirm: store the picked dest, then route and arm the
@@ -2515,6 +2529,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![knife_id],
+                members_req: false,
             };
             let mut graph = TransportGraph::default();
             graph.at.entry(edge.at).or_default().push(0);
@@ -2637,7 +2652,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             bank_fetch: Some(pending.clone()),
             ..Default::default()
         };
-        step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here));
+        step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here), false);
         assert_eq!(
             arm.route.as_ref().map(|r| r.dest),
             Some(final_route.dest),
@@ -2658,6 +2673,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             &mut arm_ground,
             None,
             Some((here.0, here.1, 0)),
+            false,
         );
         assert!(
             arm_ground.route.is_none(),
@@ -2715,7 +2731,14 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             ..Default::default()
         };
         let before = c.out.pos;
-        step_walk_arm_follow(&mut c, &snap, &mut arm, Some(world.as_ref()), (0, 4, 0));
+        step_walk_arm_follow(
+            &mut c,
+            &snap,
+            &mut arm,
+            Some(world.as_ref()),
+            (0, 4, 0),
+            false,
+        );
         assert!(
             c.out.pos > before,
             "BankBudget pump must drive deposit on the Driver (pos {before} → {})",
