@@ -999,7 +999,13 @@ impl TuiSession {
             None => Err("no play".to_string()),
         };
         app.error = match result {
-            Ok(()) => None,
+            Ok(()) => {
+                if self.js.load_failures().is_empty() {
+                    None
+                } else {
+                    Some(self.js.named_failure_output())
+                }
+            }
             Err(e) => Some(format!("script: {e}")),
         };
     }
@@ -1034,13 +1040,23 @@ impl TuiSession {
         match self.js.load(path) {
             Ok(card) => {
                 app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
-                app.error = None;
+                app.error = if self.js.load_failures().is_empty() {
+                    None
+                } else {
+                    Some(self.js.named_failure_output())
+                };
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
                     app.script_load_last_dir = self.script_load_last_dir.clone();
                 }
             }
-            Err(e) => app.error = Some(format!("script: {e}")),
+            Err(e) => {
+                app.error = if self.js.load_failures().len() > 1 {
+                    Some(self.js.named_failure_output())
+                } else {
+                    Some(format!("script: {e}"))
+                };
+            }
         }
     }
 
@@ -1604,7 +1620,16 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = session.import_rs2b0t_catalog(app, &root).err();
+            app.error = match session.import_rs2b0t_catalog(app, &root) {
+                Ok(_) => {
+                    if session.js.load_failures().is_empty() {
+                        None
+                    } else {
+                        Some(session.js.named_failure_output())
+                    }
+                }
+                Err(e) => Some(e),
+            };
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => app.open_script_params(&session.script_settings),

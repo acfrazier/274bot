@@ -55,7 +55,7 @@ pub use load::{
     live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
     raw_content_fingerprint, resolve_api_family, scan_import_specifiers,
     scan_same_folder_js_imports, sibling_module_url, ApiFamily, CatalogApplyReport, CatalogDiff,
-    JsCard, LoadShape, PreparedCard, ScriptSel, VersionDiag,
+    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, ScriptSel, VersionDiag,
 };
 /// Cache/transpile-backed library and sibling resolution (isolate feature).
 #[cfg(feature = "load")]

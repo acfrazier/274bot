@@ -3362,9 +3362,9 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
 }
 
 fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
-    let selected =
-        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
-    let id = format!("##scard-{:?}-{}", card.source, card.name);
+    let selected = session.script_sel
+        == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let id = format!("##scard-{}", card.identity_key());
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
         .size([w, 0.0])
@@ -3433,6 +3433,12 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             ) {
                 let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                 ui.text_disabled(line);
+            }
+            if let Some(failure) = session.js.load_failure(&card.identity_key()) {
+                ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
+                if selected {
+                    ui.text_wrapped(&failure.named_line());
+                }
             }
             if !card.description.is_empty() {
                 let _wrap = ui.push_text_wrap_pos(0.0);
@@ -3542,6 +3548,20 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 }
             }
         }
+        ui.spacing();
+    }
+    let named_failures = session.js.named_failure_output();
+    if !named_failures.is_empty() {
+        ui.text_colored(
+            ERROR,
+            format!("{} failed", session.js.load_failures().len()),
+        );
+        if ui.button("Copy failures") {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                let _ = clip.set_text(&named_failures);
+            }
+        }
+        ui.text_wrapped(&named_failures);
         ui.spacing();
     }
     ui.child_window("##script-list")

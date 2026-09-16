@@ -2,9 +2,7 @@
 
 #[cfg(feature = "load")]
 use std::collections::{HashMap, HashSet};
-#[cfg(feature = "load")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "load")]
 use crate::js_cache::{default_js_cache_root, CacheMeta, JsCache};
@@ -14,12 +12,12 @@ use crate::rs2b0t_registry::{
 };
 use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
-use super::shape::{ApiFamily, LoadShape};
 #[cfg(feature = "load")]
 use super::shape::{
-    catalog_unloadable, first_unloadable_for_card, is_reserved, raw_content_fingerprint,
-    resolve_api_family, resolve_sibling_modules,
+    catalog_unloadable, first_unloadable_for_card, is_reserved, resolve_api_family,
+    resolve_sibling_modules,
 };
+use super::shape::{raw_content_fingerprint, ApiFamily, LoadShape};
 
 /// A loaded JS bot: picker name, origin path, loader shape, origin text,
 /// cached JS (SHA object), execution kind, provenance, and content hash.
@@ -42,6 +40,119 @@ pub struct JsCard {
     pub unloadable: Option<String>,
     /// Provenance only — not part of identity or the cache key.
     pub api_family: ApiFamily,
+}
+
+/// Stage of a retained per-source load failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadStage {
+    Read,
+    ParseTranspile,
+    ImportResolution,
+    RuntimeLoad,
+}
+
+impl LoadStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::ParseTranspile => "parse/transpile",
+            Self::ImportResolution => "import",
+            Self::RuntimeLoad => "runtime-load",
+        }
+    }
+}
+
+/// One inspectable load/transpile/import/runtime-load failure.
+/// Keyed by stable identity (path for files, register name for catalog).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadFailure {
+    pub identity_key: String,
+    pub name: String,
+    pub path: PathBuf,
+    pub stage: LoadStage,
+    pub diagnostic: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub sibling: Option<String>,
+    pub fingerprint: String,
+    pub api_family: Option<ApiFamily>,
+}
+
+impl LoadFailure {
+    pub fn capture(
+        source: ScriptSource,
+        path: &Path,
+        name: &str,
+        diagnostic: &str,
+        origin: Option<&str>,
+        api_family: Option<ApiFamily>,
+    ) -> Self {
+        let fingerprint = match origin {
+            Some(text) => raw_content_fingerprint(path, text),
+            None => String::new(),
+        };
+        let (line, column) = extract_line_column(diagnostic);
+        let sibling = extract_sibling(diagnostic);
+        let stage = classify_stage(diagnostic, sibling.as_deref());
+        Self {
+            identity_key: crate::identity::card_identity_key(source, path, name),
+            name: name.to_string(),
+            path: path.to_path_buf(),
+            stage,
+            diagnostic: diagnostic.to_string(),
+            line,
+            column,
+            sibling,
+            fingerprint,
+            api_family,
+        }
+    }
+
+    pub fn named_line(&self) -> String {
+        let loc = match (self.line, self.column) {
+            (Some(line), Some(column)) => format!(":{line}:{column}"),
+            (Some(line), None) => format!(":{line}"),
+            _ => String::new(),
+        };
+        let sibling = self
+            .sibling
+            .as_deref()
+            .map(|s| format!(" sibling {s}"))
+            .unwrap_or_default();
+        format!(
+            "{} ({}) {}{}{}: {}",
+            self.name,
+            self.path.display(),
+            self.stage.as_str(),
+            loc,
+            sibling,
+            self.diagnostic
+        )
+    }
+
+    pub fn copyable_text(&self) -> String {
+        let mut out = self.named_line();
+        if let Some(family) = self.api_family {
+            out.push_str(&format!("\napi_family: {}", family.as_str()));
+        }
+        out.push_str(&format!("\nidentity: {}", self.identity_key));
+        if !self.fingerprint.is_empty() {
+            out.push_str(&format!("\nfingerprint: {}", self.fingerprint));
+        }
+        out
+    }
+}
+
+/// Readable/copyable named list for panel and TUI.
+pub fn format_load_failures<'a, I>(failures: I) -> String
+where
+    I: IntoIterator<Item = &'a LoadFailure>,
+{
+    failures
+        .into_iter()
+        .map(LoadFailure::named_line)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl JsCard {
@@ -84,6 +195,9 @@ pub struct JsLibrary {
     /// Combined raw entry+sibling hashes keyed by identity, used to skip
     /// no-op reloads without transpiling.
     fingerprints: HashMap<String, String>,
+    /// Retained per-identity load failures. One card's success does not
+    /// clear another identity's record.
+    failures: HashMap<String, LoadFailure>,
 }
 
 #[cfg(feature = "load")]
@@ -100,6 +214,7 @@ impl JsLibrary {
             cache: JsCache::new(cache_root),
             cards: Vec::new(),
             fingerprints: HashMap::new(),
+            failures: HashMap::new(),
         }
     }
 
@@ -168,6 +283,35 @@ impl JsLibrary {
     /// Start. Loading the same file path replaces its previous card;
     /// different paths remain distinct even when their file stems match.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
+        match self.load_unrecorded(path) {
+            Ok(card) => {
+                self.note_card_outcome(&card);
+                Ok(card)
+            }
+            Err(e) => {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let origin = std::fs::read_to_string(path).ok();
+                let family = origin
+                    .as_deref()
+                    .and_then(|text| resolve_api_family(text).ok().map(|(_, family)| family));
+                self.note_err(
+                    ScriptSource::File,
+                    path,
+                    &name,
+                    &e,
+                    origin.as_deref(),
+                    family,
+                );
+                Err(e)
+            }
+        }
+    }
+
+    fn load_unrecorded(&mut self, path: &Path) -> Result<JsCard, String> {
         let origin =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
         let name = path
@@ -232,6 +376,62 @@ impl JsLibrary {
         &self.cards
     }
 
+    pub fn load_failures(&self) -> Vec<&LoadFailure> {
+        let mut rows: Vec<&LoadFailure> = self.failures.values().collect();
+        rows.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.identity_key.cmp(&b.identity_key))
+        });
+        rows
+    }
+
+    pub fn load_failure(&self, identity_key: &str) -> Option<&LoadFailure> {
+        self.failures.get(identity_key)
+    }
+
+    pub fn named_failure_output(&self) -> String {
+        format_load_failures(self.load_failures())
+    }
+
+    pub fn record_failure(&mut self, failure: LoadFailure) {
+        self.failures.insert(failure.identity_key.clone(), failure);
+    }
+
+    pub fn clear_failure(&mut self, identity_key: &str) {
+        self.failures.remove(identity_key);
+    }
+
+    fn note_err(
+        &mut self,
+        source: ScriptSource,
+        path: &Path,
+        name: &str,
+        diagnostic: &str,
+        origin: Option<&str>,
+        api_family: Option<ApiFamily>,
+    ) {
+        self.record_failure(LoadFailure::capture(
+            source, path, name, diagnostic, origin, api_family,
+        ));
+    }
+
+    fn note_card_outcome(&mut self, card: &JsCard) {
+        if let Some(spec) = &card.unloadable {
+            self.record_failure(LoadFailure::capture(
+                card.source,
+                &card.path,
+                &card.name,
+                &format!("unloadable import: {spec}"),
+                Some(card.origin.as_str()),
+                Some(card.api_family),
+            ));
+        } else {
+            self.clear_failure(&card.identity_key());
+        }
+    }
+
     /// Fill the library from the `$RS2B0T` catalog: statically parse
     /// `root/src/bot/scripts/index.ts` and register each script as a card
     /// under its register name (which may differ from the folder). Sources
@@ -278,13 +478,43 @@ impl JsLibrary {
                 continue;
             }
             let Some(path) = script_file_path(root, &card.rel_path) else {
+                self.note_err(
+                    ScriptSource::Catalog,
+                    Path::new(&card.rel_path),
+                    &card.name,
+                    &format!("missing {}", card.rel_path),
+                    None,
+                    None,
+                );
                 continue;
             };
-            let Ok(origin) = std::fs::read_to_string(&path) else {
-                continue;
+            let origin = match std::fs::read_to_string(&path) {
+                Ok(origin) => origin,
+                Err(e) => {
+                    self.note_err(
+                        ScriptSource::Catalog,
+                        &path,
+                        &card.name,
+                        &format!("unreadable {}: {e}", path.display()),
+                        None,
+                        None,
+                    );
+                    continue;
+                }
             };
-            let Ok((shape, api_family)) = resolve_api_family(&origin) else {
-                continue;
+            let (shape, api_family) = match resolve_api_family(&origin) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    self.note_err(
+                        ScriptSource::Catalog,
+                        &path,
+                        &card.name,
+                        &e,
+                        Some(&origin),
+                        None,
+                    );
+                    continue;
+                }
             };
             if shape == LoadShape::Reject {
                 continue;
@@ -320,6 +550,7 @@ impl JsLibrary {
             n += 1;
             if let Some(last) = self.cards.last().cloned() {
                 self.remember_fingerprint(&last);
+                self.note_card_outcome(&last);
             }
         }
         let _ = persist_rs2b0t_root_at(root, path_file);
@@ -331,6 +562,27 @@ impl JsLibrary {
     /// respawn is the caller's job — the updated `js`/`sha256` are on the
     /// card when they do.
     pub fn refresh(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
+        let prior = self
+            .get(source, name)
+            .map(|c| (c.path.clone(), c.api_family));
+        match self.refresh_unrecorded(source, name) {
+            Ok(()) => {
+                if let Some(card) = self.get(source, name).cloned() {
+                    self.note_card_outcome(&card);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                if let Some((path, family)) = prior {
+                    let origin = std::fs::read_to_string(&path).ok();
+                    self.note_err(source, &path, name, &e, origin.as_deref(), Some(family));
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn refresh_unrecorded(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
         let idx = self
             .cards
             .iter()
@@ -465,7 +717,33 @@ impl JsLibrary {
 
     /// Transpile/validate a candidate without replacing the live card.
     /// Old isolates keep the previous registration until [`JsLibrary::commit_prepared`].
-    pub fn prepare_card(&self, source: ScriptSource, name: &str) -> Result<PreparedCard, String> {
+    pub fn prepare_card(
+        &mut self,
+        source: ScriptSource,
+        name: &str,
+    ) -> Result<PreparedCard, String> {
+        let prior = self.get(source, name).cloned();
+        match self.prepare_card_unrecorded(source, name) {
+            Ok(prepared) => Ok(prepared),
+            Err(e) => {
+                if let Some(card) = prior {
+                    let origin = std::fs::read_to_string(&card.path).ok();
+                    let family = origin
+                        .as_deref()
+                        .and_then(|text| resolve_api_family(text).ok().map(|(_, family)| family))
+                        .or(Some(card.api_family));
+                    self.note_err(source, &card.path, name, &e, origin.as_deref(), family);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn prepare_card_unrecorded(
+        &self,
+        source: ScriptSource,
+        name: &str,
+    ) -> Result<PreparedCard, String> {
         let card = self
             .get(source, name)
             .ok_or_else(|| format!("no card ({source:?}, {name})"))?
@@ -526,10 +804,12 @@ impl JsLibrary {
         } else {
             self.cards.push(prepared.card.clone());
         }
-        self.fingerprints.insert(key, prepared.fingerprint.clone());
+        self.fingerprints
+            .insert(key.clone(), prepared.fingerprint.clone());
         if prepared.card.source == ScriptSource::File {
             self.persist_file_cards(&self.cards)?;
         }
+        self.clear_failure(&key);
         Ok(prepared.card)
     }
 
@@ -543,16 +823,35 @@ impl JsLibrary {
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut sources = HashMap::new();
         let mut failed = Vec::new();
+        let mut failed_names = HashSet::new();
         for reg in &registry_cards {
             let Some(path) = script_file_path(root, &reg.rel_path) else {
-                failed.push((reg.name.clone(), format!("missing {}", reg.rel_path)));
+                failed.push(LoadFailure::capture(
+                    ScriptSource::Catalog,
+                    Path::new(&reg.rel_path),
+                    &reg.name,
+                    &format!("missing {}", reg.rel_path),
+                    None,
+                    None,
+                ));
+                failed_names.insert(reg.name.clone());
                 continue;
             };
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
                     sources.insert(reg.rel_path.clone(), text);
                 }
-                Err(e) => failed.push((reg.name.clone(), e.to_string())),
+                Err(e) => {
+                    failed.push(LoadFailure::capture(
+                        ScriptSource::Catalog,
+                        &path,
+                        &reg.name,
+                        &e.to_string(),
+                        None,
+                        None,
+                    ));
+                    failed_names.insert(reg.name.clone());
+                }
             }
         }
         let sibling_rels: Vec<String> = sources
@@ -579,16 +878,40 @@ impl JsLibrary {
                 continue;
             }
             let Some(path) = script_file_path(root, &card.rel_path) else {
-                failed.push((card.name, format!("missing {}", card.rel_path)));
+                failed.push(LoadFailure::capture(
+                    ScriptSource::Catalog,
+                    Path::new(&card.rel_path),
+                    &card.name,
+                    &format!("missing {}", card.rel_path),
+                    None,
+                    None,
+                ));
+                failed_names.insert(card.name.clone());
                 continue;
             };
             let Ok(origin) = std::fs::read_to_string(&path) else {
-                failed.push((card.name, format!("unreadable {}", path.display())));
+                failed.push(LoadFailure::capture(
+                    ScriptSource::Catalog,
+                    &path,
+                    &card.name,
+                    &format!("unreadable {}", path.display()),
+                    None,
+                    None,
+                ));
+                failed_names.insert(card.name.clone());
                 continue;
             };
             match resolve_api_family(&origin) {
                 Err(e) => {
-                    failed.push((card.name, e));
+                    failed.push(LoadFailure::capture(
+                        ScriptSource::Catalog,
+                        &path,
+                        &card.name,
+                        &e,
+                        Some(&origin),
+                        None,
+                    ));
+                    failed_names.insert(card.name.clone());
                     continue;
                 }
                 Ok((LoadShape::Reject, _)) => continue,
@@ -620,7 +943,7 @@ impl JsLibrary {
             }
         }
         for name in &existing {
-            if !incoming.contains_key(name) {
+            if !incoming.contains_key(name) && !failed_names.contains(name) {
                 removed.push(name.clone());
             }
         }
@@ -646,6 +969,9 @@ impl JsLibrary {
         let mut added = 0usize;
         let mut removed = 0usize;
         let failed = diff.failed.clone();
+        for failure in &failed {
+            self.record_failure(failure.clone());
+        }
         for name in &diff.added {
             let Some((card, path, origin)) = diff.incoming.get(name) else {
                 continue;
@@ -683,6 +1009,7 @@ impl JsLibrary {
                 api_family,
             };
             self.remember_fingerprint(&js_card);
+            self.note_card_outcome(&js_card);
             self.cards.push(js_card);
             added += 1;
         }
@@ -690,6 +1017,7 @@ impl JsLibrary {
             let key =
                 crate::identity::card_identity_key(ScriptSource::Catalog, Path::new(""), name);
             self.fingerprints.remove(&key);
+            self.clear_failure(&key);
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == *name));
             removed += 1;
@@ -741,7 +1069,7 @@ pub struct CatalogDiff {
     pub added: Vec<String>,
     pub changed: Vec<String>,
     pub removed: Vec<String>,
-    pub failed: Vec<(String, String)>,
+    pub failed: Vec<LoadFailure>,
     #[cfg(feature = "load")]
     incoming: HashMap<String, (crate::rs2b0t_registry::RegistryCard, PathBuf, String)>,
 }
@@ -760,7 +1088,7 @@ pub struct CatalogApplyReport {
     pub added: usize,
     pub changed: usize,
     pub removed: usize,
-    pub failed: Vec<(String, String)>,
+    pub failed: Vec<LoadFailure>,
 }
 
 impl CatalogApplyReport {
@@ -782,6 +1110,10 @@ impl CatalogApplyReport {
             parts.push(format!("failed {}", self.failed.len()));
         }
         parts.join(", ")
+    }
+
+    pub fn named_failure_output(&self) -> String {
+        format_load_failures(&self.failed)
     }
 }
 
@@ -811,5 +1143,66 @@ fn cache_meta(shape: LoadShape, source: ScriptSource, family: ApiFamily) -> Cach
         source,
         shape: Some(shape_label(shape).into()),
         api_family: Some(family.as_str().into()),
+    }
+}
+
+fn classify_stage(diagnostic: &str, sibling: Option<&str>) -> LoadStage {
+    let d = diagnostic.to_ascii_lowercase();
+    if sibling.is_some()
+        || d.contains("unloadable")
+        || d.contains("sibling ")
+        || d.contains("unresolvable")
+    {
+        return LoadStage::ImportResolution;
+    }
+    if d.contains("missing export")
+        || d.contains("js engine")
+        || d.contains("top-level")
+        || d.contains("validate")
+    {
+        return LoadStage::RuntimeLoad;
+    }
+    if d.contains("no such file")
+        || d.contains("unreadable")
+        || d.contains("not utf-8")
+        || d.contains("permission denied")
+        || d.contains("os error")
+        || d.contains("missing ")
+    {
+        return LoadStage::Read;
+    }
+    LoadStage::ParseTranspile
+}
+
+fn extract_line_column(diagnostic: &str) -> (Option<u32>, Option<u32>) {
+    for token in
+        diagnostic.split(|c: char| c.is_whitespace() || matches!(c, ',' | '(' | ')' | '[' | ']'))
+    {
+        let mut parts = token.rsplitn(3, ':');
+        let col = parts.next();
+        let line = parts.next();
+        let rest = parts.next();
+        if rest.is_none() {
+            continue;
+        }
+        if let (Some(line), Some(col)) = (line, col) {
+            if let (Ok(line), Ok(col)) = (line.parse::<u32>(), col.parse::<u32>()) {
+                if line > 0 {
+                    return (Some(line), Some(col));
+                }
+            }
+        }
+    }
+    (None, None)
+}
+
+fn extract_sibling(diagnostic: &str) -> Option<String> {
+    const MARK: &str = "unloadable import: ";
+    let idx = diagnostic.find(MARK)?;
+    let rest = diagnostic[idx + MARK.len()..].trim();
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
     }
 }

@@ -45,7 +45,7 @@ pub enum PendingReloadKind {
         root: PathBuf,
         added: Vec<String>,
         removed: Vec<String>,
-        failed: Vec<(String, String)>,
+        failed: Vec<script::LoadFailure>,
         set_fingerprint: String,
     },
 }
@@ -865,12 +865,16 @@ impl Session {
             self.enqueue_transpile(script::ScriptSource::Catalog, name.clone(), false);
         }
         let mut prepared_ok = Vec::new();
-        let mut prepare_failed: Vec<(String, String)> = Vec::new();
+        let mut prepare_failed: Vec<script::LoadFailure> = Vec::new();
         for name in &changed {
             match self.js.prepare_card(script::ScriptSource::Catalog, name) {
                 Ok(prepared) => prepared_ok.push(prepared),
                 Err(e) => {
-                    prepare_failed.push((name.clone(), e.clone()));
+                    if let Some(card) = self.js.get(script::ScriptSource::Catalog, name) {
+                        if let Some(failure) = self.js.load_failure(&card.identity_key()).cloned() {
+                            prepare_failed.push(failure);
+                        }
+                    }
                     self.error = Some(format!("catalog {name}: {e}"));
                 }
             }
@@ -1006,7 +1010,7 @@ impl Session {
         root: &Path,
         mut diff: script::CatalogDiff,
         prepared: Vec<script::PreparedCard>,
-        prepare_failed: Vec<(String, String)>,
+        prepare_failed: Vec<script::LoadFailure>,
         warning: ReloadWarning,
     ) {
         let removed = diff.removed.clone();
@@ -1031,6 +1035,10 @@ impl Session {
         let mut summary = report.summary();
         if failed > 0 {
             summary = format!("{summary}, start failed {}: {}", failed, errors.join("; "));
+        }
+        let named = self.js.named_failure_output();
+        if !named.is_empty() {
+            summary = format!("{summary}\n{named}");
         }
         self.catalog_refresh_report = Some(summary.clone());
         self.error = Some(format!("Refresh catalog: {summary}"));
@@ -1727,6 +1735,67 @@ mod tests {
             s.error,
             s.catalog_refresh_report
         );
+        assert!(
+            s.js.load_failures().iter().any(|f| f.name == "BadBot"),
+            "failed catalog card stays inspectable: {:?}",
+            s.js.load_failures()
+        );
+    }
+
+    #[test]
+    fn catalog_mixed_batch_keeps_two_failures_after_success() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let root = dir.join("catalog-mixed");
+        fake_catalog(
+            &root,
+            &[
+                ("GoodBot", BOT_TS),
+                ("BadParse", BOT_TS),
+                ("BadImport", BOT_TS),
+            ],
+        );
+        s.js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "GoodBot")
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "BadParse")
+            .unwrap();
+        s.js.ensure_js(script::ScriptSource::Catalog, "BadImport")
+            .unwrap();
+        fs::write(
+            root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+            "export default class T extends LoopingBot { override loop() { return; } }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/bot/scripts/BadParse/BadParse.ts"),
+            "export default class T extends LoopingBot { override loop() { const x = \"unterminated } }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/bot/scripts/BadImport/BadImport.ts"),
+            "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { override loop() {} }\n",
+        )
+        .unwrap();
+        s.refresh_catalog_at(&root);
+        let names: Vec<_> =
+            s.js.load_failures()
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect();
+        assert!(
+            names.contains(&"BadParse") && names.contains(&"BadImport"),
+            "both failures stay inspectable: {names:?} err={:?} report={:?}",
+            s.error,
+            s.catalog_refresh_report
+        );
+        assert!(!names.contains(&"GoodBot"));
+        assert!(s.js.named_failure_output().contains("BadParse"));
+        assert!(s
+            .catalog_refresh_report
+            .as_deref()
+            .unwrap_or("")
+            .contains("BadParse"));
     }
 
     #[test]

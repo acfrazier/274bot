@@ -165,7 +165,9 @@ impl Session {
             if let Some((source, name)) = self.transpile_queue.pop_front() {
                 match self.js.ensure_js(source, &name) {
                     Ok(()) => {
-                        self.error = None;
+                        if self.js.load_failures().is_empty() {
+                            self.error = None;
+                        }
                         self.transpile_done = self.transpile_done.saturating_add(1);
                     }
                     Err(e) => self.error = Some(format!("transpile {name}: {e}")),
