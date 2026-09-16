@@ -102,6 +102,7 @@ struct Wait {
     key: WalkKey,
     settled: Option<bool>,
     seq_at_begin: u64,
+    matched_failure: bool,
 }
 
 struct WalkSlot {
@@ -132,7 +133,7 @@ impl WalkSlot {
             });
         }
         if snap.has_walk_outcome_seq() {
-            self.outcome = HostOutcome {
+            let outcome = HostOutcome {
                 seq: snap.walk_outcome_seq(),
                 generation: snap.walk_outcome_generation(),
                 request_id: snap.walk_outcome_request_id(),
@@ -147,6 +148,12 @@ impl WalkSlot {
                     allow_teleports: snap.walk_outcome_allow_teleports(),
                 },
             };
+            self.outcome = outcome;
+            if let Some(wait) = self.wait.as_mut() {
+                if Self::fail_matches(outcome, wait) {
+                    wait.matched_failure = true;
+                }
+            }
         }
     }
 
@@ -157,6 +164,7 @@ impl WalkSlot {
             key,
             settled: None,
             seq_at_begin: self.outcome.seq,
+            matched_failure: false,
         });
         token
     }
@@ -192,7 +200,7 @@ impl WalkSlot {
             wait.settled = Some(true);
             return true;
         }
-        if Self::fail_matches(self.outcome, wait) {
+        if wait.matched_failure {
             wait.settled = Some(false);
             return true;
         }
@@ -418,6 +426,33 @@ mod tests {
     }
 
     #[test]
+    fn arrival_still_wins_after_a_matching_failure_was_observed() {
+        on_reset();
+        let token = begin(2820, 3556, 0, 1, false);
+        let mut failed = empty_input(2);
+        failed.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(failed, fail_native(1, 1, token, 2820, 3556, 0, 1, false));
+
+        let mut arrived = empty_input(3);
+        arrived.here = Some(TileInput {
+            x: 2821,
+            z: 3556,
+            level: 0,
+        });
+        observe(arrived, NativeFactsInput::default());
+
+        assert!(settled(token));
+        assert!(
+            value(token),
+            "arrival keeps precedence at the eligible poll"
+        );
+    }
+
+    #[test]
     fn arrival_within_radius_and_level_settles_true() {
         on_reset();
         let token = begin(2820, 3556, 0, 1, false);
@@ -625,6 +660,26 @@ mod tests {
         observe(matched, fail_native(3, 2, second, 2820, 3556, 0, 1, false));
         assert!(settled(second));
         assert!(!value(second));
+    }
+
+    #[test]
+    fn new_begin_invalidates_an_unpolled_matching_failure() {
+        on_reset();
+        let first = begin(2820, 3556, 0, 1, false);
+        let mut failed = empty_input(1);
+        failed.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(failed, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
+
+        let second = begin(2820, 3556, 0, 1, false);
+        assert_ne!(second, first);
+        assert!(
+            !settled(second),
+            "a new wait must not inherit the superseded wait's matched failure"
+        );
     }
 
     #[test]
