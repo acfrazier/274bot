@@ -14,6 +14,7 @@ use crate::isolate_fb::{IsolateBuf, SnapshotFingerprint};
 use crate::load::{LoadIsolate, LoadShape};
 #[cfg(feature = "load")]
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
+use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
 
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
@@ -259,6 +260,7 @@ pub struct SlotScript {
     /// Bumped on each successful Start and watchdog isolate replacement.
     runtime_generation: u64,
     last_settings_fp: Option<String>,
+    native_input: Arc<NativeInputAuthority>,
 }
 
 impl Default for SlotScript {
@@ -300,6 +302,7 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
+            native_input: NativeInputAuthority::new(),
         }
     }
 
@@ -335,6 +338,7 @@ impl SlotScript {
                 self.state = RunState::Running;
                 self.runtime_generation = self.runtime_generation.wrapping_add(1);
                 self.last_settings_fp = None;
+                self.native_input.publish_live();
                 Ok(())
             }
         }
@@ -432,6 +436,7 @@ impl SlotScript {
                 self.state = RunState::Running;
                 self.runtime_generation = self.runtime_generation.wrapping_add(1);
                 self.last_settings_fp = None;
+                self.native_input.publish_live();
                 Ok(())
             }
         }
@@ -442,6 +447,7 @@ impl SlotScript {
     /// aborted on the host nav bot.
     pub fn pause(&mut self) -> bool {
         self.want_run = false;
+        self.revoke_native_input();
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
         }
@@ -488,12 +494,14 @@ impl SlotScript {
                 let _ = self.watchdog.set_frozen(false, Instant::now());
             }
             self.state = RunState::Running;
+            self.native_input.resume();
         }
     }
 
     /// Operator Stop: join the Load isolate, run the compiled teardown
     /// hook, drop the instance, Idle.
     pub fn stop(&mut self) {
+        self.revoke_native_input();
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let logs = isolate.join();
@@ -529,6 +537,9 @@ impl SlotScript {
     /// after a panic — `is_up` must not resurrect or wipe an error).
     pub fn on_is_up(&mut self, up: bool) {
         if !up {
+            self.native_input.sync_live(false);
+            #[cfg(feature = "load")]
+            self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
                 self.complete_current_withdrawal(false);
             }
@@ -717,6 +728,50 @@ impl SlotScript {
 
     pub fn runtime_generation(&self) -> u64 {
         self.runtime_generation
+    }
+
+    pub fn native_input(&self) -> Arc<NativeInputAuthority> {
+        Arc::clone(&self.native_input)
+    }
+
+    /// Share the host SlotInput authority. Call on spawn before Start.
+    pub fn bind_native_input(&mut self, authority: Arc<NativeInputAuthority>) {
+        self.native_input = authority;
+    }
+
+    fn revoke_native_input(&mut self) {
+        self.native_input.revoke();
+        #[cfg(feature = "load")]
+        self.discard_mouse_interacts();
+    }
+
+    #[cfg(feature = "load")]
+    fn discard_mouse_interacts(&self) {
+        if let Some(isolate) = &self.load {
+            isolate.discard_mouse_interacts();
+        }
+    }
+
+    pub fn sync_native_input_gate(&self) {
+        let watchdog_hold = {
+            #[cfg(feature = "load")]
+            {
+                self.watchdog.holds_script_actions()
+            }
+            #[cfg(not(feature = "load"))]
+            {
+                false
+            }
+        };
+        let live = self.state == RunState::Running
+            && self.want_run
+            && self.has_instance()
+            && !watchdog_hold;
+        self.native_input.sync_live(live);
+        if !live {
+            #[cfg(feature = "load")]
+            self.discard_mouse_interacts();
+        }
     }
 
     #[cfg(feature = "load")]
@@ -924,6 +979,7 @@ impl SlotScript {
         if self.watchdog.frozen() {
             return Err("watchdog restart cancelled: frozen".into());
         }
+        self.revoke_native_input();
         let identity = self
             .load_identity
             .clone()
@@ -957,6 +1013,7 @@ impl SlotScript {
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
         self.watchdog.on_restart_applied(now);
+        self.native_input.publish_live();
         Ok(())
     }
 
@@ -1043,6 +1100,7 @@ impl SlotScript {
             self.state = RunState::Error;
             self.want_run = false;
             self.compiled = None;
+            self.revoke_native_input();
         }
     }
 

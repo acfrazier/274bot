@@ -11,6 +11,7 @@ pub mod game_data;
 pub mod gather_tools;
 pub mod interact;
 pub mod named_banks;
+pub mod native_input;
 pub mod obj_names;
 pub mod prot;
 pub mod query;
