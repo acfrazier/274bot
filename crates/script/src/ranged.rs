@@ -7,6 +7,11 @@
 //! Ownership stays in `script` (shared helper). Callers still compute the three
 //! counts; this module only answers the depletion predicate. No host wire,
 //! scene scan, or loadout policy.
+//!
+//! Exported JS marshals with native `Number` before the JSON bridge (which
+//! would otherwise turn undefined/NaN/±Infinity into null). This module keeps
+//! the `<= 0` decision and accepts finite JSON numbers, null→0, missing→NaN,
+//! and IEEE string tags from that shim.
 
 use serde_json::Value;
 
@@ -18,33 +23,21 @@ pub fn range_supply_empty(equipped: f64, carried: f64, ground: f64) -> bool {
     equipped <= 0.0 && carried <= 0.0 && ground <= 0.0
 }
 
-/// Coerce a rustyscript/JSON arg toward the Number operand JS `<=` would see
-/// after ordinary ToNumber for bridge-friendly shapes.
+/// Decode one bridge arg into the f64 operand the predicate compares.
 ///
+/// Exported shim path: JS `Number(value)` then finite number or `"NaN"` /
+/// `"Infinity"` / `"-Infinity"`. Direct bind path still sees:
 /// - missing → NaN (undefined-like; `NaN <= 0` is false)
 /// - null → 0.0 (`null <= 0` is true)
-/// - number / bool / numeric string → ToNumber-ish
-/// - other → NaN
-pub fn js_relational_number(value: Option<&Value>) -> f64 {
+/// - JSON number → as f64 (non-finite never arrives via JSON number)
+/// - IEEE string tags → parse
+/// - other → NaN (number signature; no object fidelity claim)
+pub fn bridge_relational_number(value: Option<&Value>) -> f64 {
     match value {
         None => f64::NAN,
         Some(Value::Null) => 0.0,
-        Some(Value::Bool(b)) => {
-            if *b {
-                1.0
-            } else {
-                0.0
-            }
-        }
         Some(Value::Number(n)) => n.as_f64().unwrap_or(f64::NAN),
-        Some(Value::String(s)) => {
-            let t = s.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse::<f64>().unwrap_or(f64::NAN)
-            }
-        }
+        Some(Value::String(s)) => s.parse::<f64>().unwrap_or(f64::NAN),
         Some(_) => f64::NAN,
     }
 }
@@ -52,9 +45,9 @@ pub fn js_relational_number(value: Option<&Value>) -> f64 {
 /// Isolate binding entry: three positional JSON args → frozen predicate.
 pub fn range_supply_empty_args(args: &[Value]) -> bool {
     range_supply_empty(
-        js_relational_number(args.first()),
-        js_relational_number(args.get(1)),
-        js_relational_number(args.get(2)),
+        bridge_relational_number(args.first()),
+        bridge_relational_number(args.get(1)),
+        bridge_relational_number(args.get(2)),
     )
 }
 
@@ -88,6 +81,18 @@ mod tests {
     }
 
     #[test]
+    fn infinity_edges_match_js_le() {
+        assert!(!range_supply_empty(f64::INFINITY, 0.0, 0.0));
+        assert!(range_supply_empty(f64::NEG_INFINITY, 0.0, 0.0));
+        assert!(!range_supply_empty(0.0, f64::INFINITY, 0.0));
+        assert!(range_supply_empty(
+            0.0,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY
+        ));
+    }
+
+    #[test]
     fn large_counts_do_not_saturate_to_empty() {
         // i32::MAX+ path and large f64 must stay non-empty (not saturating i32).
         assert!(!range_supply_empty((i32::MAX as f64) + 1.0, 0.0, 0.0));
@@ -95,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn json_bridge_covers_caller_shapes_and_null_missing() {
+    fn json_bridge_covers_caller_shapes_null_missing_and_ieee_tags() {
         assert!(range_supply_empty_args(&[json!(0), json!(0), json!(0)]));
         assert!(!range_supply_empty_args(&[json!(1), json!(0), json!(0)]));
         assert!(!range_supply_empty_args(&[json!(0), json!(1), json!(0)]));
@@ -112,5 +117,21 @@ mod tests {
         // fractional JSON number.
         assert!(!range_supply_empty_args(&[json!(0.5), json!(0), json!(0)]));
         assert!(range_supply_empty_args(&[json!(-1), json!(0), json!(0)]));
+        // Shim-encoded non-finites (JSON cannot carry NaN/±Infinity as numbers).
+        assert!(!range_supply_empty_args(&[
+            json!("NaN"),
+            json!(0),
+            json!(0)
+        ]));
+        assert!(!range_supply_empty_args(&[
+            json!("Infinity"),
+            json!(0),
+            json!(0)
+        ]));
+        assert!(range_supply_empty_args(&[
+            json!("-Infinity"),
+            json!(0),
+            json!(0)
+        ]));
     }
 }
