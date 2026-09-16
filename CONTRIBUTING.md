@@ -39,8 +39,9 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   `BOT_NAV_REVISION=274` for 274), so the app boots with a bound nav world
   and no manual step. Missing canonical inputs fail the build:
   `BOT_NAV_BUILD=skip` opts out. `nav-pack` stays for custom bakes
-  (`$NAV_PACK` or `~/.274bot/274bot.navpack`, `274V` v8; v7 is
-  `BadVersion`). Details: [docs/api/nav.md](docs/api/nav.md).
+  (`$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`, version byte
+  **9**; v8 and older are `BadVersion`). Details:
+  [docs/api/nav.md](docs/api/nav.md).
 
 ## Clone and run
 

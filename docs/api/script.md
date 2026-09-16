@@ -62,9 +62,12 @@ path/name identity, optional `unavailable` reason) and merges
 `script_settings` for that card identity into the vault profile. Focus
 restore prefers a pending Browse selection, then the saved assignment.
 Parameters **Edit** writes the focused profile’s bag (typed editors honour
-`showIf` / `group`; File Load parses `export const SETTINGS` with no V8).
-Live settings apply to the running bag on the next relevant tick path —
-they are not a separate undocumented API.
+`showIf` / `group`; File Load parses `export const SETTINGS` with no V8)
+and persists it under that card identity. Values a script reads only at
+**Start** take effect on the next Start. Live edits push into a matching
+**running or paused** isolate without restart (next relevant tick path) —
+there is no separate settings API beyond the panel/TUI editors and the
+vault bag.
 
 Missing catalog/file sources stay visible with `unavailable` rather than
 silently dropping the assignment.
@@ -83,7 +86,7 @@ catalog and the MultiBox bulk script controls described below.
 | **Reload** | Hash current card origin (+ siblings). Unchanged → “Nothing changed; nothing to reload”. Changed with no running/paused owners → apply. Changed with owners → **Confirm** / **Cancel reload**: running bots that still match the warned generation **restart**; named **paused** bots are **Stopped** (not left half-reloaded). |
 | **Start / Pause / Resume / Stop** | Focused profile only. |
 | **Start all / Stop all** | MultiBox rail bulk script controls (panel). Separate from **Login all / Logout all**. Start all skips already running/paused/stopping members; Stop all stops running and paused across wall members and live slots. |
-| **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Confirm when affected running/paused bots need the same restart/stop policy as manual reload. |
+| **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
 
 Script paint (`ScriptPaint`) draws over the Game chatbox in the panel and
 replaces the chat pane in the TUI (`p` toggles back to the game ring).

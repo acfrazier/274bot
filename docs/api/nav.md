@@ -22,13 +22,14 @@ and writes the current whole-world pack (`encode` in
 `crates/nav/src/pack.rs`):
 
 ```bash
-cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_DIR] [CONFIG_DIR]
+cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
+# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR …
 ```
 
-Defaults are `$HOME/experiments/Server/content/maps` and siblings. Pass
-the three dirs if yours lives elsewhere. Output goes to `$NAV_PACK` or
-`~/.274bot/274bot.navpack`. `gates.loc` is derived from the maps dir's
-parent (`content/scripts/general_use/configs/gates.loc`).
+Legacy positional defaults are `$HOME/experiments/Server/content/maps` and
+siblings. Pass the three paths if yours lives elsewhere. Output goes to
+`$NAV_PACK` or `~/.274bot/274bot.navpack`. `gates.loc` is derived from the
+maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus

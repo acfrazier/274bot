@@ -35,9 +35,10 @@ cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --
 Match `--profile` / engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`). The door test also accepts
 `BOT_NAV_DOOR_REVERSE_LOGIN=1`. Its closer remains active while the driven
-player must reach the exact destination. Pack format is version 8:
-**rebake old v8 packs** to receive the adjacent-door edge fix. A new
-executable does not rewrite an existing override pack.
+player must reach the exact destination. Pack format is version **9**
+(magic `274V`; `decode` rejects v8 and older as `BadVersion`). **Rebake
+existing override packs** after updating. A new executable does not rewrite
+an existing override pack on its own.
 
 The `nav_door` integration test uses the local-274 engine and the fixed
 `$HOME/experiments/Server/engine/data/pack/client` cache path:

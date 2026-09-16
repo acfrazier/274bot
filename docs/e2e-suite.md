@@ -258,8 +258,8 @@ without limit.
 
 The manifest cargo-template resolution uses the platform executable suffix, including
 `.exe` on Windows; `--exec-core`/`--exec-pair` remain optional explicit overrides.
-The runner itself is native on Windows (see
-`docs/compat/release-p3-process-portability.md`).
+The runner owns process groups on unix and job objects on Windows as described above;
+platform-specific LIVE proof remains a separate host run.
 
 
 ## Verification without a game
