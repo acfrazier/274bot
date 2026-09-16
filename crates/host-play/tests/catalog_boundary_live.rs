@@ -213,6 +213,7 @@ struct LiveState {
     start_handle: Option<ScriptStartHandle>,
     pending: Option<PendingStart>,
     baseline: Option<Observation>,
+    start_preparation: HerbCleanerStartPreparation,
     witness: Option<CoreWitness>,
     start_error: Option<String>,
     start_count: u32,
@@ -222,7 +223,11 @@ impl LiveState {
     fn publish(&mut self, client: &client::client::Client) -> Observation {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
-        Observation::from_snapshot(&self.snapshot, &self.names)
+        let observation = Observation::from_snapshot(&self.snapshot, &self.names);
+        if self.case == CoreCase::HerbCleanerEmptyBank {
+            self.start_preparation.observe(&self.account, &observation);
+        }
+        observation
     }
 
     fn capture_baseline(&mut self, observation: &Observation) -> Result<(), String> {
@@ -242,9 +247,23 @@ impl LiveState {
                 self.account
             ));
         }
-        validate_case_baseline(self.case, observation)?;
+        let start_preparation = if self.case == CoreCase::HerbCleanerEmptyBank {
+            self.start_preparation
+                .receipt_for(&self.account, observation)
+        } else {
+            None
+        };
+        validate_case_baseline_with_preparation(
+            self.case,
+            observation,
+            start_preparation.as_ref(),
+        )?;
         self.baseline = Some(observation.clone());
-        self.witness = Some(CoreWitness::new(self.case, observation.clone()));
+        self.witness = Some(CoreWitness::new_with_start_preparation(
+            self.case,
+            observation.clone(),
+            start_preparation,
+        ));
         println!(
             "{}",
             json!({
@@ -582,6 +601,7 @@ fn run_cell() -> Result<(), String> {
         start_handle: None,
         pending: Some(pending),
         baseline: None,
+        start_preparation: HerbCleanerStartPreparation::default(),
         witness: None,
         start_error: None,
         start_count: 0,
@@ -2000,8 +2020,17 @@ mod tests {
         let case = CoreCase::parse("herb_cleaner_empty_bank").expect("empty-bank core case");
         let mut baseline = herb_obs(&[], &[(UNIDENTIFIED_GUAM_ID, 20)], 1_000);
         baseline.levels.insert("herblore".into(), 20);
+        baseline.bank_open = true;
+        baseline.bank_loaded = true;
         baseline.bank_generation = 7;
         validate_case_baseline(case, &baseline).unwrap();
+
+        let mut closed_without_receipt = baseline.clone();
+        closed_without_receipt.bank_open = false;
+        closed_without_receipt.bank_loaded = false;
+        closed_without_receipt.bank_ids.clear();
+        closed_without_receipt.bank_generation = 8;
+        assert!(validate_case_baseline(case, &closed_without_receipt).is_err());
 
         let cleaned = herb_obs(&[(GUAM_LEAF_ID, 20)], &[], 1_050);
         let mut exhausted = cleaned.clone();

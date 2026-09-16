@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use host_play::catalog_core::{
     firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
-    OAK_LOGS_ID, TINDERBOX_ID, VARROCK_EAST_BANK,
+    OAK_LOGS_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID, UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK,
 };
 
 fn thiever_observation() -> Observation {
@@ -111,6 +111,93 @@ fn start_uses_the_last_published_pre_start_observation() {
         evidence["baseline"]["items"]["Coins"].is_null(),
         "the post-Start coin must not leak into the frozen baseline"
     );
+}
+
+fn herb_empty_observation(tick: u32, bank_open: bool, bank_loaded: bool) -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3185, 3440, 0)),
+        tick,
+        bank_open,
+        bank_loaded,
+        bank_generation: u64::from(tick),
+        ..Observation::default()
+    };
+    observation.levels.insert("herblore".into(), 20);
+    if bank_loaded {
+        observation.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 20);
+        observation.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 0);
+    }
+    observation
+}
+
+#[test]
+fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    watch.observe("catalogtest", herb_empty_observation(1, true, true), false);
+    let closed = herb_empty_observation(2, false, false);
+    watch.observe("catalogtest", closed.clone(), false);
+
+    watch
+        .begin_start("catalogtest")
+        .expect("an observed loaded seed followed by a closed-bank baseline starts");
+    let evidence = watch.evidence();
+    assert_eq!(evidence["witness"]["baseline"]["bank_open"], false);
+    assert_eq!(evidence["witness"]["baseline"]["bank_loaded"], false);
+    assert_eq!(evidence["witness"]["start_preparation"]["guam_count"], 20);
+    assert_eq!(
+        evidence["witness"]["start_preparation"]["marrentill_count"],
+        0
+    );
+
+    let missing_seed = CoreWatch::default();
+    missing_seed.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    missing_seed.observe("catalogtest", closed.clone(), false);
+    assert!(missing_seed.begin_start("catalogtest").is_err());
+
+    let unloaded = CoreWatch::default();
+    unloaded.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    let mut unacknowledged = herb_empty_observation(1, true, false);
+    unacknowledged.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 20);
+    unloaded.observe("catalogtest", unacknowledged, false);
+    unloaded.observe("catalogtest", closed.clone(), false);
+    assert!(unloaded.begin_start("catalogtest").is_err());
+
+    let wrong_seed = CoreWatch::default();
+    wrong_seed.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    let mut nineteen_guam = herb_empty_observation(1, true, true);
+    nineteen_guam.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 19);
+    wrong_seed.observe("catalogtest", nineteen_guam, false);
+    wrong_seed.observe("catalogtest", closed.clone(), false);
+    assert!(wrong_seed.begin_start("catalogtest").is_err());
+
+    let wrong_order = CoreWatch::default();
+    wrong_order.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    wrong_order.observe("catalogtest", closed.clone(), false);
+    wrong_order.observe("catalogtest", herb_empty_observation(3, true, true), false);
+    assert!(wrong_order.begin_start("catalogtest").is_err());
+
+    let stale_run = CoreWatch::default();
+    stale_run.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    stale_run.observe("catalogtest", herb_empty_observation(1, true, true), false);
+    stale_run.observe("catalogtest", closed.clone(), false);
+    stale_run.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    stale_run.observe("catalogtest", closed, false);
+    assert!(stale_run.begin_start("catalogtest").is_err());
+
+    let stale_session = CoreWatch::default();
+    stale_session.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
+    stale_session.observe("catalogtest", herb_empty_observation(1, true, true), false);
+    stale_session.observe("catalogtest", Observation::default(), true);
+    stale_session.observe(
+        "catalogtest",
+        herb_empty_observation(2, false, false),
+        false,
+    );
+    assert!(stale_session.begin_start("catalogtest").is_err());
 }
 
 fn fire_observation(tick: u32, logs: i32, xp: i32, bank_open: bool) -> Observation {
