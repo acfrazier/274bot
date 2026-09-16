@@ -1,0 +1,4530 @@
+//! LoadIsolate: rustyscript V8 on its own thread (feature `load` only).
+
+use super::*;
+use rustyscript::{json_args, Runtime, RuntimeOptions};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Mutex, Once, OnceLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Per-tick budget: ticks taking longer than this are interrupted and
+/// logged, and stale ticks are skipped.
+const SLOW_TICK: Duration = Duration::from_millis(50);
+/// `in_flight` tick id for a live `recoveryAnchor` eval (not a game tick).
+const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
+/// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
+const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long `join` waits for the isolate thread after Stop + terminate
+/// before abandoning it: a stuck isolate must never freeze the caller.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Heap cap for the isolate (~64 MB, the brief's number).
+const MAX_HEAP: usize = 64 * 1024 * 1024;
+/// Bounded native pairing metadata for mouse gestures produced by one
+/// isolate. Overflow invalidates every unmatched pair rather than letting
+/// a later up inherit a newer gesture's identity.
+const MAX_MOUSE_GESTURES: usize = 32;
+
+#[derive(Default)]
+struct MouseGestureIdentities {
+    pairs: VecDeque<u64>,
+    /// Number of leading ups that cannot be paired after overflow. The
+    /// count is bounded storage and makes them fail closed at identity 0.
+    unpairable: u64,
+}
+
+fn stamp_mouse_gesture_identities(
+    reqs: &mut [crate::shim::InteractReq],
+    input_identity: u64,
+    gestures: &mut MouseGestureIdentities,
+) {
+    for req in reqs {
+        let crate::shim::InteractReq::Mouse { down, identity, .. } = req else {
+            continue;
+        };
+        if *down {
+            *identity = input_identity;
+            if gestures.unpairable != 0 {
+                gestures.unpairable = gestures.unpairable.saturating_add(1);
+            } else if gestures.pairs.len() >= MAX_MOUSE_GESTURES {
+                gestures.unpairable = (gestures.pairs.len() as u64).saturating_add(1);
+                gestures.pairs.clear();
+            } else {
+                gestures.pairs.push_back(input_identity);
+            }
+        } else if gestures.unpairable != 0 {
+            gestures.unpairable -= 1;
+            *identity = 0;
+        } else {
+            // FIFO is deliberate: if a second down precedes the first
+            // up, that old up must retain the oldest gesture identity.
+            *identity = gestures.pairs.pop_front().unwrap_or(0);
+        }
+    }
+}
+
+struct SnapshotMessage {
+    bytes: Vec<u8>,
+    #[cfg(feature = "memory-profile")]
+    _lease: crate::memory_profile::SnapshotLease,
+}
+
+enum IsolateCmd {
+    Tick {
+        tick: u64,
+        generation: u64,
+        input_identity: u64,
+    },
+    ResetSession,
+    /// The host's FlatBuffer snapshot blob (schema: `crates/script/
+    /// schema/isolate.fbs`), decoded on the isolate thread into the
+    /// JS object the Game/Inventory/Skills/EventSignal shims read
+    /// before the next dispatched tick. Never a JSON string.
+    Snapshot(SnapshotMessage),
+    /// Merged operator settings JSON for the prelude's `this.settings.*`.
+    Settings(String),
+    Loadouts(String),
+    Pause,
+    Resume,
+    /// One-shot script-local paint button, tagged with the isolate
+    /// work generation so a stale overlay cannot land on a later script.
+    PaintClick {
+        id: String,
+        generation: u64,
+    },
+    /// Generation-bound recoveryAnchor sample. Evaluated on this
+    /// thread with the 50 ms budget; the reply is a FlatBuffer interact.
+    RecoveryAnchor {
+        generation: u64,
+    },
+    Probe(String, Sender<Result<serde_json::Value, String>>),
+    /// Isolate teardown. `invoke_hook` is true for operator join and
+    /// self-stop; raw Drop sends false so a dying isolate never runs
+    /// `onStop` into a dropped rx.
+    Stop {
+        invoke_hook: bool,
+    },
+}
+
+/// Host/isolate coordination for Stop vs `onStop`. Transitions are
+/// taken under the mutex so join cannot terminate after the hook
+/// starts, and the hook's 50 ms one-shot cannot fire into Done.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TeardownPhase {
+    Running,
+    UnwindingTick,
+    Hook,
+    Done,
+}
+
+/// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
+/// one-shot worker decide under this same mutex.
+struct TeardownState {
+    phase: TeardownPhase,
+    deadline: Option<Instant>,
+    interrupt_issued: bool,
+    /// Dropped at Done so a sleeping one-shot worker exits without terminate.
+    cancel: Option<Sender<()>>,
+    /// Isolate-scoped test seam: sleep after the deadline owner is armed
+    /// and before getter/body, without a process-global switch.
+    hook_entry_delay: Option<Duration>,
+    /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
+    fail_deadline_spawn: bool,
+}
+
+impl TeardownState {
+    fn new() -> Self {
+        Self {
+            phase: TeardownPhase::Running,
+            deadline: None,
+            interrupt_issued: false,
+            cancel: None,
+            hook_entry_delay: None,
+            fail_deadline_spawn: false,
+        }
+    }
+}
+
+/// Per-isolate teardown evidence. Survives dropping the public handle so
+/// raw Drop can wait for the isolate thread to consume Stop before
+/// asserting no hook / no leftover deadline worker.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct TeardownProof {
+    inner: std::sync::Arc<TeardownProofInner>,
+}
+
+struct TeardownProofInner {
+    invoked: AtomicBool,
+    finished: AtomicBool,
+    worker_live: AtomicUsize,
+}
+
+impl TeardownProof {
+    fn new() -> Self {
+        Self {
+            inner: std::sync::Arc::new(TeardownProofInner {
+                invoked: AtomicBool::new(false),
+                finished: AtomicBool::new(false),
+                worker_live: AtomicUsize::new(0),
+            }),
+        }
+    }
+
+    pub fn invoked(&self) -> bool {
+        self.inner.invoked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn finished(&self) -> bool {
+        self.inner
+            .finished
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn deadline_workers(&self) -> usize {
+        self.inner
+            .worker_live
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+struct DeadlineWorkerGuard {
+    proof: std::sync::Arc<TeardownProofInner>,
+}
+impl Drop for DeadlineWorkerGuard {
+    fn drop(&mut self) {
+        self.proof
+            .worker_live
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+struct TickLoopFinish(std::sync::Arc<TeardownProofInner>);
+impl Drop for TickLoopFinish {
+    fn drop(&mut self) {
+        self.0
+            .finished
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+enum ThreadMsg {
+    Log(String),
+    /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
+    /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
+    /// forwarded after the tick's JS finished (parked or not).
+    Interact {
+        bytes: Vec<u8>,
+        generation: u64,
+    },
+    /// The tick's recorded paint frame (`Paint.begin` … `end()` on the
+    /// host handle), a FlatBuffer `Paint` forwarded for the script
+    /// paint views. The host reads the latest frame off the handle
+    /// without a probe round-trip. Null frames are not forwarded — a
+    /// script that stops painting keeps its last frame. Never a JSON
+    /// value on this channel.
+    Paint(Vec<u8>),
+    /// The bot instance's `ignoredRandoms()` list, read on the isolate
+    /// thread after the tick and cached on the host handle (no probe).
+    IgnoredRandoms(Vec<String>),
+    /// The highest tick the thread has fully processed (ran or skipped).
+    Completed {
+        tick: u64,
+        generation: u64,
+    },
+    /// ScriptRunner.stop ended this isolate with its bounded script reason.
+    ScriptStopped {
+        tick: u64,
+        reason: String,
+    },
+    /// ScriptRunner.stop ended this isolate lifetime.
+    Stopped,
+    /// A non-tick isolate command finished; clear matching `in_flight`.
+    InFlightDone {
+        generation: u64,
+        tick: u64,
+    },
+}
+
+/// One JS bot running in its own rustyscript/V8 isolate. Spawned only
+/// on Start; the Runtime lives on the thread and is reached through a
+/// command channel, so the host never blocks on JS. Ticks run on
+/// observed game-tick edges; stale ticks are skipped.
+pub struct LoadIsolate {
+    #[cfg(feature = "memory-profile")]
+    counters: std::sync::Arc<crate::memory_profile::Counters>,
+    #[cfg(feature = "memory-profile")]
+    last_completed: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "memory-profile")]
+    dispatched: std::sync::atomic::AtomicU64,
+    work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Host-owned identity of forwarded paint frames. Unique per spawn
+    /// and bumped on session reset so a stale overlay generation cannot
+    /// match a later isolate that advertises the same button id.
+    paint_generation: std::sync::atomic::AtomicU64,
+    stopped: std::sync::atomic::AtomicBool,
+    /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
+    script_stop: Mutex<Option<ScriptStopReceipt>>,
+    tx: Sender<IsolateCmd>,
+    rx: Mutex<Receiver<ThreadMsg>>,
+    logs: Mutex<Vec<String>>,
+    /// Interact requests forwarded by the tick thread (the shim
+    /// `Bank`/`Banking` queue), drained by the host like logs.
+    interacts: Mutex<Vec<crate::shim::InteractReq>>,
+    /// Watchdog lifecycle facts from the same FlatBuffer batch.
+    lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
+    /// The latest paint frame the tick thread forwarded (a
+    /// [`crate::shim::ScriptPaint`] decoded off the host handle after
+    /// each tick), read by the script paint views.
+    paint: Mutex<Option<crate::shim::ScriptPaint>>,
+    /// The bot instance's random-ignore list, forwarded by the tick
+    /// thread after each tick (same source as the old probe path).
+    ignored_randoms: Mutex<Vec<String>>,
+    handle: Option<JoinHandle<()>>,
+    /// Thread-safe handle used to terminate a runaway tick from this
+    /// side of the channel. The terminate stays armed until the isolate
+    /// thread has returned from the tick and clears it there (a cancel
+    /// from this side would race the interrupt and make it a no-op).
+    terminate: v8::IsolateHandle,
+    /// The tick currently being dispatched and when it was sent; the
+    /// thread clears it when the tick completes.
+    in_flight: Mutex<Option<(u64, u64, Instant)>>,
+    /// Shared Stop/`onStop` phase. Join, Drop, and the isolate thread
+    /// serialize tick-unwind vs hook vs Done under this mutex.
+    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
+    proof: TeardownProof,
+}
+
+/// ScriptRunner.stop receipt copied off the isolate thread. This is a
+/// single bounded value, independent of the panel's destructive log queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptStopReceipt {
+    pub tick: u64,
+    pub reason: String,
+}
+
+impl LoadIsolate {
+    /// Spawn the isolate thread with already-cached JS (no transpile).
+    /// Fails with a message when the source cannot be wired.
+    pub fn spawn(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+    }
+
+    /// Spawn with immutable selected-revision facts. The Arc is shared
+    /// until the isolate's one startup publication is complete.
+    pub fn spawn_with_game_data(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: std::sync::Arc<api::game_data::SelectedGameData>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            Some(game_data),
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+    }
+
+    /// Spawn with selected-revision facts and already-resolved named
+    /// bank aliases. Existing constructors post empty aliases.
+    pub fn spawn_with_content(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(js, shape, siblings, game_data, named_banks)
+    }
+
+    /// Evaluate and instantiate the candidate in a throwaway Runtime
+    /// using the same [`wire_runtime`] path Start uses. Old isolates
+    /// are not touched. Fails on top-level throw, missing export, or
+    /// unresolvable sibling.
+    pub fn validate_source(
+        js: &str,
+        shape: LoadShape,
+        siblings: &[(String, String)],
+    ) -> Result<(), String> {
+        ensure_platform();
+        let mut runtime = Runtime::new(RuntimeOptions {
+            timeout: RUNTIME_TIMEOUT,
+            max_heap_size: Some(MAX_HEAP),
+            ..Default::default()
+        })
+        .map_err(|e| format!("js engine init: {e}"))?;
+        wire_runtime(
+            &mut runtime,
+            js,
+            shape,
+            siblings,
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+    }
+
+    fn spawn_inner(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<Self, String> {
+        ensure_platform();
+        let (tx, rx) = mpsc::channel::<IsolateCmd>();
+        let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
+        let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
+        #[cfg(feature = "memory-profile")]
+        let counters = crate::memory_profile::registered();
+        #[cfg(feature = "memory-profile")]
+        let thread_counters = counters.clone();
+        let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let thread_generation = work_generation.clone();
+        let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
+        let thread_teardown = teardown.clone();
+        let proof = TeardownProof::new();
+        let thread_proof = proof.inner.clone();
+        let paint_generation =
+            NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let handle = std::thread::Builder::new()
+            .name("js-isolate".into())
+            .spawn(move || {
+                isolate_main(
+                    js,
+                    shape,
+                    siblings,
+                    game_data,
+                    named_banks,
+                    rx,
+                    msg_tx,
+                    setup_tx,
+                    thread_generation,
+                    thread_teardown,
+                    thread_proof,
+                    #[cfg(feature = "memory-profile")]
+                    thread_counters,
+                )
+            })
+            .map_err(|e| format!("isolate thread: {e}"))?;
+        let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(handle)) => handle,
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(format!("isolate init: {e}")),
+        };
+        Ok(LoadIsolate {
+            #[cfg(feature = "memory-profile")]
+            counters,
+            #[cfg(feature = "memory-profile")]
+            last_completed: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "memory-profile")]
+            dispatched: std::sync::atomic::AtomicU64::new(0),
+            work_generation,
+            paint_generation: std::sync::atomic::AtomicU64::new(paint_generation),
+            stopped: std::sync::atomic::AtomicBool::new(false),
+            script_stop: Mutex::new(None),
+            tx,
+            rx: Mutex::new(msg_rx),
+            logs: Mutex::new(Vec::new()),
+            interacts: Mutex::new(Vec::new()),
+            lifecycle: Mutex::new(Vec::new()),
+            paint: Mutex::new(None),
+            ignored_randoms: Mutex::new(Vec::new()),
+            handle: Some(handle),
+            terminate,
+            in_flight: Mutex::new(None),
+            teardown,
+            proof,
+        })
+    }
+
+    /// Post the host's FlatBuffer snapshot blob into the isolate: the
+    /// buffer is decoded on the isolate thread into the JS object on
+    /// the host handle (`__rs2b0t_host.snapshot`) before the next
+    /// dispatched tick, so the Game/Inventory/Skills/EventSignal shims
+    /// read the fields the host observed this PLAYER_INFO. Only these
+    /// fields are copied — no World clone. Commands are serialized on
+    /// the isolate thread, so a post followed by
+    /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
+    pub fn post_snapshot(&self, bytes: Vec<u8>) {
+        let message = SnapshotMessage {
+            #[cfg(feature = "memory-profile")]
+            _lease: crate::memory_profile::SnapshotLease::new(
+                self.counters.clone(),
+                bytes.len(),
+                bytes.capacity(),
+            ),
+            bytes,
+        };
+        let _ = self.tx.send(IsolateCmd::Snapshot(message));
+    }
+
+    /// Post available loadouts before subsequent tick commands.
+    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+        let json = serde_json::to_string(loadouts).expect("serializable loadouts");
+        let _ = self.tx.send(IsolateCmd::Loadouts(json));
+    }
+
+    /// Post the merged operator settings bag (schema defaults + panel/TUI
+    /// overrides + optional scenario inject). The prelude's
+    /// `this.settings.*` reads `__rs2b0t_host.settingsBag`.
+    pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
+        let Ok(json) = serde_json::to_string(bag) else {
+            return;
+        };
+        let _ = self.tx.send(IsolateCmd::Settings(json));
+    }
+
+    /// Dispatch one observed game tick to the isolate. The previous
+    /// tick is checked against the budget: still running past
+    /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
+    /// skipped.
+    pub fn on_game_tick(&self, snap_tick: u64) {
+        self.on_game_tick_at(snap_tick, 0);
+    }
+
+    /// Dispatch one observed game tick, tagging produced mouse rows with
+    /// the native permit identity that was live at production.
+    pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
+        self.pump_logs();
+        if self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            || self.teardown_blocks_dispatch()
+        {
+            return;
+        }
+        #[cfg(feature = "memory-profile")]
+        self.dispatched
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let interrupted = {
+            let mut in_flight = self.in_flight.lock().unwrap();
+            // The previous tick is still in flight (no `Completed`
+            // folded yet) past the budget: interrupt it.
+            let over = in_flight
+                .as_ref()
+                .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                .map(|(_, tick, started)| (*tick, started.elapsed()));
+            *in_flight = Some((generation, snap_tick, Instant::now()));
+            over
+        };
+        if let Some((tick, elapsed)) = interrupted {
+            // Leave the terminate armed until the isolate thread has
+            // returned from the tick (it cancels there); an immediate
+            // cancel would race the interrupt and make this a no-op.
+            self.terminate.terminate_execution();
+            // `in_flight` was released before this lock, so the lock
+            // order (never `in_flight` -> `logs`) holds everywhere.
+            let line = if tick == RECOVERY_ANCHOR_TICK {
+                format!("interrupted slow recoveryAnchor ({elapsed:?})")
+            } else {
+                format!("interrupted slow tick {tick} ({elapsed:?})")
+            };
+            self.logs.lock().unwrap().push(line);
+        }
+        let _ = self.tx.send(IsolateCmd::Tick {
+            tick: snap_tick,
+            generation,
+            input_identity,
+        });
+    }
+
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_metrics(&self) -> serde_json::Value {
+        self.counters.snapshot()
+    }
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
+        self.counters.clone()
+    }
+
+    /// Read cached counters only; do not pump messages or probe JS.
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_progress(&self) -> serde_json::Value {
+        use std::sync::atomic::Ordering::Relaxed;
+        serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
+            "last_completed_tick":self.last_completed.load(Relaxed),
+            "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
+            "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
+    }
+
+    /// Park tick dispatch. A runaway tick is interrupted first so the
+    /// thread returns to the command loop.
+    pub fn pause(&self) {
+        self.pump_logs();
+        if self.teardown_blocks_dispatch() {
+            let _ = self.tx.send(IsolateCmd::Pause);
+            return;
+        }
+        let over = self
+            .in_flight
+            .lock()
+            .unwrap()
+            .map(|(_, _, started)| started.elapsed() > SLOW_TICK)
+            .unwrap_or(false);
+        if over {
+            // No cancel here: the isolate thread clears the terminate
+            // itself once it has returned from the interrupted tick.
+            self.terminate.terminate_execution();
+        }
+        let _ = self.tx.send(IsolateCmd::Pause);
+    }
+
+    /// Re-arm tick dispatch after [`LoadIsolate::pause`].
+    pub fn resume(&self) {
+        let _ = self.tx.send(IsolateCmd::Resume);
+    }
+
+    /// Queue a one-shot paint-button id for the current work generation.
+    /// Consumed on the next paint that advertises that id; dropped on
+    /// pause, generation skip, or an unadvertised leftover after paint.
+    pub fn paint_click(&self, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let _ = self.tx.send(IsolateCmd::PaintClick {
+            id: id.to_string(),
+            generation,
+        });
+    }
+
+    /// Ask the isolate thread to evaluate `recoveryAnchor()` once for
+    /// this work generation. Non-blocking: the reply arrives as a
+    /// generation-tagged interact (`recovery-anchor` / `recovery-anchor-none`).
+    pub fn request_recovery_anchor(&self) {
+        if self.stopped.load(std::sync::atomic::Ordering::Acquire)
+            || self.teardown_blocks_dispatch()
+        {
+            return;
+        }
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let interrupted = {
+            let mut in_flight = self.in_flight.lock().unwrap();
+            let over = in_flight
+                .as_ref()
+                .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                .map(|(_, tick, started)| (*tick, started.elapsed()));
+            *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
+            over
+        };
+        if let Some((tick, elapsed)) = interrupted {
+            self.terminate.terminate_execution();
+            let line = if tick == RECOVERY_ANCHOR_TICK {
+                format!("interrupted slow recoveryAnchor ({elapsed:?})")
+            } else {
+                format!("interrupted slow tick {tick} ({elapsed:?})")
+            };
+            self.logs.lock().unwrap().push(line);
+        }
+        let _ = self.tx.send(IsolateCmd::RecoveryAnchor { generation });
+    }
+
+    /// Evaluate `expr` in the isolate's global scope and return its
+    /// JSON value (test/status read-back; e.g. `"__rs_bot.n"`).
+    pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
+        let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
+        self.tx
+            .send(IsolateCmd::Probe(expr.to_string(), tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|e| format!("probe: {e}"))?
+    }
+
+    /// The bot instance's random-ignore list (`inst.ignoredRandoms?.()`
+    /// on `__rs_bot`, default `[]`): cached on the isolate thread
+    /// after each tick (see [`ThreadMsg::IgnoredRandoms`]). A throwing /
+    /// non-array method and a native `tick`-shaped card (no instance)
+    /// fail closed to `[]`. No probe round-trip.
+    pub fn ignored_randoms(&self) -> Vec<String> {
+        self.pump_logs();
+        self.ignored_randoms.lock().unwrap().clone()
+    }
+
+    /// Drain the isolate's log lines (tick errors, slow/interrupted
+    /// ticks).
+    pub fn drain_logs(&self) -> Vec<String> {
+        self.pump_logs();
+        std::mem::take(&mut *self.logs.lock().unwrap())
+    }
+
+    /// Cached terminal state, refreshed by the regular log drain.
+    pub fn stopped(&self) -> bool {
+        self.stopped.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Cached ScriptRunner.stop receipt. Reading it never drains logs.
+    pub fn script_stop_receipt(&self) -> Option<ScriptStopReceipt> {
+        self.pump_logs();
+        self.script_stop.lock().unwrap().clone()
+    }
+
+    /// Per-isolate teardown evidence. Clone before `join`/`Drop`.
+    #[doc(hidden)]
+    pub fn teardown_proof(&self) -> TeardownProof {
+        self.proof.clone()
+    }
+
+    /// Isolate-scoped seam: delay after the deadline owner is armed and
+    /// before getter/body. Proves a late cancel cannot drop the one-shot.
+    #[doc(hidden)]
+    pub fn delay_onstop_after_deadline_arm(&self, delay: Duration) {
+        self.teardown.lock().unwrap().hook_entry_delay = Some(delay);
+    }
+
+    /// Isolate-scoped seam: deadline-thread spawn fails for this isolate.
+    #[doc(hidden)]
+    pub fn fail_onstop_deadline_spawn(&self) {
+        self.teardown.lock().unwrap().fail_deadline_spawn = true;
+    }
+
+    /// Drain the interact requests the tick's shim queued
+    /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
+    /// tick order. The host dispatches them through the slot Driver;
+    /// a malformed entry is logged and dropped, never fatal.
+    pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+        self.pump_logs();
+        std::mem::take(&mut *self.interacts.lock().unwrap())
+    }
+
+    /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
+    pub fn discard_mouse_interacts(&self) {
+        self.pump_logs();
+        self.interacts
+            .lock()
+            .unwrap()
+            .retain(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. }));
+    }
+
+    /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
+    /// loop/wait settle, recoveryAnchor replies) from the same FlatBuffer
+    /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
+    pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
+        self.pump_logs();
+        std::mem::take(&mut *self.lifecycle.lock().unwrap())
+    }
+
+    /// Discard work from the previous connection, including batches that
+    /// an already running tick has not forwarded yet. Script state and
+    /// parked waits survive; the next snapshot is posted before a new tick.
+    pub fn reset_session_work(&self) {
+        {
+            let mut interacts = self.interacts.lock().unwrap();
+            self.work_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            self.paint_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            interacts.clear();
+            self.lifecycle.lock().unwrap().clear();
+        }
+        if let Some(paint) = self.paint.lock().unwrap().as_mut() {
+            paint.generation = self
+                .paint_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+        }
+        *self.in_flight.lock().unwrap() = None;
+        let _ = self.tx.send(IsolateCmd::ResetSession);
+    }
+
+    /// The latest recorded paint frame (the tick thread forwards the
+    /// host handle's `paint` record after every tick that painted).
+    /// `None` when the script has not painted yet. No probe
+    /// round-trip — the host reads this every frame.
+    pub fn paint(&self) -> Option<crate::shim::ScriptPaint> {
+        self.pump_logs();
+        self.paint.lock().unwrap().clone()
+    }
+
+    /// Stop the isolate: tell the thread to exit, interrupt a live tick
+    /// so Stop can be processed, and wait for the thread (the Runtime
+    /// is dropped there). The wait is bounded by [`Self::JOIN_TIMEOUT`]:
+    /// a stuck isolate is abandoned (thread detached) so Stop can never
+    /// freeze the panel. Returns leftover log lines (including `onStop`
+    /// / `this.log` drained during teardown) after `pump_logs`.
+    ///
+    /// Tick interruption is claimed only while phase is `Running`. Once
+    /// the isolate has entered the hook, only that hook's 50 ms
+    /// one-shot may terminate; join never samples `in_flight` to decide.
+    pub fn join(mut self) -> Vec<String> {
+        let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: true });
+        {
+            let mut st = self.teardown.lock().unwrap();
+            if st.phase == TeardownPhase::Running {
+                st.phase = TeardownPhase::UnwindingTick;
+                self.terminate.terminate_execution();
+            }
+        }
+        if let Some(handle) = self.handle.take() {
+            let deadline = Instant::now() + JOIN_TIMEOUT;
+            while !handle.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+                self.pump_logs();
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
+            // else: abandoned — dropping the handle detaches the thread,
+            // which exits on its own once the interrupt lands.
+        }
+        self.pump_logs();
+        std::mem::take(&mut *self.logs.lock().unwrap())
+    }
+
+    fn teardown_blocks_dispatch(&self) -> bool {
+        matches!(
+            self.teardown.lock().unwrap().phase,
+            TeardownPhase::Hook | TeardownPhase::Done
+        )
+    }
+
+    /// Fold completed ticks and thread log lines into local state.
+    /// `logs` and `in_flight` are never held together: the thread also
+    /// takes them in this same order (`logs` -> `in_flight` would let a
+    /// slow-tick interrupt deadlock against `on_game_tick`), so each
+    /// message is folded under its own lock.
+    fn pump_logs(&self) {
+        let mut msgs = Vec::new();
+        {
+            let rx = self.rx.lock().unwrap();
+            while let Ok(msg) = rx.try_recv() {
+                msgs.push(msg);
+            }
+        }
+        for msg in msgs {
+            match msg {
+                ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                ThreadMsg::ScriptStopped { tick, reason } => {
+                    *self.script_stop.lock().unwrap() =
+                        Some(ScriptStopReceipt { tick, reason });
+                }
+                ThreadMsg::Stopped => {
+                    self.stopped
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    *self.in_flight.lock().unwrap() = None;
+                    self.interacts.lock().unwrap().clear();
+                    self.lifecycle.lock().unwrap().clear();
+                }
+                ThreadMsg::Interact { bytes, generation } => {
+                    let mut interacts = self.interacts.lock().unwrap();
+                    if generation
+                        != self
+                            .work_generation
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    match crate::isolate_fb::decode_interact_batch(&bytes) {
+                        Ok(reqs) => {
+                            let mut lifecycle = self.lifecycle.lock().unwrap();
+                            for req in reqs {
+                                if req.is_watchdog_lifecycle() {
+                                    lifecycle.push(req);
+                                } else {
+                                    interacts.push(req);
+                                }
+                            }
+                        }
+                        Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
+                    }
+                }
+                ThreadMsg::Paint(bytes) => {
+                    // Decode the FlatBuffer paint frame (no JSON).
+                    match crate::isolate_fb::decode_paint(&bytes) {
+                        Ok(mut paint) => {
+                            paint.generation = self
+                                .paint_generation
+                                .load(std::sync::atomic::Ordering::Acquire);
+                            let mut slot = self.paint.lock().unwrap();
+                            if slot.as_ref() != Some(&paint) {
+                                *slot = Some(paint);
+                            }
+                        }
+                        Err(e) => self.logs.lock().unwrap().push(format!("paint: {e}")),
+                    }
+                }
+                ThreadMsg::IgnoredRandoms(list) => {
+                    *self.ignored_randoms.lock().unwrap() = list;
+                }
+                ThreadMsg::Completed { tick, generation } => {
+                    let mut in_flight = self.in_flight.lock().unwrap();
+                    if generation
+                        != self
+                            .work_generation
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    #[cfg(feature = "memory-profile")]
+                    self.last_completed
+                        .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
+                    if in_flight.is_some_and(|(g, t, _)| g == generation && t <= tick) {
+                        *in_flight = None;
+                    }
+                }
+                ThreadMsg::InFlightDone { generation, tick } => {
+                    if generation
+                        != self
+                            .work_generation
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    let mut in_flight = self.in_flight.lock().unwrap();
+                    if in_flight.is_some_and(|(g, t, _)| g == generation && t == tick) {
+                        *in_flight = None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for LoadIsolate {
+    fn drop(&mut self) {
+        // Best-effort: unblock a stuck tick and close the channel; the
+        // thread exits and drops its Runtime by itself (no join here,
+        // and no cancel — the thread clears the terminate once the tick
+        // has returned). After a successful join the hook is Done: do
+        // not re-interrupt a completed teardown.
+        let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: false });
+        let mut st = self.teardown.lock().unwrap();
+        match st.phase {
+            TeardownPhase::Done => {}
+            TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
+                st.phase = TeardownPhase::Done;
+                st.cancel.take();
+                self.terminate.terminate_execution();
+            }
+        }
+    }
+}
+
+/// Initialize the V8 platform once, on the caller's thread (Start and
+/// Load both run here, and the isolate threads are spawned by it).
+fn ensure_platform() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        rustyscript::init_platform(1, true);
+    });
+}
+
+/// Read the bot instance's ignore list on the isolate thread (no probe).
+fn eval_ignored_randoms(runtime: &mut Runtime) -> Vec<String> {
+    runtime
+        .eval::<Vec<String>>(
+            "(() => { const b = globalThis.__rs_bot; if (!b || typeof b.ignoredRandoms !== 'function') return []; const l = b.ignoredRandoms(); return Array.isArray(l) ? l.filter(x => typeof x === 'string') : []; })()",
+        )
+        .unwrap_or_default()
+}
+
+/// The isolate thread: create the Runtime, wire the module, hand the
+/// thread-safe isolate handle back, then run the tick loop.
+#[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
+fn isolate_main(
+    source: String,
+    shape: LoadShape,
+    siblings: Vec<(String, String)>,
+    game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    cmds: Receiver<IsolateCmd>,
+    out: Sender<ThreadMsg>,
+    setup: Sender<Result<v8::IsolateHandle, String>>,
+    work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    proof: std::sync::Arc<TeardownProofInner>,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+        crate::memory_profile::Counters,
+    >,
+) {
+    #[cfg(feature = "memory-profile")]
+    let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
+    let mut runtime = match Runtime::new(RuntimeOptions {
+        timeout: RUNTIME_TIMEOUT,
+        max_heap_size: Some(MAX_HEAP),
+        ..Default::default()
+    }) {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            let _ = setup.send(Err(format!("js engine init: {e}")));
+            return;
+        }
+    };
+    #[cfg(feature = "memory-profile")]
+    counters
+        .heap_live
+        .store(1, std::sync::atomic::Ordering::Relaxed);
+    if let Err(e) = wire_runtime(
+        &mut runtime,
+        &source,
+        shape,
+        &siblings,
+        game_data,
+        named_banks,
+    ) {
+        let _ = setup.send(Err(e));
+        return;
+    }
+    let _ = runtime.eval::<serde_json::Value>(INSTALL_ON_STOP);
+    let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+    let _ = setup.send(Ok(terminate));
+    tick_loop(
+        runtime,
+        cmds,
+        out,
+        work_generation,
+        teardown,
+        proof,
+        #[cfg(feature = "memory-profile")]
+        counters,
+    );
+}
+
+/// Monotonic clock backing the prelude's `performance.now()` shim
+/// (rustyscript's default extensions define no `performance`). First
+/// call anchors at isolate-thread start.
+static CLOCK_START: OnceLock<Instant> = OnceLock::new();
+
+const WORLD_COORD_MAX: i64 = (1 << 14) - 1;
+const TILE_LEVEL_MAX: i64 = 3;
+const CROSS_PLANE_DISTANCE: i32 = 1_000_000;
+
+/// Validate JavaScript Tile values at the native-world boundary, then
+/// preserve the shim's historical cross-plane representation on top of
+/// the host query distance primitive.
+fn tile_distance(args: &[serde_json::Value]) -> Result<serde_json::Value, rustyscript::Error> {
+    let from = distance_tile(args.first(), "from")?;
+    let to = distance_tile(args.get(1), "to")?;
+    let host_distance = api::query::chebyshev_to(from, to);
+    let distance = if host_distance == i32::MAX {
+        let planar = api::query::chebyshev_to(
+            from,
+            api::WorldTile {
+                level: from.level,
+                ..to
+            },
+        );
+        CROSS_PLANE_DISTANCE + planar
+    } else {
+        host_distance
+    };
+    Ok(serde_json::Value::from(distance))
+}
+
+fn distance_tile(
+    value: Option<&serde_json::Value>,
+    side: &str,
+) -> Result<api::WorldTile, rustyscript::Error> {
+    let object = value
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            rustyscript::Error::Runtime(format!(
+                "invalid tile distance: {side} must be a Tile-like object"
+            ))
+        })?;
+    Ok(api::WorldTile {
+        x: tile_integer(object.get("x"), side, "x", 0, WORLD_COORD_MAX)?,
+        z: tile_integer(object.get("z"), side, "z", 0, WORLD_COORD_MAX)?,
+        level: match object.get("level") {
+            None | Some(serde_json::Value::Null) => 0,
+            value => tile_integer(value, side, "level", 0, TILE_LEVEL_MAX)?,
+        },
+    })
+}
+
+fn tile_integer(
+    value: Option<&serde_json::Value>,
+    side: &str,
+    field: &str,
+    min: i64,
+    max: i64,
+) -> Result<i32, rustyscript::Error> {
+    let integer = value
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| (min..=max).contains(value))
+        .ok_or_else(|| {
+            rustyscript::Error::Runtime(format!(
+                "invalid tile distance: {side}.{field} must be an integer in {min}..={max}"
+            ))
+        })?;
+    Ok(integer as i32)
+}
+
+fn json_i32(value: Option<&serde_json::Value>) -> Option<i32> {
+    value.and_then(|v| {
+        v.as_i64()
+            .or_else(|| {
+                v.as_f64()
+                    .and_then(|n| (n.is_finite() && n.fract() == 0.0).then_some(n as i64))
+            })
+            .and_then(|n| i32::try_from(n).ok())
+    })
+}
+
+fn json_f64(value: Option<&serde_json::Value>) -> f64 {
+    value
+        .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|n| n as f64)))
+        .unwrap_or(0.0)
+}
+
+fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
+    let object = value.and_then(serde_json::Value::as_object)?;
+    Some(api::WorldTile {
+        x: json_i32(object.get("x"))?,
+        z: json_i32(object.get("z"))?,
+        level: match object.get("level") {
+            None | Some(serde_json::Value::Null) => 0,
+            Some(other) => json_i32(Some(other))?,
+        },
+    })
+}
+
+/// Load `source` into `runtime` as a module and wire the global tick
+/// entry. Native sources export `tick(api)`; compat sources
+/// default-export a `defineBot` config and tick through `create()`'s
+/// `loop()`, and the catalog shape default-exports a
+/// `LoopingBot`/`TaskBot`/`TreeBot` subclass that is instantiated and
+/// ticked through its `loop()`.
+///
+/// The shim prelude and the extra rs2b0t-named modules are wired first
+/// so relative `../../api/...` imports and the remapped
+/// `@rs2b0t/api` bundle resolve to our modules; an import that does
+/// not name a shim module (e.g. `../../api/bank/Banking.js` before
+/// its task) fails the load honestly.
+fn wire_runtime(
+    runtime: &mut Runtime,
+    source: &str,
+    shape: LoadShape,
+    siblings: &[(String, String)],
+    game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+) -> Result<(), String> {
+    if shape == LoadShape::Reject {
+        return Err("not a bot shape".to_string());
+    }
+    let source = crate::shim::remap_catalog_imports(source);
+    runtime
+        .register_function(
+            "__rs2b0t_now",
+            |_args: &[rustyscript::serde_json::Value]| {
+                let start = CLOCK_START.get_or_init(Instant::now);
+                Ok(rustyscript::serde_json::Value::from(
+                    start.elapsed().as_millis() as f64,
+                ))
+            },
+        )
+        .map_err(|e| format!("register now: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_tile_distance", tile_distance)
+        .map_err(|e| format!("register tile distance: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_range_supply_empty",
+            |args: &[serde_json::Value]| {
+                Ok(serde_json::Value::Bool(
+                    crate::ranged::range_supply_empty_args(args),
+                ))
+            },
+        )
+        .map_err(|e| format!("register range supply empty: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
+            Ok(crate::bank_withdraw::step(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register withdraw: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_matches_common_bank_loot",
+            |args: &[serde_json::Value]| {
+                let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let id = args.get(1).and_then(|v| v.as_i64()).unwrap_or(-1);
+                Ok(serde_json::Value::Bool(i32::try_from(id).ok().is_some_and(
+                    |id| api::content::matches_common_bank_loot(name, id),
+                )))
+            },
+        )
+        .map_err(|e| format!("register common bank loot: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_periodic_bank", |args: &[serde_json::Value]| {
+            Ok(crate::periodic_bank::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register periodic bank: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_bank_open", |args: &[serde_json::Value]| {
+            Ok(crate::bank_open::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register bank open: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
+            Ok(crate::walk_wait::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register walk: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_cake_stall", |args: &[serde_json::Value]| {
+            Ok(crate::cake_stall::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register cake stall: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_death_recovery", |args: &[serde_json::Value]| {
+            Ok(crate::death_recovery::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register death recovery: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_selected_loadout",
+            |args: &[serde_json::Value]| {
+                let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
+                    args.first().cloned().unwrap_or(serde_json::json!([])),
+                )
+                .unwrap_or_default();
+                Ok(crate::loadouts_store::selected_compat_loadout(
+                    &rows,
+                    args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                ))
+            },
+        )
+        .map_err(|e| format!("register loadout: {e}"))?;
+    let selected_food = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_food_of", move |args: &[serde_json::Value]| {
+            let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
+            let food = args
+                .first()
+                .and_then(|v| v.get("carry"))
+                .and_then(|v| v.as_array())
+                .and_then(|rows| {
+                    rows.iter().find_map(|row| {
+                        let name = row.get("item")?.as_str()?;
+                        selected_food
+                            .as_deref()
+                            .and_then(|data| {
+                                data.fixed_food_heals()
+                                    .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                            })
+                            .map(|(known, _)| serde_json::json!(known))
+                    })
+                });
+            Ok(food.unwrap_or(fallback))
+        })
+        .map_err(|e| format!("register food: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_gear_of", |args: &[serde_json::Value]| {
+            Ok(serde_json::to_value(crate::loadouts_store::gear_of(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+            .unwrap_or(serde_json::json!([])))
+        })
+        .map_err(|e| format!("register gear: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_supplies_of", |args: &[serde_json::Value]| {
+            Ok(serde_json::to_value(crate::loadouts_store::supplies_of(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+            .unwrap_or(serde_json::json!([])))
+        })
+        .map_err(|e| format!("register supplies: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_weapon_of", |args: &[serde_json::Value]| {
+            let fallback = args
+                .get(1)
+                .and_then(|v| if v.is_null() { None } else { v.as_str() });
+            Ok(crate::loadouts_store::weapon_of(
+                args.first().unwrap_or(&serde_json::Value::Null),
+                fallback,
+            ))
+        })
+        .map_err(|e| format!("register weapon: {e}"))?;
+    let selected_spells = game_data.clone();
+    runtime
+        .register_function(
+            "__rs2b0t_runes_per_cast",
+            move |args: &[serde_json::Value]| {
+                let spell = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let wielded: Vec<String> = args
+                    .get(1)
+                    .and_then(|v| v.as_array())
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| row.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(match selected_spells.as_deref() {
+                    Some(data) => match data.runes_per_cast(spell, &wielded) {
+                        Some(costs) => serde_json::json!(costs
+                            .into_iter()
+                            .map(|cost| serde_json::json!({
+                                "rune": cost.rune,
+                                "count": cost.count
+                            }))
+                            .collect::<Vec<_>>()),
+                        None => serde_json::Value::Null,
+                    },
+                    None => serde_json::Value::Null,
+                })
+            },
+        )
+        .map_err(|e| format!("register runes per cast: {e}"))?;
+    let selected_spell_buttons = game_data.clone();
+    runtime
+        .register_function(
+            "__rs2b0t_spell_button_com",
+            move |args: &[serde_json::Value]| {
+                let spell = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                Ok(serde_json::json!(selected_spell_buttons
+                    .as_deref()
+                    .map(|data| data.spell_button_com(spell))
+                    .unwrap_or(-1)))
+            },
+        )
+        .map_err(|e| format!("register spell button: {e}"))?;
+    crate::autocast::configure(game_data.as_deref());
+    let selected_autocast = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
+            Ok(crate::autocast::dispatch(
+                selected_autocast.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register autocast: {e}"))?;
+    let selected_special = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_special", move |args: &[serde_json::Value]| {
+            Ok(crate::special::dispatch(
+                selected_special.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register special: {e}"))?;
+    let selected_teleport = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_teleport", move |args: &[serde_json::Value]| {
+            Ok(crate::teleport::dispatch(
+                selected_teleport.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register teleport: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_shop", move |args: &[serde_json::Value]| {
+            Ok(crate::shop::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register shop: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_production",
+            move |args: &[serde_json::Value]| {
+                Ok(crate::production::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            },
+        )
+        .map_err(|e| format!("register production: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_fire", move |args: &[serde_json::Value]| {
+            Ok(crate::fire::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register fire: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_trade", move |args: &[serde_json::Value]| {
+            Ok(crate::trade::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register trade: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_drive_partner_trade",
+            move |args: &[serde_json::Value]| {
+                Ok(crate::drive_partner_trade::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            },
+        )
+        .map_err(|e| format!("register drive_partner_trade: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_is_hostile_attacker",
+            |args: &[serde_json::Value]| {
+                let payload = args.first().unwrap_or(&serde_json::Value::Null);
+                let as_i32 = |v: Option<&serde_json::Value>| {
+                    v.and_then(|value| {
+                        value
+                            .as_i64()
+                            .or_else(|| {
+                                value.as_f64().and_then(|n| {
+                                    (n.is_finite() && n.fract() == 0.0).then_some(n as i64)
+                                })
+                            })
+                            .and_then(|n| i32::try_from(n).ok())
+                    })
+                };
+                let Some(distance) = as_i32(payload.get("distance")) else {
+                    return Ok(serde_json::Value::Bool(false));
+                };
+                let Some(max_distance) = as_i32(payload.get("maxDistance")) else {
+                    return Ok(serde_json::Value::Bool(false));
+                };
+                let actions: Vec<&str> = payload
+                    .get("actions")
+                    .and_then(|v| v.as_array())
+                    .map(|rows| rows.iter().filter_map(|row| row.as_str()).collect())
+                    .unwrap_or_default();
+                Ok(serde_json::Value::Bool(
+                    crate::content::is_hostile_attacker(
+                        payload.get("name").and_then(|v| v.as_str()),
+                        payload
+                            .get("inCombat")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                        payload
+                            .get("targetsAnotherPlayer")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                        distance,
+                        &actions,
+                        max_distance,
+                    ),
+                ))
+            },
+        )
+        .map_err(|e| format!("register hostile attacker: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_ent_npc_ids", |_args: &[serde_json::Value]| {
+            Ok(serde_json::json!(api::ent::ENT_NPC_IDS))
+        })
+        .map_err(|e| format!("register ent npc ids: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_ent_life_ticks",
+            |_args: &[serde_json::Value]| Ok(serde_json::json!(api::ent::ENT_LIFE_TICKS)),
+        )
+        .map_err(|e| format!("register ent life ticks: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_is_ent_npc_id", |args: &[serde_json::Value]| {
+            Ok(serde_json::Value::Bool(
+                json_i32(args.first()).is_some_and(api::ent::is_ent_npc_id),
+            ))
+        })
+        .map_err(|e| format!("register is ent npc id: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_ent_npc_on_tile",
+            |args: &[serde_json::Value]| {
+                let npcs = args
+                    .first()
+                    .and_then(serde_json::Value::as_array)
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| {
+                                Some((json_i32(row.get("id"))?, json_tile(row.get("tile"))?))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Ok(serde_json::Value::Bool(json_tile(args.get(1)).is_some_and(
+                    |tile| crate::ent::ent_npc_on_tile(npcs, tile),
+                )))
+            },
+        )
+        .map_err(|e| format!("register ent npc on tile: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_tool_step", |args: &[serde_json::Value]| {
+            Ok(crate::gather_tools::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register tool step: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_boost_potions_step",
+            |args: &[serde_json::Value]| {
+                Ok(crate::boost_potions::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            },
+        )
+        .map_err(|e| format!("register boost potions step: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_target_step", |args: &[serde_json::Value]| {
+            Ok(crate::targets::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register target step: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_begin", |_args: &[serde_json::Value]| {
+            crate::canvas::begin();
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas begin: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_set", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let value = args
+                .get(1)
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default();
+            crate::canvas::set_style(prop, &value);
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas set: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_get", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let value = crate::canvas::get_style(prop);
+            Ok(serde_json::Value::String(value))
+        })
+        .map_err(|e| format!("register canvas get: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_set_num", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            crate::canvas::set_number(prop, json_f64(args.get(1)));
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas set num: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_get_num", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            Ok(serde_json::json!(crate::canvas::get_number(prop)))
+        })
+        .map_err(|e| format!("register canvas get num: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_fill_gradient_id",
+            |_args: &[serde_json::Value]| {
+                Ok(serde_json::json!(crate::canvas::fill_gradient_id()))
+            },
+        )
+        .map_err(|e| format!("register canvas fill gradient id: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_set_fill_gradient",
+            |args: &[serde_json::Value]| {
+                let id = json_f64(args.first()) as u32;
+                crate::canvas::set_fill_gradient(id);
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas set fill gradient: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_save", |_args: &[serde_json::Value]| {
+            crate::canvas::save();
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas save: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_restore",
+            |_args: &[serde_json::Value]| {
+                crate::canvas::restore();
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas restore: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_begin_path",
+            |_args: &[serde_json::Value]| {
+                crate::canvas::begin_path();
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas beginPath: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_close_path",
+            |_args: &[serde_json::Value]| {
+                crate::canvas::close_path();
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas closePath: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_move_to", |args: &[serde_json::Value]| {
+            crate::canvas::move_to(json_f64(args.first()), json_f64(args.get(1)));
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas moveTo: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_line_to", |args: &[serde_json::Value]| {
+            crate::canvas::line_to(json_f64(args.first()), json_f64(args.get(1)));
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas lineTo: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_quad_to", |args: &[serde_json::Value]| {
+            crate::canvas::quadratic_curve_to(
+                json_f64(args.first()),
+                json_f64(args.get(1)),
+                json_f64(args.get(2)),
+                json_f64(args.get(3)),
+            );
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas quadraticCurveTo: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_arc", |args: &[serde_json::Value]| {
+            match crate::canvas::arc(
+                json_f64(args.first()),
+                json_f64(args.get(1)),
+                json_f64(args.get(2)),
+                json_f64(args.get(3)),
+                json_f64(args.get(4)),
+                args.get(5)
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            ) {
+                Ok(()) => Ok(serde_json::Value::Null),
+                Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+            }
+        })
+        .map_err(|e| format!("register canvas arc: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_fill", |_args: &[serde_json::Value]| {
+            crate::canvas::fill();
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas fill: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_stroke", |_args: &[serde_json::Value]| {
+            crate::canvas::stroke();
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas stroke: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_clip", |_args: &[serde_json::Value]| {
+            crate::canvas::clip();
+            Ok(serde_json::Value::Null)
+        })
+        .map_err(|e| format!("register canvas clip: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_create_linear",
+            |args: &[serde_json::Value]| match crate::canvas::create_linear(
+                json_f64(args.first()),
+                json_f64(args.get(1)),
+                json_f64(args.get(2)),
+                json_f64(args.get(3)),
+            ) {
+                Ok(id) => Ok(serde_json::json!(id)),
+                Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+            },
+        )
+        .map_err(|e| format!("register canvas createLinearGradient: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_create_radial",
+            |args: &[serde_json::Value]| match crate::canvas::create_radial(
+                json_f64(args.first()),
+                json_f64(args.get(1)),
+                json_f64(args.get(2)),
+                json_f64(args.get(3)),
+                json_f64(args.get(4)),
+                json_f64(args.get(5)),
+            ) {
+                Ok(id) => Ok(serde_json::json!(id)),
+                Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+            },
+        )
+        .map_err(|e| format!("register canvas createRadialGradient: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_add_color_stop",
+            |args: &[serde_json::Value]| {
+                let id = json_f64(args.first()) as u32;
+                let offset = json_f64(args.get(1));
+                let color = args
+                    .get(2)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                match crate::canvas::add_color_stop(id, offset, color) {
+                    Ok(()) => Ok(serde_json::Value::Null),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                }
+            },
+        )
+        .map_err(|e| format!("register canvas addColorStop: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_fill_rect",
+            |args: &[serde_json::Value]| {
+                let num = |i: usize| {
+                    args.get(i)
+                        .and_then(serde_json::Value::as_f64)
+                        .or_else(|| {
+                            args.get(i)
+                                .and_then(serde_json::Value::as_i64)
+                                .map(|n| n as f64)
+                        })
+                        .unwrap_or(0.0)
+                };
+                crate::canvas::fill_rect(num(0), num(1), num(2), num(3));
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas fillRect: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_fill_text",
+            |args: &[serde_json::Value]| {
+                let text = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let num = |i: usize| {
+                    args.get(i)
+                        .and_then(serde_json::Value::as_f64)
+                        .or_else(|| {
+                            args.get(i)
+                                .and_then(serde_json::Value::as_i64)
+                                .map(|n| n as f64)
+                        })
+                        .unwrap_or(0.0)
+                };
+                crate::canvas::fill_text(text, num(1), num(2));
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas fillText: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_measure_text",
+            |args: &[serde_json::Value]| {
+                let text = args
+                    .first()
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                match crate::canvas::measure_text(text) {
+                    Ok(w) => Ok(serde_json::json!(w)),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                }
+            },
+        )
+        .map_err(|e| format!("register canvas measureText: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_onpaint_done",
+            |args: &[serde_json::Value]| {
+                let kind = args
+                    .first()
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0);
+                let msg = args.get(1).and_then(serde_json::Value::as_str);
+                crate::canvas::onpaint_done(kind, msg);
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register canvas onpaint done: {e}"))?;
+    runtime
+        .eval::<()>(crate::shim::PRELUDE)
+        .map_err(|e| format!("shim: {e}"))?;
+    let content = format!(
+        "globalThis.__rs2b0t_host.content = {};",
+        crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
+    );
+    runtime
+        .eval::<()>(content.as_str())
+        .map_err(|e| format!("content: {e}"))?;
+    let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
+    let main = match shape {
+        LoadShape::NativeTick => {
+            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN)
+        }
+        LoadShape::CompatDefineBot => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::CompatClass => rustyscript::Module::new(
+            crate::shim::MAIN_MODULE,
+            format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
+        ),
+        LoadShape::Reject => unreachable!("rejected above"),
+    };
+    // Side modules load in order, so the shim modules (which the bot
+    // imports) must precede the bot's own module.
+    let mut side = crate::shim::shim_modules();
+    let siblings: Vec<(String, String)> = siblings
+        .iter()
+        .map(|(url, src)| (url.clone(), crate::shim::remap_catalog_imports(src)))
+        .collect();
+    for (url, src) in &siblings {
+        side.push(rustyscript::Module::new(url, src));
+    }
+    side.push(bot);
+    let side: Vec<&rustyscript::Module> = side.iter().collect();
+    // Loading evaluates the modules, so a missing `tick`/default
+    // export, an unresolvable import, or a syntax error surfaces
+    // here, before any tick runs.
+    runtime
+        .load_modules(&main, side)
+        .map_err(|e| format!("load: {e}"))?;
+    Ok(())
+}
+
+/// Native wrapper: re-export the module's `tick` behind a global that
+/// receives the tick number and a persistent `api` object. `api` is a
+/// Proxy: the host owns it (`api.tick` is set each tick); reading or
+/// writing any other member throws `not impl` — a script stashes its own
+/// state elsewhere, never in host-owned slots.
+const NATIVE_MAIN: &str = r#"
+import { tick } from './bot.js';
+const api = new Proxy({}, {
+get(target, prop) {
+    if (typeof prop === 'symbol') return undefined;
+    if (prop === 'tick') return target.tick;
+    throw new Error('not impl: api.' + String(prop));
+},
+set(target, prop, value) {
+    if (prop === 'tick') { target.tick = value; return true; }
+    throw new Error('not impl: api.' + String(prop));
+},
+});
+globalThis.__rs_api = api;
+globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
+"#;
+
+/// Compat wrapper: `create()` the bot instance, then the shared compat
+/// runner (onStart once, awaited, then loop/onPaint every tick). The
+/// instance is exposed as `__rs_bot` for probe read-back and the
+/// EventSignal/ignoredRandoms host read (same global the class shape
+/// uses).
+const COMPAT_MAIN: &str = r#"
+import bot from './bot.js';
+const inst = (bot && typeof bot.create === 'function') ? bot.create() : (bot || null);
+globalThis.__rs_bot = inst;
+"#;
+
+/// Compat class wrapper: instantiate the default-export
+/// `LoopingBot`/`TaskBot`/`TreeBot` subclass, then the shared compat
+/// runner. The instance is exposed as `__rs_bot` for probe read-back.
+const COMPAT_CLASS_MAIN: &str = r#"
+import bot from './bot.js';
+const inst = new bot();
+globalThis.__rs_bot = inst;
+"#;
+
+/// The shared compat tick runner (defineBot and class shapes): `onStart`
+/// once (awaited), then `loop()` (awaited). `onPaint` runs on every
+/// posted tick even while `loop` is parked on an Execution wait —
+/// paint is not gated on `loop()` returning. `__rs2b0t_tick_async` is
+/// async so an Execution wait parks the whole runner; `__rs_tick` is
+/// the synchronous entry the thread calls (it returns immediately —
+/// parked or not), and the wait is settled by `__rs2b0t_pump` on later
+/// posted ticks instead of a re-entrant `loop()`. Async errors (a cond
+/// that throws) land on the host handle's `lastError` for the thread
+/// to log.
+const COMPAT_RUNNER: &str = r#"
+globalThis.__rs2b0t_flush_native_events = () => {
+const pending = globalThis.__rs2b0t_pending_native_event_batch;
+globalThis.__rs2b0t_pending_native_event_batch = null;
+if (pending && pending.length) {
+    const dispatch = globalThis.__rs2b0t_dispatch_native_events;
+    if (typeof dispatch === 'function') dispatch(pending);
+}
+};
+globalThis.__rs_tick = (n) => {
+if (!inst) return;
+globalThis.__rs2b0t_tick_async(n).catch((e) => {
+    globalThis.__rs2b0t_host.lastError = String((e && e.message) || e);
+    globalThis.__rs2b0t_host.loopInFlight = false;
+});
+};
+globalThis.__rs2b0t_tick_async = async (n) => {
+const h = globalThis.__rs2b0t_host;
+h.tick = n;
+const fire = globalThis.__rs2b0t_fire_tick_listeners;
+if (typeof fire === 'function') fire();
+if (!globalThis.__rs2b0t_started) {
+    globalThis.__rs2b0t_started = true;
+    // Same single-flight as loop(): a pending onStart must not let a
+    // later tick enter loop(). Listeners/chat/onPaint still run.
+    h.loopInFlight = true;
+    try {
+        if (typeof inst.onStart === 'function') { await inst.onStart(); }
+    } finally {
+        h.loopInFlight = false;
+    }
+}
+// Native Rust selects/deduplicates events; deliver them only after
+// onStart has installed subscriptions.
+globalThis.__rs2b0t_flush_native_events();
+
+// Single-flight: a never-resolving loop() must not re-enter. Tick
+// listeners, chat, and onPaint still run.
+if (h.loopInFlight) {
+    await Promise.resolve();
+    globalThis.__rs2b0t_call_on_paint(inst);
+    return;
+}
+h.loopInFlight = true;
+const loopP = (typeof inst.loop === 'function') ? inst.loop() : Promise.resolve();
+await Promise.resolve();
+globalThis.__rs2b0t_call_on_paint(inst);
+try {
+    await loopP;
+    h.interact = h.interact || [];
+    h.interact.push({ op: 'loop-settled' });
+} finally {
+    h.loopInFlight = false;
+}
+};
+"#;
+
+/// Materialise the decoded FlatBuffer snapshot as the JS object the
+/// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
+/// posted object. A post is a delta: `tick` is always carried, other
+/// fields only when they changed — so an omitted vector must NOT clear
+/// the previous JS rows. Only the fields the buffer carries are
+/// overwritten; the first post (keyframe on Start / isolate spawn)
+/// builds the object and fail-closes the fields the keyframe also
+/// lacks (absent `here`, empty rows, false flags), exactly like the
+/// old JSON blob. The object is built on the isolate thread directly
+/// from the buffer (v8 object construction — not `JSON.parse`): a wall
+/// of 50+ isolates never parses a JSON document per tick.
+fn materialize_snapshot(
+    runtime: &mut Runtime,
+    snap: &crate::isolate_fb::SnapshotReader<'_>,
+    host_hold: bool,
+) -> Result<(), String> {
+    let context = runtime.deno_runtime().main_context();
+    let mut scope = runtime.deno_runtime().handle_scope();
+    let global = context.open(&mut scope).global(&mut scope);
+    let host_key = js_string(&mut scope, "__rs2b0t_host")?;
+    let host = global
+        .get(&mut scope, host_key)
+        .ok_or_else(|| "no __rs2b0t_host global".to_string())?
+        .to_object(&mut scope)
+        .ok_or_else(|| "__rs2b0t_host is not an object".to_string())?;
+
+    let snap_key = js_string(&mut scope, "snapshot")?;
+    let existing = host.get(&mut scope, snap_key);
+    let had = existing.is_some_and(|v| v.is_object());
+    let obj = if had {
+        existing
+            .expect("checked above")
+            .to_object(&mut scope)
+            .ok_or_else(|| "snapshot is not an object".to_string())?
+    } else {
+        v8::Object::new(&mut scope)
+    };
+    // The fail-closed defaults a keyframe's absent fields materialise
+    // to (the same values the shim's `snap()` reads with no snapshot).
+    let empty_rows: v8::Local<v8::Value> = v8::Array::new(&mut scope, 0).into();
+    let none: v8::Local<v8::Value> = v8::null(&mut scope).into();
+
+    // `tick` is always carried. A field the buffer carries overwrites
+    // the object; a field a delta omits keeps its last value. On the
+    // keyframe (`had` is false) an absent field fail-closes to the
+    // same value the shim's `snap()` reads without a snapshot.
+    let tick = num(&mut scope, snap.tick() as f64);
+    set(&mut scope, obj, "tick", tick)?;
+    let falsy: v8::Local<v8::Value> = v8::Boolean::new(&mut scope, false).into();
+    if snap.has_here() {
+        let here = match snap.here() {
+            Some(tile) => tile_object(&mut scope, &tile)?,
+            None => v8::null(&mut scope).into(),
+        };
+        set(&mut scope, obj, "here", here)?;
+        // The reader adapter's `worldTile` reads the host handle
+        // directly (not the snapshot blob): mirror `here` there.
+        set(&mut scope, host, "tile", here)?;
+    } else if !had {
+        set(&mut scope, obj, "here", none)?;
+    }
+    // The reader adapter's `inventorySize` reads the host handle too:
+    // mirror the inv tab slot count (0 while the inv tab is
+    // tutorial-locked — the gate an onStart waits on).
+    if snap.has_inv_size() {
+        let inv_size = num(&mut scope, snap.inv_size() as f64);
+        set(&mut scope, host, "invSize", inv_size)?;
+        set(&mut scope, obj, "inv_size", inv_size)?;
+    }
+    if snap.has_ingame() {
+        let ingame = v8::Boolean::new(&mut scope, snap.ingame());
+        set(&mut scope, obj, "ingame", ingame.into())?;
+    } else if !had {
+        set(&mut scope, obj, "ingame", falsy)?;
+    }
+    if snap.has_inv() {
+        let inv = row_array(&mut scope, &snap.inv())?;
+        set(&mut scope, obj, "inv", inv)?;
+    } else if !had {
+        set(&mut scope, obj, "inv", empty_rows)?;
+    }
+    if snap.has_stats() {
+        let stats = stat_array(&mut scope, &snap.stats())?;
+        set(&mut scope, obj, "stats", stats)?;
+    } else if !had {
+        set(&mut scope, obj, "stats", empty_rows)?;
+    }
+    if snap.has_booths() {
+        let booths = tile_array(&mut scope, &snap.booths())?;
+        set(&mut scope, obj, "booths", booths)?;
+    } else if !had {
+        set(&mut scope, obj, "booths", empty_rows)?;
+    }
+    if snap.has_nearest_booth() {
+        let nb = nearest_booth_object(&mut scope, &snap.nearest_booth().expect("has flag"))?;
+        set(&mut scope, obj, "nearest_booth", nb)?;
+    } else if !had {
+        set(&mut scope, obj, "nearest_booth", none)?;
+    }
+    if snap.has_banks() {
+        let banks = bank_stand_array(&mut scope, &snap.banks())?;
+        set(&mut scope, obj, "banks", banks)?;
+    } else if !had {
+        set(&mut scope, obj, "banks", empty_rows)?;
+    }
+    if snap.has_bank() {
+        let bank = row_array(&mut scope, &snap.bank())?;
+        set(&mut scope, obj, "bank", bank)?;
+    } else if !had {
+        set(&mut scope, obj, "bank", empty_rows)?;
+    }
+    if snap.has_bank_side() {
+        let bank_side = row_array(&mut scope, &snap.bank_side())?;
+        set(&mut scope, obj, "bank_side", bank_side)?;
+    } else if !had {
+        set(&mut scope, obj, "bank_side", empty_rows)?;
+    }
+    if snap.has_bank_open() {
+        let bank_open = v8::Boolean::new(&mut scope, snap.bank_open());
+        set(&mut scope, obj, "bank_open", bank_open.into())?;
+    } else if !had {
+        set(&mut scope, obj, "bank_open", falsy)?;
+    }
+    if snap.has_bank_loaded() {
+        let bank_loaded = v8::Boolean::new(&mut scope, snap.bank_loaded());
+        set(&mut scope, obj, "bank_loaded", bank_loaded.into())?;
+    } else if !had {
+        set(&mut scope, obj, "bank_loaded", falsy)?;
+    }
+    if snap.has_bank_generation() {
+        let bank_generation = num(&mut scope, snap.bank_generation() as f64);
+        set(&mut scope, obj, "bank_generation", bank_generation)?;
+    } else if !had {
+        let bank_generation = num(&mut scope, 0.0);
+        set(&mut scope, obj, "bank_generation", bank_generation)?;
+    }
+    if snap.has_count_dialog_open() {
+        let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
+        set(
+            &mut scope,
+            obj,
+            "count_dialog_open",
+            count_dialog_open.into(),
+        )?;
+    } else if !had {
+        set(&mut scope, obj, "count_dialog_open", falsy)?;
+    }
+    if snap.has_withdraw_x_result_seq() {
+        let seq = num(&mut scope, snap.withdraw_x_result_seq() as f64);
+        set(&mut scope, obj, "withdraw_x_result_seq", seq)?;
+    } else if !had {
+        let seq = num(&mut scope, 0.0);
+        set(&mut scope, obj, "withdraw_x_result_seq", seq)?;
+    }
+    if snap.has_withdraw_x_result() {
+        let result = v8::Boolean::new(&mut scope, snap.withdraw_x_result());
+        set(&mut scope, obj, "withdraw_x_result", result.into())?;
+    } else if !had {
+        set(&mut scope, obj, "withdraw_x_result", falsy)?;
+    }
+    if snap.has_withdraw_load_result_seq() {
+        let seq = num(&mut scope, snap.withdraw_load_result_seq() as f64);
+        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
+    } else if !had {
+        let seq = num(&mut scope, 0.0);
+        set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
+    }
+    if snap.has_withdraw_load_result() {
+        let result = v8::Boolean::new(&mut scope, snap.withdraw_load_result());
+        set(&mut scope, obj, "withdraw_load_result", result.into())?;
+    } else if !had {
+        set(&mut scope, obj, "withdraw_load_result", falsy)?;
+    }
+    if snap.has_bank_op_result_seq() {
+        let seq = num(&mut scope, snap.bank_op_result_seq() as f64);
+        set(&mut scope, obj, "bank_op_result_seq", seq)?;
+    } else if !had {
+        let seq = num(&mut scope, 0.0);
+        set(&mut scope, obj, "bank_op_result_seq", seq)?;
+    }
+    if snap.has_bank_op_result() {
+        let result = v8::Boolean::new(&mut scope, snap.bank_op_result());
+        set(&mut scope, obj, "bank_op_result", result.into())?;
+    } else if !had {
+        set(&mut scope, obj, "bank_op_result", falsy)?;
+    }
+    if snap.has_bank_note_on() {
+        let bank_note_on = num(&mut scope, snap.bank_note_on() as f64);
+        set(&mut scope, obj, "bank_note_on", bank_note_on)?;
+    } else if !had {
+        let bank_note_on = num(&mut scope, -1.0);
+        set(&mut scope, obj, "bank_note_on", bank_note_on)?;
+    }
+    if snap.has_bank_note_off() {
+        let bank_note_off = num(&mut scope, snap.bank_note_off() as f64);
+        set(&mut scope, obj, "bank_note_off", bank_note_off)?;
+    } else if !had {
+        let bank_note_off = num(&mut scope, -1.0);
+        set(&mut scope, obj, "bank_note_off", bank_note_off)?;
+    }
+    if snap.has_scene_state() {
+        let scene_state = num(&mut scope, snap.scene_state() as f64);
+        set(&mut scope, obj, "scene_state", scene_state)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "scene_state", zero)?;
+    }
+    if snap.has_weight() {
+        let weight = num(&mut scope, snap.weight() as f64);
+        set(&mut scope, obj, "weight", weight)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "weight", zero)?;
+    }
+    if snap.has_camera_yaw() {
+        let camera_yaw = num(&mut scope, snap.camera_yaw() as f64);
+        set(&mut scope, obj, "camera_yaw", camera_yaw)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "camera_yaw", zero)?;
+    }
+    if snap.has_camera_pitch() {
+        let camera_pitch = num(&mut scope, snap.camera_pitch() as f64);
+        set(&mut scope, obj, "camera_pitch", camera_pitch)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "camera_pitch", zero)?;
+    }
+    if snap.has_teleports_enabled() {
+        let teleports_enabled = v8::Boolean::new(&mut scope, snap.teleports_enabled());
+        set(
+            &mut scope,
+            obj,
+            "teleports_enabled",
+            teleports_enabled.into(),
+        )?;
+    } else if !had {
+        set(&mut scope, obj, "teleports_enabled", falsy)?;
+    }
+    if snap.has_self_slot() {
+        let self_slot = num(&mut scope, snap.self_slot() as f64);
+        set(&mut scope, obj, "self_slot", self_slot)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "self_slot", zero)?;
+    }
+    if snap.has_trade_offer_open() {
+        let trade_offer_open = v8::Boolean::new(&mut scope, snap.trade_offer_open());
+        set(&mut scope, obj, "trade_offer_open", trade_offer_open.into())?;
+    } else if !had {
+        set(&mut scope, obj, "trade_offer_open", falsy)?;
+    }
+    if snap.has_trade_confirm_open() {
+        let trade_confirm_open = v8::Boolean::new(&mut scope, snap.trade_confirm_open());
+        set(
+            &mut scope,
+            obj,
+            "trade_confirm_open",
+            trade_confirm_open.into(),
+        )?;
+    } else if !had {
+        set(&mut scope, obj, "trade_confirm_open", falsy)?;
+    }
+    if snap.has_trade_partner() {
+        match snap.trade_partner() {
+            Some(name) => {
+                let partner = js_string(&mut scope, name)?;
+                set(&mut scope, obj, "trade_partner", partner)?;
+            }
+            None => {
+                let none = v8::null(&mut scope);
+                set(&mut scope, obj, "trade_partner", none.into())?;
+            }
+        }
+    } else if !had {
+        let none = v8::null(&mut scope);
+        set(&mut scope, obj, "trade_partner", none.into())?;
+    }
+    if snap.has_trade_mine() {
+        let trade_mine = row_array(&mut scope, &snap.trade_mine())?;
+        set(&mut scope, obj, "trade_mine", trade_mine)?;
+    } else if !had {
+        set(&mut scope, obj, "trade_mine", empty_rows)?;
+    }
+    if snap.has_trade_theirs() {
+        let trade_theirs = row_array(&mut scope, &snap.trade_theirs())?;
+        set(&mut scope, obj, "trade_theirs", trade_theirs)?;
+    } else if !had {
+        set(&mut scope, obj, "trade_theirs", empty_rows)?;
+    }
+    if snap.has_trade_side() {
+        let trade_side = row_array(&mut scope, &snap.trade_side())?;
+        set(&mut scope, obj, "trade_side", trade_side)?;
+    } else if !had {
+        set(&mut scope, obj, "trade_side", empty_rows)?;
+    }
+    if snap.has_trade_accept_id() {
+        let trade_accept_id = num(&mut scope, snap.trade_accept_id() as f64);
+        set(&mut scope, obj, "trade_accept_id", trade_accept_id)?;
+    } else if !had {
+        let trade_accept_id = num(&mut scope, -1.0);
+        set(&mut scope, obj, "trade_accept_id", trade_accept_id)?;
+    }
+    if snap.has_trade_decline_id() {
+        let trade_decline_id = num(&mut scope, snap.trade_decline_id() as f64);
+        set(&mut scope, obj, "trade_decline_id", trade_decline_id)?;
+    } else if !had {
+        let trade_decline_id = num(&mut scope, -1.0);
+        set(&mut scope, obj, "trade_decline_id", trade_decline_id)?;
+    }
+    if snap.has_shop_open() {
+        let shop_open = v8::Boolean::new(&mut scope, snap.shop_open());
+        set(&mut scope, obj, "shop_open", shop_open.into())?;
+    } else if !had {
+        set(&mut scope, obj, "shop_open", falsy)?;
+    }
+    if snap.has_shop_stock() {
+        let shop_stock = row_array(&mut scope, &snap.shop_stock())?;
+        set(&mut scope, obj, "shop_stock", shop_stock)?;
+    } else if !had {
+        set(&mut scope, obj, "shop_stock", empty_rows)?;
+    }
+    if snap.has_shop_player_available() {
+        let shop_player = if snap.shop_player_available() {
+            row_array(&mut scope, &snap.shop_player())?
+        } else {
+            empty_rows
+        };
+        set(&mut scope, obj, "shop_player", shop_player)?;
+    } else if !had {
+        set(&mut scope, obj, "shop_player", empty_rows)?;
+    }
+    if snap.has_main_make_available() {
+        let available = v8::Boolean::new(&mut scope, snap.main_make_available());
+        set(&mut scope, obj, "main_make_available", available.into())?;
+        let main_make = if snap.main_make_available() {
+            row_array(&mut scope, &snap.main_make())?
+        } else {
+            empty_rows
+        };
+        set(&mut scope, obj, "main_make_items", main_make)?;
+    } else if !had {
+        set(&mut scope, obj, "main_make_available", falsy)?;
+        set(&mut scope, obj, "main_make_items", empty_rows)?;
+    }
+    if snap.has_reach() {
+        let reach = reach_object(&mut scope, snap.reach())?;
+        set(&mut scope, obj, "reach", reach)?;
+    } else if !had {
+        let reach = unavailable_reach(&mut scope)?;
+        set(&mut scope, obj, "reach", reach)?;
+    }
+    if snap.has_attacked_by_player() {
+        let attacked = v8::Boolean::new(&mut scope, snap.attacked_by_player());
+        set(&mut scope, obj, "attacked_by_player", attacked.into())?;
+    } else if !had {
+        set(&mut scope, obj, "attacked_by_player", falsy)?;
+    }
+    if snap.has_widgets() {
+        let widgets = widget_text_array(&mut scope, &snap.widgets())?;
+        set(&mut scope, obj, "widgets", widgets)?;
+    } else if !had {
+        set(&mut scope, obj, "widgets", empty_rows)?;
+    }
+    if snap.has_quest_statuses_update() {
+        if snap.quest_statuses_available() {
+            let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+            set(&mut scope, obj, "quest_statuses", quests)?;
+        } else {
+            set(&mut scope, obj, "quest_statuses", none)?;
+        }
+    } else if snap.has_quest_statuses() {
+        // Accept buffers from the additive vector-only draft as available.
+        let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+        set(&mut scope, obj, "quest_statuses", quests)?;
+    } else if !had {
+        set(&mut scope, obj, "quest_statuses", none)?;
+    }
+    if snap.has_npc_boxes_update() {
+        if snap.npc_boxes_available() {
+            let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+            set(&mut scope, obj, "npc_boxes", boxes)?;
+        } else {
+            set(&mut scope, obj, "npc_boxes", none)?;
+        }
+    } else if snap.has_npc_boxes() {
+        // Accept buffers from an additive vector-only draft as available.
+        let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+        set(&mut scope, obj, "npc_boxes", boxes)?;
+    } else if !had {
+        set(&mut scope, obj, "npc_boxes", none)?;
+    }
+    if snap.has_self_chat() {
+        let self_chat = match snap.self_chat() {
+            Some("") | None => v8::null(&mut scope).into(),
+            Some(text) => js_string(&mut scope, text)?,
+        };
+        set(&mut scope, obj, "self_chat", self_chat)?;
+    } else if !had {
+        set(&mut scope, obj, "self_chat", none)?;
+    }
+    if snap.has_hint_tile() {
+        let hint = match snap.hint_tile() {
+            Some((x, z)) => {
+                let tile = v8::Object::new(&mut scope);
+                let x = num(&mut scope, x as f64);
+                set(&mut scope, tile, "x", x)?;
+                let z = num(&mut scope, z as f64);
+                set(&mut scope, tile, "z", z)?;
+                tile.into()
+            }
+            None => v8::null(&mut scope).into(),
+        };
+        set(&mut scope, obj, "hint_tile", hint)?;
+    } else if !had {
+        set(&mut scope, obj, "hint_tile", none)?;
+    }
+    if snap.has_retaliate_controls() {
+        let controls = match snap.retaliate_controls() {
+            Some((on, off)) => {
+                let controls = v8::Object::new(&mut scope);
+                let on = num(&mut scope, on as f64);
+                set(&mut scope, controls, "onComId", on)?;
+                let off = num(&mut scope, off as f64);
+                set(&mut scope, controls, "offComId", off)?;
+                controls.into()
+            }
+            None => v8::null(&mut scope).into(),
+        };
+        set(&mut scope, obj, "retaliate_controls", controls)?;
+    } else if !had {
+        set(&mut scope, obj, "retaliate_controls", none)?;
+    }
+    if snap.has_hold() {
+        let hold = v8::Boolean::new(&mut scope, snap.hold());
+        set(&mut scope, obj, "hold", hold.into())?;
+    } else if !had {
+        set(&mut scope, obj, "hold", falsy)?;
+    }
+    // Mirror the host-owned gate onto `__rs2b0t_host.hold` every post
+    // (hold is re-posted every tick — SEC-004). READ_ONLY so JS cannot
+    // overwrite the posted value; tick_loop also gates on `host_hold`.
+    let hold_host = v8::Boolean::new(&mut scope, host_hold);
+    set_readonly(&mut scope, host, "hold", hold_host.into())?;
+    if snap.has_canvas_width() && snap.canvas_width() > 0 && snap.canvas_height() > 0 {
+        let w = snap.canvas_width();
+        let h = snap.canvas_height();
+        let rect = v8::Object::new(&mut scope);
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, rect, "left", zero)?;
+        set(&mut scope, rect, "top", zero)?;
+        set(&mut scope, rect, "x", zero)?;
+        set(&mut scope, rect, "y", zero)?;
+        let width = num(&mut scope, w as f64);
+        let height = num(&mut scope, h as f64);
+        set(&mut scope, rect, "width", width)?;
+        set(&mut scope, rect, "height", height)?;
+        set(&mut scope, rect, "right", width)?;
+        set(&mut scope, rect, "bottom", height)?;
+        set_readonly(&mut scope, host, "canvasRect", rect.into())?;
+    } else {
+        delete_key(&mut scope, host, "canvasRect")?;
+    }
+    if snap.has_ours() {
+        let ours = v8::Boolean::new(&mut scope, snap.ours());
+        set(&mut scope, obj, "ours", ours.into())?;
+        set_readonly(&mut scope, host, "ours", ours.into())?;
+    } else if !had {
+        set(&mut scope, obj, "ours", falsy)?;
+        set_readonly(&mut scope, host, "ours", falsy)?;
+    }
+    if snap.has_npcs() {
+        let npcs = scene_entity_array(&mut scope, &snap.npcs())?;
+        set(&mut scope, obj, "npcs", npcs)?;
+    } else if !had {
+        set(&mut scope, obj, "npcs", empty_rows)?;
+    }
+    if snap.has_locs() {
+        let locs = scene_entity_array(&mut scope, &snap.locs())?;
+        set(&mut scope, obj, "locs", locs)?;
+    } else if !had {
+        set(&mut scope, obj, "locs", empty_rows)?;
+    }
+    if snap.has_players() {
+        let players = scene_entity_array(&mut scope, &snap.players())?;
+        set(&mut scope, obj, "players", players)?;
+    } else if !had {
+        set(&mut scope, obj, "players", empty_rows)?;
+    }
+    if snap.has_ground() {
+        let ground = scene_entity_array(&mut scope, &snap.ground())?;
+        set(&mut scope, obj, "ground", ground)?;
+    } else if !had {
+        set(&mut scope, obj, "ground", empty_rows)?;
+    }
+    if snap.has_equipment() {
+        let equipment = row_array(&mut scope, &snap.equipment())?;
+        set(&mut scope, obj, "equipment", equipment)?;
+    } else if !had {
+        set(&mut scope, obj, "equipment", empty_rows)?;
+    }
+    if snap.has_chat_open() {
+        let chat_open = v8::Boolean::new(&mut scope, snap.chat_open());
+        set(&mut scope, obj, "chat_open", chat_open.into())?;
+    } else if !had {
+        set(&mut scope, obj, "chat_open", falsy)?;
+    }
+    if snap.has_chat_continue() {
+        let chat_continue = v8::Boolean::new(&mut scope, snap.chat_continue());
+        set(&mut scope, obj, "chat_continue", chat_continue.into())?;
+    } else if !had {
+        set(&mut scope, obj, "chat_continue", falsy)?;
+    }
+    if snap.has_chat_text() {
+        let chat_text = match snap.chat_text() {
+            Some("") | None => v8::null(&mut scope).into(),
+            Some(s) => js_string(&mut scope, s)?,
+        };
+        set(&mut scope, obj, "chat_text", chat_text)?;
+    } else if !had {
+        set(&mut scope, obj, "chat_text", none)?;
+    }
+    if snap.has_chat_options() {
+        let chat_options = chat_option_array(&mut scope, &snap.chat_options())?;
+        set(&mut scope, obj, "chat_options", chat_options)?;
+    } else if !had {
+        set(&mut scope, obj, "chat_options", empty_rows)?;
+    }
+    if snap.has_side_tab() {
+        let side_tab = num(&mut scope, snap.side_tab() as f64);
+        set(&mut scope, obj, "side_tab", side_tab)?;
+    } else if !had {
+        let neg = num(&mut scope, -1.0);
+        set(&mut scope, obj, "side_tab", neg)?;
+    }
+    if snap.has_varps() {
+        let varps = varp_array(&mut scope, &snap.varps())?;
+        set(&mut scope, obj, "varps", varps)?;
+    } else if !had {
+        set(&mut scope, obj, "varps", empty_rows)?;
+    }
+    if snap.has_combat_styles() {
+        let combat_styles = combat_style_array(&mut scope, &snap.combat_styles())?;
+        set(&mut scope, obj, "combat_styles", combat_styles)?;
+    } else if !had {
+        set(&mut scope, obj, "combat_styles", empty_rows)?;
+    }
+    if snap.has_run_energy() {
+        let run_energy = num(&mut scope, snap.run_energy() as f64);
+        set(&mut scope, obj, "run_energy", run_energy)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "run_energy", zero)?;
+    }
+    if snap.has_run_enabled() {
+        let run_enabled = v8::Boolean::new(&mut scope, snap.run_enabled());
+        set(&mut scope, obj, "run_enabled", run_enabled.into())?;
+    } else if !had {
+        set(&mut scope, obj, "run_enabled", falsy)?;
+    }
+    if snap.has_retaliate_enabled() {
+        let retaliate_enabled = v8::Boolean::new(&mut scope, snap.retaliate_enabled());
+        set(
+            &mut scope,
+            obj,
+            "retaliate_enabled",
+            retaliate_enabled.into(),
+        )?;
+    } else if !had {
+        set(&mut scope, obj, "retaliate_enabled", falsy)?;
+    }
+    if snap.has_my_name() {
+        let my_name = match snap.my_name() {
+            Some("") | None => v8::null(&mut scope).into(),
+            Some(s) => js_string(&mut scope, s)?,
+        };
+        set(&mut scope, obj, "my_name", my_name)?;
+    } else if !had {
+        set(&mut scope, obj, "my_name", none)?;
+    }
+    if snap.has_in_combat() {
+        let in_combat = v8::Boolean::new(&mut scope, snap.in_combat());
+        set(&mut scope, obj, "in_combat", in_combat.into())?;
+    } else if !had {
+        set(&mut scope, obj, "in_combat", falsy)?;
+    }
+    if snap.has_animating() {
+        let animating = v8::Boolean::new(&mut scope, snap.animating());
+        set(&mut scope, obj, "animating", animating.into())?;
+    } else if !had {
+        set(&mut scope, obj, "animating", falsy)?;
+    }
+    if snap.has_main_modal_id() {
+        let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
+        set(&mut scope, obj, "main_modal_id", main_modal_id)?;
+    } else if !had {
+        let neg = num(&mut scope, -1.0);
+        set(&mut scope, obj, "main_modal_id", neg)?;
+    }
+    if snap.has_chat_modal_id() {
+        let chat_modal_id = num(&mut scope, snap.chat_modal_id() as f64);
+        set(&mut scope, obj, "chat_modal_id", chat_modal_id)?;
+    } else if !had {
+        let neg = num(&mut scope, -1.0);
+        set(&mut scope, obj, "chat_modal_id", neg)?;
+    }
+    if snap.has_make_products() {
+        let make_products = make_product_array(&mut scope, &snap.make_products())?;
+        set(&mut scope, obj, "make_products", make_products)?;
+    } else if !had {
+        set(&mut scope, obj, "make_products", empty_rows)?;
+    }
+    if snap.has_side_tab_ifaces() {
+        let ifaces = side_tab_iface_array(&mut scope, &snap.side_tab_ifaces())?;
+        set(&mut scope, obj, "side_tab_ifaces", ifaces)?;
+    } else if !had {
+        set(&mut scope, obj, "side_tab_ifaces", empty_rows)?;
+    }
+    if snap.has_spell_buttons() {
+        let spell_buttons = combat_style_array(&mut scope, &snap.spell_buttons())?;
+        set(&mut scope, obj, "spell_buttons", spell_buttons)?;
+    } else if !had {
+        set(&mut scope, obj, "spell_buttons", empty_rows)?;
+    }
+    if snap.has_chat_lines() {
+        let chat_lines = chat_line_array(&mut scope, &snap.chat_lines())?;
+        set(&mut scope, obj, "chat_lines", chat_lines)?;
+    } else if !had {
+        set(&mut scope, obj, "chat_lines", empty_rows)?;
+    }
+    let snapshot = obj.into();
+    set(&mut scope, host, "snapshot", snapshot)
+}
+
+fn materialize_settings_bag(runtime: &mut Runtime, json: &str) -> Result<(), String> {
+    runtime
+        .eval::<()>(format!("globalThis.__rs2b0t_host.settingsBag = {json};"))
+        .map_err(|e| format!("settings bag: {e}"))
+}
+
+fn native_event_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    ev: &crate::events::NativeEvent,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let wrapped = v8::Object::new(scope);
+    let type_name = js_string(scope, ev.type_name())?;
+    set(scope, wrapped, "type", type_name)?;
+    let payload = v8::Object::new(scope);
+    match ev {
+        crate::events::NativeEvent::ChatMessage {
+            type_,
+            username,
+            text,
+        } => {
+            let type_value = num(scope, *type_ as f64);
+            set(scope, payload, "type", type_value)?;
+            match username {
+                Some(name) => {
+                    let value = js_string(scope, name)?;
+                    set(scope, payload, "username", value)?;
+                }
+                None => {
+                    let value = v8::undefined(scope).into();
+                    set(scope, payload, "username", value)?;
+                }
+            }
+            let text_value = js_string(scope, text)?;
+            set(scope, payload, "text", text_value)?;
+        }
+        crate::events::NativeEvent::SkillXp {
+            skill,
+            name,
+            xp,
+            delta,
+        } => {
+            let skill_v = num(scope, *skill as f64);
+            set(scope, payload, "skill", skill_v)?;
+            let name_v = js_string(scope, name)?;
+            set(scope, payload, "name", name_v)?;
+            let xp_v = num(scope, *xp as f64);
+            set(scope, payload, "xp", xp_v)?;
+            let delta_v = num(scope, *delta as f64);
+            set(scope, payload, "delta", delta_v)?;
+        }
+        crate::events::NativeEvent::InventoryChanged {
+            slot,
+            id,
+            name,
+            count,
+            previous_id,
+            previous_count,
+        } => {
+            let slot_v = num(scope, *slot as f64);
+            set(scope, payload, "slot", slot_v)?;
+            let id_v = num(scope, *id as f64);
+            set(scope, payload, "id", id_v)?;
+            match name {
+                Some(n) => {
+                    let name_v = js_string(scope, n)?;
+                    set(scope, payload, "name", name_v)?;
+                }
+                None => {
+                    let none = v8::null(scope).into();
+                    set(scope, payload, "name", none)?;
+                }
+            }
+            let count_v = num(scope, *count as f64);
+            set(scope, payload, "count", count_v)?;
+            let prev_id = num(scope, *previous_id as f64);
+            set(scope, payload, "previousId", prev_id)?;
+            let prev_count = num(scope, *previous_count as f64);
+            set(scope, payload, "previousCount", prev_count)?;
+        }
+    }
+    set(scope, wrapped, "payload", payload.into())?;
+    Ok(wrapped.into())
+}
+
+fn dispatch_native_events(
+    runtime: &mut Runtime,
+    events: &[crate::events::NativeEvent],
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    {
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let arr = v8::Array::new(&mut scope, events.len() as i32);
+        for (i, ev) in events.iter().enumerate() {
+            let obj = native_event_object(&mut scope, ev)?;
+            arr.set_index(&mut scope, i as u32, obj)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        let key = js_string(&mut scope, "__rs2b0t_native_event_batch")?;
+        global
+            .set(&mut scope, key, arr.into())
+            .ok_or_else(|| "v8 set batch failed".to_string())?;
+    }
+    runtime
+        .eval::<()>(
+            "(() => { const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; const q = globalThis.__rs2b0t_pending_native_event_batch || (globalThis.__rs2b0t_pending_native_event_batch = []); q.push(...b); })()",
+        )
+        .map_err(|e| format!("{e}"))
+}
+
+fn deliver_native_events(
+    runtime: &mut Runtime,
+    events: &[crate::events::NativeEvent],
+    out: &Sender<ThreadMsg>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    if let Err(e) = dispatch_native_events(runtime, events) {
+        let _ = out.send(ThreadMsg::Log(format!("native events: {e}")));
+    }
+}
+
+fn js_string<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    s: &str,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    v8::String::new(scope, s)
+        .map(|v| v.into())
+        .ok_or_else(|| "v8 string alloc failed".to_string())
+}
+
+fn num<'s>(scope: &mut v8::HandleScope<'s>, n: f64) -> v8::Local<'s, v8::Value> {
+    v8::Number::new(scope, n).into()
+}
+
+fn set<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    obj: v8::Local<'s, v8::Object>,
+    key: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> Result<(), String> {
+    let key = js_string(scope, key)?;
+    obj.set(scope, key, value)
+        .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
+    Ok(())
+}
+
+fn set_readonly<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    obj: v8::Local<'s, v8::Object>,
+    key: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> Result<(), String> {
+    let name =
+        v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    obj.define_own_property(scope, name.into(), value, v8::PropertyAttribute::READ_ONLY)
+        .ok_or_else(|| format!("v8 define_own_property failed for {key}"))?;
+    Ok(())
+}
+
+fn delete_key<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    obj: v8::Local<'s, v8::Object>,
+    key: &str,
+) -> Result<(), String> {
+    let name =
+        v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    obj.delete(scope, name.into())
+        .ok_or_else(|| format!("v8 object delete failed for {key}"))?;
+    Ok(())
+}
+
+/// One `{id, name, ops, count, noted, cert, component_id, slot}` row from ItemView.
+fn row_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    row: &crate::isolate_fb::RowReader<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    match row.name() {
+        Some(name) => {
+            let name = js_string(scope, name)?;
+            set(scope, o, "name", name)?;
+        }
+        None => {
+            let none = v8::null(scope);
+            set(scope, o, "name", none.into())?;
+        }
+    }
+    let count = num(scope, row.count() as f64);
+    set(scope, o, "count", count)?;
+    let id = num(scope, row.id() as f64);
+    set(scope, o, "id", id)?;
+    let ops = v8::Array::new(scope, row.ops().len() as i32);
+    for (i, op) in row.ops().iter().enumerate() {
+        let a = js_string(scope, op)?;
+        ops.set_index(scope, i as u32, a)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    set(scope, o, "ops", ops.into())?;
+    let noted = v8::Boolean::new(scope, row.noted());
+    set(scope, o, "noted", noted.into())?;
+    let cert = num(scope, row.cert() as f64);
+    set(scope, o, "cert", cert)?;
+    if row.has_component_id() {
+        let component_id = num(scope, row.component_id() as f64);
+        set(scope, o, "component_id", component_id)?;
+    }
+    if row.has_slot() {
+        let slot = num(scope, row.slot() as f64);
+        set(scope, o, "slot", slot)?;
+    }
+    Ok(o.into())
+}
+
+fn row_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::RowReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let row = row_object(scope, row)?;
+        arr.set_index(scope, i as u32, row)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn stat_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    stats: &[crate::isolate_fb::StatReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, stats.len() as i32);
+    for (i, st) in stats.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let index = num(scope, st.index() as f64);
+        set(scope, o, "index", index)?;
+        let name = js_string(scope, st.name())?;
+        set(scope, o, "name", name)?;
+        let xp = num(scope, st.xp() as f64);
+        set(scope, o, "xp", xp)?;
+        let base = num(scope, st.base() as f64);
+        set(scope, o, "base", base)?;
+        let effective = num(scope, st.effective() as f64);
+        set(scope, o, "effective", effective)?;
+        let obj = o.into();
+        arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn tile_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    t: &crate::isolate_fb::TileReader<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    tile_values_object(scope, t.x(), t.z(), t.level())
+}
+
+fn tile_values_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    x_value: i32,
+    z_value: i32,
+    level_value: i32,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let x = num(scope, x_value as f64);
+    set(scope, o, "x", x)?;
+    let z = num(scope, z_value as f64);
+    set(scope, o, "z", z)?;
+    let level = num(scope, level_value as f64);
+    set(scope, o, "level", level)?;
+    Ok(o.into())
+}
+
+fn u32_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    words: &[u32],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, words.len() as i32);
+    for (i, word) in words.iter().enumerate() {
+        let n = num(scope, f64::from(*word));
+        arr.set_index(scope, i as u32, n)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn u8_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    bytes: &[u8],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, bytes.len() as i32);
+    for (i, byte) in bytes.iter().enumerate() {
+        let n = num(scope, f64::from(*byte));
+        arr.set_index(scope, i as u32, n)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn u16_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    values: &[u16],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, values.len() as i32);
+    for (i, value) in values.iter().enumerate() {
+        let n = num(scope, f64::from(*value));
+        arr.set_index(scope, i as u32, n)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn unavailable_reach<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let falsy: v8::Local<v8::Value> = v8::Boolean::new(scope, false).into();
+    set(scope, o, "available", falsy)?;
+    let zero = num(scope, 0.0);
+    set(scope, o, "base_x", zero)?;
+    set(scope, o, "base_z", zero)?;
+    set(scope, o, "level", zero)?;
+    set(scope, o, "width", zero)?;
+    set(scope, o, "height", zero)?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "walkable", empty.into())?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "reachable", empty.into())?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "reachable_adj", empty.into())?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "exact_rank", empty.into())?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "adjacent_rank", empty.into())?;
+    let empty = v8::Array::new(scope, 0);
+    set(scope, o, "step", empty.into())?;
+    Ok(o.into())
+}
+
+fn reach_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    reach: Option<crate::isolate_fb::ReachReader<'_>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(r) = reach else {
+        return unavailable_reach(scope);
+    };
+    let o = v8::Object::new(scope);
+    let available = v8::Boolean::new(scope, r.available());
+    set(scope, o, "available", available.into())?;
+    let base_x = num(scope, r.base_x() as f64);
+    set(scope, o, "base_x", base_x)?;
+    let base_z = num(scope, r.base_z() as f64);
+    set(scope, o, "base_z", base_z)?;
+    let level = num(scope, r.level() as f64);
+    set(scope, o, "level", level)?;
+    let width = num(scope, r.width() as f64);
+    set(scope, o, "width", width)?;
+    let height = num(scope, r.height() as f64);
+    set(scope, o, "height", height)?;
+    let walkable = u32_array(scope, &r.walkable())?;
+    set(scope, o, "walkable", walkable)?;
+    let reachable = u32_array(scope, &r.reachable())?;
+    set(scope, o, "reachable", reachable)?;
+    let reachable_adj = u32_array(scope, &r.reachable_adj())?;
+    set(scope, o, "reachable_adj", reachable_adj)?;
+    let exact_rank = u16_array(scope, &r.exact_rank())?;
+    set(scope, o, "exact_rank", exact_rank)?;
+    let adjacent_rank = u16_array(scope, &r.adjacent_rank())?;
+    set(scope, o, "adjacent_rank", adjacent_rank)?;
+    let step = u8_array(scope, &r.step())?;
+    set(scope, o, "step", step)?;
+    Ok(o.into())
+}
+
+fn nearest_booth_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    nb: &crate::isolate_fb::NearestBoothReader<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let x = num(scope, nb.x() as f64);
+    set(scope, o, "x", x)?;
+    let z = num(scope, nb.z() as f64);
+    set(scope, o, "z", z)?;
+    let level = num(scope, nb.level() as f64);
+    set(scope, o, "level", level)?;
+    let id = num(scope, nb.id() as f64);
+    set(scope, o, "id", id)?;
+    let name = js_string(scope, nb.name())?;
+    set(scope, o, "name", name)?;
+    let op = js_string(scope, nb.op())?;
+    set(scope, o, "op", op)?;
+    Ok(o.into())
+}
+
+fn tile_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tiles: &[crate::isolate_fb::TileReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, tiles.len() as i32);
+    for (i, t) in tiles.iter().enumerate() {
+        let t = tile_object(scope, t)?;
+        arr.set_index(scope, i as u32, t)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn scene_entity_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    ent: &crate::isolate_fb::SceneEntityReader<'_>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let index = num(scope, ent.index() as f64);
+    set(scope, o, "index", index)?;
+    let id = num(scope, ent.id() as f64);
+    set(scope, o, "id", id)?;
+    match ent.name() {
+        Some(name) => {
+            let name = js_string(scope, name)?;
+            set(scope, o, "name", name)?;
+        }
+        None => {
+            let none = v8::null(scope);
+            set(scope, o, "name", none.into())?;
+        }
+    }
+    let x = num(scope, ent.x() as f64);
+    set(scope, o, "x", x)?;
+    let z = num(scope, ent.z() as f64);
+    set(scope, o, "z", z)?;
+    let level = num(scope, ent.level() as f64);
+    set(scope, o, "level", level)?;
+    // ClientAdapter reader.locs() keeps the native flat fields for
+    // existing consumers, while compat Loc consumers read the same
+    // coordinates through the nested `tile` shape.
+    let tile = tile_values_object(scope, ent.x(), ent.z(), ent.level())?;
+    set(scope, o, "tile", tile)?;
+    let distance = num(scope, ent.distance() as f64);
+    set(scope, o, "distance", distance)?;
+    let health = num(scope, ent.health() as f64);
+    set(scope, o, "health", health)?;
+    let max_health = num(scope, ent.max_health() as f64);
+    set(scope, o, "max_health", max_health)?;
+    set(scope, o, "totalHealth", max_health)?;
+    let in_combat = v8::Boolean::new(scope, ent.in_combat());
+    set(scope, o, "in_combat", in_combat.into())?;
+    let animating = v8::Boolean::new(scope, ent.animating());
+    set(scope, o, "animating", animating.into())?;
+    let actions = v8::Array::new(scope, ent.actions().len() as i32);
+    for (i, action) in ent.actions().iter().enumerate() {
+        let a = js_string(scope, action)?;
+        actions
+            .set_index(scope, i as u32, a)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    set(scope, o, "actions", actions.into())?;
+    let reachable = v8::Boolean::new(scope, ent.reachable());
+    set(scope, o, "reachable", reachable.into())?;
+    let reachable_adj = v8::Boolean::new(scope, ent.reachable_adj());
+    set(scope, o, "reachable_adj", reachable_adj.into())?;
+    let combat_level = num(scope, ent.combat_level() as f64);
+    set(scope, o, "combat_level", combat_level)?;
+    let target_kind = num(scope, ent.target_kind() as f64);
+    set(scope, o, "target_kind", target_kind)?;
+    let target_index = num(scope, ent.target_index() as f64);
+    set(scope, o, "target_index", target_index)?;
+    Ok(o.into())
+}
+
+fn scene_entity_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    ents: &[crate::isolate_fb::SceneEntityReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, ents.len() as i32);
+    for (i, ent) in ents.iter().enumerate() {
+        let ent = scene_entity_object(scope, ent)?;
+        arr.set_index(scope, i as u32, ent)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn chat_option_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    opts: &[crate::isolate_fb::ChatOptionReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, opts.len() as i32);
+    for (i, opt) in opts.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let text = js_string(scope, opt.text())?;
+        set(scope, o, "text", text)?;
+        let obj = o.into();
+        arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn make_product_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    products: &[crate::isolate_fb::MakeProductReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, products.len() as i32);
+    for (i, product) in products.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let name = js_string(scope, product.name())?;
+        set(scope, o, "name", name)?;
+        let oid = num(scope, product.object_id() as f64);
+        set(scope, o, "object_id", oid)?;
+        let buttons = v8::Array::new(scope, product.buttons().len() as i32);
+        for (j, btn) in product.buttons().iter().enumerate() {
+            let b = v8::Object::new(scope);
+            let qty = num(scope, btn.qty() as f64);
+            set(scope, b, "qty", qty)?;
+            let com_id = num(scope, btn.com_id() as f64);
+            set(scope, b, "comId", com_id)?;
+            buttons
+                .set_index(scope, j as u32, b.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        set(scope, o, "buttons", buttons.into())?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn varp_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    varps: &[crate::isolate_fb::VarpReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, varps.len() as i32);
+    for (i, v) in varps.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let index = num(scope, v.index() as f64);
+        set(scope, o, "index", index)?;
+        let value = num(scope, v.value() as f64);
+        set(scope, o, "value", value)?;
+        let obj = o.into();
+        arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn combat_style_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    styles: &[crate::isolate_fb::CombatStyleReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, styles.len() as i32);
+    for (i, st) in styles.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let mode = num(scope, st.mode() as f64);
+        set(scope, o, "mode", mode)?;
+        let label = js_string(scope, st.label())?;
+        set(scope, o, "label", label)?;
+        let component_id = num(scope, st.component_id() as f64);
+        set(scope, o, "component_id", component_id)?;
+        let obj = o.into();
+        arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn side_tab_iface_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tabs: &[crate::isolate_fb::SideTabIfaceReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, tabs.len() as i32);
+    for (i, t) in tabs.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let index = num(scope, t.index() as f64);
+        set(scope, o, "index", index)?;
+        let id = num(scope, t.id() as f64);
+        set(scope, o, "id", id)?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn chat_line_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    lines: &[crate::isolate_fb::ChatLineReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, lines.len() as i32);
+    for (i, line) in lines.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let seq = num(scope, line.seq() as f64);
+        set(scope, o, "seq", seq)?;
+        let text = js_string(scope, line.text())?;
+        set(scope, o, "text", text)?;
+        let type_ = num(scope, line.type_() as f64);
+        set(scope, o, "type", type_)?;
+        if let Some(username) = line.username() {
+            let username = js_string(scope, username)?;
+            set(scope, o, "username", username)?;
+        }
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn widget_text_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::WidgetTextReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let component_id = num(scope, row.component_id() as f64);
+        set(scope, o, "component_id", component_id)?;
+        let text = js_string(scope, row.text())?;
+        set(scope, o, "text", text)?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn quest_status_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::QuestStatusReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let name = js_string(scope, row.name())?;
+        set(scope, o, "name", name)?;
+        let status = js_string(scope, row.status())?;
+        set(scope, o, "status", status)?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn npc_box_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::NpcBoxReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let index = num(scope, row.index() as f64);
+        set(scope, o, "index", index)?;
+        let points = row.points();
+        let point_arr = v8::Array::new(scope, points.len() as i32);
+        for (j, (x, y)) in points.into_iter().enumerate() {
+            let point = v8::Object::new(scope);
+            let x = num(scope, x as f64);
+            set(scope, point, "x", x)?;
+            let y = num(scope, y as f64);
+            set(scope, point, "y", y)?;
+            point_arr
+                .set_index(scope, j as u32, point.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        set(scope, o, "points", point_arr.into())?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn bank_stand_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    stands: &[crate::isolate_fb::BankStandReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, stands.len() as i32);
+    for (i, s) in stands.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let name = js_string(scope, s.name())?;
+        set(scope, o, "name", name)?;
+        let x = num(scope, s.x() as f64);
+        set(scope, o, "x", x)?;
+        let z = num(scope, s.z() as f64);
+        set(scope, o, "z", z)?;
+        let level = num(scope, s.level() as f64);
+        set(scope, o, "level", level)?;
+        let kind = js_string(scope, s.kind())?;
+        set(scope, o, "kind", kind)?;
+        let op = num(scope, s.op() as f64);
+        set(scope, o, "op", op)?;
+        match s.choose() {
+            Some(choose) => {
+                let choose = js_string(scope, choose)?;
+                set(scope, o, "choose", choose)?;
+            }
+            None => {
+                let none = v8::null(scope);
+                set(scope, o, "choose", none.into())?;
+            }
+        }
+        let obj = o.into();
+        arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+/// Drain the native recorder and compose it with user Paint.end (if any).
+fn compose_forwarded_paint(
+    runtime: &mut Runtime,
+) -> Result<crate::shim::ScriptPaint, rustyscript::Error> {
+    let user: Option<crate::shim::ScriptPaint> =
+        runtime.eval("globalThis.__rs2b0t_host.paint || null")?;
+    Ok(crate::canvas::compose_paint(user))
+}
+fn forward_paint_if_changed(
+    ipc: &mut crate::isolate_fb::IsolateBuf,
+    out: &Sender<ThreadMsg>,
+    last: &mut Option<crate::shim::ScriptPaint>,
+    frame: crate::shim::ScriptPaint,
+) {
+    if last.as_ref() == Some(&frame) {
+        return;
+    }
+    *last = Some(frame.clone());
+    let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+}
+
+/// Drop an unconsumed one-shot so a later paint cannot return a stale id.
+fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
+    let _ = runtime.eval::<()>(
+        "if (globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.paintClick != null) { globalThis.__rs2b0t_host.paintClick = null; }",
+    );
+}
+
+fn set_paint_click(runtime: &mut Runtime, id: &str) -> Result<(), String> {
+    let json = serde_json::to_string(id).map_err(|e| e.to_string())?;
+    runtime
+        .eval::<()>(&format!("globalThis.__rs2b0t_host.paintClick = {json};"))
+        .map_err(|e| e.to_string())
+}
+
+/// Drain Execution wait enqueue/settle counters. Each increment is a
+/// real lifecycle fact, including settle+repark in the same pump.
+fn take_wait_facts(runtime: &mut Runtime) -> (u32, u32) {
+    let counts: Result<Vec<u32>, rustyscript::Error> = runtime.eval(
+        "(() => { const h = globalThis.__rs2b0t_host || {}; const e = h.waitEnqueues | 0; const s = h.waitSettles | 0; h.waitEnqueues = 0; h.waitSettles = 0; return [e, s]; })()",
+    );
+    match counts.ok().as_deref() {
+        Some([e, s, ..]) => (*e, *s),
+        _ => (0, 0),
+    }
+}
+
+fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, settled: u32) {
+    for _ in 0..enqueued {
+        reqs.push(crate::shim::InteractReq::WaitEnqueued);
+    }
+    for _ in 0..settled {
+        reqs.push(crate::shim::InteractReq::WaitSettled);
+    }
+}
+
+/// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
+fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
+    let value: Result<Option<Vec<i32>>, rustyscript::Error> = runtime.eval(
+        r#"(() => {
+            try {
+                const inst = globalThis.__rs_bot;
+                if (!inst || typeof inst.recoveryAnchor !== 'function') return null;
+                const a = inst.recoveryAnchor();
+                if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+                const x = a.x, z = a.z, level = a.level;
+                if (!Number.isInteger(x) || !Number.isInteger(z) || !Number.isInteger(level)) return null;
+                return [x, z, level];
+            } catch (_) { return null; }
+        })()"#,
+    );
+    match value {
+        Ok(Some(coords)) if coords.len() >= 3 => Some((coords[0], coords[1], coords[2])),
+        _ => None,
+    }
+}
+
+const DRAIN_BOT_LOG: &str = "(() => { const h = globalThis.__rs2b0t_host; const rows = h && h.log; if (!Array.isArray(rows) || rows.length === 0) return []; h.log = []; return rows.map(String); })()";
+
+const INSTALL_ON_STOP: &str = r#"void (globalThis.__rs2b0t_invoke_on_stop = function () {
+  try {
+const inst = globalThis.__rs_bot;
+if (!inst || typeof inst.onStop !== 'function') return null;
+inst.onStop();
+return null;
+  } catch (e) {
+return String((e && (e.message || e.stack)) || e);
+  }
+}, globalThis.__rs2b0t_drain_log = function () {
+  const h = globalThis.__rs2b0t_host;
+  const rows = h && h.log;
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  h.log = [];
+  return rows.map(String);
+}, 0)"#;
+
+fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> bool {
+    let mut st = teardown.lock().unwrap();
+    match st.phase {
+        TeardownPhase::Hook | TeardownPhase::Done => false,
+        TeardownPhase::Running | TeardownPhase::UnwindingTick => {
+            st.phase = TeardownPhase::Hook;
+            st.deadline = Some(Instant::now() + SLOW_TICK);
+            st.interrupt_issued = false;
+            true
+        }
+    }
+}
+
+fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) {
+    let mut st = teardown.lock().unwrap();
+    st.phase = TeardownPhase::Done;
+    st.cancel.take();
+}
+
+fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
+    let bot_log: Result<Vec<String>, rustyscript::Error> =
+        runtime.call_function_immediate(None, "__rs2b0t_drain_log", json_args!());
+    if let Ok(rows) = bot_log {
+        for line in rows {
+            let _ = out.send(ThreadMsg::Log(line));
+        }
+    }
+}
+
+fn take_hook_entry_delay(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> Option<Duration> {
+    teardown.lock().unwrap().hook_entry_delay.take()
+}
+
+/// One-shot worker spawned only at Hook entry. Sleeps until the
+/// Hook-entry deadline, then issues at most one terminate while still
+/// Hook, under the same mutex as finish. Cancelled by dropping `cancel`.
+///
+/// The old tick interrupt is cleared under the Hook lock *before* spawn
+/// so a deschedule cannot let this worker fire and then be cancelled.
+fn arm_hook_deadline(
+    runtime: &mut Runtime,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    proof: &std::sync::Arc<TeardownProofInner>,
+) -> Option<JoinHandle<()>> {
+    let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
+    let deadline = {
+        let mut st = teardown.lock().unwrap();
+        if st.phase != TeardownPhase::Hook {
+            return None;
+        }
+        runtime
+            .deno_runtime()
+            .v8_isolate()
+            .cancel_terminate_execution();
+        if st.fail_deadline_spawn {
+            return None;
+        }
+        st.cancel = Some(cancel_tx);
+        st.deadline.unwrap_or_else(|| Instant::now() + SLOW_TICK)
+    };
+    let wd_teardown = teardown.clone();
+    let wd_proof = proof.clone();
+    match std::thread::Builder::new()
+        .name("js-onstop-deadline".into())
+        .spawn(move || {
+            wd_proof
+                .worker_live
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _guard = DeadlineWorkerGuard { proof: wd_proof };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match cancel_rx.recv_timeout(remaining) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            let mut st = wd_teardown.lock().unwrap();
+            if st.phase == TeardownPhase::Hook && !st.interrupt_issued {
+                st.interrupt_issued = true;
+                handle.terminate_execution();
+            }
+        }) {
+        Ok(h) => {
+            if let Some(delay) = take_hook_entry_delay(teardown) {
+                std::thread::sleep(delay);
+            }
+            Some(h)
+        }
+        Err(_) => {
+            teardown.lock().unwrap().cancel.take();
+            None
+        }
+    }
+}
+
+fn complete_teardown_without_hook(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    diagnostic: Option<&str>,
+) {
+    if let Some(line) = diagnostic {
+        let _ = out.send(ThreadMsg::Log(line.to_string()));
+    }
+    finish_teardown_hook(teardown);
+    runtime
+        .deno_runtime()
+        .v8_isolate()
+        .cancel_terminate_execution();
+    let _ = out.send(ThreadMsg::Stopped);
+}
+
+/// Exactly-once isolate-thread teardown. The 50 ms deadline is the
+/// Instant captured at Hook entry; a one-shot worker (not a parked
+/// per-bot thread) issues at most one interrupt under the same mutex
+/// as finish. Getter, body, and log-drain share that budget.
+///
+/// Fail closed: if no deadline owner can be created, skip user
+/// getter/body/drain, emit a native diagnostic, and finish cleanup.
+fn teardown_once(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    invoke_hook: bool,
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    proof: &std::sync::Arc<TeardownProofInner>,
+) {
+    if !enter_teardown_hook(teardown) {
+        return;
+    }
+    if !invoke_hook {
+        complete_teardown_without_hook(runtime, out, teardown, None);
+        return;
+    }
+    let Some(worker) = arm_hook_deadline(runtime, teardown, proof) else {
+        complete_teardown_without_hook(
+            runtime,
+            out,
+            teardown,
+            Some("onStop skipped: no deadline owner"),
+        );
+        return;
+    };
+    proof
+        .invoked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let threw: Result<Option<String>, rustyscript::Error> =
+        runtime.call_function_immediate(None, "__rs2b0t_invoke_on_stop", json_args!());
+    match threw {
+        Ok(Some(msg)) => {
+            let _ = out.send(ThreadMsg::Log(format!("onStop threw: {msg}")));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            let _ = out.send(ThreadMsg::Log(format!("onStop threw: {e}")));
+        }
+    }
+    drain_bot_log(runtime, out);
+    let _ = runtime.deno_runtime().execute_script(
+        "<onStop-clear-interact>",
+        "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
+    );
+    finish_teardown_hook(teardown);
+    runtime
+        .deno_runtime()
+        .v8_isolate()
+        .cancel_terminate_execution();
+    let _ = worker.join();
+    let _ = out.send(ThreadMsg::Stopped);
+}
+
+fn script_stop_requested(runtime: &mut Runtime) -> bool {
+    runtime
+        .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.stopRequested)")
+        .unwrap_or(false)
+}
+
+const STOP_REASON_MAX_BYTES: usize = 256;
+
+fn script_stop_reason(runtime: &mut Runtime) -> String {
+    let mut reason = runtime
+        .eval::<Option<String>>(
+            "(() => { const h = globalThis.__rs2b0t_host; return h && typeof h.stopReason === 'string' ? h.stopReason : null; })()",
+        )
+        .unwrap_or(None)
+        .unwrap_or_default();
+    if reason.len() > STOP_REASON_MAX_BYTES {
+        let mut end = STOP_REASON_MAX_BYTES;
+        while !reason.is_char_boundary(end) {
+            end -= 1;
+        }
+        reason.truncate(end);
+    }
+    reason
+}
+
+/// The tick loop: commands are serialized on this thread; ticks run
+/// with a time budget, slow ticks are logged and stale queued ticks are
+/// skipped, and errors never kill the isolate.
+///
+/// The stale-skip drain consumes commands with an explicit match so a
+/// non-Tick command (Pause/Resume/Probe/Stop/PaintClick) that arrives while ticks
+/// are queued is stashed for the next iteration instead of being
+/// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
+/// swallow it).
+fn tick_loop(
+    mut runtime: Runtime,
+    cmds: Receiver<IsolateCmd>,
+    out: Sender<ThreadMsg>,
+    work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    proof: std::sync::Arc<TeardownProofInner>,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+        crate::memory_profile::Counters,
+    >,
+) {
+    let _finish = TickLoopFinish(proof.clone());
+    #[cfg(feature = "memory-profile")]
+    let mut last_heap_sample = None::<Instant>;
+    let mut paused = false;
+    let mut pending: Option<IsolateCmd> = None;
+    // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
+    // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
+    let mut host_hold = false;
+    let mut event_producer = crate::events::NativeEventProducer::new();
+    // One reusable encode buffer for this V8 isolate: interact batch
+    // and paint frames share it (`reset` between messages).
+    let mut ipc = crate::isolate_fb::IsolateBuf::new();
+    let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
+    let mut mouse_gestures = MouseGestureIdentities::default();
+    loop {
+        #[cfg(feature = "memory-profile")]
+        if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
+            counters
+                .heap_used
+                .store(heap.used_heap_size() as u64, Relaxed);
+            counters
+                .heap_total
+                .store(heap.total_heap_size() as u64, Relaxed);
+            counters.heap_updated_ms.store(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+                Relaxed,
+            );
+            counters.heap_samples.fetch_add(1, Relaxed);
+            last_heap_sample = Some(Instant::now());
+        }
+        let cmd = match pending.take() {
+            Some(cmd) => cmd,
+            None => match cmds.recv() {
+                Ok(cmd) => cmd,
+                Err(_) => break,
+            },
+        };
+        match cmd {
+            IsolateCmd::Snapshot(bytes) => {
+                // Decode the posted FlatBuffer and materialise the JS
+                // object the shim reads on the host handle. A
+                // malformed blob is logged, never fatal.
+                match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
+                    Ok(snap) => {
+                        crate::bank_open::on_snapshot(&snap);
+                        crate::cake_stall::on_snapshot(&snap);
+                        crate::walk_wait::on_snapshot(&snap);
+                        crate::autocast::on_snapshot(&snap);
+                        crate::teleport::on_snapshot(&snap);
+                        crate::shop::on_snapshot(&snap);
+                        crate::production::on_snapshot(&snap);
+                        crate::fire::on_snapshot(&snap);
+                        crate::trade::on_snapshot(&snap);
+                        crate::drive_partner_trade::on_snapshot(&snap);
+                        if snap.has_hold() {
+                            host_hold = snap.hold();
+                            crate::periodic_bank::on_hold(host_hold);
+                            crate::bank_open::on_hold(host_hold);
+                            crate::cake_stall::on_hold(host_hold);
+                            crate::walk_wait::on_hold(host_hold);
+                            crate::death_recovery::on_hold(host_hold);
+                            crate::autocast::on_hold(host_hold);
+                            crate::special::on_hold(host_hold);
+                            crate::teleport::on_hold(host_hold);
+                            crate::shop::on_hold(host_hold);
+                            crate::production::on_hold(host_hold);
+                            crate::fire::on_hold(host_hold);
+                            crate::trade::on_hold(host_hold);
+                            crate::drive_partner_trade::on_hold(host_hold);
+                        }
+                        if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
+                            let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                        } else {
+                            let observed = event_producer.observe(&snap);
+                            if let Some(diag) = observed.diagnostic {
+                                let _ = out.send(ThreadMsg::Log(diag));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
+                    }
+                }
+            }
+            IsolateCmd::Loadouts(json) => {
+                if let Err(e) =
+                    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};"))
+                {
+                    let _ = out.send(ThreadMsg::Log(format!("loadouts: {e}")));
+                }
+            }
+            IsolateCmd::Settings(json) => {
+                if let Err(e) = materialize_settings_bag(&mut runtime, &json) {
+                    let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
+                }
+            }
+            IsolateCmd::Tick {
+                tick: n,
+                generation,
+                input_identity,
+            } => {
+                if paused
+                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    continue;
+                }
+                let start = Instant::now();
+                let observed = event_producer.take_eligible();
+                if let Some(diag) = observed.diagnostic {
+                    let _ = out.send(ThreadMsg::Log(diag));
+                }
+                deliver_native_events(&mut runtime, &observed.events, &out);
+                // Guardian hold: skip `loop()` AND skip resolving
+                // parked conds (time waits too) — the wait stays parked
+                // until the hold lifts. Still call `onPaint` so status
+                // rows keep updating. Pause already freezes above.
+                if host_hold {
+                    // Paint-only tick: no loop, no pump. Use `__rs_bot`
+                    // (global); module-local `inst` is not visible here.
+                    let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
+                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
+                    );
+                    match compose_forwarded_paint(&mut runtime) {
+                        Ok(frame) => {
+                            forward_paint_if_changed(
+                                &mut ipc,
+                                &out,
+                                &mut last_forwarded_paint,
+                                frame,
+                            );
+                        }
+                        Err(e) => {
+                            let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                        }
+                    }
+                    clear_unconsumed_paint_click(&mut runtime);
+                    // Ownership boundary after callback eval + microtasks:
+                    // drop public actions and cancel a terminate armed by
+                    // a runaway listener so the next eligible tick recovers.
+                    runtime
+                        .deno_runtime()
+                        .v8_isolate()
+                        .cancel_terminate_execution();
+                    let _ = runtime.eval::<()>(
+                        "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
+                    );
+                    let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
+                        &mut runtime,
+                    )));
+                    if script_stop_requested(&mut runtime) {
+                        let _ = out.send(ThreadMsg::ScriptStopped {
+                            tick: n,
+                            reason: script_stop_reason(&mut runtime),
+                        });
+                        let _ = out.send(ThreadMsg::Completed {
+                            tick: n,
+                            generation,
+                        });
+                        let _ = out.send(ThreadMsg::Log(format!(
+                            "script requested stop on tick {n}; isolate stopping"
+                        )));
+                        teardown_once(&mut runtime, &out, true, &teardown, &proof);
+                        break;
+                    }
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: n,
+                        generation,
+                    });
+                    continue;
+                }
+                // A parked Execution wait: settle it (cond / due tick /
+                // due time) so the loop's continuation runs — never call
+                // `loop()` again while parked. Otherwise start a fresh
+                // tick. `__rs2b0t_pump` is async and awaited through the
+                // event loop, so the resolved wait's continuation (which
+                // may re-park or complete the tick) lands here.
+                let parked = runtime
+                    .eval::<bool>(
+                        "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
+                    )
+                    .unwrap_or(false);
+                let result: Result<(), rustyscript::Error> = if parked {
+                    // Pump settles the wait (and may re-park), then
+                    // paints. Drain so await + onPaint + loop
+                    // continuation land on this tick before paint
+                    // forward.
+                    let result = runtime.call_function(None, "__rs2b0t_pump", json_args!(n));
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
+                    );
+                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
+                    result
+                } else {
+                    // `__rs_tick` is a synchronous entry that returns
+                    // immediately (parked or not), so this cannot hang on
+                    // a wait. Drain microtasks so the runner's await
+                    // continuations and onPaint land inside this tick; a
+                    // parked wait leaves no pending work, so the drain
+                    // returns at once (the timeout is only a backstop).
+                    let result =
+                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
+                    );
+                    result
+                };
+                // The host may have armed `terminate_execution` to
+                // interrupt a slow tick; clear it now that the tick's
+                // JS frames have fully unwound. This is the only cancel
+                // point — canceling from the host would race the
+                // interrupt and make it a no-op.
+                runtime
+                    .deno_runtime()
+                    .v8_isolate()
+                    .cancel_terminate_execution();
+                let elapsed = start.elapsed();
+                #[cfg(feature = "memory-profile")]
+                counters.tick(elapsed);
+                if let Err(e) = result {
+                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                }
+                // Async errors (a cond that throws, a rejected wait)
+                // surface on the runner's catch instead of throwing the
+                // tick; fold them into the log like sync tick errors.
+                let async_err: Option<String> = runtime
+                    .eval("(() => { const e = globalThis.__rs2b0t_host.lastError; if (e) { globalThis.__rs2b0t_host.lastError = null; return e; } return null; })()")
+                    .unwrap_or(None);
+                if let Some(e) = async_err {
+                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                }
+                // `LoopingBot.log` / `this.log` push onto the host
+                // handle; fold them into the isolate log so BOT_DEBUG
+                // and the panel can see script-side lines.
+                let bot_log: Result<Vec<String>, rustyscript::Error> =
+                    runtime.eval(DRAIN_BOT_LOG);
+                if let Ok(rows) = bot_log {
+                    for line in rows {
+                        let _ = out.send(ThreadMsg::Log(line));
+                    }
+                }
+                // Forward the tick's shim interact queue (Bank/Banking
+                // requests written to `__rs2b0t_host.interact`) to the
+                // host, then clear it for the next tick. The queue is
+                // evaluated only now, after the tick's JS (and any
+                // parked continuation) has fully run, so a request
+                // reaches the host exactly once. The queue is read
+                // through the runtime's value bridge (v8 object walk,
+                // not `JSON.parse`) and forwarded as a FlatBuffer
+                // batch, not a stringified JSON document. Each row is
+                // accepted or rejected locally so a malformed mouse
+                // object cannot drop a sibling key.
+                let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
+                    runtime.eval("globalThis.__rs2b0t_host.interact || []");
+                let mut reqs: Vec<crate::shim::InteractReq> = rows
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|row| match row {
+                        crate::shim::MaybeInteractReq::Req(req) => Some(req),
+                        crate::shim::MaybeInteractReq::Skip(_) => None,
+                    })
+                    .collect();
+                stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
+                let (enqueued, settled) = take_wait_facts(&mut runtime);
+                append_wait_facts(&mut reqs, enqueued, settled);
+                if !reqs.is_empty() {
+                    let _ = out.send(ThreadMsg::Interact {
+                        bytes: ipc.encode_interact_batch(&reqs),
+                        generation,
+                    });
+                }
+                let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                // Forward the tick's recorded paint frame
+                // (`Paint.begin` … `end()` on the host handle) to the
+                // host, so the script paint views read it without a
+                // probe round-trip. Only non-empty frames are sent —
+                // a tick that painted nothing leaves the last frame
+                // in place (Stop drops the whole isolate). serde_v8
+                // walks the v8 object into `ScriptPaint`; the channel
+                // carries a FlatBuffer, never a `serde_json::Value`.
+                // onPaint is sync; the async runner may still be parked
+                // in onStart/loop. Invoke it here so the forward always
+                // sees this tick's frame (or the catch/placeholder).
+                let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                match compose_forwarded_paint(&mut runtime) {
+                    Ok(frame) => {
+                        forward_paint_if_changed(
+                            &mut ipc,
+                            &out,
+                            &mut last_forwarded_paint,
+                            frame,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                    }
+                }
+                clear_unconsumed_paint_click(&mut runtime);
+                let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
+                    &mut runtime,
+                )));
+                // ScriptRunner.stop signal: the script flags the host
+                // handle. Fold the completed tick, log the stop, run
+                // exactly-once onStop under the isolate-owned 50 ms
+                // deadline, then break so the Runtime is dropped.
+                if script_stop_requested(&mut runtime) {
+                    let _ = out.send(ThreadMsg::ScriptStopped {
+                        tick: n,
+                        reason: script_stop_reason(&mut runtime),
+                    });
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: n,
+                        generation,
+                    });
+                    let _ = out.send(ThreadMsg::Log(format!(
+                        "script requested stop on tick {n}; isolate stopping"
+                    )));
+                    teardown_once(&mut runtime, &out, true, &teardown, &proof);
+                    break;
+                }
+                if elapsed > SLOW_TICK {
+                    let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
+                    // Skip stale queued ticks: a slow tick means the
+                    // pump backed up, so only the newest matters.
+                    let mut latest = n;
+                    loop {
+                        match cmds.try_recv() {
+                            Ok(IsolateCmd::Tick {
+                                tick: next,
+                                generation: next_generation,
+                                input_identity: _,
+                            }) if next_generation == generation => latest = next,
+                            Ok(other) => {
+                                pending = Some(other);
+                                break;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    if latest != n {
+                        let _ = out
+                            .send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
+                    }
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: latest,
+                        generation,
+                    });
+                } else {
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: n,
+                        generation,
+                    });
+                }
+            }
+            IsolateCmd::ResetSession => {
+                crate::periodic_bank::on_reset();
+                crate::bank_open::on_reset();
+                crate::cake_stall::on_reset();
+                crate::walk_wait::on_reset();
+                crate::death_recovery::on_reset();
+                crate::autocast::on_reset();
+                crate::special::on_reset();
+                crate::teleport::on_reset();
+                crate::shop::on_reset();
+                crate::production::on_reset();
+                crate::fire::on_reset();
+                crate::trade::on_reset();
+                crate::drive_partner_trade::on_reset();
+                event_producer.reset();
+                let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                clear_unconsumed_paint_click(&mut runtime);
+            }
+            IsolateCmd::Pause => {
+                paused = true;
+                let _ = event_producer.set_paused(true);
+                crate::periodic_bank::on_pause();
+                crate::bank_open::on_pause();
+                crate::cake_stall::on_pause();
+                crate::walk_wait::on_pause();
+                crate::death_recovery::on_pause();
+                crate::autocast::on_pause();
+                crate::special::on_pause();
+                crate::teleport::on_pause();
+                crate::shop::on_pause();
+                crate::production::on_pause();
+                crate::fire::on_pause();
+                crate::trade::on_pause();
+                crate::drive_partner_trade::on_pause();
+                clear_unconsumed_paint_click(&mut runtime);
+            }
+            IsolateCmd::Resume => {
+                paused = false;
+                let _ = event_producer.set_paused(false);
+                crate::periodic_bank::on_resume();
+                crate::bank_open::on_resume();
+                crate::cake_stall::on_resume();
+                crate::walk_wait::on_resume();
+                crate::death_recovery::on_resume();
+                crate::autocast::on_resume();
+                crate::special::on_resume();
+                crate::teleport::on_resume();
+                crate::shop::on_resume();
+                crate::production::on_resume();
+                crate::fire::on_resume();
+                crate::trade::on_resume();
+                crate::drive_partner_trade::on_resume();
+            }
+            IsolateCmd::PaintClick { id, generation } => {
+                if paused
+                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    continue;
+                }
+                if let Err(e) = set_paint_click(&mut runtime, &id) {
+                    let _ = out.send(ThreadMsg::Log(format!("paintClick: {e}")));
+                }
+            }
+            IsolateCmd::RecoveryAnchor { generation } => {
+                // Pause / generation still reject. host_hold freezes
+                // loop/pump (guardian or recovery) but must not skip
+                // the async recoveryAnchor sample: OR-ing recovery into
+                // snapshot.hold would otherwise stick SamplingAnchor.
+                // Guardian freeze aborts sampling on the host before a
+                // new request is posted.
+                if paused
+                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    let _ = out.send(ThreadMsg::InFlightDone {
+                        generation,
+                        tick: RECOVERY_ANCHOR_TICK,
+                    });
+                    continue;
+                }
+                let start = Instant::now();
+                let req = match eval_recovery_anchor(&mut runtime) {
+                    Some((x, z, level)) => {
+                        crate::shim::InteractReq::RecoveryAnchor { x, z, level }
+                    }
+                    None => crate::shim::InteractReq::RecoveryAnchorNone,
+                };
+                runtime
+                    .deno_runtime()
+                    .v8_isolate()
+                    .cancel_terminate_execution();
+                if start.elapsed() > SLOW_TICK {
+                    let _ = out.send(ThreadMsg::Log(format!(
+                        "slow recoveryAnchor: {:?}",
+                        start.elapsed()
+                    )));
+                }
+                if generation == work_generation.load(std::sync::atomic::Ordering::Acquire) {
+                    let _ = out.send(ThreadMsg::Interact {
+                        bytes: ipc.encode_interact_batch(&[req]),
+                        generation,
+                    });
+                }
+                let _ = out.send(ThreadMsg::InFlightDone {
+                    generation,
+                    tick: RECOVERY_ANCHOR_TICK,
+                });
+            }
+            IsolateCmd::Probe(expr, reply) => {
+                let value: Result<serde_json::Value, String> =
+                    runtime.eval(expr).map_err(|e| e.to_string());
+                let _ = reply.send(value);
+            }
+            IsolateCmd::Stop { invoke_hook } => {
+                teardown_once(&mut runtime, &out, invoke_hook, &teardown, &proof);
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
+        let iso = LoadIsolate::spawn(
+            "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        iso.reset_session_work();
+        // A sender captured this tick before reset but enqueued it late.
+        iso.tx
+            .send(IsolateCmd::Tick {
+                tick: 1,
+                generation: 0,
+                input_identity: 0,
+            })
+            .unwrap();
+        assert_eq!(
+            iso.probe("globalThis.n || 0").unwrap(),
+            serde_json::json!(0)
+        );
+        iso.on_game_tick(2);
+        assert_eq!(iso.probe("globalThis.n").unwrap(), serde_json::json!(1));
+        iso.join();
+    }
+
+    #[test]
+    fn shim_prelude_defines_globals_for_compat_fixture() {
+        ensure_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
+        let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
+        assert!(t);
+        let t: bool = runtime.eval("typeof TaskBot === 'function'").unwrap();
+        assert!(t);
+        let t: bool = runtime.eval("typeof TreeBot === 'function'").unwrap();
+        assert!(t);
+        let t: bool = runtime.eval("typeof LoopingBot === 'function'").unwrap();
+        assert!(t);
+        let t: bool = runtime.eval("typeof __rs2b0t_host === 'object'").unwrap();
+        assert!(t);
+        // defineBot validates { name, create } instead of no-op'ing.
+        let err: bool = runtime
+            .eval("(() => { try { defineBot({}); return false; } catch { return true; } })()")
+            .unwrap();
+        assert!(err, "defineBot throws without a name/create pair");
+    }
+
+    #[test]
+    fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
+        ensure_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
+        let report: serde_json::Value = runtime
+            .eval(
+                r#"
+(() => {
+const canvas = document.getElementById('canvas');
+const other = document.getElementById('other');
+canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+let mouseCtor = true;
+try { new MouseEvent('mousedown'); } catch { mouseCtor = false; }
+let mouseDispatch = '';
+try { canvas.dispatchEvent(new MouseEvent('mousedown')); }
+catch (e) { mouseDispatch = String((e && e.message) || e); }
+let layout = '';
+try { canvas.getBoundingClientRect(); }
+catch (e) { layout = String((e && e.message) || e); }
+const frozen = new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5});
+canvas.dispatchEvent(frozen);
+let unknown = '';
+try { canvas.dispatchEvent(new MouseEvent('mousemove')); }
+catch (e) { unknown = String((e && e.message) || e); }
+return {
+    canvas: canvas !== null && typeof canvas === 'object',
+    other: other,
+    interact: globalThis.__rs2b0t_host.interact,
+    mouseCtor,
+    mouseDispatch,
+    layout,
+    frozen: {x: frozen.clientX, y: frozen.clientY, button: frozen.button},
+    unknown,
+};
+})()
+"#,
+            )
+            .unwrap();
+        assert_eq!(report["canvas"], true);
+        assert!(report["other"].is_null());
+        assert_eq!(
+            report["interact"],
+            serde_json::json!([
+                {"op": "key", "down": true, "key": "2", "code": "2"},
+                {"op": "key", "down": false, "key": "2", "code": "2"},
+                {"op": "mouse", "down": true, "x": 0, "y": 0, "button": 0},
+                {"op": "mouse", "down": true, "x": 382.5, "y": 251.5, "button": 0},
+            ])
+        );
+        assert_eq!(report["mouseCtor"], true);
+        assert_eq!(report["mouseDispatch"], "");
+        assert!(
+            report["layout"]
+                .as_str()
+                .is_some_and(|s| s.contains("BLOCKED: missing getBoundingClientRect")),
+            "{report:?}"
+        );
+        assert_eq!(report["frozen"]["x"], 382.5);
+        assert_eq!(report["frozen"]["y"], 251.5);
+        assert_eq!(report["frozen"]["button"], 0);
+        assert!(
+            report["unknown"]
+                .as_str()
+                .is_some_and(|s| s.contains("BLOCKED: missing mouse")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn canvas_keyboard_producer_round_trips_fb_and_drops_stale_generation() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+loop() {
+    const canvas = document.getElementById('canvas');
+    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+    canvas.dispatchEvent(new KeyboardEvent('keyup', {key: '2', code: '2'}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        iso.on_game_tick(1);
+        iso.probe("true").unwrap();
+        let reqs = iso.drain_interacts();
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Key {
+                    down: true,
+                    key,
+                    ..
+                } if key == "2"
+            )),
+            "{reqs:?}"
+        );
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Key {
+                    down: false,
+                    key,
+                    ..
+                } if key == "2"
+            )),
+            "{reqs:?}"
+        );
+
+        iso.on_game_tick(2);
+        iso.probe("true").unwrap();
+        iso.reset_session_work();
+        let stale = iso.drain_interacts();
+        assert!(
+            stale
+                .iter()
+                .all(|req| !matches!(req, crate::shim::InteractReq::Key { .. })),
+            "stale generation must not deliver keys: {stale:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn canvas_mouse_producer_round_trips_fb_and_drops_stale_generation() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+loop() {
+    const canvas = document.getElementById('canvas');
+    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
+    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        iso.on_game_tick(1);
+        iso.probe("true").unwrap();
+        let reqs = iso.drain_interacts();
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: true,
+                    x,
+                    y,
+                    button: 0,
+                    ..
+                } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
+            )),
+            "{reqs:?}"
+        );
+        assert!(
+            reqs.iter()
+                .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
+            "{reqs:?}"
+        );
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            )),
+            "{reqs:?}"
+        );
+
+        iso.on_game_tick(2);
+        iso.probe("true").unwrap();
+        iso.reset_session_work();
+        let stale = iso.drain_interacts();
+        assert!(
+            stale
+                .iter()
+                .all(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. })),
+            "stale generation must not deliver mouse: {stale:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn canvas_mouse_production_stamps_input_identity() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+loop() {
+    const canvas = document.getElementById('canvas');
+    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        iso.on_game_tick_at(1, 42);
+        iso.probe("true").unwrap();
+        let reqs = iso.drain_interacts();
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: true,
+                    identity: 42,
+                    ..
+                }
+            )),
+            "{reqs:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn root_mouse_parked_up_keeps_revoked_gesture_identity() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+async loop() {
+    if (globalThis.__started) return;
+    globalThis.__started = true;
+    const canvas = document.getElementById('canvas');
+    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+    await new Promise((resolve) => {
+        globalThis.__release = () => {
+            globalThis.__rs2b0t_host.parked = false;
+            resolve();
+        };
+        globalThis.__rs2b0t_host.parked = true;
+    });
+    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+
+        iso.on_game_tick_at(1, 42);
+        iso.probe("true").unwrap();
+        let first = iso.drain_interacts();
+        assert!(
+            first.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: true,
+                    identity: 42,
+                    ..
+                }
+            )),
+            "{first:?}"
+        );
+
+        iso.pause();
+        iso.resume();
+        iso.probe("globalThis.__release(); true").unwrap();
+        iso.on_game_tick_at(2, 43);
+        iso.probe("true").unwrap();
+        let second = iso.drain_interacts();
+        assert!(
+            second.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: false,
+                    identity: 42,
+                    ..
+                }
+            )),
+            "parked old up was restamped: {second:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn execution_delay_ticks_mouse_up_keeps_down_identity() {
+        let iso = LoadIsolate::spawn(
+            r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+async loop() {
+    if (globalThis.__started) return;
+    globalThis.__started = true;
+    const canvas = document.getElementById('canvas');
+    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+    await Execution.delayTicks(1);
+    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+
+        iso.on_game_tick_at(1, 42);
+        iso.probe("true").unwrap();
+        let first = iso.drain_interacts();
+        assert!(first.iter().any(|req| matches!(
+            req,
+            crate::shim::InteractReq::Mouse {
+                down: true,
+                identity: 42,
+                ..
+            }
+        )));
+
+        iso.pause();
+        iso.resume();
+        iso.on_game_tick_at(2, 43);
+        iso.probe("true").unwrap();
+        let second = iso.drain_interacts();
+        assert!(
+            second.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: false,
+                    identity: 42,
+                    ..
+                }
+            )),
+            "{second:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn mouse_gesture_identity_overflow_fails_closed() {
+        let mouse = |down| crate::shim::InteractReq::Mouse {
+            down,
+            x: 10.0,
+            y: 10.0,
+            button: 0,
+            identity: 99,
+        };
+        let mut gestures = MouseGestureIdentities::default();
+        let mut downs: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(true)).collect();
+        stamp_mouse_gesture_identities(&mut downs, 7, &mut gestures);
+        assert!(downs
+            .iter()
+            .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 7, .. })));
+        assert!(gestures.pairs.is_empty());
+        assert_eq!(gestures.unpairable, 33);
+
+        let mut ups: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(false)).collect();
+        stamp_mouse_gesture_identities(&mut ups, 7, &mut gestures);
+        assert!(ups
+            .iter()
+            .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 0, .. })));
+        assert_eq!(gestures.unpairable, 0);
+    }
+
+    #[test]
+    fn canvas_mouse_malformed_rows_keep_sibling_key_and_center() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+loop() {
+    const canvas = document.getElementById('canvas');
+    const h = globalThis.__rs2b0t_host;
+    h.interact = h.interact || [];
+    h.interact.push({op:'mouse', down:true, x:{}, y:10, button:0});
+    h.interact.push({op:'mouse', down:true, x:[1], y:10, button:0});
+    h.interact.push({op:'mouse', down:true, x: Number.NaN, y:10, button:0});
+    h.interact.push({op:'mouse', down:true, x:100, y:100, button: 4294967296});
+    h.interact.push({op:'mouse', down:true, x:100, y:100, button: 1.5});
+    h.interact.push({op:'mouse', down:true, x:100, y:100, button: null});
+    h.interact.push([1, 2, 3]);
+    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+    canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+    canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        iso.on_game_tick(1);
+        iso.probe("true").unwrap();
+        let reqs = iso.drain_interacts();
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            )),
+            "sibling key dropped: {reqs:?}"
+        );
+        assert!(
+            reqs.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: true,
+                    x,
+                    y,
+                    button: 0,
+                    ..
+                } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
+            )),
+            "valid center down dropped: {reqs:?}"
+        );
+        assert!(
+            reqs.iter()
+                .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
+            "valid center up dropped: {reqs:?}"
+        );
+        iso.join();
+    }
+}
