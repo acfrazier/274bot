@@ -2501,7 +2501,9 @@
     "alcher_custom_alias",
     "alcher_custom_name",
     "alcher_ordered",
-    "alcher_large_batch"
+    "alcher_large_batch",
+    "alcher_low",
+    "alcher_fire_battlestaff"
    ],
    "reference_cases": [
     {
@@ -2509,18 +2511,6 @@
      "status": "vetted",
      "manual": false,
      "budget_min": 12
-    },
-    {
-     "id": "alcher-low-744-live",
-     "status": "unvetted",
-     "manual": false,
-     "budget_min": 10
-    },
-    {
-     "id": "alcher-fire-battlestaff-live",
-     "status": "unvetted",
-     "manual": false,
-     "budget_min": 8
     },
     {
      "id": "alcher-swarm-drain-live",
@@ -2745,6 +2735,88 @@
    },
    "variants": [],
    "reference_cases": []
+  },
+  {
+   "id": "alcher_low",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 8,
+   "runner": "core",
+   "live": "script_alcher_low",
+   "scenario": "alcher_low",
+   "core_case": "alcher_low",
+   "pair_case": null,
+   "options": [
+    "spell=Low (Low Level Alchemy)"
+   ],
+   "unsupported": [
+    {
+     "option": "swarm interruption",
+     "reason": "the frozen swarm-drain fixture stays separate later work; this cell proves the Low spell row only"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "alcher-low-744-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 10
+    }
+   ],
+   "budget_note": "outer budget is the frozen harness 480s window, not the 10-minute reference-manifest envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s"
+  },
+  {
+   "id": "alcher_fire_battlestaff",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 7,
+   "runner": "core",
+   "live": "script_alcher_fire_battlestaff",
+   "scenario": "alcher_fire_battlestaff",
+   "core_case": "alcher_fire_battlestaff",
+   "pair_case": null,
+   "options": [
+    "staff selection (Fire battlestaff with no Staff of fire banked)"
+   ],
+   "unsupported": [
+    {
+     "option": "Magic 70 / Attack 40 fixture",
+     "reason": "the cell needs the frozen Magic 70 / Attack 40 seed and a bank that holds no Staff of fire, not the historical Magic 55 / Attack 1 seed"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "alcher-fire-battlestaff-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ],
+   "budget_note": "outer budget is the frozen harness 420s window, not the 8-minute reference-manifest envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s"
   },
   {
    "id": "smithing_bot",
