@@ -22,6 +22,7 @@ mod runner;
 pub mod shot;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use api::interact::{
@@ -2934,8 +2935,65 @@ fn alcher_fire_battlestaff_scenario() -> Scenario {
 
 /// Frozen `alcher-swarm-drain-live`: Magic 70, 20 rich + 8 poor, High default,
 /// 20 alchs a trip. After the first native High cast, inject `~macro_event 1`
-/// once. CoreWatch owns interruption/recovery qualification.
+/// until a Swarm NPC targets the local player. Busy-player `please_finish`
+/// is explicit rejection, not spawn. CoreWatch owns interruption/recovery.
 const SWARM_MACRO_EVENT_CHEAT: &str = "~macro_event 1";
+const SWARM_NPC_NAME: &str = "Swarm";
+const SWARM_BUSY_REJECT: &str = "Please finish what you are doing first.";
+
+fn swarm_macro_event_accepted(snap: &GameSnapshot) -> bool {
+    Proof::NpcNameTargetingLocal {
+        name: SWARM_NPC_NAME,
+    }
+    .check(snap, None)
+}
+
+fn swarm_busy_reject_seq(snap: &GameSnapshot) -> Option<i32> {
+    snap.chat_lines().iter().find_map(|line| {
+        line.text
+            .contains(SWARM_BUSY_REJECT)
+            .then_some(line.sequence)
+    })
+}
+
+/// First attempt after the firstcast arms; later attempts only when chat
+/// shows a newer busy rejection than the one consumed by the last send.
+fn swarm_macro_event_should_send(
+    snap: &GameSnapshot,
+    ever_sent: bool,
+    last_handled_reject_seq: i32,
+) -> bool {
+    if swarm_macro_event_accepted(snap) {
+        return false;
+    }
+    if !ever_sent {
+        return true;
+    }
+    swarm_busy_reject_seq(snap).is_some_and(|seq| seq > last_handled_reject_seq)
+}
+
+fn swarm_macro_event_inject(
+    c: &mut Client,
+    snap: &GameSnapshot,
+    ever_sent: &AtomicBool,
+    last_handled_reject_seq: &AtomicI32,
+) -> bool {
+    if !swarm_macro_event_should_send(
+        snap,
+        ever_sent.load(Ordering::Relaxed),
+        last_handled_reject_seq.load(Ordering::Relaxed),
+    ) {
+        return true;
+    }
+    if !cheat(c, SWARM_MACRO_EVENT_CHEAT) {
+        return false;
+    }
+    ever_sent.store(true, Ordering::Relaxed);
+    if let Some(seq) = swarm_busy_reject_seq(snap) {
+        last_handled_reject_seq.store(seq, Ordering::Relaxed);
+    }
+    true
+}
 
 const ALCHER_SWARM_DRAIN_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -3126,15 +3184,18 @@ fn alcher_swarm_drain_scenario() -> Scenario {
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
+    let ever_sent = AtomicBool::new(false);
+    let last_handled_reject_seq = AtomicI32::new(i32::MIN);
     steps.push(Step {
         name: "inject the upstream swarm macro_event after the first native High cast",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| cheat(c, SWARM_MACRO_EVENT_CHEAT)),
+        kind: StepKind::Repeat {
+            send: Box::new(move |c, snap| {
+                swarm_macro_event_inject(c, snap, &ever_sent, &last_handled_reject_seq)
+            }),
         },
         wait: Wait {
-            arm: Proof::StatXpGain {
-                id: MAGIC_STAT,
-                min: HIGH_ALCH_MAGIC_XP,
+            arm: Proof::NpcNameTargetingLocal {
+                name: SWARM_NPC_NAME,
             },
             budget_ticks: 50,
         },
@@ -18850,9 +18911,8 @@ mod tests {
                     id: NATURE_RUNE_ID,
                     count: 19,
                 },
-                Proof::StatXpGain {
-                    id: MAGIC_STAT,
-                    min: HIGH_ALCH_MAGIC_XP,
+                Proof::NpcNameTargetingLocal {
+                    name: SWARM_NPC_NAME,
                 },
             ]
         );
@@ -18861,8 +18921,10 @@ mod tests {
             .iter()
             .find(|step| step.name.contains("macro_event"))
             .expect("swarm inject step");
-        assert!(matches!(inject_step.kind, StepKind::Perform { .. }));
+        assert!(matches!(inject_step.kind, StepKind::Repeat { .. }));
+        assert_eq!(inject_step.wait.budget_ticks, 50);
         assert_eq!(SWARM_MACRO_EVENT_CHEAT, "~macro_event 1");
+        assert_eq!(SWARM_NPC_NAME, "Swarm");
         assert_eq!(
             swarm.proof,
             Proof::StatXpGain {
@@ -18870,6 +18932,136 @@ mod tests {
                 min: HIGH_ALCH_MAGIC_XP,
             }
         );
+    }
+
+    fn swarm_inject_send(
+        scenario: &Scenario,
+    ) -> &Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync> {
+        let step = scenario
+            .steps
+            .iter()
+            .find(|step| step.name.contains("macro_event"))
+            .expect("swarm inject step");
+        match &step.kind {
+            StepKind::Repeat { send } => send,
+            _ => panic!("swarm inject must re-invoke send until Swarm targets the local player"),
+        }
+    }
+
+    fn swarm_snapshot(client: &mut Client) -> GameSnapshot {
+        use client::io::ServerProt;
+        for prot in [
+            ServerProt::PLAYER_INFO,
+            ServerProt::NPC_INFO,
+            ServerProt::MESSAGE_GAME,
+        ] {
+            client.bump_gens(prot);
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        snapshot
+    }
+
+    fn plant_swarm_npc(client: &mut Client, face_entity: i32) {
+        use client::client::ClientNpc;
+        use client::config::NpcType;
+        let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        if cache.npcs.is_empty() {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[0].name = SWARM_NPC_NAME.into();
+        let mut npc = ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
+        npc.entity.face_entity = face_entity;
+        client.npc[1] = Some(Box::new(npc));
+        client.npc_ids[0] = 1;
+        client.npc_count = 1;
+        client.self_slot = 0;
+    }
+
+    #[test]
+    fn alcher_swarm_inject_sends_once_then_holds_without_fresh_rejection() {
+        let swarm = get("alcher_swarm_drain").expect("alcher_swarm_drain is registered");
+        let send = swarm_inject_send(&swarm);
+        let mut client = native_seed_client();
+        let snapshot = GameSnapshot::new();
+        assert!(send(&mut client, &snapshot));
+        assert!(emitted_has(&client, SWARM_MACRO_EVENT_CHEAT));
+        let pos = client.out.pos;
+        assert!(send(&mut client, &snapshot));
+        assert_eq!(
+            client.out.pos, pos,
+            "a sent packet is not spawn; do not resend without a newer please_finish"
+        );
+        assert!(
+            !swarm_macro_event_should_send(&snapshot, true, i32::MIN),
+            "no chat rejection must not authorize another send"
+        );
+    }
+
+    #[test]
+    fn alcher_swarm_inject_retries_only_on_a_fresh_busy_rejection() {
+        let swarm = get("alcher_swarm_drain").expect("alcher_swarm_drain is registered");
+        let send = swarm_inject_send(&swarm);
+        let mut client = native_seed_client();
+        let snapshot = GameSnapshot::new();
+        assert!(send(&mut client, &snapshot));
+        client.out.pos = 0;
+
+        client.add_chat(0, SWARM_BUSY_REJECT, "");
+        let rejected = swarm_snapshot(&mut client);
+        let first_seq = swarm_busy_reject_seq(&rejected).expect("busy reject is sequenced");
+        assert!(swarm_macro_event_should_send(&rejected, true, i32::MIN));
+        assert!(send(&mut client, &rejected));
+        assert!(emitted_has(&client, SWARM_MACRO_EVENT_CHEAT));
+        client.out.pos = 0;
+        assert!(send(&mut client, &rejected));
+        assert!(
+            !emitted_has(&client, SWARM_MACRO_EVENT_CHEAT),
+            "the same please_finish sequence is not a fresh rejection"
+        );
+        assert!(!swarm_macro_event_should_send(&rejected, true, first_seq));
+
+        client.add_chat(0, SWARM_BUSY_REJECT, "");
+        let again = swarm_snapshot(&mut client);
+        let second_seq = swarm_busy_reject_seq(&again).expect("a newer busy reject");
+        assert!(second_seq > first_seq);
+        assert!(swarm_macro_event_should_send(&again, true, first_seq));
+        assert!(send(&mut client, &again));
+        assert!(emitted_has(&client, SWARM_MACRO_EVENT_CHEAT));
+    }
+
+    #[test]
+    fn alcher_swarm_inject_does_not_duplicate_an_accepted_targeting_swarm() {
+        let swarm = get("alcher_swarm_drain").expect("alcher_swarm_drain is registered");
+        let send = swarm_inject_send(&swarm);
+        let mut client = native_seed_client();
+        plant_swarm_npc(&mut client, api::snapshot::PLAYER_FACE_BASE);
+        let accepted = swarm_snapshot(&mut client);
+        assert!(swarm_macro_event_accepted(&accepted));
+        assert!(!swarm_macro_event_should_send(&accepted, false, i32::MIN));
+        assert!(send(&mut client, &accepted));
+        assert!(
+            !emitted_has(&client, SWARM_MACRO_EVENT_CHEAT),
+            "accepted Swarm targeting local must not emit another ~macro_event 1"
+        );
+
+        client.add_chat(0, SWARM_BUSY_REJECT, "");
+        let stale_reject = swarm_snapshot(&mut client);
+        assert!(swarm_macro_event_accepted(&stale_reject));
+        assert!(send(&mut client, &stale_reject));
+        assert!(
+            !emitted_has(&client, SWARM_MACRO_EVENT_CHEAT),
+            "please_finish must not retrigger once Swarm already targets the player"
+        );
+
+        let mut other = native_seed_client();
+        plant_swarm_npc(&mut other, api::snapshot::PLAYER_FACE_BASE + 3);
+        let untargeted = swarm_snapshot(&mut other);
+        assert!(!swarm_macro_event_accepted(&untargeted));
+        assert!(swarm_macro_event_should_send(&untargeted, false, i32::MIN));
     }
 
     #[test]
