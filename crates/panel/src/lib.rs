@@ -16,6 +16,7 @@ pub mod rail;
 pub mod resource;
 pub mod script_picker;
 pub mod session;
+mod session_catalog;
 pub mod theme;
 pub mod ui_state;
 pub mod wall;
