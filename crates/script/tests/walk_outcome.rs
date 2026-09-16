@@ -375,6 +375,79 @@ fn isolate_two_same_target_begins_delayed_first_id_does_not_settle_second() {
 }
 
 #[test]
+fn isolate_held_matching_refusal_survives_later_old_outcome_until_resume() {
+    let iso = LoadIsolate::spawn(overlapping_walk_src(), LoadShape::CompatClass, vec![]).unwrap();
+    let (first_id, second_id) = park_two_walks(&iso);
+
+    let mut held = base_snapshot(2, far());
+    held.hold = true;
+    iso.post_snapshot(encode_snapshot_with_native(
+        &held,
+        fail_native(1, 0, second_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        serde_json::Value::Null,
+        "guardian hold must not settle the current JavaScript wait"
+    );
+
+    let mut still_held = base_snapshot(3, far());
+    still_held.hold = true;
+    iso.post_snapshot(encode_snapshot_with_native(
+        &still_held,
+        fail_native(2, 0, first_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        serde_json::Value::Null,
+        "a later held snapshot still must not settle JavaScript"
+    );
+
+    iso.post_snapshot(encode_snapshot(&base_snapshot(4, far())));
+    iso.on_game_tick(4);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        false,
+        "the matching refusal observed under hold must settle on the first eligible tick"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_paused_matching_refusal_survives_later_old_outcome_until_resume() {
+    let iso = LoadIsolate::spawn(overlapping_walk_src(), LoadShape::CompatClass, vec![]).unwrap();
+    let (first_id, second_id) = park_two_walks(&iso);
+    iso.pause();
+
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(2, far()),
+        fail_native(1, 0, second_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(2);
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(3, far()),
+        fail_native(2, 0, first_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        serde_json::Value::Null,
+        "Pause must not settle the current JavaScript wait"
+    );
+
+    iso.resume();
+    iso.on_game_tick(4);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        false,
+        "the matching refusal observed while paused must settle after resume"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_stop_start_does_not_consume_prior_request_id() {
     let iso1 = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
     let old_id = park_walk(&iso1);

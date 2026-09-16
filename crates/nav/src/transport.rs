@@ -986,7 +986,8 @@ fn gate_pair_tile(at: WorldTile, angle_dir: DoorDir, outer: bool) -> WorldTile {
 /// - that category's generic handler is verified in the content
 ///   ([`generic_gate_handlers`], handler body plus proc);
 /// - a `next_loc_stage` open leaf resolves through loc.pack, and that
-///   leaf's own config is present with the matching `gate_*_open`;
+///   leaf's own config is present with one unconflicted matching
+///   `gate_*_open` category;
 /// - no loc-specific `[oploc1,<name>]` block exists anywhere under
 ///   `scripts` (the resolver's first priority — a named override, gated or
 ///   denied, is never promoted);
@@ -1052,6 +1053,7 @@ fn inherited_closed_gates(
     // open-leaf and pair checks (the leaf of a `gates.loc` member is
     // defined there, not in the member's own config).
     let mut categories: HashMap<i32, String> = HashMap::new();
+    let mut category_conflicted: HashSet<i32> = HashSet::new();
     visit_loc_configs(&scripts, &mut |text| {
         let mut cur: Option<i32> = None;
         for raw in text.lines() {
@@ -1064,9 +1066,18 @@ fn inherited_closed_gates(
                 continue;
             };
             if let Some(value) = line.strip_prefix("category=") {
-                categories
-                    .entry(id)
-                    .or_insert_with(|| value.trim().to_string());
+                let value = value.trim();
+                match categories.get(&id) {
+                    Some(previous) if previous != value => {
+                        categories.remove(&id);
+                        category_conflicted.insert(id);
+                    }
+                    Some(_) => {}
+                    None if category_conflicted.contains(&id) => {}
+                    None => {
+                        categories.insert(id, value.to_string());
+                    }
+                }
             }
         }
     });
@@ -1112,7 +1123,9 @@ fn inherited_closed_gates(
             bump(skipped, SKIP_GATE_MEMBER_OVERRIDE, 1);
             continue;
         }
-        if categories.get(&open).map(String::as_str) != Some(open_gate_category(outer)) {
+        if category_conflicted.contains(&open)
+            || categories.get(&open).map(String::as_str) != Some(open_gate_category(outer))
+        {
             bump(skipped, SKIP_GATE_MEMBER_STAGE, 1);
             continue;
         }
@@ -1131,8 +1144,9 @@ fn inherited_closed_gates(
                     .get(&(pair.x, pair.z, pair.level))
                     .is_some_and(|ids| {
                         ids.iter().any(|lid| {
-                            categories.get(lid).and_then(|c| closed_gate_category(c))
-                                == Some(!outer)
+                            !category_conflicted.contains(lid)
+                                && categories.get(lid).and_then(|c| closed_gate_category(c))
+                                    == Some(!outer)
                         })
                     })
             })
@@ -8823,5 +8837,102 @@ category=gate_main_open
                 "loc {id} must not be promoted: {why}"
             );
         }
+    }
+
+    #[test]
+    fn inherited_gate_open_leaf_categories_fail_closed_on_conflicts_and_aliases() {
+        let fx = Fixture::new();
+        let ids = HashMap::from([
+            ("control_main".to_string(), 6001),
+            ("control_open".to_string(), 6002),
+            ("duplicate_main".to_string(), 6011),
+            ("duplicate_open".to_string(), 6012),
+            ("conflict_main".to_string(), 6021),
+            ("conflict_open".to_string(), 6022),
+            ("alias_main".to_string(), 6031),
+            ("alias_open".to_string(), 6032),
+        ]);
+        fx.write(
+            "scripts/general_use/scripts/gates.rs2",
+            "\
+[proc,open_gate]
+return;
+
+[oploc1,_gate_main_closed] ~open_gate;
+",
+        );
+        fx.write(
+            "scripts/quests/quest_scan/configs/categories.loc",
+            "\
+[control_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,control_open
+
+[control_open]
+category=gate_main_open
+
+[duplicate_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,duplicate_open
+
+[duplicate_open]
+category=gate_main_open
+
+[loc_6012]
+category=gate_main_open
+
+[conflict_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,conflict_open
+
+[conflict_open]
+category=gate_main_open
+
+[conflict_open]
+category=gate_outer_open
+
+[conflict_open]
+category=gate_main_open
+
+[alias_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,alias_open
+
+[alias_open]
+category=gate_main_open
+
+[loc_6032]
+category=gate_outer_open
+
+[alias_open]
+category=gate_main_open
+",
+        );
+
+        let supported = generic_gate_handlers(fx.path());
+        let mut skipped = HashMap::new();
+        let inherited =
+            inherited_closed_gates(fx.path(), &ids, &HashMap::new(), &supported, &mut skipped);
+
+        assert_eq!(inherited.get(&6001), Some(&6002), "valid control");
+        assert_eq!(
+            inherited.get(&6011),
+            Some(&6012),
+            "repeating the same category, including through loc_N, remains valid"
+        );
+        assert_eq!(
+            inherited.get(&6021),
+            None,
+            "a differing category permanently conflicts the named open leaf"
+        );
+        assert_eq!(
+            inherited.get(&6031),
+            None,
+            "a differing loc_N alias permanently conflicts the same open leaf id"
+        );
     }
 }
