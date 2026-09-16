@@ -1647,6 +1647,165 @@ mod tests {
         }
     }
 
+    fn alcher_spell_obs(
+        item_ids: &[(i32, i32)],
+        equipment_ids: &[(i32, i32)],
+        magic_xp: i32,
+        magic_level: i32,
+        attack_level: i32,
+    ) -> Observation {
+        let mut observation = alcher_generated_obs(item_ids, magic_xp);
+        observation.levels.insert("magic".into(), magic_level);
+        observation.levels.insert("attack".into(), attack_level);
+        observation.equipment_ids = equipment_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn alcher_spell_rows_require_selected_spell_equipment_and_reject_seeded_casts() {
+        let mut low_base = alcher_spell_obs(&[], &[], 10_000, 25, 1);
+        low_base.bank_generation = 1;
+        validate_case_baseline(CoreCase::AlcherLow, &low_base).unwrap();
+
+        let mut withdrawn = alcher_spell_obs(
+            &[(CERT_RUNE_CHAINBODY_ID, 10), (NATURE_RUNE_ID, 10)],
+            &[],
+            10_000,
+            25,
+            1,
+        );
+        withdrawn.bank_generation = 2;
+        let mut low_cast = alcher_spell_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 9),
+                (NATURE_RUNE_ID, 9),
+                (COINS_ID, RUNE_CHAINBODY_LOW_ALCH_COINS),
+            ],
+            &[(STAFF_OF_FIRE_ID, 1)],
+            10_000 + LOW_ALCH_MAGIC_XP,
+            25,
+            1,
+        );
+        low_cast.bank_generation = 2;
+        assert!(
+            witness(CoreCase::AlcherLow, &low_base, [&withdrawn, &low_cast])
+                .qualify()
+                .is_ok()
+        );
+
+        let mut high_cast = alcher_spell_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 9),
+                (NATURE_RUNE_ID, 9),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+            ],
+            &[(STAFF_OF_FIRE_ID, 1)],
+            10_000 + HIGH_ALCH_MAGIC_XP,
+            25,
+            1,
+        );
+        high_cast.bank_generation = 2;
+        assert!(
+            witness(CoreCase::AlcherLow, &low_base, [&withdrawn, &high_cast])
+                .qualify()
+                .is_err(),
+            "High 65 XP / 30000 coins must not pass the Low row"
+        );
+        assert!(
+            witness(CoreCase::AlcherLow, &low_base, [&low_base])
+                .qualify()
+                .is_err()
+        );
+        assert!(
+            witness(CoreCase::AlcherLow, &low_base, [&withdrawn])
+                .qualify()
+                .is_err()
+        );
+
+        let mut seeded = low_base.clone();
+        seeded.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 10);
+        seeded.item_ids.insert(NATURE_RUNE_ID, 10);
+        seeded
+            .item_ids
+            .insert(COINS_ID, RUNE_CHAINBODY_LOW_ALCH_COINS);
+        seeded.xp.insert("magic".into(), 10_000 + LOW_ALCH_MAGIC_XP);
+        seeded.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        assert!(validate_case_baseline(CoreCase::AlcherLow, &seeded).is_err());
+        assert!(
+            witness(CoreCase::AlcherLow, &seeded, [&seeded])
+                .qualify()
+                .is_err(),
+            "a seeded baseline cannot count as a cast"
+        );
+
+        let mut staff_base = alcher_spell_obs(&[], &[], 10_000, 70, 40);
+        staff_base.bank_generation = 1;
+        validate_case_baseline(CoreCase::AlcherFireBattlestaff, &staff_base).unwrap();
+        let mut staff_withdrawn = alcher_spell_obs(
+            &[(CERT_RUNE_CHAINBODY_ID, 8), (NATURE_RUNE_ID, 8)],
+            &[],
+            10_000,
+            70,
+            40,
+        );
+        staff_withdrawn.bank_generation = 2;
+        let mut staff_cast = alcher_spell_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 7),
+                (NATURE_RUNE_ID, 7),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+            ],
+            &[(FIRE_BATTLESTAFF_ID, 1)],
+            10_000 + HIGH_ALCH_MAGIC_XP,
+            70,
+            40,
+        );
+        staff_cast.bank_generation = 2;
+        assert!(witness(
+            CoreCase::AlcherFireBattlestaff,
+            &staff_base,
+            [&staff_withdrawn, &staff_cast]
+        )
+        .qualify()
+        .is_ok());
+
+        let mut wrong_staff = staff_cast.clone();
+        wrong_staff.equipment_ids.clear();
+        wrong_staff.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        assert!(
+            witness(
+                CoreCase::AlcherFireBattlestaff,
+                &staff_base,
+                [&staff_withdrawn, &wrong_staff]
+            )
+            .qualify()
+            .is_err(),
+            "Staff of fire must not pass the Fire battlestaff row"
+        );
+        let mut no_staff = staff_cast.clone();
+        no_staff.equipment_ids.clear();
+        assert!(witness(
+            CoreCase::AlcherFireBattlestaff,
+            &staff_base,
+            [&staff_withdrawn, &no_staff]
+        )
+        .qualify()
+        .is_err());
+
+        let mut worn_at_start = staff_base.clone();
+        worn_at_start.equipment_ids.insert(FIRE_BATTLESTAFF_ID, 1);
+        assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &worn_at_start).is_err());
+        let mut low_magic = staff_base.clone();
+        low_magic.levels.insert("magic".into(), 54);
+        assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &low_magic).is_err());
+        let mut low_attack = staff_base.clone();
+        low_attack.levels.insert("attack".into(), 29);
+        assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &low_attack).is_err());
+        let mut banked_staff = staff_base.clone();
+        banked_staff.item_ids.insert(FIRE_BATTLESTAFF_ID, 1);
+        assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &banked_staff).is_err());
+    }
+
     fn dart_obs(item_ids: &[(i32, i32)], fletching_xp: i32) -> Observation {
         let mut observation = observation(&[], &[("fletching", fletching_xp)], &[]);
         observation.item_ids = item_ids.iter().copied().collect();
@@ -6893,6 +7052,18 @@ mod tests {
         validate_case_catalog(CoreCase::SuperheaterFireBattlestaff, CATALOG_COMMIT_B).unwrap();
         validate_case_catalog(CoreCase::Superheater, CATALOG_COMMIT_A).unwrap();
         validate_case_catalog(CoreCase::SuperheaterSteel, CATALOG_COMMIT_A).unwrap();
+        for case in [CoreCase::AlcherLow, CoreCase::AlcherFireBattlestaff] {
+            for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+                let error = validate_case_catalog(case, commit).unwrap_err();
+                assert!(
+                    error.contains("High-only") && error.contains("96410ec5"),
+                    "{error}"
+                );
+            }
+            validate_case_catalog(case, REFERENCE_COMMIT_964).unwrap();
+        }
+        validate_case_catalog(CoreCase::Alcher, CATALOG_COMMIT_A).unwrap();
+        validate_case_catalog(CoreCase::AlcherDefaults, CATALOG_COMMIT_B).unwrap();
         for case in [
             CoreCase::AlcherCustomAlias,
             CoreCase::AlcherCustomName,

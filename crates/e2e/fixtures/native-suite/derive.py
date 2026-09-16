@@ -158,11 +158,24 @@ MAPPING = [
          ],
          options=["bar selection"]),
     case("Alcher", "alcher_defaults",
-         reference=["alcher-nearest-bank-live", "alcher-low-744-live", "alcher-fire-battlestaff-live",
-                    "alcher-swarm-drain-live"],
+         reference=["alcher-nearest-bank-live", "alcher-swarm-drain-live"],
          budget=12,
          variants=["alcher", "alcher_custom", "alcher_custom_alias", "alcher_custom_name", "alcher_ordered",
-                   "alcher_large_batch"],
+                   "alcher_large_batch",
+                   {"live": "alcher_low", "reference": ["alcher-low-744-live"], "budget": 8,
+                    "options": ["spell=Low (Low Level Alchemy)"],
+                    "note": "outer budget is the frozen harness 480s window, not the 10-minute reference-manifest "
+                            "envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s",
+                    "unsupported": [("swarm interruption",
+                                     "the frozen swarm-drain fixture stays separate later work; this cell proves the "
+                                     "Low spell row only")]},
+                   {"live": "alcher_fire_battlestaff", "reference": ["alcher-fire-battlestaff-live"], "budget": 7,
+                    "options": ["staff selection (Fire battlestaff with no Staff of fire banked)"],
+                    "note": "outer budget is the frozen harness 420s window, not the 8-minute reference-manifest "
+                            "envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s",
+                    "unsupported": [("Magic 70 / Attack 40 fixture",
+                                     "the cell needs the frozen Magic 70 / Attack 40 seed and a bank that holds no "
+                                     "Staff of fire, not the historical Magic 55 / Attack 1 seed")]}],
          options=["spell=High default", "spell=Low", "item alias/name/ordered/batch", "staff/swarm branches"],
          unsupported=[("full-cycle assertion for loader smoke", "no full-cycle assertion is claimed for the loader smoke")]),
     case("SmithingBot", "smithing_bot", reference=["smithingbot-bank-loop-live"], budget=10,
@@ -520,7 +533,8 @@ def main():
                     add_row(script, script_key, variant["live"], runner=spec["runner"], refs=vrefs,
                             options=variant.get("options", spec["options"]),
                             unsupported=variant.get("unsupported", spec["unsupported"]),
-                            budget=variant.get("budget", spec["budget"]), unavailable=None, primary=False)
+                            budget=variant.get("budget", spec["budget"]), unavailable=None, primary=False,
+                            note=variant.get("note"))
                 else:
                     add_row(script, script_key, variant, runner=spec["runner"], refs=[], options=spec["options"],
                             unsupported=spec["unsupported"], budget=spec["budget"], unavailable=None, primary=False)

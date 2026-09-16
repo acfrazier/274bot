@@ -396,6 +396,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "alcher_custom_name" => Some(alcher_custom_name_scenario()),
         "alcher_ordered" => Some(alcher_ordered_scenario()),
         "alcher_large_batch" => Some(alcher_large_batch_scenario()),
+        "alcher_low" => Some(alcher_low_scenario()),
+        "alcher_fire_battlestaff" => Some(alcher_fire_battlestaff_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
         "bank_fletcher_shafts" => Some(bank_fletcher_shafts_scenario()),
         "bank_fletcher_headless" => Some(bank_fletcher_headless_scenario()),
@@ -517,6 +519,8 @@ pub fn names() -> Vec<&'static str> {
         "alcher_custom_name",
         "alcher_ordered",
         "alcher_large_batch",
+        "alcher_low",
+        "alcher_fire_battlestaff",
         "bank_fletcher",
         "bank_fletcher_shafts",
         "bank_fletcher_headless",
@@ -2533,6 +2537,395 @@ fn alcher_large_batch_scenario() -> Scenario {
         1000,
         Some(("Rune chainbody", 1000)),
     )
+}
+
+const RUNE_CHAINBODY_ID: i32 = 1113;
+const CERT_RUNE_CHAINBODY_ID: i32 = 1114;
+/// High Level Alchemy pays 60% of shop cost: floor(50000 * 0.6) = 30000.
+const RUNE_CHAINBODY_HIGH_ALCH_COINS: i32 = 30_000;
+/// Low Level Alchemy pays 40% of shop cost: floor(50000 * 0.4) = 20000.
+const RUNE_CHAINBODY_LOW_ALCH_COINS: i32 = 20_000;
+const LOW_ALCH_MAGIC_XP: i32 = 31;
+const ATTACK_STAT: i32 = 0;
+
+/// `spell=Low` on noted rune chainbodies, the `alcher-low-744-live` fixture:
+/// Magic 25 at Varrock West with twelve chainbodies, 200 natures and a Staff
+/// of fire banked. Nothing is worn and no outcome is seeded.
+const ALCHER_LOW_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["rune_chainbody"]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(10.0),
+    },
+    ScriptSettingInject {
+        id: "spell",
+        value: ScriptInjectValue::Str("Low"),
+    },
+];
+
+/// The `alcher-fire-battlestaff-live` fixture: High stays the default (no
+/// `spell` inject) and the only fire staff banked is a Fire battlestaff.
+const ALCHER_FIRE_BATTLESTAFF_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["rune_chainbody"]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(8.0),
+    },
+];
+
+/// The `alcher_low` scenario: Magic 25 at Varrock West, twelve rune
+/// chainbodies / 200 natures / one Staff of fire banked, `spell=Low`, ten alchs
+/// a trip. The core witness proves the Low cast arithmetic and the worn staff.
+fn alcher_low_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: LOW_ALCH_MAGIC_XP,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic 25 and the exact Low fixture stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat magic 25");
+                cheat(c, "givebank rune_chainbody 12");
+                cheat(c, "givebank naturerune 200");
+                cheat(c, "givebank staff_of_fire 1");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Magic 25 before Start",
+            Proof::Stat {
+                id: MAGIC_STAT,
+                min: 25,
+            },
+        ),
+        (
+            "confirm no seeded noted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unnoted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Nature rune outcome before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no staff in the pack before Start",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact rune chainbody seed bank",
+        Proof::BankItemId {
+            id: RUNE_CHAINBODY_ID,
+            count: 12,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact Nature rune seed bank",
+            Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 200,
+            },
+        ),
+        (
+            "acknowledge the exact Staff of fire seed bank",
+            Proof::BankItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge no seeded note of the chainbody in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no Fire battlestaff in the Low bank",
+            Proof::BankItemIdAtMost {
+                id: FIRE_BATTLESTAFF_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch the noted rune chainbody land in the pack",
+            Proof::ItemId {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the Staff of fire worn natively",
+            Proof::EquipmentId {
+                id: STAFF_OF_FIRE_ID,
+            },
+        ),
+        ("watch Magic XP from a Low Level Alchemy cast", xp),
+        (
+            "watch the exact Low Level Alchemy coin payment",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: RUNE_CHAINBODY_LOW_ALCH_COINS,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "alcher_low",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_LOW_INJECT),
+            terminal_shot: Some("alcher_low"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// The `alcher_fire_battlestaff` scenario: Magic 70 / Attack 40 at Varrock
+/// West with eight chainbodies, 200 natures and exactly one Fire battlestaff
+/// banked (no Staff of fire), default High, eight alchs a trip.
+fn alcher_fire_battlestaff_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: HIGH_ALCH_MAGIC_XP,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic 70, Attack 40 and the exact alternative-staff stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat magic 70");
+                cheat(c, "setstat attack 40");
+                cheat(c, "givebank fire_battlestaff 1");
+                cheat(c, "givebank naturerune 200");
+                cheat(c, "givebank rune_chainbody 8");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Magic 70 before Start",
+            Proof::Stat {
+                id: MAGIC_STAT,
+                min: 70,
+            },
+        ),
+        (
+            "confirm Attack 40 before Start",
+            Proof::Stat {
+                id: ATTACK_STAT,
+                min: 40,
+            },
+        ),
+        (
+            "confirm no seeded Fire battlestaff in the pack before Start",
+            Proof::ItemIdAtMost {
+                id: FIRE_BATTLESTAFF_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm the default Staff of fire is absent from the pack before Start",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unnoted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Nature rune outcome before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact Fire battlestaff seed bank",
+        Proof::BankItemId {
+            id: FIRE_BATTLESTAFF_ID,
+            count: 1,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact Nature rune seed bank",
+            Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 200,
+            },
+        ),
+        (
+            "acknowledge the exact rune chainbody seed bank",
+            Proof::BankItemId {
+                id: RUNE_CHAINBODY_ID,
+                count: 8,
+            },
+        ),
+        (
+            "acknowledge Staff of fire is absent from the alternative-staff bank",
+            Proof::BankItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded note of the chainbody in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch the Fire battlestaff worn natively",
+            Proof::EquipmentId {
+                id: FIRE_BATTLESTAFF_ID,
+            },
+        ),
+        (
+            "watch the noted rune chainbody land in the pack",
+            Proof::ItemId {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 1,
+            },
+        ),
+        ("watch Magic XP from a High Level Alchemy cast", xp),
+        (
+            "watch the exact High Level Alchemy coin payment",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "alcher_fire_battlestaff",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_FIRE_BATTLESTAFF_INJECT),
+            terminal_shot: Some("alcher_fire_battlestaff"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -16624,6 +17017,8 @@ mod tests {
                 "alcher_custom_name",
                 "alcher_ordered",
                 "alcher_large_batch",
+                "alcher_low",
+                "alcher_fire_battlestaff",
                 "bank_fletcher",
                 "bank_fletcher_shafts",
                 "bank_fletcher_headless",
@@ -17864,6 +18259,160 @@ mod tests {
         assert_eq!(
             inject.get("customItem"),
             Some(&Value::String("rune_chainbody".into()))
+        );
+    }
+
+    #[test]
+    fn alcher_option_rows_preserve_frozen_settings_seeds_and_inner_deadline() {
+        let low = get("alcher_low").expect("alcher_low is registered");
+        assert_eq!(low.settings.start_script, Some("Alcher"));
+        assert_eq!(low.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(low.settings.terminal_shot, Some("alcher_low"));
+        let inject = settings_inject_map(low.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("items"),
+            Some(&Value::Array(vec![Value::String("rune_chainbody".into())]))
+        );
+        assert_eq!(inject.get("alchs"), Some(&Value::from(10.0)));
+        assert_eq!(inject.get("spell"), Some(&Value::String("Low".into())));
+        let start = low
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(low.steps[start - 1].wait.arm, Proof::BankClosed);
+        let seed_arms = low.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed_arms.contains(&Proof::Stat {
+            id: MAGIC_STAT,
+            min: 25
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: RUNE_CHAINBODY_ID,
+            count: 12,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: NATURE_RUNE_ID,
+            count: 200,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: STAFF_OF_FIRE_ID,
+            count: 1,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemIdAtMost {
+            id: FIRE_BATTLESTAFF_ID,
+            count: 0,
+        }));
+        assert_eq!(
+            low.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>(),
+            vec![
+                Proof::ItemId {
+                    id: CERT_RUNE_CHAINBODY_ID,
+                    count: 1,
+                },
+                Proof::EquipmentId {
+                    id: STAFF_OF_FIRE_ID,
+                },
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: LOW_ALCH_MAGIC_XP,
+                },
+                Proof::ItemId {
+                    id: COINS_ID,
+                    count: RUNE_CHAINBODY_LOW_ALCH_COINS,
+                },
+            ]
+        );
+        assert_eq!(
+            low.proof,
+            Proof::StatXpGain {
+                id: MAGIC_STAT,
+                min: LOW_ALCH_MAGIC_XP,
+            }
+        );
+
+        let staff = get("alcher_fire_battlestaff").expect("alcher_fire_battlestaff is registered");
+        assert_eq!(staff.settings.start_script, Some("Alcher"));
+        assert_eq!(staff.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(
+            staff.settings.terminal_shot,
+            Some("alcher_fire_battlestaff")
+        );
+        let inject = settings_inject_map(staff.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("items"),
+            Some(&Value::Array(vec![Value::String("rune_chainbody".into())]))
+        );
+        assert_eq!(inject.get("alchs"), Some(&Value::from(8.0)));
+        assert!(!inject.contains_key("spell"));
+        let start = staff
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(staff.steps[start - 1].wait.arm, Proof::BankClosed);
+        let seed_arms = staff.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed_arms.contains(&Proof::Stat {
+            id: MAGIC_STAT,
+            min: 70
+        }));
+        assert!(seed_arms.contains(&Proof::Stat {
+            id: ATTACK_STAT,
+            min: 40
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: FIRE_BATTLESTAFF_ID,
+            count: 1,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: NATURE_RUNE_ID,
+            count: 200,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: RUNE_CHAINBODY_ID,
+            count: 8,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemIdAtMost {
+            id: STAFF_OF_FIRE_ID,
+            count: 0,
+        }));
+        assert_eq!(
+            staff.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>(),
+            vec![
+                Proof::EquipmentId {
+                    id: FIRE_BATTLESTAFF_ID,
+                },
+                Proof::ItemId {
+                    id: CERT_RUNE_CHAINBODY_ID,
+                    count: 1,
+                },
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: HIGH_ALCH_MAGIC_XP,
+                },
+                Proof::ItemId {
+                    id: COINS_ID,
+                    count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+                },
+            ]
+        );
+        assert_eq!(
+            staff.proof,
+            Proof::StatXpGain {
+                id: MAGIC_STAT,
+                min: HIGH_ALCH_MAGIC_XP,
+            }
         );
     }
 
@@ -21639,6 +22188,8 @@ mod tests {
             "alcher",
             "alcher_custom_alias",
             "alcher_custom_name",
+            "alcher_low",
+            "alcher_fire_battlestaff",
             "bank_fletcher",
             "bank_fletcher_string",
             "bank_fletcher_cut_string",

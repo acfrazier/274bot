@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -23,10 +23,25 @@ pub const CERT_YEW_LONGBOW_ID: i32 = 856;
 pub const NATURE_RUNE_ID: i32 = 561;
 pub const MIND_RUNE_ID: i32 = 558;
 pub const COINS_ID: i32 = 995;
+pub const RUNE_CHAINBODY_ID: i32 = 1113;
+pub const CERT_RUNE_CHAINBODY_ID: i32 = 1114;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 pub const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
 pub const YEW_LONGBOW_ALCH_COINS: i32 = 768;
 pub const HIGH_ALCH_MAGIC_XP: i32 = 65;
+/// Canonical 289 `magic_spells.dbrow`: Low needs 21 Magic and 31 client-scale
+/// XP per cast; High needs 55 and 65. Low pays 40% of shop cost, High 60%.
+pub const LOW_ALCH_LEVEL: i32 = 21;
+pub const HIGH_ALCH_LEVEL: i32 = 55;
+pub const LOW_ALCH_MAGIC_XP: i32 = 31;
+/// High Level Alchemy pays 60% of shop cost: floor(50000 * 0.6) = 30000.
+pub const RUNE_CHAINBODY_HIGH_ALCH_COINS: i32 = 30_000;
+/// Low Level Alchemy pays 40% of shop cost: floor(50000 * 0.4) = 20000.
+pub const RUNE_CHAINBODY_LOW_ALCH_COINS: i32 = 20_000;
+/// Both selected catalogs require Attack 30 to wield a Fire battlestaff.
+pub const FIRE_BATTLESTAFF_WIELD_ATTACK: i32 = 30;
+/// Fire-rune staves, the default first: a spelled row proves the one it selected.
+pub const ALCHER_FIRE_STAFFS: [i32; 2] = [STAFF_OF_FIRE_ID, FIRE_BATTLESTAFF_ID];
 pub const LOGS_ID: i32 = 1511;
 pub const ARROW_SHAFT_ID: i32 = 52;
 pub const HEADLESS_ARROW_ID: i32 = 53;
@@ -420,6 +435,8 @@ pub enum CoreCase {
     AlcherCustomName,
     AlcherOrdered,
     AlcherLargeBatch,
+    AlcherLow,
+    AlcherFireBattlestaff,
     BankFletcher,
     BankFletcherShafts,
     BankFletcherHeadless,
@@ -523,6 +540,8 @@ impl CoreCase {
             "alcher_custom_name" => Ok(Self::AlcherCustomName),
             "alcher_ordered" => Ok(Self::AlcherOrdered),
             "alcher_large_batch" => Ok(Self::AlcherLargeBatch),
+            "alcher_low" => Ok(Self::AlcherLow),
+            "alcher_fire_battlestaff" => Ok(Self::AlcherFireBattlestaff),
             "bank_fletcher" => Ok(Self::BankFletcher),
             "bank_fletcher_shafts" => Ok(Self::BankFletcherShafts),
             "bank_fletcher_headless" => Ok(Self::BankFletcherHeadless),
@@ -629,6 +648,8 @@ impl CoreCase {
             Self::AlcherCustomName => "alcher_custom_name",
             Self::AlcherOrdered => "alcher_ordered",
             Self::AlcherLargeBatch => "alcher_large_batch",
+            Self::AlcherLow => "alcher_low",
+            Self::AlcherFireBattlestaff => "alcher_fire_battlestaff",
             Self::BankFletcher => "bank_fletcher",
             Self::BankFletcherShafts => "bank_fletcher_shafts",
             Self::BankFletcherHeadless => "bank_fletcher_headless",
@@ -729,7 +750,9 @@ impl CoreCase {
             | Self::AlcherCustomAlias
             | Self::AlcherCustomName
             | Self::AlcherOrdered
-            | Self::AlcherLargeBatch => "Alcher",
+            | Self::AlcherLargeBatch
+            | Self::AlcherLow
+            | Self::AlcherFireBattlestaff => "Alcher",
             Self::BankFletcher
             | Self::BankFletcherShafts
             | Self::BankFletcherHeadless
@@ -799,6 +822,15 @@ pub fn validate_case_catalog(case: CoreCase, commit: &str) -> Result<(), String>
     if case == CoreCase::SuperheaterFireBattlestaff && commit == CATALOG_COMMIT_A {
         return Err(format!(
             "catalog {CATALOG_COMMIT_A} Superheater requires Staff of fire; superheater_fire_battlestaff is supported only by {CATALOG_COMMIT_B}"
+        ));
+    }
+    if matches!(case, CoreCase::AlcherLow | CoreCase::AlcherFireBattlestaff)
+        && (commit == CATALOG_COMMIT_A || commit == CATALOG_COMMIT_B)
+    {
+        return Err(format!(
+            "catalog {commit} Alcher is High-only and withdraws Staff of fire; the Low spell and the \
+             alternative-staff branch are supported only by the current 96410ec5 Alcher (spell setting \
+             and pickFireStaff over FIRE_STAVES)"
         ));
     }
     Ok(())
@@ -1720,6 +1752,31 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         | CoreCase::AlcherLargeBatch => {
             near(baseline.tile, (3185, 3440, 0), 6) && baseline.level("magic") >= 55
         }
+        CoreCase::AlcherLow => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.level("magic") >= LOW_ALCH_LEVEL
+                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+        }
+        CoreCase::AlcherFireBattlestaff => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.level("magic") >= HIGH_ALCH_LEVEL
+                && baseline.level("attack") >= FIRE_BATTLESTAFF_WIELD_ATTACK
+                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+        }
         CoreCase::AlcherDefaults => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= 55
@@ -2184,6 +2241,13 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::Alcher | CoreCase::AlcherCustom
         | CoreCase::AlcherOrdered
         | CoreCase::AlcherLargeBatch => "Varrock West bank and Magic 55",
+        CoreCase::AlcherLow => {
+            "Varrock West bank, Magic 21+, and no seeded chainbody note, coins, Nature rune, or staff"
+        }
+        CoreCase::AlcherFireBattlestaff => {
+            "Varrock West bank, Magic 55+ and Attack 30+, no staff worn or seeded, and no seeded \
+             chainbody note, coins, or Nature rune"
+        }
         CoreCase::AlcherDefaults => {
             "Varrock West bank, Magic 55, and no seeded yew-longbow note, coins, Nature rune, or chainbody"
         }
@@ -2458,6 +2522,7 @@ pub struct CoreWitness {
     pub bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle,
     pub alcher_defaults_cycle: AlcherGeneratedCustomCycle,
     pub alcher_generated_custom_cycle: AlcherGeneratedCustomCycle,
+    pub alcher_spell_cycle: AlcherGeneratedCustomCycle,
     pub dart_fletcher_cycle: DartFletcherCycle,
     pub herb_cleaner_cycle: HerbCleanerCycle,
     pub gem_cutter_cycle: GemCutterCycle,
@@ -2794,6 +2859,67 @@ impl BankFletcherCutStringCycle {
 pub struct AlcherGeneratedCustomCycle {
     pub withdrawn: Option<Observation>,
     pub consumed: bool,
+    /// Selected spell a spelled row demanded (`None` on the High/default rows).
+    pub spell: Option<AlcherSpell>,
+    /// Client-scale Magic XP one cast of that spell credits.
+    pub magic_xp_per_cast: i32,
+    /// Coins one cast pays for the selected item at that spell's rate.
+    pub coins_per_cast: i32,
+    /// Casts the noted-stack, rune and XP deltas agreed on.
+    pub casts: i32,
+    /// Fire staff worn on the baseline frame (`None`: no staff before Start).
+    pub baseline_staff: Option<i32>,
+    /// Fire staff worn on the frame that proved the cast.
+    pub cast_staff: Option<i32>,
+    /// Fire staff a spelled row required; `None` when the row claims none.
+    pub required_staff: Option<i32>,
+    /// A fire staff other than the required one was worn after Start.
+    pub wrong_staff: bool,
+}
+
+/// The Alcher's selected spell: Low needs 21 Magic and pays 40% of shop cost,
+/// High needs 55 and pays 60%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlcherSpell {
+    Low,
+    High,
+}
+
+/// One selected spell's per-cast expectations for the selected item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlcherSpellExpectation {
+    pub spell: AlcherSpell,
+    /// Client-scale Magic XP one cast credits (Low 31 / High 65).
+    pub magic_xp: i32,
+    /// Coins one cast pays: floor(canonical item cost * the spell's rate).
+    pub coins_per_cast: i32,
+    /// Fire staff the fixture's gear step must actually wear.
+    pub staff: i32,
+}
+
+/// Low Level Alchemy on noted rune chainbodies under a Staff of fire (#744).
+pub const ALCHER_LOW_EXPECTATION: AlcherSpellExpectation = AlcherSpellExpectation {
+    spell: AlcherSpell::Low,
+    magic_xp: LOW_ALCH_MAGIC_XP,
+    coins_per_cast: RUNE_CHAINBODY_LOW_ALCH_COINS,
+    staff: STAFF_OF_FIRE_ID,
+};
+
+/// High Level Alchemy on noted rune chainbodies under a Fire battlestaff.
+pub const ALCHER_FIRE_BATTLESTAFF_EXPECTATION: AlcherSpellExpectation = AlcherSpellExpectation {
+    spell: AlcherSpell::High,
+    magic_xp: HIGH_ALCH_MAGIC_XP,
+    coins_per_cast: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+    staff: FIRE_BATTLESTAFF_ID,
+};
+
+/// The fire staff worn right now, if any.
+fn worn_fire_staff(observation: &Observation) -> Option<i32> {
+    ALCHER_FIRE_STAFFS
+        .iter()
+        .copied()
+        .find(|id| observation.equipment_id(*id) > 0)
 }
 
 impl AlcherGeneratedCustomCycle {
@@ -2807,6 +2933,25 @@ impl AlcherGeneratedCustomCycle {
         );
     }
 
+    /// A fresh bank generation handed over the noted stack, with no unnoted copy
+    /// in the pack and at least one cast's fuel.
+    fn withdrawal_ready(
+        &self,
+        baseline: &Observation,
+        now: &Observation,
+        unnoted: i32,
+        noted: i32,
+    ) -> bool {
+        self.withdrawn.is_none()
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(noted) >= 1
+            && now.item_id(unnoted) == 0
+            && now.item_id(noted) > baseline.item_id(noted)
+            && now.item_id(NATURE_RUNE_ID) >= 1
+    }
+
+    /// The High/default rows keep their own name-based guard on top of the
+    /// shared withdrawal, exactly as before.
     pub fn observe_target(
         &mut self,
         baseline: &Observation,
@@ -2815,14 +2960,7 @@ impl AlcherGeneratedCustomCycle {
         noted: i32,
         alch_coins: i32,
     ) {
-        if self.withdrawn.is_none()
-            && now.bank_generation > baseline.bank_generation
-            && now.item_id(noted) >= 1
-            && now.item_id(unnoted) == 0
-            && now.item_id(noted) > baseline.item_id(noted)
-            && now.item_id(NATURE_RUNE_ID) >= 1
-            && now.item("Rune chainbody") == 0
-        {
+        if self.withdrawal_ready(baseline, now, unnoted, noted) && now.item("Rune chainbody") == 0 {
             self.withdrawn = Some(now.clone());
         }
         if let Some(withdrawn) = &self.withdrawn {
@@ -2834,6 +2972,67 @@ impl AlcherGeneratedCustomCycle {
                 && now.skill_xp("magic") - baseline.skill_xp("magic") >= HIGH_ALCH_MAGIC_XP
                 && now.item("Rune chainbody") == 0;
         }
+    }
+
+    /// The selected-spell rows: the ordered withdrawal, then one frame where the
+    /// noted stack, the Nature runes, the Magic XP and the coins agree on the
+    /// same number of casts, with the selected fire staff actually worn after a
+    /// baseline that wore no staff at all.
+    pub fn observe_spelled(
+        &mut self,
+        expectation: AlcherSpellExpectation,
+        baseline: &Observation,
+        now: &Observation,
+        unnoted: i32,
+        noted: i32,
+    ) {
+        self.spell = Some(expectation.spell);
+        self.magic_xp_per_cast = expectation.magic_xp;
+        self.coins_per_cast = expectation.coins_per_cast;
+        self.required_staff = Some(expectation.staff);
+        if self.baseline_staff.is_none() {
+            self.baseline_staff = worn_fire_staff(baseline);
+        }
+        self.wrong_staff |= worn_fire_staff(now).is_some_and(|worn| worn != expectation.staff);
+        if self.withdrawal_ready(baseline, now, unnoted, noted) {
+            self.withdrawn = Some(now.clone());
+        }
+        let withdrawn = match &self.withdrawn {
+            Some(withdrawn) => withdrawn,
+            None => return,
+        };
+        if now.bank_open || now.bank_loaded || self.consumed {
+            return;
+        }
+        let casts = withdrawn.item_id(noted) - now.item_id(noted);
+        if casts < 1 {
+            return;
+        }
+        let coins = expectation.coins_per_cast * casts;
+        let xp = expectation.magic_xp * casts;
+        let consumed = withdrawn.item_id(NATURE_RUNE_ID) - now.item_id(NATURE_RUNE_ID) == casts
+            && now.item_id(COINS_ID) - withdrawn.item_id(COINS_ID) == coins
+            && now.skill_xp("magic") - withdrawn.skill_xp("magic") == xp
+            && now.item_id(COINS_ID) - baseline.item_id(COINS_ID) == coins
+            && now.skill_xp("magic") - baseline.skill_xp("magic") == xp
+            && worn_fire_staff(now) == Some(expectation.staff);
+        if consumed {
+            self.casts = casts;
+            self.cast_staff = worn_fire_staff(now);
+            self.consumed = true;
+        }
+    }
+
+    /// Qualification for a spelled row: the exact cast arithmetic proved, the
+    /// demanded staff worn, no staff in the baseline and no other fire staff
+    /// seen anywhere after Start.
+    pub fn qualified_spell(&self) -> bool {
+        self.consumed
+            && self.casts >= 1
+            && !self.wrong_staff
+            && self.baseline_staff.is_none()
+            && self.required_staff.is_some()
+            && self.cast_staff == self.required_staff
     }
 }
 
@@ -6902,6 +7101,7 @@ impl CoreWitness {
             bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle::default(),
             alcher_defaults_cycle: AlcherGeneratedCustomCycle::default(),
             alcher_generated_custom_cycle: AlcherGeneratedCustomCycle::default(),
+            alcher_spell_cycle: AlcherGeneratedCustomCycle::default(),
             dart_fletcher_cycle: DartFletcherCycle::default(),
             herb_cleaner_cycle: HerbCleanerCycle::default(),
             gem_cutter_cycle: GemCutterCycle::default(),
@@ -6981,6 +7181,22 @@ impl CoreWitness {
                 YEW_LONGBOW_ID,
                 CERT_YEW_LONGBOW_ID,
                 YEW_LONGBOW_ALCH_COINS,
+            );
+        }
+        if matches!(
+            self.case,
+            CoreCase::AlcherLow | CoreCase::AlcherFireBattlestaff
+        ) {
+            let expectation = match self.case {
+                CoreCase::AlcherLow => ALCHER_LOW_EXPECTATION,
+                _ => ALCHER_FIRE_BATTLESTAFF_EXPECTATION,
+            };
+            self.alcher_spell_cycle.observe_spelled(
+                expectation,
+                &self.baseline,
+                observation,
+                RUNE_CHAINBODY_ID,
+                CERT_RUNE_CHAINBODY_ID,
             );
         }
         if matches!(self.case, CoreCase::DartFletcher) {
@@ -7376,6 +7592,9 @@ impl CoreWitness {
             CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
                 self.alcher_generated_custom_cycle.consumed
             }
+            CoreCase::AlcherLow | CoreCase::AlcherFireBattlestaff => {
+                self.alcher_spell_cycle.qualified_spell()
+            }
             CoreCase::AlcherDefaults => self.alcher_defaults_cycle.consumed,
             CoreCase::BankFletcher => {
                 self.bank_fletcher_cycle.crafted_after_withdrawal
@@ -7514,6 +7733,7 @@ impl CoreWitness {
             "bank_fletcher_cut_string_cycle": self.bank_fletcher_cut_string_cycle,
             "alcher_defaults_cycle": self.alcher_defaults_cycle,
             "alcher_generated_custom_cycle": self.alcher_generated_custom_cycle,
+            "alcher_spell_cycle": self.alcher_spell_cycle,
             "dart_fletcher_cycle": self.dart_fletcher_cycle,
             "herb_cleaner_cycle": self.herb_cleaner_cycle,
             "gem_cutter_cycle": self.gem_cutter_cycle,
