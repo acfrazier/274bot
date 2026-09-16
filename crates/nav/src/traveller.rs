@@ -3587,6 +3587,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -3614,6 +3615,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -3642,6 +3644,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -4261,6 +4264,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let route = Route {
             legs: vec![Leg::Transport { edge }],
@@ -4314,6 +4318,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let packed = [tree(village), tree(varrock)];
         let leg = Leg::Transport {
@@ -4555,6 +4560,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let packed = [tree(village), tree(varrock), tree(khazard)];
         let route = Route {
@@ -4881,6 +4887,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -5289,6 +5296,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -5320,6 +5328,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -5349,6 +5358,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -5378,6 +5388,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         }
     }
 
@@ -7267,6 +7278,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         };
         let route = Route {
             legs: vec![Leg::Transport { edge }],

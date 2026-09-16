@@ -50,6 +50,8 @@ pub struct ScenarioRunner {
     /// route on it.
     nav_world: Option<Arc<NavWorld>>,
     traveller: Traveller,
+    /// WORLD membership for routing. Default false (unknown).
+    map_members: bool,
     /// The armed nav route (re-passed each tick; the traveller consumes
     /// it when a run starts).
     route: Option<Route>,
@@ -129,6 +131,11 @@ impl ScenarioRunner {
         Self::with_data(scenario, nav_world)
     }
 
+    /// Bind WORLD membership for routing. Unknown/false is the default.
+    pub fn set_map_members(&mut self, map_members: bool) {
+        self.map_members = map_members;
+    }
+
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         // Settings fields are Copy, so read them out before `scenario`
         // moves into the runner below.
@@ -143,6 +150,7 @@ impl ScenarioRunner {
             obj_names: None,
             nav_world,
             traveller: Traveller::new(),
+            map_members: false,
             route: None,
             terminal_shot,
             phase: Phase::Seeding,
@@ -720,7 +728,8 @@ impl ScenarioRunner {
         // cannot pay / has not earned is not relaxed. The traveller's
         // latched essence-mine session lets a route from inside the mine
         // use the exit portal's return hop to the entry wizard.
-        let state = nav::WorldState::from_snapshot(&self.snapshot);
+        let state =
+            nav::WorldState::from_snapshot(&self.snapshot).with_map_members(self.map_members);
         let opts = FindOptions {
             essence: self.traveller.essence(),
             ..opts

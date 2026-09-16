@@ -1,10 +1,13 @@
 //! The gating facts a [`crate::router::find`] search checks transport
 //! edges against, built from a `GameSnapshot` at find time: inventory
-//! stacks, worn items, skill levels, varps, and completed quests.
+//! stacks, worn items, skill levels, varps, completed quests, and the
+//! bound world's `map_members` fact.
 //!
 //! Missing facts fail closed — [`WorldState::allows`] is false for any
 //! requirement the state cannot prove, so an unpaid toll, an incomplete
-//! quest, or a missing level never routes. There is no "assume yes".
+//! quest, a missing level, or an unbound members world never routes.
+//! There is no "assume yes". `map_members` is WORLD membership
+//! (`Environment.node.members`), never the account or cache flag.
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,6 +38,12 @@ pub struct WorldState {
     pub varps: HashMap<i32, i32>,
     /// Quest names completed (green in the quest journal).
     pub quests: HashSet<String>,
+    /// WORLD membership (`Environment.node.members` / `MAP_MEMBERS`).
+    /// Default false: [`WorldState::from_snapshot`] cannot honestly fill
+    /// this from `GameSnapshot` (account `members` is a different fact).
+    /// Host-play / panel / tui / scenario or-in the bound profile fact
+    /// via [`WorldState::with_map_members`].
+    pub map_members: bool,
 }
 
 impl WorldState {
@@ -76,19 +85,30 @@ impl WorldState {
             stats,
             varps,
             quests,
+            map_members: false,
         }
+    }
+
+    /// Bind the WORLD `map_members` fact from the selected server profile.
+    /// `from_snapshot` always leaves this false; routing callers that can
+    /// reach a members-required edge must apply the profile fact here.
+    pub fn with_map_members(mut self, map_members: bool) -> Self {
+        self.map_members = map_members;
+        self
     }
 
     /// Whether the edge's requirements are all satisfied: every
     /// `skill_req` level met, every `item_req` count carried, every
-    /// `quest_req` completed, every `varp_req` value reached, and **any**
+    /// `quest_req` completed, every `varp_req` value reached, **any**
     /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
-    /// one-id list; a slash-weapon web lists every slash blade). Any
+    /// one-id list; a slash-weapon web lists every slash blade), and a
+    /// `members_req` edge only when [`Self::map_members`] is true. Any
     /// requirement the state cannot prove fails the edge.
     pub fn allows(&self, e: &TransportEdge) -> bool {
-        e.skill_req
-            .iter()
-            .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
+        self.members_ok(e)
+            && e.skill_req
+                .iter()
+                .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
             && e.item_req
                 .iter()
                 .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
@@ -105,13 +125,18 @@ impl WorldState {
     /// feeds it the search's relaxed gate) — [`find`] and [`find_with`]
     /// never skip a carry/wear gate.
     pub fn allows_without_carry_worn(&self, e: &TransportEdge) -> bool {
-        e.skill_req
-            .iter()
-            .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
+        self.members_ok(e)
+            && e.skill_req
+                .iter()
+                .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
             && e.quest_req.iter().all(|q| self.quests.contains(q))
             && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
+    }
+
+    fn members_ok(&self, e: &TransportEdge) -> bool {
+        !e.members_req || self.map_members
     }
 }
 
@@ -177,6 +202,7 @@ mod tests {
             quest_req: vec!["Rune Mysteries".to_string()],
             varp_req: vec![(150, 160)], // Grand Tree complete
             worn_req: vec![1712],       // a charged glory
+            members_req: false,
         }
     }
 
@@ -191,6 +217,7 @@ mod tests {
             stats: HashMap::from([(6, 25)]),
             varps: HashMap::from([(150, 160)]),
             quests: HashSet::from(["Rune Mysteries".to_string()]),
+            map_members: false,
         };
         assert!(s.allows(&e), "all facts present");
         // One missing fact at a time, each failing closed.
@@ -255,6 +282,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
             ..gated_edge()
         };
         assert!(
@@ -391,5 +419,38 @@ mod tests {
             ..s.clone()
         };
         assert!(!poor.allows(&e));
+        assert!(
+            !s.map_members,
+            "from_snapshot must not invent WORLD membership"
+        );
+    }
+
+    /// A `members_req` edge is refused until `map_members` is true.
+    /// BankBudget's relaxed carry/wear arm still cannot fetch membership.
+    #[test]
+    fn members_req_refuses_until_map_members_is_true() {
+        let mut e = gated_edge();
+        e.skill_req.clear();
+        e.item_req.clear();
+        e.quest_req.clear();
+        e.varp_req.clear();
+        e.worn_req.clear();
+        e.members_req = true;
+        assert!(
+            !WorldState::empty().allows(&e),
+            "empty state is not a members world"
+        );
+        assert!(
+            !WorldState::empty().allows_without_carry_worn(&e),
+            "BankBudget cannot fetch membership"
+        );
+        let open = WorldState::empty().with_map_members(true);
+        assert!(open.allows(&e));
+        assert!(open.allows_without_carry_worn(&e));
+        e.members_req = false;
+        assert!(
+            WorldState::empty().allows(&e),
+            "existing edges stay ungated"
+        );
     }
 }

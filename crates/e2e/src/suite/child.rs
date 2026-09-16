@@ -178,6 +178,8 @@ pub struct NativeConfig {
     pub vault: Option<PathBuf>,
     pub lowmem: bool,
     pub mainland: bool,
+    /// Operator-declared WORLD membership for the selected endpoint.
+    pub world_members: Option<bool>,
     /// Headed diagnostic layers; the suite defaults on without persisting panel settings.
     pub nav_paints: bool,
     /// Direct native executables. When absent the manifest's cargo template is resolved to
@@ -225,6 +227,11 @@ impl NativeConfig {
         push(
             "--vault",
             self.vault.as_ref().map(|p| p.display().to_string()),
+        );
+        push(
+            "--world-members",
+            self.world_members
+                .map(|v| if v { "true".into() } else { "false".into() }),
         );
         args
     }
@@ -1403,6 +1410,7 @@ mod tests {
             vault: None,
             lowmem: true,
             mainland: false,
+            world_members: None,
             nav_paints: true,
             exec_core: None,
             exec_pair: None,

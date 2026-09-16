@@ -106,6 +106,10 @@ pub struct TransportEdge {
     pub quest_req: Vec<String>,
     pub varp_req: Vec<(i32, i32)>,
     pub worn_req: Vec<i32>,
+    /// WORLD membership required (`MAP_MEMBERS`). False on every existing
+    /// deriver; only the canonical `membergatel`/`membergater` family sets
+    /// this. Packed as a `u8` on the v9 wire after `worn_req`.
+    pub members_req: bool,
 }
 
 /// All transport edges, indexed by interact target (`graph.at[tile]` lists
@@ -152,6 +156,7 @@ pub fn derive_transports(
     let positions = loc_positions(content_root);
 
     door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
+    membergate_edges(content_root, &ids, &mut graph, &mut skipped, collision);
     ladder_stair_edges(
         content_root,
         &ids,
@@ -224,6 +229,12 @@ const SKIP_GATE_MEMBER_STAGE: &str =
 const SKIP_GATE_MEMBER_PAIR: &str =
     "closed gate member has no adjacent paired open-stage placement";
 const SKIP_GATE_MEMBER_CONFLICT: &str = "closed gate member is defined twice with different data";
+const SKIP_MEMBERGATE_HANDLER: &str =
+    "membergate named handler is missing, extra-guarded, or not the canonical opener";
+const SKIP_MEMBERGATE_CONFLICT: &str = "membergate is defined twice with different data";
+const SKIP_MEMBERGATE_STAGE: &str = "membergate open leaf is unresolved or mismatched";
+const SKIP_MEMBERGATE_PAIR: &str = "membergate has no complementary paired placement";
+const SKIP_MEMBERGATE_SHAPE: &str = "membergate declares no Open op or the wrong closed category";
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -660,9 +671,408 @@ fn door_edges(
                         varp_req.clone()
                     },
                     worn_req: vec![],
+                    members_req: false,
                 });
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical membergate family (membergatel / membergater).
+// ---------------------------------------------------------------------------
+
+const MEMBERGATE_LEFT: &str = "membergatel";
+const MEMBERGATE_RIGHT: &str = "membergater";
+const MEMBERGATE_LEFT_CLOSED: &str = "door_left_closed";
+const MEMBERGATE_RIGHT_CLOSED: &str = "door_right_closed";
+const MEMBERGATE_LEFT_OPENED: &str = "door_left_opened";
+const MEMBERGATE_RIGHT_OPENED: &str = "door_right_opened";
+const MEMBERGATE_LEFT_OPEN: &str =
+    "if(map_members=^false){mes(^mes_members_gate);return;}~open_double_doors_left(500,door_right_closed,loc_param(open_sound));";
+const MEMBERGATE_RIGHT_OPEN: &str =
+    "if(map_members=^false){mes(^mes_members_gate);return;}~open_double_doors_right(500,door_left_closed,loc_param(open_sound));";
+
+/// Closed membergate block as read from `doubledoors.loc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MembergateDef {
+    left: bool,
+    op_open: bool,
+    category_ok: bool,
+    open: Option<i32>,
+}
+
+/// Open-leaf provenance for `loc_1560` / `loc_1561`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MembergateOpenLeaf {
+    left: bool,
+    op_close: bool,
+    category_ok: bool,
+}
+
+/// Dedicated `membergatel`/`membergater` crossings. Not `parse_door_config`,
+/// not fence-gate inheritance, not a generic double-door interpreter.
+/// Both directions, `members_req`, `open_double_doors_*` morph.
+fn membergate_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+    collision: &WorldCollision,
+) {
+    let Some(&left_id) = ids.get(MEMBERGATE_LEFT) else {
+        return;
+    };
+    let Some(&right_id) = ids.get(MEMBERGATE_RIGHT) else {
+        return;
+    };
+    let handlers = membergate_handlers(content_root);
+    let (defs, open_leaves, conflicted) = membergate_loc_defs(content_root, ids);
+    let positions = loc_positions(content_root);
+
+    let mut admitted: HashMap<i32, i32> = HashMap::new();
+    for (id, left) in [(left_id, true), (right_id, false)] {
+        if conflicted.contains(&id) {
+            bump(skipped, SKIP_MEMBERGATE_CONFLICT, 1);
+            continue;
+        }
+        match handlers.get(&left) {
+            Some(MembergateHandler::Ok) => {}
+            Some(MembergateHandler::Conflict) => {
+                bump(skipped, SKIP_MEMBERGATE_CONFLICT, 1);
+                continue;
+            }
+            _ => {
+                bump(skipped, SKIP_MEMBERGATE_HANDLER, 1);
+                continue;
+            }
+        }
+        let Some(def) = defs.get(&id) else {
+            bump(skipped, SKIP_MEMBERGATE_SHAPE, 1);
+            continue;
+        };
+        if def.left != left || !def.op_open || !def.category_ok {
+            bump(skipped, SKIP_MEMBERGATE_SHAPE, 1);
+            continue;
+        }
+        let Some(open) = def.open else {
+            bump(skipped, SKIP_MEMBERGATE_STAGE, 1);
+            continue;
+        };
+        let Some(leaf) = open_leaves.get(&open) else {
+            bump(skipped, SKIP_MEMBERGATE_STAGE, 1);
+            continue;
+        };
+        if leaf.left != left || !leaf.op_close || !leaf.category_ok {
+            bump(skipped, SKIP_MEMBERGATE_STAGE, 1);
+            continue;
+        }
+        admitted.insert(id, open);
+    }
+    if admitted.len() != 2 {
+        return;
+    }
+
+    let mut placed: HashMap<(i32, i32, i32), Vec<(i32, i32, i32)>> = HashMap::new();
+    for &id in admitted.keys() {
+        let Some(ps) = positions.get(&id) else {
+            continue;
+        };
+        for p in ps {
+            placed
+                .entry((p.x, p.z, p.level))
+                .or_default()
+                .push((id, p.shape, p.angle));
+        }
+    }
+
+    for (&id, &open) in &admitted {
+        let Some(ps) = positions.get(&id) else {
+            continue;
+        };
+        let left = id == left_id;
+        for p in ps {
+            if p.level != 0 || p.shape != 0 {
+                continue;
+            }
+            let Some(angle_dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            let pair = membergate_pair_tile(at, angle_dir, !left);
+            let paired = placed
+                .get(&(pair.x, pair.z, pair.level))
+                .is_some_and(|rows| {
+                    rows.iter().any(|&(oid, shape, angle)| {
+                        oid != id && admitted.contains_key(&oid) && shape == 0 && angle == p.angle
+                    })
+                });
+            if !paired {
+                bump(skipped, SKIP_MEMBERGATE_PAIR, 1);
+                continue;
+            }
+            for dir in [angle_dir, opposite(angle_dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: Some(open),
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: true,
+                });
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MembergateHandler {
+    Ok,
+    Invalid,
+    Conflict,
+}
+
+/// Loc-specific `[oploc1,membergatel|membergater]` bodies under `scripts`.
+/// Same-line and next-line forms. Duplicate identical canonical bodies are
+/// fine; a second different body is a conflict. Extra guards / a different
+/// opener fail closed.
+fn membergate_handlers(content_root: &Path) -> HashMap<bool, MembergateHandler> {
+    let mut bodies: HashMap<bool, Vec<String>> = HashMap::new();
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        for (left, body) in membergate_oploc_handlers(text) {
+            bodies.entry(left).or_default().push(normalized_body(&body));
+        }
+    });
+    let mut out = HashMap::new();
+    for left in [true, false] {
+        let expected = if left {
+            MEMBERGATE_LEFT_OPEN
+        } else {
+            MEMBERGATE_RIGHT_OPEN
+        };
+        let Some(found) = bodies.get(&left) else {
+            continue;
+        };
+        let mut distinct = found.clone();
+        distinct.sort();
+        distinct.dedup();
+        out.insert(
+            left,
+            if distinct.len() > 1 {
+                MembergateHandler::Conflict
+            } else if distinct.first().map(String::as_str) == Some(expected) {
+                MembergateHandler::Ok
+            } else {
+                MembergateHandler::Invalid
+            },
+        );
+    }
+    out
+}
+
+fn membergate_oploc_handlers(text: &str) -> Vec<(bool, String)> {
+    let mut out = Vec::new();
+    let mut cur: Option<(bool, String)> = None;
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => &raw[..i],
+            None => raw,
+        };
+        let line = line.trim();
+        if let Some((header, body)) = line.strip_prefix('[').and_then(|l| l.split_once(']')) {
+            if let Some(done) = cur.take() {
+                out.push(done);
+            }
+            let (op, name) = match header.split_once(',') {
+                Some(parts) => parts,
+                None => continue,
+            };
+            if op.trim() != "oploc1" {
+                continue;
+            }
+            let left = match name.trim() {
+                MEMBERGATE_LEFT => true,
+                MEMBERGATE_RIGHT => false,
+                _ => continue,
+            };
+            cur = Some((left, body.to_string()));
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push('\n');
+            body.push_str(line);
+        }
+    }
+    if let Some(done) = cur {
+        out.push(done);
+    }
+    out
+}
+
+fn membergate_loc_defs(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> (
+    HashMap<i32, MembergateDef>,
+    HashMap<i32, MembergateOpenLeaf>,
+    HashSet<i32>,
+) {
+    let path = content_root
+        .join("scripts")
+        .join("doors")
+        .join("configs")
+        .join("doubledoors.loc");
+    let mut defs: HashMap<i32, MembergateDef> = HashMap::new();
+    let mut open_leaves: HashMap<i32, MembergateOpenLeaf> = HashMap::new();
+    let mut conflicted: HashSet<i32> = HashSet::new();
+    let Ok(text) = fs::read_to_string(&path) else {
+        return (defs, open_leaves, conflicted);
+    };
+    let mut cur_name: Option<String> = None;
+    let mut op_open = false;
+    let mut op_close = false;
+    let mut category = String::new();
+    let mut open: Option<i32> = None;
+    let flush = |name: &str,
+                 op_open: bool,
+                 op_close: bool,
+                 category: &str,
+                 open: Option<i32>,
+                 defs: &mut HashMap<i32, MembergateDef>,
+                 open_leaves: &mut HashMap<i32, MembergateOpenLeaf>,
+                 conflicted: &mut HashSet<i32>| {
+        let Some(id) = loc_pack_id(name, ids) else {
+            return;
+        };
+        if name == MEMBERGATE_LEFT || name == MEMBERGATE_RIGHT {
+            let left = name == MEMBERGATE_LEFT;
+            let want = if left {
+                MEMBERGATE_LEFT_CLOSED
+            } else {
+                MEMBERGATE_RIGHT_CLOSED
+            };
+            let def = MembergateDef {
+                left,
+                op_open,
+                category_ok: category == want,
+                open,
+            };
+            match defs.get(&id) {
+                Some(prev) if *prev != def => {
+                    defs.remove(&id);
+                    conflicted.insert(id);
+                }
+                Some(_) => {}
+                None if conflicted.contains(&id) => {}
+                None => {
+                    defs.insert(id, def);
+                }
+            }
+        } else if name == "loc_1560" || name == "loc_1561" || open_leaves.contains_key(&id) {
+            let left = match category {
+                MEMBERGATE_LEFT_OPENED => true,
+                MEMBERGATE_RIGHT_OPENED => false,
+                _ => return,
+            };
+            let leaf = MembergateOpenLeaf {
+                left,
+                op_close,
+                category_ok: true,
+            };
+            match open_leaves.get(&id) {
+                Some(prev) if *prev != leaf => {
+                    open_leaves.remove(&id);
+                    conflicted.insert(id);
+                }
+                Some(_) => {}
+                None if conflicted.contains(&id) => {}
+                None => {
+                    open_leaves.insert(id, leaf);
+                }
+            }
+        }
+    };
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(name) = config_header(line) {
+            if let Some(prev) = cur_name.take() {
+                flush(
+                    &prev,
+                    op_open,
+                    op_close,
+                    &category,
+                    open,
+                    &mut defs,
+                    &mut open_leaves,
+                    &mut conflicted,
+                );
+            }
+            cur_name = Some(name.to_string());
+            op_open = false;
+            op_close = false;
+            category.clear();
+            open = None;
+            continue;
+        }
+        if cur_name.is_none() {
+            continue;
+        }
+        if line == "op1=Open" {
+            op_open = true;
+        } else if line == "op1=Close" {
+            op_close = true;
+        } else if let Some(value) = line.strip_prefix("category=") {
+            category = value.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("param=") {
+            if let Some((key, value)) = rest.split_once(',') {
+                if key.trim() == "next_loc_stage" {
+                    open = stage_open_loc_id(value.trim(), ids);
+                }
+            }
+        }
+    }
+    if let Some(prev) = cur_name {
+        flush(
+            &prev,
+            op_open,
+            op_close,
+            &category,
+            open,
+            &mut defs,
+            &mut open_leaves,
+            &mut conflicted,
+        );
+    }
+    (defs, open_leaves, conflicted)
+}
+
+/// Paired counterpart tile from `door_close` for `wall_straight`.
+/// Left uses `door_close`; right uses the negated offset.
+fn membergate_pair_tile(at: WorldTile, angle_dir: DoorDir, right: bool) -> WorldTile {
+    let (dx, dz) = match angle_dir {
+        DoorDir::W => (0, 1),
+        DoorDir::N => (1, 0),
+        DoorDir::E => (0, -1),
+        DoorDir::S => (-1, 0),
+    };
+    let sign = if right { -1 } else { 1 };
+    WorldTile {
+        x: at.x + sign * dx,
+        z: at.z + sign * dz,
+        level: at.level,
     }
 }
 
@@ -1245,6 +1655,7 @@ fn web_edges(
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
+                members_req: false,
             });
             if !slash_blades.is_empty() {
                 graph.edges.push(TransportEdge {
@@ -1261,6 +1672,7 @@ fn web_edges(
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: slash_blades.clone(),
+                    members_req: false,
                 });
             }
         }
@@ -2708,6 +3120,7 @@ fn ladder_stair_edges(
                         quest_req: vec![],
                         varp_req: vec![],
                         worn_req: vec![],
+                        members_req: false,
                     });
                 }
             }
@@ -2809,6 +3222,7 @@ fn shortcut_edges(
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    members_req: false,
                 });
             }
         }
@@ -3235,6 +3649,7 @@ fn boat_edges(graph: &mut TransportGraph) {
             quest_req: vec![],
             varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
             worn_req: vec![],
+            members_req: false,
         });
         if let Some(p) = r.plank {
             graph.edges.push(TransportEdge {
@@ -3251,6 +3666,7 @@ fn boat_edges(graph: &mut TransportGraph) {
                 quest_req: vec![],
                 varp_req: vec![],
                 worn_req: vec![],
+                members_req: false,
             });
         }
     }
@@ -3344,6 +3760,7 @@ fn cart_edges(graph: &mut TransportGraph) {
             quest_req: r.quest.map(|q| vec![q.to_string()]).unwrap_or_default(),
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
     }
 }
@@ -3474,6 +3891,7 @@ fn essence_mine_edges(graph: &mut TransportGraph) {
             quest_req: vec!["Rune Mysteries Quest".to_string()],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
     }
 }
@@ -3563,6 +3981,7 @@ fn elkoy_edges(graph: &mut TransportGraph) {
             quest_req: vec!["Tree Gnome Village".to_string()],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
     }
 }
@@ -3674,6 +4093,7 @@ fn glider_edge(at: WorldTile, to: WorldTile, varp_gate: bool) -> TransportEdge {
             vec![]
         },
         worn_req: vec![],
+        members_req: false,
     }
 }
 
@@ -3788,6 +4208,7 @@ fn spirit_tree_edges(
                     quest_req: vec![],
                     varp_req: varp_req.clone(),
                     worn_req: vec![],
+                    members_req: false,
                 });
             }
         }
@@ -3942,6 +4363,7 @@ fn lever_edges(
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    members_req: false,
                 });
             }
         }
@@ -4075,6 +4497,7 @@ fn toll_edges(
                     quest_req: vec![],
                     varp_req: vec![],
                     worn_req: vec![],
+                    members_req: false,
                 });
             }
         }
@@ -4115,6 +4538,7 @@ fn toll_edges(
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
@@ -4134,6 +4558,7 @@ fn toll_edges(
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![],
+            members_req: false,
         });
     }
 }
@@ -4233,6 +4658,7 @@ fn zanaris_door_edges(
             quest_req: vec!["Lost City".to_string()],
             varp_req: vec![],
             worn_req: vec![staff_id],
+            members_req: false,
         });
     }
 }
@@ -4368,6 +4794,7 @@ fn push_spell_teleport(
         quest_req: vec![],
         varp_req: vec![],
         worn_req: vec![],
+        members_req: false,
     });
 }
 
@@ -4435,6 +4862,7 @@ fn jewellery_teleports(
                         quest_req: vec![],
                         varp_req: vec![],
                         worn_req: vec![],
+                        members_req: false,
                     });
                 }
             }
@@ -8324,6 +8752,523 @@ p_delay(1);
                     ),
                 }
             }
+        }
+    }
+
+    fn membergate_pack() -> &'static str {
+        "\
+1596=membergatel
+1597=membergater
+1560=loc_1560
+1561=loc_1561
+"
+    }
+
+    fn membergate_loc_blocks() -> &'static str {
+        "\
+[membergatel]
+name=Gate
+desc=A wrought iron gate.
+model=outdoorfurniture_metalgateclosedl
+op1=Open
+active=yes
+blockrange=no
+raiseobject=no
+category=door_left_closed
+param=next_loc_stage,loc_1560
+param=open_sound,grate_open
+
+[membergater]
+name=Gate
+desc=A wrought iron gate.
+model=outdoorfurniture_metalgateclosedl
+op1=Open
+mirror=yes
+active=yes
+blockrange=no
+raiseobject=no
+category=door_right_closed
+param=next_loc_stage,loc_1561
+param=open_sound,grate_open
+
+[loc_1560]
+name=Gate
+desc=A wrought iron gate.
+model=outdoorfurniture_metalgateclosedl
+op1=Close
+active=yes
+raiseobject=no
+category=door_left_opened
+param=next_loc_stage,loc_1557
+param=close_sound,grate_close
+
+[loc_1561]
+name=Gate
+desc=A wrought iron gate.
+model=outdoorfurniture_metalgateclosedl
+op1=Close
+mirror=yes
+active=yes
+raiseobject=no
+category=door_right_opened
+param=next_loc_stage,loc_1558
+param=close_sound,grate_close
+"
+    }
+
+    fn membergate_handlers_text() -> &'static str {
+        "\
+[oploc1,membergatel]
+if (map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_double_doors_left(500, door_right_closed, loc_param(open_sound));
+
+[oploc1,membergater]
+if (map_members = ^false) {
+    mes(^mes_members_gate);
+    return;
+}
+~open_double_doors_right(500, door_left_closed, loc_param(open_sound));
+
+[proc,open_double_doors_left](int $duration, category $category, synth $sound)
+return;
+
+[proc,open_double_doors_right](int $duration, category $category, synth $sound)
+return;
+"
+    }
+
+    fn write_membergate_family(fx: &Fixture) {
+        fx.write("pack/loc.pack", membergate_pack());
+        fx.write(
+            "scripts/doors/configs/doubledoors.loc",
+            membergate_loc_blocks(),
+        );
+        fx.write(
+            "scripts/doors/scripts/doubledoors.rs2",
+            membergate_handlers_text(),
+        );
+    }
+
+    fn write_blocked_square(fx: &Fixture, mx: i32, mz: i32, walk: &[(i32, i32)], locs: &str) {
+        let mut map = String::from("==== MAP ====\n");
+        let ox = mx * 64;
+        let oz = mz * 64;
+        let walk: HashSet<(i32, i32)> = walk.iter().copied().collect();
+        for lz in 0..64i32 {
+            for lx in 0..64i32 {
+                if !walk.contains(&(ox + lx, oz + lz)) {
+                    map.push_str(&format!("0 {lx} {lz}: f1 u48\n"));
+                }
+            }
+        }
+        map.push_str("\n==== LOC ====\n");
+        map.push_str(locs);
+        fx.write(&format!("maps/m{mx}_{mz}.jm2"), &map);
+    }
+
+    /// The Taverley membergate pair emits four crossings with members_req.
+    #[test]
+    fn derive_transports_emits_membergate_family_crossings() {
+        let fx = Fixture::new();
+        write_membergate_family(&fx);
+        fx.write(
+            "maps/m45_53.jm2",
+            "\
+==== MAP ====
+0 55 58: f1 u48
+
+==== LOC ====
+0 55 58: 1597 0 2
+0 55 59: 1596 0 2
+",
+        );
+        let defs = loc_defs(&[(1596, 1, 1), (1597, 1, 1), (1560, 1, 1), (1561, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1596, 1597]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert_eq!(
+            door_crossings(&graph, 1596),
+            vec![
+                ((2935, 3451), 'E', (2936, 3451)),
+                ((2935, 3451), 'W', (2934, 3451)),
+            ],
+            "1596 crosses both ways"
+        );
+        assert_eq!(
+            door_crossings(&graph, 1597),
+            vec![
+                ((2935, 3450), 'E', (2936, 3450)),
+                ((2935, 3450), 'W', (2934, 3450)),
+            ],
+            "1597 crosses both ways"
+        );
+        for id in [1560, 1561] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "open leaf {id} is not a crossing"
+            );
+        }
+        for e in graph
+            .edges
+            .iter()
+            .filter(|e| matches!(e.loc_id, 1596 | 1597))
+        {
+            assert_eq!(e.option, 1, "{e:?}");
+            assert!(e.members_req, "{e:?}");
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 1596 { 1560 } else { 1561 }),
+                "{e:?}"
+            );
+            assert!(
+                e.skill_req.is_empty()
+                    && e.item_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.varp_req.is_empty()
+                    && e.worn_req.is_empty(),
+                "{e:?}"
+            );
+        }
+        assert!(
+            !crate::pack::parse_door_config(membergate_loc_blocks()).contains(&1596),
+            "parse_door_config still ignores named membergate blocks"
+        );
+    }
+
+    /// Empty WorldState cannot walk Taverley to BANK_STAND; map_members opens
+    /// the membergate hop. The corridor is sealed except through 1596/1597.
+    #[test]
+    fn membergate_routes_taverley_bank_only_when_map_members() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let fx = Fixture::new();
+        write_membergate_family(&fx);
+        let mut walk = Vec::new();
+        for x in 2895..=2934 {
+            walk.push((x, 3435));
+        }
+        for z in 3435..=3451 {
+            walk.push((2934, z));
+        }
+        for z in 3450..=3451 {
+            walk.push((2935, z));
+            walk.push((2936, z));
+        }
+        for z in 3369..=3451 {
+            walk.push((2936, z));
+        }
+        for x in 2936..=2946 {
+            walk.push((x, 3369));
+        }
+        write_blocked_square(&fx, 45, 53, &walk, "0 55 58: 1597 0 2\n0 55 59: 1596 0 2\n");
+        write_blocked_square(&fx, 45, 52, &walk, "");
+        write_blocked_square(&fx, 46, 52, &walk, "");
+        let defs = loc_defs(&[(1596, 1, 1), (1597, 1, 1), (1560, 1, 1), (1561, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1596, 1597]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let taverley = WorldTile {
+            x: 2895,
+            z: 3435,
+            level: 0,
+        };
+        let bank = WorldTile {
+            x: 2946,
+            z: 3369,
+            level: 0,
+        };
+        let empty = crate::world_state::WorldState::empty();
+        assert!(
+            matches!(
+                find_with(&wc, &graph, taverley, bank, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty state cannot open the members gate"
+        );
+        assert!(
+            matches!(
+                find_with(&wc, &graph, bank, taverley, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty reverse is also NoPath"
+        );
+        let members = empty.clone().with_map_members(true);
+        let there = find_with(
+            &wc,
+            &graph,
+            taverley,
+            bank,
+            FindOptions::default(),
+            &members,
+        )
+        .expect("members world routes Taverley to bank");
+        assert!(
+            there.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if matches!(edge.loc_id, 1596 | 1597) && edge.members_req
+            )),
+            "the hop is a membergate: {there:?}"
+        );
+        let back = find_with(
+            &wc,
+            &graph,
+            bank,
+            taverley,
+            FindOptions::default(),
+            &members,
+        )
+        .expect("members world routes bank to Taverley");
+        assert!(back.legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if matches!(edge.loc_id, 1596 | 1597)
+        )));
+    }
+
+    /// Near-misses stay out; a control pair in the same fixture is admitted.
+    #[test]
+    fn derive_transports_omits_unproven_membergate_members() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "\
+1596=membergatel
+1597=membergater
+1560=loc_1560
+1561=loc_1561
+1598=memberfencegate_l
+1599=memberfencegate_r
+5001=plainopen
+5002=unpaired_left
+5003=unpaired_right
+",
+        );
+        fx.write(
+            "scripts/doors/configs/doubledoors.loc",
+            &format!(
+                "{}
+[plainopen]
+op1=Open
+category=door_left_closed
+param=next_loc_stage,loc_1560
+
+[memberfencegate_l]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,loc_1560
+
+[memberfencegate_r]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,loc_1561
+",
+                membergate_loc_blocks()
+            ),
+        );
+        fx.write(
+            "scripts/doors/scripts/doubledoors.rs2",
+            &format!(
+                "{}
+[oploc1,plainopen]
+~open_double_doors_left(500, door_right_closed, loc_param(open_sound));
+
+[oploc1,memberfencegate_l]
+if(map_members = ^false) {{
+    mes(^mes_members_gate);
+    return;
+}}
+~open_gate;
+",
+                membergate_handlers_text()
+            ),
+        );
+        fx.write(
+            "maps/m45_53.jm2",
+            "\
+==== MAP ====
+0 0 0: f1 u48
+
+==== LOC ====
+0 55 58: 1597 0 2
+0 55 59: 1596 0 2
+0 10 10: 5002 0 2
+0 20 20: 1598 0 2
+0 20 21: 1599 0 2
+0 30 30: 5001 0 2
+",
+        );
+        let defs = loc_defs(&[
+            (1596, 1, 1),
+            (1597, 1, 1),
+            (1560, 1, 1),
+            (1561, 1, 1),
+            (1598, 1, 1),
+            (1599, 1, 1),
+            (5001, 1, 1),
+            (5002, 1, 1),
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert!(
+            !door_crossings(&graph, 1596).is_empty() && !door_crossings(&graph, 1597).is_empty(),
+            "control Taverley pair is admitted"
+        );
+        for id in [1598, 1599, 5001, 5002] {
+            assert!(
+                graph.edges.iter().all(|e| e.loc_id != id),
+                "unproven loc {id} must not emit"
+            );
+        }
+    }
+
+    /// A second named handler with a different body fail-closes the family.
+    #[test]
+    fn derive_transports_omits_membergate_handler_conflicts() {
+        let fx = Fixture::new();
+        write_membergate_family(&fx);
+        fx.write(
+            "scripts/areas/area_extra/scripts/extra.rs2",
+            "[oploc1,membergatel] mes(^mes_members_gate);\n",
+        );
+        fx.write(
+            "maps/m45_53.jm2",
+            "\
+==== MAP ====
+0 55 58: f1 u48
+
+==== LOC ====
+0 55 58: 1597 0 2
+0 55 59: 1596 0 2
+",
+        );
+        let defs = loc_defs(&[(1596, 1, 1), (1597, 1, 1), (1560, 1, 1), (1561, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert!(
+            door_crossings(&graph, 1596).is_empty() && door_crossings(&graph, 1597).is_empty(),
+            "a conflicting extra handler fail-closes the family"
+        );
+    }
+
+    fn find_radius3(
+        wc: &WorldCollision,
+        graph: &TransportGraph,
+        from: WorldTile,
+        to: WorldTile,
+        state: &crate::world_state::WorldState,
+    ) -> Result<crate::router::Route, crate::router::RouteError> {
+        use crate::router::{find_with, local_step_component, FindOptions, RouteError};
+        let mut dests: Vec<_> = local_step_component(wc, to, 3).into_iter().collect();
+        dests.sort_by_key(|t| ((t.x - from.x).abs().max((t.z - from.z).abs()), t.x, t.z));
+        let mut last = Err(RouteError::NoPath);
+        for dest in dests {
+            match find_with(wc, graph, from, dest, FindOptions::default(), state) {
+                Ok(route) => return Ok(route),
+                Err(e) => last = Err(e),
+            }
+        }
+        last
+    }
+
+    /// Real 274+289 content: Taverley 1596/1597 crossings, empty-state
+    /// radius-3 bank remains NoPath, members world routes through the family.
+    /// 274config probes of 289 content are not fresh 289 qualification.
+    #[test]
+    #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
+    fn membergate_taverley_bank_from_real_content() {
+        use crate::router::{Leg, RouteError};
+        let (roots, defs) = required_qualification_inputs();
+        let taverley = WorldTile {
+            x: 2895,
+            z: 3435,
+            level: 0,
+        };
+        let passage = WorldTile {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        };
+        let bank = WorldTile {
+            x: 2946,
+            z: 3369,
+            level: 0,
+        };
+        for root in roots {
+            let (graph, wc) = derive_from_root_with(&root, &defs);
+            assert_eq!(
+                door_crossings(&graph, 1596),
+                vec![
+                    ((2935, 3451), 'E', (2936, 3451)),
+                    ((2935, 3451), 'W', (2934, 3451)),
+                ],
+                "1596 ({})",
+                root.display()
+            );
+            assert_eq!(
+                door_crossings(&graph, 1597),
+                vec![
+                    ((2935, 3450), 'E', (2936, 3450)),
+                    ((2935, 3450), 'W', (2934, 3450)),
+                ],
+                "1597 ({})",
+                root.display()
+            );
+            for e in graph
+                .edges
+                .iter()
+                .filter(|e| matches!(e.loc_id, 1596 | 1597))
+            {
+                assert!(e.members_req, "{e:?} ({})", root.display());
+            }
+            for id in [1598, 1599] {
+                assert!(
+                    door_crossings(&graph, id).is_empty(),
+                    "Paterdomus {id} must stay out ({})",
+                    root.display()
+                );
+            }
+            let empty = crate::world_state::WorldState::empty();
+            for (label, from) in [("Taverley", taverley), ("passage", passage)] {
+                assert!(
+                    matches!(
+                        find_radius3(&wc, &graph, from, bank, &empty),
+                        Err(RouteError::NoPath)
+                    ),
+                    "{label} -> bank empty remains NoPath ({})",
+                    root.display()
+                );
+            }
+            let members = empty.clone().with_map_members(true);
+            let agility1 = crate::world_state::WorldState {
+                stats: std::collections::HashMap::from([(16, 1)]),
+                map_members: true,
+                ..crate::world_state::WorldState::default()
+            };
+            let there = find_radius3(&wc, &graph, taverley, bank, &agility1).unwrap_or_else(|e| {
+                panic!("members Taverley -> bank ({e:?}) ({})", root.display())
+            });
+            assert!(
+                there.legs.iter().any(|l| matches!(
+                    l,
+                    Leg::Transport { edge } if matches!(edge.loc_id, 1596 | 1597)
+                )),
+                "Taverley -> bank hops membergate ({})",
+                root.display()
+            );
+            find_radius3(&wc, &graph, bank, taverley, &members).unwrap_or_else(|e| {
+                panic!("members bank -> Taverley ({e:?}) ({})", root.display())
+            });
+            let done = crate::world_state::WorldState {
+                quests: ["Death Plateau".to_string()].into(),
+                stats: std::collections::HashMap::from([(16, 1)]),
+                map_members: true,
+                ..crate::world_state::WorldState::default()
+            };
+            find_radius3(&wc, &graph, passage, bank, &done).unwrap_or_else(|e| {
+                panic!(
+                    "passage -> bank with Death Plateau ({e:?}) ({})",
+                    root.display()
+                )
+            });
         }
     }
 

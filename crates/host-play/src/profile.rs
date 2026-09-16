@@ -77,6 +77,33 @@ pub fn parse_revision(value: &str) -> Result<ClientRevision, String> {
     }
 }
 
+/// WORLD membership bound to a selected endpoint. Unknown routes as false.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorldMembersFact {
+    Unknown,
+    Known {
+        members: bool,
+        source: WorldMembersSource,
+    },
+}
+
+/// How a known [`WorldMembersFact`] was declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorldMembersSource {
+    /// Guarded local `data/config/world.json` whose revision, port, and
+    /// `node.members` bool all matched the selected loopback profile.
+    LocalWorldJson { path: PathBuf },
+    /// `--world-members true|false` on this profile.
+    ExplicitOverride,
+}
+
+impl WorldMembersFact {
+    /// Routing fact: unknown and known-free are both false.
+    pub fn map_members(&self) -> bool {
+        matches!(self, Self::Known { members: true, .. })
+    }
+}
+
 /// Explicit launch overrides. No process state changes occur while parsing.
 #[derive(Debug, Clone, Default)]
 pub struct ProfileOptions {
@@ -96,6 +123,9 @@ pub struct ProfileOptions {
     pub vault_path: Option<PathBuf>,
     pub catalog_root: Option<PathBuf>,
     pub cache_manifest: Option<PathBuf>,
+    /// Operator-declared WORLD membership for this endpoint (`true`/`false`).
+    /// Omission preserves the guarded local world.json bind / unknown public.
+    pub world_members: Option<bool>,
 }
 
 /// Consume shared connection/resource flags; return frontend-specific args.
@@ -129,6 +159,7 @@ pub fn parse_profile_args(
                 | "--vault"
                 | "--catalog"
                 | "--cache-manifest"
+                | "--world-members"
         ) {
             rest.push(flag.to_string());
             continue;
@@ -164,6 +195,13 @@ pub fn parse_profile_args(
             "--vault" => options.vault_path = Some(value.into()),
             "--catalog" => options.catalog_root = Some(value.into()),
             "--cache-manifest" => options.cache_manifest = Some(value.into()),
+            "--world-members" => {
+                options.world_members = Some(match value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err("--world-members needs true or false".into()),
+                });
+            }
             _ => unreachable!(),
         }
     }
@@ -233,6 +271,7 @@ pub struct ProfileSelection {
     rsa_exponent: Option<String>,
     nav_pack_overridden: bool,
     nav_flags_overridden: bool,
+    world_members: WorldMembersFact,
 }
 
 impl ProfileOptions {
@@ -394,13 +433,16 @@ impl ProfileOptions {
                 working_dir.join(path)
             }
         };
+        let engine_dir = absolute(engine_dir);
+        let world_members =
+            bind_world_members(selection, game_port, &engine_dir, self.world_members);
         Ok(ProfileSelection {
             selection,
             game_host,
             game_port,
             asset_host,
             asset_port,
-            engine_dir: absolute(engine_dir),
+            engine_dir,
             cache_dir: absolute(cache_dir),
             unpack_dir: absolute(unpack_dir),
             nav_pack: absolute(nav_pack),
@@ -421,7 +463,61 @@ impl ProfileOptions {
             rsa_exponent: env.rsa_exponent.clone(),
             nav_pack_overridden,
             nav_flags_overridden,
+            world_members,
         })
+    }
+}
+
+/// Guarded local world.json bind. NODE_MEMBERS is not applied. Public
+/// profiles never inherit. Explicit `--world-members` wins.
+fn bind_world_members(
+    selection: ServerSelection,
+    game_port: u16,
+    engine_dir: &Path,
+    explicit: Option<bool>,
+) -> WorldMembersFact {
+    if let Some(members) = explicit {
+        return WorldMembersFact::Known {
+            members,
+            source: WorldMembersSource::ExplicitOverride,
+        };
+    }
+    let want_rev = match selection {
+        ServerSelection::Local274 => 274u64,
+        ServerSelection::Local289 => 289u64,
+        ServerSelection::Public289 => return WorldMembersFact::Unknown,
+    };
+    let path = engine_dir.join("data/config/world.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return WorldMembersFact::Unknown;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return WorldMembersFact::Unknown;
+    };
+    let Some(engine) = value.get("engine") else {
+        return WorldMembersFact::Unknown;
+    };
+    let Some(node) = value.get("node") else {
+        return WorldMembersFact::Unknown;
+    };
+    let Some(revision) = engine.get("revision").and_then(|v| v.as_u64()) else {
+        return WorldMembersFact::Unknown;
+    };
+    if revision != want_rev {
+        return WorldMembersFact::Unknown;
+    }
+    let Some(port) = node.get("port").and_then(|v| v.as_u64()) else {
+        return WorldMembersFact::Unknown;
+    };
+    if port != u64::from(game_port) {
+        return WorldMembersFact::Unknown;
+    }
+    let Some(members) = node.get("members").and_then(|v| v.as_bool()) else {
+        return WorldMembersFact::Unknown;
+    };
+    WorldMembersFact::Known {
+        members,
+        source: WorldMembersSource::LocalWorldJson { path },
     }
 }
 
@@ -452,6 +548,7 @@ pub struct ServerProfile {
     content_dir: PathBuf,
     vault_path: PathBuf,
     catalog_root: Option<PathBuf>,
+    world_members: WorldMembersFact,
 }
 
 struct LoadedNav {
@@ -520,6 +617,12 @@ impl ProfileSelection {
     }
     pub fn catalog_root(&self) -> Option<&Path> {
         self.catalog_root.as_deref()
+    }
+    pub fn world_members(&self) -> &WorldMembersFact {
+        &self.world_members
+    }
+    pub fn map_members(&self) -> bool {
+        self.world_members.map_members()
     }
     pub fn label(&self) -> String {
         format!(
@@ -711,6 +814,7 @@ impl ProfileSelection {
             content_dir: self.content_dir.clone(),
             vault_path: self.vault_path.clone(),
             catalog_root: self.catalog_root.clone(),
+            world_members: self.world_members.clone(),
         }))
     }
 
@@ -935,6 +1039,12 @@ impl ServerProfile {
     /// Suggested source directory only; scripts are not revision-bound resources.
     pub fn catalog_root(&self) -> Option<&Path> {
         self.catalog_root.as_deref()
+    }
+    pub fn world_members(&self) -> &WorldMembersFact {
+        &self.world_members
+    }
+    pub fn map_members(&self) -> bool {
+        self.world_members.map_members()
     }
     pub fn label(&self) -> String {
         format!(

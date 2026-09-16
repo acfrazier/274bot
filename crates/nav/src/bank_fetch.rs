@@ -250,6 +250,7 @@ mod tests {
             quest_req: vec![],
             varp_req: vec![],
             worn_req: vec![KNIFE],
+            members_req: false,
         };
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
