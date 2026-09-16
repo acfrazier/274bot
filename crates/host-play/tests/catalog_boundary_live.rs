@@ -1966,6 +1966,34 @@ mod tests {
         .qualify()
         .is_ok());
 
+        let mut released_away = swarm_at(hold.clone(), flee);
+        released_away.taking_damage = false;
+        released_away.npc_facts.clear();
+        released_away.guardian = BoundedGuardian::default();
+        let further_away = swarm_at(further.clone(), flee);
+        let retired_home = swarm_at(retired.clone(), bank);
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released_away,
+                    &further_away,
+                    &retired_home,
+                    &poor_out,
+                    &poor_cast
+                ]
+            )
+            .qualify()
+            .is_ok(),
+            "native release away from bank, then exact remaining rich casts, then bank return must qualify"
+        );
+
         let first_only = witness(case, &baseline, [&withdrawn, &first]);
         let first_only_error = first_only
             .qualify()
@@ -2160,6 +2188,58 @@ mod tests {
             .qualify()
             .is_err(),
             "evade hold without flee displacement must not qualify"
+        );
+
+        let mut held_through = fled.clone();
+        held_through.item_ids = further.item_ids.clone();
+        held_through.xp = further.xp.clone();
+        let mut held_retired = retired.clone();
+        held_retired.guardian = hold.guardian.clone();
+        held_retired.taking_damage = true;
+        let mut held_poor_out = poor_out.clone();
+        held_poor_out.guardian = hold.guardian.clone();
+        let mut held_poor_cast = poor_cast.clone();
+        held_poor_cast.guardian = hold.guardian.clone();
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &held_through,
+                    &held_retired,
+                    &held_poor_out,
+                    &held_poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "hold-only without native release must not qualify"
+        );
+
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released_away,
+                    &retired_home,
+                    &poor_out,
+                    &poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "release away from bank without a post-release cast must not qualify"
         );
 
         let mut drop_notes = released.clone();
