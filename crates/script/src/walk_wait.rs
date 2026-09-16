@@ -5,15 +5,16 @@
 //! wait. JavaScript only marshals arguments and awaits the callback.
 //!
 //! Correlation is the isolate-allocated request id (`Wait.token`), carried on
-//! the existing FlatBuffer walk request and echoed in the host outcome. It is
-//! bound to this isolate thread (reset on Stop/restart) and the host uid's
-//! `NavBot`. `route_generation` stays the host worker / retained-route token
-//! and is not used to match waits.
+//! the existing FlatBuffer walk request and echoed in the host outcome. Tokens
+//! are process-wide so a Stop/Start or watchdog restart cannot reuse token 1
+//! against an uncleared host outcome or a late old worker. `route_generation`
+//! stays the host worker / retained-route token and is not used to match waits.
 //!
 //! A late outcome from an earlier same-target request cannot settle a new
-//! wait: request ids differ. Coalescing keeps the in-flight id rather than
-//! assigning another caller's result. Request id `0` (old buffers / ctx.walk)
-//! never settles a wait.
+//! wait: request ids differ, and a leftover outcome observed before `begin`
+//! cannot match even if ids collide after rollover. Host coalescing keeps the
+//! in-flight id and fail-closes a distinct nonzero wait. Request id `0`
+//! (old buffers / ctx.walk) never settles a wait.
 //!
 //! Mid-follow Stall / Refused / Blocked / GaveUp publish the armed request
 //! id as failed. Arrival still requires Chebyshev ≤ radius and same level.
@@ -22,6 +23,32 @@
 use crate::isolate_fb::SnapshotReader;
 use serde_json::{json, Value};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// JS `Number` cannot uniquely represent integers above this.
+const JS_MAX_SAFE: u64 = (1 << 53) - 1;
+static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+fn alloc_token(avoid: u64) -> u64 {
+    loop {
+        let cur = NEXT_TOKEN.load(Ordering::Relaxed);
+        let token = match cur {
+            0 => 1,
+            n if n > JS_MAX_SAFE => 1,
+            n => n,
+        };
+        let next = if token >= JS_MAX_SAFE { 1 } else { token + 1 };
+        if NEXT_TOKEN
+            .compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            continue;
+        }
+        if token != avoid {
+            return token;
+        }
+    }
+}
 
 thread_local! {
     static SLOT: RefCell<WalkSlot> = const { RefCell::new(WalkSlot::new()) };
@@ -74,13 +101,13 @@ struct Wait {
     token: u64,
     key: WalkKey,
     settled: Option<bool>,
+    seq_at_begin: u64,
 }
 
 struct WalkSlot {
     here: Option<Tile>,
     outcome: HostOutcome,
     wait: Option<Wait>,
-    next_token: u64,
 }
 
 impl WalkSlot {
@@ -89,7 +116,6 @@ impl WalkSlot {
             here: None,
             outcome: HostOutcome::empty(),
             wait: None,
-            next_token: 1,
         }
     }
 
@@ -125,15 +151,12 @@ impl WalkSlot {
     }
 
     fn begin(&mut self, key: WalkKey) -> u64 {
-        let token = self.next_token;
-        self.next_token = self.next_token.wrapping_add(1);
-        if self.next_token == 0 {
-            self.next_token = 1;
-        }
+        let token = alloc_token(self.outcome.request_id);
         self.wait = Some(Wait {
             token,
             key,
             settled: None,
+            seq_at_begin: self.outcome.seq,
         });
         token
     }
@@ -151,6 +174,8 @@ impl WalkSlot {
             && outcome.request_id != 0
             && outcome.request_id == wait.token
             && outcome.key == wait.key
+            && outcome.seq != 0
+            && outcome.seq != wait.seq_at_begin
     }
 
     fn poll(&mut self, token: u64) -> bool {
@@ -387,7 +412,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(1, 1, token, 2820, 3556, 0, 1, false));
         assert!(settled(token));
         assert!(!value(token));
     }
@@ -464,7 +489,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
+        observe(input, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
         assert!(!settled(first));
         assert!(!settled(second));
         assert!(!value(first));
@@ -544,6 +569,62 @@ mod tests {
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
         on_snapshot(&snap);
         assert!(!settled(token));
+    }
+
+    #[test]
+    fn leftover_outcome_observed_before_begin_does_not_settle() {
+        on_reset();
+        let mut input = empty_input(1);
+        input.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
+        let token = begin(2820, 3556, 0, 1, false);
+        assert!(
+            !settled(token),
+            "host leftover observed before begin must not settle a new wait"
+        );
+    }
+
+    #[test]
+    fn reset_then_new_wait_does_not_consume_late_old_request_id() {
+        on_reset();
+        let first = begin(2820, 3556, 0, 1, false);
+        let mut prior = empty_input(1);
+        prior.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(prior, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
+        on_reset();
+        let second = begin(2820, 3556, 0, 1, false);
+        assert_ne!(
+            second, first,
+            "isolate restart must not reuse the previous wait token"
+        );
+        let mut late = empty_input(2);
+        late.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(late, fail_native(2, 1, first, 2820, 3556, 0, 1, false));
+        assert!(
+            !settled(second),
+            "late old-worker request id must not settle a post-reset wait"
+        );
+        let mut matched = empty_input(3);
+        matched.here = Some(TileInput {
+            x: 2823,
+            z: 3555,
+            level: 0,
+        });
+        observe(matched, fail_native(3, 2, second, 2820, 3556, 0, 1, false));
+        assert!(settled(second));
+        assert!(!value(second));
     }
 
     #[test]

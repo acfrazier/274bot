@@ -4612,17 +4612,20 @@ export default class T extends LoopingBot {
         "walkOpening must not call missing Traversal.walkTo: {value:?}"
     );
     assert_eq!(value, "go", "walkOpening parks on walkResilient, not throw");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Walk {
+    let drained = iso.drain_interacts();
+    match &drained[..] {
+        [script::shim::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
             allow_teleports: false,
-            request_id: 1,
-        }],
-        "walkOpening queues Traversal.walkResilient walk"
-    );
+            request_id,
+        }] => assert_ne!(
+            *request_id, 0,
+            "walkOpening queues Traversal.walkResilient walk"
+        ),
+        other => panic!("walkOpening queues Traversal.walkResilient walk, got {other:?}"),
+    }
     iso.join();
 }
 
@@ -4814,17 +4817,20 @@ export default class T extends LoopingBot {
         !msg.contains("not impl"),
         "walkResilient(tile, opts) must not throw: {value:?}"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Walk {
+    let drained = iso.drain_interacts();
+    match &drained[..] {
+        [script::shim::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
             allow_teleports: false,
-            request_id: 1,
-        }],
-        "createReturnToAnchorTask queues walkResilient(tile, opts)"
-    );
+            request_id,
+        }] => assert_ne!(
+            *request_id, 0,
+            "createReturnToAnchorTask queues walkResilient(tile, opts)"
+        ),
+        other => panic!("createReturnToAnchorTask queues walkResilient(tile, opts), got {other:?}"),
+    }
     iso.join();
 }
 
@@ -4903,17 +4909,20 @@ export default class T extends LoopingBot {
         !msg.contains("not impl"),
         "walkResilient(useTeleportCatalog) must not throw: {value:?}"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Walk {
+    let drained = iso.drain_interacts();
+    match &drained[..] {
+        [script::shim::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
             allow_teleports: true,
-            request_id: 1,
-        }],
-        "useTeleportCatalog maps onto FindOptions.allow_teleports"
-    );
+            request_id,
+        }] => assert_ne!(
+            *request_id, 0,
+            "useTeleportCatalog maps onto FindOptions.allow_teleports"
+        ),
+        other => panic!("useTeleportCatalog maps onto FindOptions.allow_teleports, got {other:?}"),
+    }
     iso.join();
 }
 

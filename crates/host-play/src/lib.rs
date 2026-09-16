@@ -3956,10 +3956,23 @@ impl ScriptWalkArm {
             }
             let key = (to, radius, opts.allow_teleports);
             if bot.requested_route == Some(key)
-                && (bot.route_worker.is_some() || bot.route.is_some())
+                && (bot.route_worker.is_some()
+                    || bot.route.is_some()
+                    || bot.pending_route.is_some())
             {
-                // Keep the in-flight request id. A later wait with a different
-                // isolate token must not receive this result.
+                // Same-id retransmission and legacy request_id 0 keep the
+                // in-flight find. A later distinct nonzero wait is refused
+                // without restarting search or reassigning the armed id.
+                if request_id != 0 && request_id != bot.walk_request_id {
+                    bot.note_failure(
+                        bot.route_generation,
+                        request_id,
+                        to,
+                        radius,
+                        opts.allow_teleports,
+                    );
+                    return false;
+                }
                 return true;
             }
             if let Some(ess) = bot.traveller.essence() {
@@ -8029,6 +8042,30 @@ export default class T extends LoopingBot {{
         )
     }
 
+    fn overlapping_walk_src(x: i32, z: i32, radius: i32) -> String {
+        format!(
+            r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__rs_done) return;
+        globalThis.__rs_a = null;
+        globalThis.__rs_b = null;
+        Traversal.walkResilient(
+            {{ x: {x}, z: {z}, level: 0 }},
+            {{ radius: {radius}, timeoutMs: 300000 }},
+        ).then(v => {{ globalThis.__rs_a = v; }});
+        globalThis.__rs_b = await Traversal.walkResilient(
+            {{ x: {x}, z: {z}, level: 0 }},
+            {{ radius: {radius}, timeoutMs: 300000 }},
+        );
+        globalThis.__rs_done = true;
+    }}
+}}
+"#
+        )
+    }
+
     fn park_walk_isolate(
         iso: &script::LoadIsolate,
         x: i32,
@@ -8053,6 +8090,47 @@ export default class T extends LoopingBot {{
         };
         assert_ne!(request_id, 0);
         request_id
+    }
+
+    fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u64, u64) {
+        iso.post_snapshot(encode_walk_snapshot(
+            1,
+            (0, 0, 0),
+            PostedWalkOutcome::default(),
+        ));
+        iso.on_game_tick(1);
+        assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+        assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
+        let drained = iso.drain_interacts();
+        match &drained[..] {
+            [script::shim::InteractReq::WalkNear {
+                x: dx0,
+                z: dz0,
+                level: 0,
+                radius: dr0,
+                allow_teleports: false,
+                request_id: first,
+            }, script::shim::InteractReq::WalkNear {
+                x: dx1,
+                z: dz1,
+                level: 0,
+                radius: dr1,
+                allow_teleports: false,
+                request_id: second,
+            }] if *dx0 == x
+                && *dz0 == z
+                && *dr0 == radius
+                && *dx1 == x
+                && *dz1 == z
+                && *dr1 == radius =>
+            {
+                assert_ne!(*first, 0);
+                assert_ne!(*second, 0);
+                assert_ne!(first, second);
+                (*first, *second)
+            }
+            other => panic!("unexpected interacts: {other:?}"),
+        }
     }
 
     #[test]
@@ -8278,6 +8356,286 @@ export default class T extends LoopingBot {{
         iso.on_game_tick(3);
         assert_eq!(iso.probe("__rs_ok").unwrap(), false);
         iso.join();
+    }
+
+    #[test]
+    fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "coal".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: 7,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "coal".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(
+            arm.queue_route(
+                dest.x,
+                dest.z,
+                dest.level,
+                FindOptions::default(),
+                1,
+                true,
+                7
+            ),
+            "exact retransmission of the armed id must coalesce"
+        );
+        assert!(
+            arm.queue_route(
+                dest.x,
+                dest.z,
+                dest.level,
+                FindOptions::default(),
+                1,
+                true,
+                0
+            ),
+            "legacy request_id 0 must keep the in-flight route"
+        );
+        assert!(
+            !arm.queue_route(
+                dest.x,
+                dest.z,
+                dest.level,
+                FindOptions::default(),
+                1,
+                true,
+                9
+            ),
+            "a distinct wait must fail-close while the first route stays"
+        );
+        let bot = &navs.lock().unwrap()["coal"];
+        assert_eq!(bot.route_generation, 1);
+        assert_eq!(bot.walk_request_id, 7);
+        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+        assert!(bot.route_worker.is_some());
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_request_id, 9);
+        assert_eq!(bot.walk_outcome_x, dest.x);
+        assert_eq!(bot.walk_outcome_z, dest.z);
+        assert_eq!(bot.walk_outcome_radius, 1);
+    }
+
+    #[test]
+    fn same_key_pending_route_refuses_distinct_id() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let world = Arc::new(open_world(7, 7));
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "pend".to_string(),
+            NavBot {
+                route_generation: 1,
+                pending_route: Some(ScriptRouteRequest {
+                    generation: 1,
+                    request_id: 7,
+                    world: Arc::clone(&world),
+                    from: WorldTile {
+                        x: 2823,
+                        z: 3555,
+                        level: 0,
+                    },
+                    to: dest,
+                    radius: 1,
+                    opts: FindOptions::default(),
+                    state: None,
+                    bank: vec![],
+                }),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: 7,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::clone(&world)),
+            navs: Arc::clone(&navs),
+            name: "pend".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            9
+        ));
+        let bot = &navs.lock().unwrap()["pend"];
+        assert_eq!(bot.route_generation, 1);
+        assert_eq!(bot.walk_request_id, 7);
+        assert!(bot.pending_route.is_some());
+        assert_eq!(bot.pending_route.as_ref().map(|p| p.request_id), Some(7));
+        assert!(bot.route_worker.is_none());
+        assert!(bot.walk_outcome_failed);
+        assert_eq!(bot.walk_outcome_request_id, 9);
+    }
+
+    #[test]
+    fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let iso = script::LoadIsolate::spawn(
+            overlapping_walk_src(dest.x, dest.z, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "coal".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: first_id,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "coal".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            first_id
+        ));
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            second_id
+        ));
+        let posted_second = posted_from_bot(&navs.lock().unwrap()["coal"]);
+        assert_eq!(posted_second.request_id, second_id);
+        assert!(posted_second.failed);
+        iso.post_snapshot(encode_walk_snapshot(2, (2823, 3555, 0), posted_second));
+        iso.on_game_tick(2);
+        assert_eq!(iso.probe("__rs_b").unwrap(), false);
+        assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("coal").expect("nav bot");
+            assert_eq!(bot.walk_request_id, first_id);
+            assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+            bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
+            assert_eq!(
+                bot.route.as_ref().map(|r| r.dest),
+                Some(dest),
+                "coalesced NoPath must retain the armed route"
+            );
+            assert!(bot.requested_route.is_none());
+            assert_eq!(bot.walk_outcome_request_id, first_id);
+        }
+        let posted_first = posted_from_bot(&navs.lock().unwrap()["coal"]);
+        iso.post_snapshot(encode_walk_snapshot(3, (2823, 3555, 0), posted_first));
+        iso.on_game_tick(3);
+        assert_eq!(
+            iso.probe("__rs_b").unwrap(),
+            false,
+            "delayed first NoPath must not unset the later wait"
+        );
+        assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+        iso.join();
+    }
+
+    #[test]
+    fn new_isolate_does_not_consume_prior_host_outcome() {
+        let iso1 = script::LoadIsolate::spawn(
+            walk_resilient_src(2820, 3556, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let old_id = park_walk_isolate(&iso1, 2820, 3556, 1, PostedWalkOutcome::default());
+        iso1.join();
+        let leftover = PostedWalkOutcome {
+            seq: 4,
+            generation: 1,
+            request_id: old_id,
+            failed: true,
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+        };
+        let iso2 = script::LoadIsolate::spawn(
+            walk_resilient_src(2820, 3556, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let new_id = park_walk_isolate(&iso2, 2820, 3556, 1, leftover);
+        assert_ne!(
+            new_id, old_id,
+            "new isolate must not reuse the old wait token"
+        );
+        assert_eq!(
+            iso2.probe("__rs_ok").unwrap(),
+            serde_json::Value::Null,
+            "leftover host outcome must not settle the new isolate wait"
+        );
+        iso2.post_snapshot(encode_walk_snapshot(
+            2,
+            (2823, 3555, 0),
+            PostedWalkOutcome { seq: 5, ..leftover },
+        ));
+        iso2.on_game_tick(2);
+        assert_eq!(
+            iso2.probe("__rs_ok").unwrap(),
+            serde_json::Value::Null,
+            "late old-worker request id must not settle the new isolate wait"
+        );
+        iso2.join();
     }
 
     #[test]
