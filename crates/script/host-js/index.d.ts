@@ -1,6 +1,7 @@
 // Generated from host verb tables — do not edit by hand.
 // Regen: cargo test -p script --test host_js regen_host_js -- --ignored
-// NativeTick Load is 0.2.5. Not a clone of rs2b0t-api.
+// NativeTick Load is 0.2.5. JS API v2 is NativeApi (explicit export const apiVersion = 2).
+// Not a clone of rs2b0t-api.
 
 /** Absolute world tile `{x, z, level}`. */
 export interface WorldTile {
@@ -62,6 +63,19 @@ export interface BankStand {
   kind: 'booth' | 'npc';
   op: number;
   choose: string | null;
+}
+
+/** Packed bank dest/readiness row from the host. */
+export interface BankApproach {
+  loc_id: number;
+  x: number;
+  z: number;
+  level: number;
+  can_operate: boolean;
+  dest_ok: boolean;
+  dest_x: number;
+  dest_z: number;
+  dest_level: number;
 }
 
 export interface NearestBooth {
@@ -298,4 +312,83 @@ export type InteractReq =
   | { op: 'wait-settled'}
   | { op: 'recovery-anchor'; x: number; z: number; level: number}
   | { op: 'recovery-anchor-none'}
-  | { op: 'key'; down: boolean; key: string; code?: string};
+  | { op: 'key'; down: boolean; key: string; code?: string}
+  | { op: 'mouse'; down: boolean; x: number; y: number; button?: number};
+
+/** Host-owned snapshot fields exposed on NativeApi.snapshot. Delta posts omit unchanged fields. Do not mutate; valid until the next tick. */
+export interface NativeSnapshot {
+  ingame: boolean;
+  here: WorldTile | null;
+  inv: ItemRow[];
+  /** 0 while the inv tab is tutorial-locked. */
+  inv_size: number;
+  stats: StatRow[];
+  bank: ItemRow[];
+  bank_side: ItemRow[];
+  bank_open: boolean;
+  bank_loaded: boolean;
+  /** Pass this into withdraw-load / withdraw-x. A changed generation is stale, not exhaustion. */
+  bank_generation: number;
+  banks: BankStand[];
+  nearest_booth: NearestBooth | null;
+  bank_approaches: BankApproach[];
+  count_dialog_open: boolean;
+  withdraw_x_result_seq: number;
+  withdraw_x_result: boolean;
+  withdraw_load_result_seq: number;
+  withdraw_load_result: boolean;
+  bank_op_result_seq: number;
+  bank_op_result: boolean;
+  walk_outcome_seq: number;
+  walk_outcome_generation: number;
+  walk_outcome_failed: boolean;
+  walk_outcome_x: number;
+  walk_outcome_z: number;
+  walk_outcome_level: number;
+  walk_outcome_radius: number;
+  walk_outcome_allow_teleports: boolean;
+  walk_outcome_request_id: number;
+}
+
+/** Typed settings access over the per-identity host bag. */
+export interface NativeSettings {
+  str(name: string, fallback?: string): string;
+  num(name: string, fallback?: number): number;
+  bool(name: string, fallback?: boolean): boolean;
+}
+
+/** Recording paint frame. end() publishes the host overlay. */
+export interface NativePaintFrame {
+  title(text: string): NativePaintFrame;
+  row(...cols: Array<string | number>): NativePaintFrame;
+  gap(): NativePaintFrame;
+  end(): void;
+}
+
+export interface NativePaint {
+  begin(opts?: { accent?: string }): NativePaintFrame;
+}
+
+/** Supported v2 request ops. Unknown op throws `not impl: request.<op>`. Returns void; completion is later snapshot seqs. */
+export type NativeOp =
+  | { op: 'held'; name: string; action: string}
+  | { op: 'open-booth'; x: number; z: number; level: number; id: number; name?: string; action?: string}
+  | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string; stand_op?: number; choose?: string}
+  | { op: 'close'}
+  | { op: 'set-note-mode'; on: boolean}
+  | { op: 'withdraw'; name: string; action: string}
+  | { op: 'withdraw-load'; name: string; bank_generation: number}
+  | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
+  | { op: 'walk-nearest-bank'};
+
+/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
+export interface NativeApi {
+  readonly tick: number;
+  /** Host-owned, delta-merged. Read only. Do not mutate; copy if retaining. */
+  readonly snapshot: NativeSnapshot;
+  readonly settings: NativeSettings;
+  log(message: string): void;
+  stop(reason?: string): void;
+  readonly paint: NativePaint;
+  request(op: NativeOp): void;
+}

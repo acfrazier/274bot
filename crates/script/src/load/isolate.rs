@@ -988,6 +988,11 @@ fn isolate_main(
         let _ = setup.send(Err(e));
         return;
     }
+    let v2_native = shape == LoadShape::NativeTick
+        && matches!(
+            super::shape::parse_declared_api_version(&source),
+            Ok(Some(2))
+        );
     let _ = runtime.eval::<serde_json::Value>(INSTALL_ON_STOP);
     let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     let _ = setup.send(Ok(terminate));
@@ -998,6 +1003,7 @@ fn isolate_main(
         work_generation,
         teardown,
         proof,
+        v2_native,
         #[cfg(feature = "memory-profile")]
         counters,
     );
@@ -1324,6 +1330,7 @@ fn tick_loop(
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
+    v2_native: bool,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
         crate::memory_profile::Counters,
     >,
@@ -1518,6 +1525,10 @@ fn tick_loop(
                         "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
                     )
                     .unwrap_or(false);
+                let v2_pending = v2_native
+                    && runtime
+                        .eval::<bool>("!!globalThis.__rs_v2_tick_pending")
+                        .unwrap_or(false);
                 let result: Result<(), rustyscript::Error> = if parked {
                     // Pump settles the wait (and may re-park), then
                     // paints. Drain so await + onPaint + loop
@@ -1530,6 +1541,15 @@ fn tick_loop(
                     );
                     let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
                     result
+                } else if v2_pending {
+                    // Rust-owned v2 single-flight: do not re-enter tick
+                    // while a previous returned Promise is pending.
+                    // Snapshot posts still merge; this only skips tick.
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
+                    );
+                    Ok(())
                 } else {
                     // `__rs_tick` is a synchronous entry that returns
                     // immediately (parked or not), so this cannot hang on

@@ -133,6 +133,10 @@ pub(super) fn wire_runtime(
         return Err("not a bot shape".to_string());
     }
     let source = crate::shim::remap_catalog_imports(source);
+    let family = match super::shape::parse_declared_api_version(&source) {
+        Ok(Some(2)) => super::shape::ApiFamily::V2,
+        _ => super::shape::ApiFamily::Unversioned,
+    };
     runtime
         .register_function(
             "__rs2b0t_now",
@@ -790,9 +794,10 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
     let main = match shape {
-        LoadShape::NativeTick => {
-            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN)
+        LoadShape::NativeTick if family == super::shape::ApiFamily::V2 => {
+            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
         }
+        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
         LoadShape::CompatDefineBot => rustyscript::Module::new(
             crate::shim::MAIN_MODULE,
             format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
@@ -844,6 +849,155 @@ set(target, prop, value) {
 });
 globalThis.__rs_api = api;
 globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
+"#;
+
+/// Explicit v2 wrapper: public NativeApi only. Does not grow shim policy.
+/// Snapshot is a Proxy over the host-owned materialized object (no freeze,
+/// no per-tick deep copy). request enqueues onto the existing interact drain
+/// and returns void. Async single-flight is observed by the Rust isolate.
+const NATIVE_V2_MAIN: &str = r#"
+import { tick } from './bot.js';
+const SNAPSHOT_KEYS = new Set([
+  'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
+  'bank_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
+  'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
+  'bank_op_result_seq','bank_op_result','walk_outcome_seq','walk_outcome_generation',
+  'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
+  'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
+]);
+const V2_OPS = {
+  'held': ['name','action'],
+  'open-booth': ['x','z','level','id'],
+  'open-stand': ['x','z','level','kind'],
+  'close': [],
+  'set-note-mode': ['on'],
+  'withdraw': ['name','action'],
+  'withdraw-load': ['name','bank_generation'],
+  'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
+  'walk-nearest-bank': [],
+};
+const OPTIONAL = {
+  'open-booth': ['name','action'],
+  'open-stand': ['name','stand_op','choose'],
+};
+function host() {
+  return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
+}
+function readOnlyView(value, root) {
+  if (value === null || typeof value !== 'object') return value;
+  return new Proxy(value, {
+    get(target, prop) {
+      if (typeof prop === 'symbol') return target[prop];
+      if (root && !SNAPSHOT_KEYS.has(prop)) return undefined;
+      return readOnlyView(target[prop], false);
+    },
+    set() { throw new Error('snapshot is read-only'); },
+    deleteProperty() { throw new Error('snapshot is read-only'); },
+    defineProperty() { return false; },
+    has(target, prop) {
+      if (root && typeof prop === 'string') return SNAPSHOT_KEYS.has(prop) && prop in target;
+      return prop in target;
+    },
+    ownKeys(target) {
+      const keys = Reflect.ownKeys(target);
+      return root ? keys.filter((k) => typeof k !== 'string' || SNAPSHOT_KEYS.has(k)) : keys;
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (root && typeof prop === 'string' && !SNAPSHOT_KEYS.has(prop)) return undefined;
+      const desc = Object.getOwnPropertyDescriptor(target, prop);
+      if (!desc) return desc;
+      return { ...desc, writable: false };
+    },
+  });
+}
+function settingsReader() {
+  return {
+    str(name, fallback) {
+      const v = (host().settingsBag || {})[name];
+      return typeof v === 'string' ? v : (fallback === undefined ? '' : fallback);
+    },
+    num(name, fallback) {
+      const v = (host().settingsBag || {})[name];
+      return typeof v === 'number' && Number.isFinite(v) ? v : (fallback === undefined ? 0 : fallback);
+    },
+    bool(name, fallback) {
+      const v = (host().settingsBag || {})[name];
+      return typeof v === 'boolean' ? v : (fallback === undefined ? false : fallback);
+    },
+  };
+}
+function paintRecorder() {
+  return {
+    begin(opts) {
+      const rec = { title: null, accent: (opts && opts.accent) || null, lines: [], buttons: [] };
+      const frame = {
+        title(text) { rec.title = String(text); return frame; },
+        row(...cols) { rec.lines.push(cols.join(' | ')); return frame; },
+        gap() { rec.lines.push(''); return frame; },
+        end() { host().paint = { title: rec.title, accent: rec.accent, lines: rec.lines, buttons: rec.buttons }; },
+      };
+      return frame;
+    },
+  };
+}
+function enqueueRequest(op) {
+  if (!op || typeof op !== 'object' || typeof op.op !== 'string') {
+    throw new Error('not impl: request');
+  }
+  const required = V2_OPS[op.op];
+  if (!required) {
+    throw new Error('not impl: request.' + op.op);
+  }
+  for (const field of required) {
+    if (op[field] === undefined || op[field] === null) {
+      throw new Error('not impl: request.' + op.op + ' missing ' + field);
+    }
+  }
+  const row = { op: op.op };
+  for (const field of required) row[field] = op[field];
+  const extra = OPTIONAL[op.op] || [];
+  for (const field of extra) {
+    if (op[field] !== undefined) row[field] = op[field];
+  }
+  const h = host();
+  h.interact = h.interact || [];
+  h.interact.push(row);
+}
+const api = {
+  get tick() { return host().tick || 0; },
+  set tick(n) { host().tick = n; },
+  get snapshot() { return readOnlyView(host().snapshot || {}, true); },
+  get settings() { return settingsReader(); },
+  log(message) {
+    const h = host();
+    h.log = h.log || [];
+    h.log.push(String(message));
+  },
+  stop(reason) {
+    const h = host();
+    h.stopRequested = true;
+    if (typeof reason === 'string') h.stopReason = reason;
+  },
+  get paint() { return paintRecorder(); },
+  request(op) { enqueueRequest(op); },
+};
+globalThis.__rs_api = api;
+globalThis.__rs_api_family = 2;
+globalThis.__rs_v2_tick_pending = false;
+globalThis.__rs_tick = (n) => {
+  api.tick = n;
+  const r = tick(api);
+  const pending = !!(r && typeof r.then === 'function');
+  globalThis.__rs_v2_tick_pending = pending;
+  if (pending) {
+    const clear = () => { globalThis.__rs_v2_tick_pending = false; };
+    r.then(clear, (e) => {
+      clear();
+      host().lastError = String((e && e.message) || e);
+    });
+  }
+  return r;
+};
 "#;
 
 /// Compat wrapper: `create()` the bot instance, then the shared compat

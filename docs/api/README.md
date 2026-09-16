@@ -20,6 +20,7 @@ tree.
 - [vault.md](vault.md) — encrypted profile vault, assignments, `BOT_VAULT_PASS`
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, scripts
 - [script.md](script.md) — compiled `tick` vs Load isolate; assignment, reload, cache
+- [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const apiVersion = 2`)
 - [tui.md](tui.md) — headless operator panel (`tui-play`): same `Play`, raster Off
 
 ## Layout

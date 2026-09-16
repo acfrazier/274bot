@@ -155,6 +155,7 @@ fn bright_catalog_cards_start_without_not_impl() {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
                 shape: Some(format!("{:?}", card.shape)),
+                api_family: None,
             },
         ) {
             Ok(s) => s,
