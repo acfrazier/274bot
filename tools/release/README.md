@@ -45,3 +45,12 @@ Retain host/client identities, per-file hashes, architecture/runtime dependency
 checks and smoke results with each candidate. Release notes must disclose the
 remaining catalog limitations; historical scoped script passes do not imply
 all scripts/options passed with a new binary.
+
+Initial distributed packages target public-289. Build their navigation with a
+separate engine-input directory containing the public endpoint's CRC-verified
+cache under data/pack/client, and BOT_NAV_CONTENT_DIR pointing at canonical
+289 content. Do not overwrite the local engine cache. The public 289 archive
+identity was checked on 2026-09-16 via HTTPS /crc and all eight archive CRCs;
+only versionlist differs from the existing local 289 set. Both exact cache
+identities remain recognized. Local servers with another cache require their
+own matching navigation build or explicit external navigation resources.
