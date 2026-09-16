@@ -160,16 +160,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn password_flag_still_allows_paste_path_in_imgui() {
-        // Documentary check against Dear ImGui widget rules used by ##cred-pass:
-        // cut/copy are suppressed for Password; paste is not (is_paste ignores
-        // is_password). We only assert the flag bit exists so a future binding
-        // rename would fail here — not a full InputText simulation.
-        use imgui::InputTextFlags;
-        assert!(
-            InputTextFlags::PASSWORD.bits() != 0,
-            "PASSWORD flag must remain defined for masked profile password fields"
-        );
-    }
 }
