@@ -801,4 +801,3 @@ fn shape_label(shape: LoadShape) -> &'static str {
         LoadShape::Reject => "Reject",
     }
 }
-

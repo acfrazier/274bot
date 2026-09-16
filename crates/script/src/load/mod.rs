@@ -15,6 +15,10 @@
 mod shape;
 mod library;
 #[cfg(feature = "load")]
+mod bindings;
+#[cfg(feature = "load")]
+mod snapshot;
+#[cfg(feature = "load")]
 mod isolate;
 
 pub use shape::{
