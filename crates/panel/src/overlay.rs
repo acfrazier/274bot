@@ -24,36 +24,54 @@ fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
     }
 }
 
+/// Horizontal/vertical pad inside the queue card border (equal L/R and T/B).
+const QUEUE_CARD_PAD: f32 = 8.0;
+/// Inset of the card's outer border from the Image top-left.
+const QUEUE_CARD_OUTER: f32 = 8.0;
+/// Extra leading between measured lines (on top of the active font size).
+const QUEUE_CARD_LINE_GAP: f32 = 2.0;
+
+/// Measured content bounds for the queue card at the active font/UI scale.
+/// Returns `(content_w, line_h, box_w, box_h)`. Empty `lines` yields zeros.
+fn queue_card_metrics(ui: &Ui, lines: &[String]) -> (f32, f32, f32, f32) {
+    if lines.is_empty() {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    let font = ui.current_font();
+    let font_sz = ui.current_font_size().max(1.0);
+    let mut content_w = 0.0_f32;
+    let mut line_h = font_sz;
+    for line in lines {
+        let sz = font.calc_text_size(font_sz, f32::MAX, 0.0, line);
+        content_w = content_w.max(sz[0]);
+        line_h = line_h.max(sz[1].max(font_sz));
+    }
+    line_h += QUEUE_CARD_LINE_GAP;
+    let content_h = line_h * lines.len() as f32;
+    let box_w = content_w + QUEUE_CARD_PAD * 2.0;
+    let box_h = content_h + QUEUE_CARD_PAD * 2.0;
+    (content_w, line_h, box_w, box_h)
+}
+
 /// Draw the queue card as a dark amber-bordered block over the Image.
-/// `min` is the Image's top-left corner. Width is an estimate (no font
-/// measurement at this layer), so the block only needs to be legible, not
-/// pixel-perfect.
+/// `min` is the Image's top-left corner. Width/height come from the active
+/// font measurement so left and right padding stay equal.
 fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
-    const PAD: f32 = 8.0;
-    const LINE_H: f32 = 15.0;
-    let top = [min[0] + PAD, min[1] + PAD];
-    let width = lines
-        .iter()
-        .map(|l| l.len() as f32 * 7.0)
-        .fold(PAD * 2.0, f32::max);
-    let height = PAD * 2.0 + LINE_H * (lines.len() as f32 - 1.0) + 13.0;
+    let (_content_w, line_h, box_w, box_h) = queue_card_metrics(ui, lines);
+    let box_min = [min[0] + QUEUE_CARD_OUTER, min[1] + QUEUE_CARD_OUTER];
+    let box_max = [box_min[0] + box_w, box_min[1] + box_h];
+    let text_origin = [box_min[0] + QUEUE_CARD_PAD, box_min[1] + QUEUE_CARD_PAD];
     let dl = ui.get_window_draw_list();
-    dl.add_rect(
-        [top[0] - PAD, top[1] - PAD],
-        [top[0] + width, top[1] + height],
-        [0.0, 0.0, 0.0, 0.6],
-    )
-    .filled(true)
-    .build();
-    dl.add_rect(
-        [top[0] - PAD, top[1] - PAD],
-        [top[0] + width, top[1] + height],
-        ACCENT,
-    )
-    .thickness(1.0)
-    .build();
+    dl.add_rect(box_min, box_max, [0.0, 0.0, 0.0, 0.6])
+        .filled(true)
+        .build();
+    dl.add_rect(box_min, box_max, ACCENT).thickness(1.0).build();
     for (i, line) in lines.iter().enumerate() {
-        dl.add_text([top[0], top[1] + i as f32 * LINE_H], ACCENT, line);
+        dl.add_text(
+            [text_origin[0], text_origin[1] + i as f32 * line_h],
+            ACCENT,
+            line,
+        );
     }
 }
 
@@ -118,7 +136,10 @@ mod tests {
     use nav::transport::TransportGraph;
     use nav::world::NavWorld;
 
-    use super::{queue_card_lines, PathOverlay};
+    use super::{
+        draw_queue_card, queue_card_lines, queue_card_metrics, PathOverlay, QUEUE_CARD_OUTER,
+        QUEUE_CARD_PAD,
+    };
     use crate::session::Session;
 
     /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -269,5 +290,67 @@ mod tests {
         });
         ctx.render();
         assert!(overlay.queue_lines.is_empty(), "no queue -> no card");
+    }
+
+    #[test]
+    fn queue_card_metrics_use_measured_width_with_equal_padding() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let lines = queue_card_lines(Some((1, 2)));
+        let (content_w, line_h, box_w, box_h) = queue_card_metrics(ui, &lines);
+        assert!(content_w > 0.0, "title must measure wider than zero");
+        assert!(
+            (box_w - (content_w + QUEUE_CARD_PAD * 2.0)).abs() < 0.01,
+            "box width is content plus equal left/right pad"
+        );
+        assert!(
+            (box_h - (line_h * lines.len() as f32 + QUEUE_CARD_PAD * 2.0)).abs() < 0.01,
+            "box height is lines plus equal top/bottom pad"
+        );
+        // Longest line is the title; char*7 estimate is not the source of width.
+        let title_est = lines[0].len() as f32 * 7.0;
+        let font = ui.current_font();
+        let measured = font.calc_text_size(ui.current_font_size(), f32::MAX, 0.0, &lines[0])[0];
+        assert!(
+            (content_w - measured).abs() < 0.01,
+            "content width tracks font measurement, not a fixed glyph estimate"
+        );
+        assert!(
+            (content_w - title_est).abs() > 0.5 || measured > 0.0,
+            "measurement path is active ({content_w} vs est {title_est})"
+        );
+        ui.window("##queue-card-metrics").build(|| {
+            draw_queue_card(ui, [10.0, 10.0], &lines);
+        });
+        let _ = QUEUE_CARD_OUTER;
+        ctx.render();
+    }
+
+    #[test]
+    fn queue_card_metrics_track_longer_k_of_n_counts() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let ui = ctx.frame();
+        let short = queue_card_lines(Some((1, 2)));
+        let long = queue_card_lines(Some((12, 49)));
+        let (w_short, _, box_short, _) = queue_card_metrics(ui, &short);
+        let (w_long, _, box_long, _) = queue_card_metrics(ui, &long);
+        // Title still dominates both; pads stay equal either way.
+        assert!((box_short - (w_short + QUEUE_CARD_PAD * 2.0)).abs() < 0.01);
+        assert!((box_long - (w_long + QUEUE_CARD_PAD * 2.0)).abs() < 0.01);
+        assert!(
+            box_long + 0.01 >= box_short,
+            "wider k-of-n must not shrink the measured box"
+        );
+        ctx.render();
     }
 }
