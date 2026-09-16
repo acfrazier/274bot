@@ -2533,7 +2533,8 @@
     "alcher_ordered",
     "alcher_large_batch",
     "alcher_low",
-    "alcher_fire_battlestaff"
+    "alcher_fire_battlestaff",
+    "alcher_swarm_drain"
    ],
    "reference_cases": [
     {
@@ -2541,12 +2542,6 @@
      "status": "vetted",
      "manual": false,
      "budget_min": 12
-    },
-    {
-     "id": "alcher-swarm-drain-live",
-     "status": "unvetted",
-     "manual": false,
-     "budget_min": 8
     }
    ]
   },
@@ -2847,6 +2842,47 @@
     }
    ],
    "budget_note": "outer budget is the frozen harness 420s window, not the 8-minute reference-manifest envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s"
+  },
+  {
+   "id": "alcher_swarm_drain",
+   "kind": "native",
+   "script": "Alcher",
+   "script_key": "Alcher",
+   "primary": false,
+   "status": "unvetted",
+   "manual": false,
+   "budget_min": 7,
+   "runner": "core",
+   "live": "script_alcher_swarm_drain",
+   "scenario": "alcher_swarm_drain",
+   "core_case": "alcher_swarm_drain",
+   "pair_case": null,
+   "options": [
+    "swarm interruption and ordered drain"
+   ],
+   "unsupported": [
+    {
+     "option": "full-cycle assertion for loader smoke",
+     "reason": "no full-cycle assertion is claimed for the loader smoke"
+    }
+   ],
+   "covers": {
+    "scripts": [
+     "Alcher"
+    ],
+    "subsystems": [],
+    "paths": []
+   },
+   "variants": [],
+   "reference_cases": [
+    {
+     "id": "alcher-swarm-drain-live",
+     "status": "unvetted",
+     "manual": false,
+     "budget_min": 8
+    }
+   ],
+   "budget_note": "outer budget is the frozen harness 420s window; native inner deadline is the same 420s envelope. First High cast then ~macro_event 1 once; CoreWatch owns recovery qualification"
   },
   {
    "id": "smithing_bot",

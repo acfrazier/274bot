@@ -5740,6 +5740,31 @@ fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str)
     }
 }
 
+/// Compact prior-frame guardian fact for catalog proof. The observe hook
+/// receives last frame's `client_frame` `RandomStatus`.
+fn bounded_guardian_fact(status: &RandomStatus) -> catalog_core::BoundedGuardian {
+    catalog_core::BoundedGuardian {
+        kind: status.kind.map(|kind| {
+            match kind {
+                api::random::RandomKind::Dialog => "dialog",
+                api::random::RandomKind::Pick => "pick",
+                api::random::RandomKind::Evade => "evade",
+                api::random::RandomKind::Maze => "maze",
+                api::random::RandomKind::Mime => "mime",
+                api::random::RandomKind::Box => "box",
+                api::random::RandomKind::Lamp => "lamp",
+                api::random::RandomKind::Hazard => "hazard",
+                api::random::RandomKind::LostTool => "lost_tool",
+                api::random::RandomKind::LostGear => "lost_gear",
+            }
+            .to_string()
+        }),
+        name: status.name.clone(),
+        ours: status.ours,
+        hold: status.hold,
+    }
+}
+
 /// `session_changed` is a successful login/reconnect, not a drop. Close the
 /// producer gate in both cases; only a native logout returns the banner to
 /// queue/connect wait.
@@ -6002,11 +6027,20 @@ fn spawn_slot_thread(
                             // consumed by this read.
                             let script_lifecycle = script_slot(&slot_scripts, name)
                                 .and_then(|slot| slot.lock().unwrap().lifecycle_receipt());
+                            // `status` is last frame's client_frame publication.
+                            // Snapshot observe runs before this frame copies it
+                            // onto the slot row.
+                            let guardian = if session_boundary {
+                                catalog_core::BoundedGuardian::default()
+                            } else {
+                                bounded_guardian_fact(status)
+                            };
                             obs_catalog_core.observe_snapshot_with_lifecycle(
                                 name,
                                 &nav_snapshot,
                                 &slot_obj_names,
                                 script_lifecycle,
+                                guardian,
                                 session_boundary,
                             );
                             obs_paired_core.observe_snapshot(name, &nav_snapshot, session_boundary);

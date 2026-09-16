@@ -809,9 +809,11 @@ mod tests {
             dormant_rocks_seen: false,
             ground_loot: Vec::new(),
             local_in_combat: false,
+            taking_damage: false,
             local_target_npc: None,
             local_health: 0,
             local_animation: 0,
+            guardian: BoundedGuardian::default(),
             equipment_ids: BTreeMap::new(),
             main_modal: -1,
             widget_ids: BTreeSet::new(),
@@ -1744,16 +1746,12 @@ mod tests {
                 .is_err(),
             "High 65 XP / 30000 coins must not pass the Low row"
         );
-        assert!(
-            witness(CoreCase::AlcherLow, &low_base, [&low_base])
-                .qualify()
-                .is_err()
-        );
-        assert!(
-            witness(CoreCase::AlcherLow, &low_base, [&withdrawn])
-                .qualify()
-                .is_err()
-        );
+        assert!(witness(CoreCase::AlcherLow, &low_base, [&low_base])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::AlcherLow, &low_base, [&withdrawn])
+            .qualify()
+            .is_err());
 
         let mut seeded = low_base.clone();
         seeded.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 10);
@@ -1837,6 +1835,234 @@ mod tests {
         let mut banked_staff = staff_base.clone();
         banked_staff.item_ids.insert(FIRE_BATTLESTAFF_ID, 1);
         assert!(validate_case_baseline(CoreCase::AlcherFireBattlestaff, &banked_staff).is_err());
+    }
+
+    fn swarm_npc(targeting: bool) -> BoundedNpc {
+        BoundedNpc {
+            index: 0,
+            name: Some("Swarm".into()),
+            health: 10,
+            total_health: 10,
+            animation: 0,
+            in_combat: targeting,
+            targeting_local: targeting,
+            tile: (3185, 3440, 0),
+            distance: 0,
+        }
+    }
+
+    fn swarm_obs(
+        item_ids: &[(i32, i32)],
+        magic_xp: i32,
+        taking_damage: bool,
+        targeting: bool,
+        hold: bool,
+    ) -> Observation {
+        let mut observation = alcher_spell_obs(item_ids, &[(STAFF_OF_FIRE_ID, 1)], magic_xp, 70, 1);
+        observation.taking_damage = taking_damage;
+        if targeting {
+            observation.npc_facts = vec![swarm_npc(true)];
+        }
+        if hold {
+            observation.guardian = BoundedGuardian {
+                kind: Some("evade".into()),
+                name: Some("Swarm".into()),
+                ours: true,
+                hold: true,
+            };
+        }
+        observation
+    }
+
+    #[test]
+    fn alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption() {
+        let case = CoreCase::parse("alcher_swarm_drain").expect("swarm core case");
+        let mut baseline = alcher_spell_obs(&[], &[], 10_000, 70, 1);
+        baseline.bank_generation = 1;
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let mut withdrawn = swarm_obs(
+            &[(CERT_RUNE_CHAINBODY_ID, 20), (NATURE_RUNE_ID, 20)],
+            10_000,
+            false,
+            false,
+            false,
+        );
+        withdrawn.equipment_ids.clear();
+        withdrawn.bank_generation = 2;
+        let first = swarm_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 19),
+                (NATURE_RUNE_ID, 19),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS),
+            ],
+            10_000 + HIGH_ALCH_MAGIC_XP,
+            false,
+            false,
+            false,
+        );
+        let mut hit = first.clone();
+        hit.taking_damage = true;
+        hit.npc_facts = vec![swarm_npc(true)];
+        let mut hold = hit.clone();
+        hold.guardian = BoundedGuardian {
+            kind: Some("evade".into()),
+            name: Some("Swarm".into()),
+            ours: true,
+            hold: true,
+        };
+        let mut released = hold.clone();
+        released.taking_damage = false;
+        released.npc_facts.clear();
+        released.guardian = BoundedGuardian::default();
+        let further = swarm_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 18),
+                (NATURE_RUNE_ID, 18),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+            ],
+            10_000 + HIGH_ALCH_MAGIC_XP * 2,
+            false,
+            false,
+            false,
+        );
+        let mut retired = further.clone();
+        retired.bank_open = true;
+        retired.bank_loaded = true;
+        retired.bank_generation = 3;
+        retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        let mut poor_out = retired.clone();
+        poor_out.bank_open = false;
+        poor_out.bank_loaded = false;
+        poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        poor_out.item_ids.insert(NATURE_RUNE_ID, 18);
+        let mut poor_cast = poor_out.clone();
+        poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
+        poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        poor_cast.item_ids.insert(
+            COINS_ID,
+            RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
+        );
+        poor_cast.xp.insert(
+            "magic".into(),
+            10_000 + HIGH_ALCH_MAGIC_XP * 2 + HIGH_ALCH_MAGIC_XP,
+        );
+
+        assert!(witness(
+            case,
+            &baseline,
+            [
+                &withdrawn, &first, &hit, &hold, &released, &further, &retired, &poor_out,
+                &poor_cast
+            ]
+        )
+        .qualify()
+        .is_ok());
+
+        assert!(
+            witness(case, &baseline, [&withdrawn, &first])
+                .qualify()
+                .is_err(),
+            "first cast alone must not qualify"
+        );
+        let mut spawn_only = first.clone();
+        spawn_only.npc_facts = vec![swarm_npc(true)];
+        assert!(
+            witness(case, &baseline, [&withdrawn, &first, &spawn_only])
+                .qualify()
+                .is_err(),
+            "spawn without a positive hit must not qualify"
+        );
+        let mut xp_only = baseline.clone();
+        xp_only
+            .xp
+            .insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP);
+        assert!(
+            witness(case, &baseline, [&xp_only]).qualify().is_err(),
+            "XP only must not qualify"
+        );
+        let mut chat_only = first.clone();
+        chat_only.chat.push((1, "random event: Swarm".into()));
+        assert!(
+            witness(case, &baseline, [&withdrawn, &first, &chat_only])
+                .qualify()
+                .is_err(),
+            "log/chat text must not qualify"
+        );
+        let mut hold_without_hit = first.clone();
+        hold_without_hit.guardian = BoundedGuardian {
+            kind: Some("evade".into()),
+            name: Some("Swarm".into()),
+            ours: true,
+            hold: true,
+        };
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [&withdrawn, &first, &hold_without_hit, &released, &further]
+            )
+            .qualify()
+            .is_err(),
+            "guardian without a targeted positive hit must not qualify"
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [&withdrawn, &first, &hit, &hold, &released, &further]
+            )
+            .qualify()
+            .is_err(),
+            "further cast before rich retire and poor consumption must not qualify"
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [&withdrawn, &first, &hit, &hold, &released, &further, &retired, &poor_out]
+            )
+            .qualify()
+            .is_err(),
+            "poor withdrawal without consumption must not qualify"
+        );
+        let mut further_before_release = first.clone();
+        further_before_release
+            .item_ids
+            .insert(CERT_RUNE_CHAINBODY_ID, 18);
+        further_before_release.item_ids.insert(NATURE_RUNE_ID, 18);
+        further_before_release
+            .item_ids
+            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2);
+        further_before_release
+            .xp
+            .insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP * 2);
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [&withdrawn, &first, &hit, &hold, &further_before_release]
+            )
+            .qualify()
+            .is_err(),
+            "further cast before release must not qualify"
+        );
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 20);
+        seeded.item_ids.insert(NATURE_RUNE_ID, 20);
+        seeded
+            .item_ids
+            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS);
+        seeded
+            .xp
+            .insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP);
+        seeded.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+        assert!(validate_case_baseline(case, &seeded).is_err());
+        assert!(
+            witness(case, &seeded, [&seeded]).qualify().is_err(),
+            "a seeded baseline cannot count as a cast"
+        );
     }
 
     fn dart_obs(item_ids: &[(i32, i32)], fletching_xp: i32) -> Observation {
@@ -7237,6 +7463,14 @@ export default class NativeStop extends LoopingBot {{
             validate_case_catalog(case, REFERENCE_COMMIT_964).unwrap();
         }
         for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+            let error = validate_case_catalog(CoreCase::AlcherSwarmDrain, commit).unwrap_err();
+            assert!(
+                error.contains("batch a whole trip") && error.contains("96410ec5"),
+                "{error}"
+            );
+        }
+        validate_case_catalog(CoreCase::AlcherSwarmDrain, REFERENCE_COMMIT_964).unwrap();
+        for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
             let error = validate_case_catalog(CoreCase::HerbCleanerEmptyBank, commit).unwrap_err();
             assert!(
                 error.contains("eventual empty-bank Stop") && error.contains("96410ec5"),
@@ -9822,7 +10056,9 @@ export default class NativeStop extends LoopingBot {{
         // the purchase and walk. Walking through the landing area later is
         // not another cast, even when carrying the purchased pack.
         for frame in &mut later_walk {
-            frame.xp.insert("magic".into(), early_cast.skill_xp("magic"));
+            frame
+                .xp
+                .insert("magic".into(), early_cast.skill_xp("magic"));
             for id in [LAW_RUNE_ID, AIR_RUNE_ID, WATER_RUNE_ID] {
                 frame.item_ids.insert(id, early_cast.item_id(id));
             }
