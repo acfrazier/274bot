@@ -62,6 +62,7 @@ fn first_import_writes_cache_object() {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
                 shape: Some("CompatClass".into()),
+                api_family: None,
             },
         )
         .expect("first import caches");
@@ -85,6 +86,7 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
         kind: ScriptKind::Compat,
         source: ScriptSource::File,
         shape: None,
+        api_family: None,
     };
     let first = cache
         .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta.clone())
@@ -230,6 +232,7 @@ fn js_origin_is_hashed_not_transpiled() {
                 kind: ScriptKind::NativeTick,
                 source: ScriptSource::File,
                 shape: Some("NativeTick".into()),
+                api_family: None,
             },
         )
         .expect("js origin caches verbatim");
@@ -253,6 +256,7 @@ fn cache_dirs_are_private_on_unix() {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
                 shape: None,
+                api_family: None,
             },
         )
         .expect("cache write creates layout");
@@ -285,6 +289,7 @@ fn manifest_records_script_kind_source_and_media() {
                 kind: ScriptKind::NativeTick,
                 source: ScriptSource::File,
                 shape: Some("NativeTick".into()),
+                api_family: None,
             },
         )
         .expect("cache miss writes manifest");

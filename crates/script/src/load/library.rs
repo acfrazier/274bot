@@ -14,11 +14,11 @@ use crate::rs2b0t_registry::{
 };
 use crate::rs2b0t_registry::{ScriptKind, ScriptSource, SettingDef};
 
-use super::shape::LoadShape;
+use super::shape::{ApiFamily, LoadShape};
 #[cfg(feature = "load")]
 use super::shape::{
-    catalog_unloadable, detect_shape, first_unloadable_for_card, is_reserved,
-    raw_content_fingerprint, resolve_sibling_modules,
+    catalog_unloadable, first_unloadable_for_card, is_reserved, raw_content_fingerprint,
+    resolve_api_family, resolve_sibling_modules,
 };
 
 /// A loaded JS bot: picker name, origin path, loader shape, origin text,
@@ -40,6 +40,8 @@ pub struct JsCard {
     /// First import specifier that does not remap to a registered shim.
     /// `None` means Start may spawn; `not impl` members do not set this.
     pub unloadable: Option<String>,
+    /// Provenance only — not part of identity or the cache key.
+    pub api_family: ApiFamily,
 }
 
 impl JsCard {
@@ -118,21 +120,19 @@ impl JsLibrary {
             let Ok(origin) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if detect_shape(&origin) == LoadShape::Reject {
+            let Ok((shape, api_family)) = resolve_api_family(&origin) else {
+                continue;
+            };
+            if shape == LoadShape::Reject {
                 continue;
             }
             if is_reserved(&entry.name) {
                 continue;
             }
-            let shape = detect_shape(&origin);
             let cached = match self.cache.get_or_transpile(
                 &path,
                 origin.as_bytes(),
-                CacheMeta {
-                    kind: shape_to_kind(shape),
-                    source: ScriptSource::File,
-                    shape: Some(shape_label(shape).into()),
-                },
+                cache_meta(shape, ScriptSource::File, api_family),
             ) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -153,6 +153,7 @@ impl JsLibrary {
                 tags: Vec::new(),
                 settings_schema,
                 unloadable,
+                api_family,
             });
             if let Some(last) = self.cards.last().cloned() {
                 self.remember_fingerprint(&last);
@@ -178,7 +179,8 @@ impl JsLibrary {
         if is_reserved(&name) {
             return Err(format!("reserved: {name}"));
         }
-        let shape = detect_shape(&origin);
+        let (shape, api_family) =
+            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
         if shape == LoadShape::Reject {
             return Err(format!("not a bot shape: {name}"));
         }
@@ -187,11 +189,7 @@ impl JsLibrary {
             .get_or_transpile(
                 path,
                 origin.as_bytes(),
-                CacheMeta {
-                    kind: shape_to_kind(shape),
-                    source: ScriptSource::File,
-                    shape: Some(shape_label(shape).into()),
-                },
+                cache_meta(shape, ScriptSource::File, api_family),
             )
             .map_err(|e| format!("{name}: {e}"))?;
         let settings_schema = crate::rs2b0t_registry::settings_schema_from_source(&origin);
@@ -210,6 +208,7 @@ impl JsLibrary {
             tags: Vec::new(),
             settings_schema,
             unloadable,
+            api_family,
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -284,7 +283,9 @@ impl JsLibrary {
             let Ok(origin) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let shape = detect_shape(&origin);
+            let Ok((shape, api_family)) = resolve_api_family(&origin) else {
+                continue;
+            };
             if shape == LoadShape::Reject {
                 continue;
             }
@@ -314,6 +315,7 @@ impl JsLibrary {
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
                 unloadable,
+                api_family,
             });
             n += 1;
             if let Some(last) = self.cards.last().cloned() {
@@ -337,7 +339,8 @@ impl JsLibrary {
         let path = self.cards[idx].path.clone();
         let origin = std::fs::read_to_string(&path)
             .map_err(|e| format!("refresh {}: {e}", path.display()))?;
-        let shape = detect_shape(&origin);
+        let (shape, api_family) =
+            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
         if shape == LoadShape::Reject {
             return Err(format!("not a bot shape: {name}"));
         }
@@ -346,11 +349,7 @@ impl JsLibrary {
             .get_or_transpile(
                 &path,
                 origin.as_bytes(),
-                CacheMeta {
-                    kind: shape_to_kind(shape),
-                    source,
-                    shape: Some(shape_label(shape).into()),
-                },
+                cache_meta(shape, source, api_family),
             )
             .map_err(|e| format!("{name}: {e}"))?;
         let unloadable = catalog_unloadable(
@@ -368,6 +367,7 @@ impl JsLibrary {
         card.kind = shape_to_kind(shape);
         card.sha256 = cached.sha256;
         card.unloadable = unloadable;
+        card.api_family = api_family;
         let snap = card.clone();
         self.remember_fingerprint(&snap);
         Ok(())
@@ -472,18 +472,15 @@ impl JsLibrary {
             .clone();
         let origin = std::fs::read_to_string(&card.path)
             .map_err(|e| format!("prepare {}: {e}", card.path.display()))?;
-        let shape = detect_shape(&origin);
+        let (shape, api_family) =
+            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
         if shape == LoadShape::Reject {
             return Err(format!("not a bot shape: {name}"));
         }
         let cached = self.cache.get_or_transpile(
             &card.path,
             origin.as_bytes(),
-            CacheMeta {
-                kind: shape_to_kind(shape),
-                source,
-                shape: Some(shape_label(shape).into()),
-            },
+            cache_meta(shape, source, api_family),
         )?;
         let unloadable = catalog_unloadable(
             &card.name,
@@ -499,11 +496,7 @@ impl JsLibrary {
             &card.path,
             &origin,
             &self.cache,
-            CacheMeta {
-                kind: shape_to_kind(shape),
-                source,
-                shape: Some(shape_label(shape).into()),
-            },
+            cache_meta(shape, source, api_family),
         )?;
         let fingerprint = raw_content_fingerprint(&card.path, &origin);
         #[cfg(feature = "load")]
@@ -516,6 +509,7 @@ impl JsLibrary {
         prepared.kind = shape_to_kind(shape);
         prepared.sha256 = cached.sha256;
         prepared.unloadable = unloadable;
+        prepared.api_family = api_family;
         prepared.settings_schema =
             crate::rs2b0t_registry::settings_schema_from_source(&prepared.origin);
         Ok(PreparedCard {
@@ -592,8 +586,13 @@ impl JsLibrary {
                 failed.push((card.name, format!("unreadable {}", path.display())));
                 continue;
             };
-            if detect_shape(&origin) == LoadShape::Reject {
-                continue;
+            match resolve_api_family(&origin) {
+                Err(e) => {
+                    failed.push((card.name, e));
+                    continue;
+                }
+                Ok((LoadShape::Reject, _)) => continue,
+                Ok(_) => {}
             }
             incoming.insert(card.name.clone(), (card, path, origin));
         }
@@ -651,7 +650,9 @@ impl JsLibrary {
             let Some((card, path, origin)) = diff.incoming.get(name) else {
                 continue;
             };
-            let shape = detect_shape(origin);
+            let Ok((shape, api_family)) = resolve_api_family(origin) else {
+                continue;
+            };
             if shape == LoadShape::Reject {
                 continue;
             }
@@ -679,6 +680,7 @@ impl JsLibrary {
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
                 unloadable,
+                api_family,
             };
             self.remember_fingerprint(&js_card);
             self.cards.push(js_card);
@@ -799,5 +801,15 @@ fn shape_label(shape: LoadShape) -> &'static str {
         LoadShape::CompatClass => "CompatClass",
         LoadShape::NativeTick => "NativeTick",
         LoadShape::Reject => "Reject",
+    }
+}
+
+#[cfg(feature = "load")]
+fn cache_meta(shape: LoadShape, source: ScriptSource, family: ApiFamily) -> CacheMeta {
+    CacheMeta {
+        kind: shape_to_kind(shape),
+        source,
+        shape: Some(shape_label(shape).into()),
+        api_family: Some(family.as_str().into()),
     }
 }

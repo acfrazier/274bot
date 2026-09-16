@@ -49,7 +49,8 @@ pub fn render_host_js_dts() -> String {
     let mut out = String::from(
         "// Generated from host verb tables — do not edit by hand.\n\
          // Regen: cargo test -p script --test host_js regen_host_js -- --ignored\n\
-         // NativeTick Load is 0.2.5. Not a clone of rs2b0t-api.\n\n",
+         // NativeTick Load is 0.2.5. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
+         // Not a clone of rs2b0t-api.\n\n",
     );
 
     for iface in SUPPORTING_INTERFACES {
@@ -168,6 +169,7 @@ pub fn render_host_js_dts() -> String {
     out.push('\n');
 
     render_interact_union(&mut out);
+    render_native_v2(&mut out);
 
     out
 }
@@ -241,6 +243,73 @@ fn render_interact_union(out: &mut String) {
         }
     }
     out.push_str(";\n");
+}
+
+fn render_native_v2(out: &mut String) {
+    out.push('\n');
+    out.push_str("/** Host-owned snapshot fields exposed on NativeApi.snapshot. Delta posts omit unchanged fields. Do not mutate; valid until the next tick. */\n");
+    out.push_str("export interface NativeSnapshot {\n");
+    for field in NATIVE_SNAPSHOT_FIELDS {
+        if let Some(doc) = field.doc {
+            out.push_str("  /** ");
+            out.push_str(doc);
+            out.push_str(" */\n");
+        }
+        out.push_str("  ");
+        out.push_str(field.name);
+        out.push_str(": ");
+        out.push_str(field.ty);
+        out.push_str(";\n");
+    }
+    out.push_str("}\n\n");
+    out.push_str("/** Typed settings access over the per-identity host bag. */\n");
+    out.push_str("export interface NativeSettings {\n");
+    out.push_str("  str(name: string, fallback?: string): string;\n");
+    out.push_str("  num(name: string, fallback?: number): number;\n");
+    out.push_str("  bool(name: string, fallback?: boolean): boolean;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Recording paint frame. end() publishes the host overlay. */\n");
+    out.push_str("export interface NativePaintFrame {\n");
+    out.push_str("  title(text: string): NativePaintFrame;\n");
+    out.push_str("  row(...cols: Array<string | number>): NativePaintFrame;\n");
+    out.push_str("  gap(): NativePaintFrame;\n");
+    out.push_str("  end(): void;\n");
+    out.push_str("}\n\n");
+    out.push_str("export interface NativePaint {\n");
+    out.push_str("  begin(opts?: { accent?: string }): NativePaintFrame;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Supported v2 request ops. Unknown op throws `not impl: request.<op>`. Returns void; completion is later snapshot seqs. */\n");
+    out.push_str("export type NativeOp =\n");
+    for (i, variant) in NATIVE_OP_VARIANTS.iter().enumerate() {
+        out.push_str("  | { op: '");
+        out.push_str(variant.op);
+        out.push('\'');
+        for field in variant.fields {
+            out.push_str("; ");
+            out.push_str(field.name);
+            if field.optional {
+                out.push('?');
+            }
+            out.push_str(": ");
+            out.push_str(field.ty);
+        }
+        out.push('}');
+        if i + 1 < NATIVE_OP_VARIANTS.len() {
+            out.push('\n');
+        }
+    }
+    out.push_str(";\n\n");
+    out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
+    out.push_str("export interface NativeApi {\n");
+    out.push_str("  readonly tick: number;\n");
+    out.push_str("  /** Host-owned, delta-merged. Read only. Do not mutate; copy if retaining. */\n");
+    out.push_str("  readonly snapshot: NativeSnapshot;\n");
+    out.push_str("  readonly settings: NativeSettings;\n");
+    out.push_str("  log(message: string): void;\n");
+    out.push_str("  stop(reason?: string): void;\n");
+    out.push_str("  readonly paint: NativePaint;\n");
+    out.push_str("  request(op: NativeOp): void;\n");
+    out.push_str("}\n");
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[
@@ -512,6 +581,21 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 optional: false,
                 doc: None,
             },
+        ],
+    },
+    TsInterface {
+        name: "BankApproach",
+        doc: Some("Packed bank dest/readiness row from the host."),
+        fields: &[
+            TsField { name: "loc_id", ty: "number", optional: false, doc: None },
+            TsField { name: "x", ty: "number", optional: false, doc: None },
+            TsField { name: "z", ty: "number", optional: false, doc: None },
+            TsField { name: "level", ty: "number", optional: false, doc: None },
+            TsField { name: "can_operate", ty: "boolean", optional: false, doc: None },
+            TsField { name: "dest_ok", ty: "boolean", optional: false, doc: None },
+            TsField { name: "dest_x", ty: "number", optional: false, doc: None },
+            TsField { name: "dest_z", ty: "number", optional: false, doc: None },
+            TsField { name: "dest_level", ty: "number", optional: false, doc: None },
         ],
     },
     TsInterface {
@@ -1967,6 +2051,112 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             },
         ],
     },
+];
+
+const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
+    TsField { name: "ingame", ty: "boolean", optional: false, doc: None },
+    TsField { name: "here", ty: "WorldTile | null", optional: false, doc: None },
+    TsField { name: "inv", ty: "ItemRow[]", optional: false, doc: None },
+    TsField {
+        name: "inv_size",
+        ty: "number",
+        optional: false,
+        doc: Some("0 while the inv tab is tutorial-locked."),
+    },
+    TsField { name: "stats", ty: "StatRow[]", optional: false, doc: None },
+    TsField { name: "bank", ty: "ItemRow[]", optional: false, doc: None },
+    TsField { name: "bank_side", ty: "ItemRow[]", optional: false, doc: None },
+    TsField { name: "bank_open", ty: "boolean", optional: false, doc: None },
+    TsField { name: "bank_loaded", ty: "boolean", optional: false, doc: None },
+    TsField {
+        name: "bank_generation",
+        ty: "number",
+        optional: false,
+        doc: Some("Pass this into withdraw-load / withdraw-x. A changed generation is stale, not exhaustion."),
+    },
+    TsField { name: "banks", ty: "BankStand[]", optional: false, doc: None },
+    TsField { name: "nearest_booth", ty: "NearestBooth | null", optional: false, doc: None },
+    TsField { name: "bank_approaches", ty: "BankApproach[]", optional: false, doc: None },
+    TsField { name: "count_dialog_open", ty: "boolean", optional: false, doc: None },
+    TsField { name: "withdraw_x_result_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "withdraw_x_result", ty: "boolean", optional: false, doc: None },
+    TsField { name: "withdraw_load_result_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "withdraw_load_result", ty: "boolean", optional: false, doc: None },
+    TsField { name: "bank_op_result_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "bank_op_result", ty: "boolean", optional: false, doc: None },
+    TsField { name: "walk_outcome_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_generation", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_failed", ty: "boolean", optional: false, doc: None },
+    TsField { name: "walk_outcome_x", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_z", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_level", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_radius", ty: "number", optional: false, doc: None },
+    TsField { name: "walk_outcome_allow_teleports", ty: "boolean", optional: false, doc: None },
+    TsField { name: "walk_outcome_request_id", ty: "number", optional: false, doc: None },
+];
+
+const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
+    InteractVariant {
+        op: "held",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
+            TsField { name: "action", ty: "string", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "open-booth",
+        fields: &[
+            TsField { name: "x", ty: "number", optional: false, doc: None },
+            TsField { name: "z", ty: "number", optional: false, doc: None },
+            TsField { name: "level", ty: "number", optional: false, doc: None },
+            TsField { name: "id", ty: "number", optional: false, doc: None },
+            TsField { name: "name", ty: "string", optional: true, doc: None },
+            TsField { name: "action", ty: "string", optional: true, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "open-stand",
+        fields: &[
+            TsField { name: "x", ty: "number", optional: false, doc: None },
+            TsField { name: "z", ty: "number", optional: false, doc: None },
+            TsField { name: "level", ty: "number", optional: false, doc: None },
+            TsField { name: "kind", ty: "string", optional: false, doc: None },
+            TsField { name: "name", ty: "string", optional: true, doc: None },
+            TsField { name: "stand_op", ty: "number", optional: true, doc: None },
+            TsField { name: "choose", ty: "string", optional: true, doc: None },
+        ],
+    },
+    InteractVariant { op: "close", fields: &[] },
+    InteractVariant {
+        op: "set-note-mode",
+        fields: &[TsField { name: "on", ty: "boolean", optional: false, doc: None }],
+    },
+    InteractVariant {
+        op: "withdraw",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
+            TsField { name: "action", ty: "string", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "withdraw-load",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
+            TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "withdraw-x",
+        fields: &[
+            TsField { name: "name", ty: "string", optional: false, doc: None },
+            TsField { name: "count", ty: "number", optional: false, doc: None },
+            TsField { name: "bank_item_id", ty: "number", optional: false, doc: None },
+            TsField { name: "lands_as_id", ty: "number", optional: false, doc: None },
+            TsField { name: "action", ty: "string", optional: false, doc: None },
+            TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
+        ],
+    },
+    InteractVariant { op: "walk-nearest-bank", fields: &[] },
 ];
 
 #[cfg(test)]

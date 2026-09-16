@@ -25,7 +25,7 @@ inventory count as “all catalog scripts / all options qualified.”
 | --- | --- | --- |
 | When V8 exists | Never | Start of a **JS/TS** picker card only |
 | Wake | `host::should_emit_tick` (PLAYER_INFO) | same, posted to the isolate thread |
-| House API | Rust `tick(&mut ScriptCtx)` | `export function tick` **or** `defineBot` |
+| House API | Rust `tick(&mut ScriptCtx)` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.

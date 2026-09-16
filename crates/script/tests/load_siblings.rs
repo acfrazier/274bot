@@ -61,6 +61,7 @@ fn sibling_logic_ts_is_cached_and_registered_without_v8() {
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("resolve siblings");
@@ -81,6 +82,7 @@ fn sibling_logic_ts_is_cached_and_registered_without_v8() {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
                 shape: None,
+                api_family: None,
             },
         )
         .expect("Logic.ts cached");
@@ -155,6 +157,7 @@ export function travelTo() { return true; }
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("resolve");
@@ -215,6 +218,7 @@ export function BankTask() { return true; }
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("resolve");
@@ -246,6 +250,7 @@ fn flaxaio_catalog_siblings_include_walking() {
             kind: ScriptKind::Compat,
             source: ScriptSource::Catalog,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("resolve FlaxAIO siblings");

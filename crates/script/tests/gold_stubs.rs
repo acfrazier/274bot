@@ -234,6 +234,7 @@ fn alcher_logic_sibling_is_sha_cached_at_start() {
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("AlcherLogic sibling resolves");
@@ -444,6 +445,7 @@ export default class T extends LoopingBot {
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("frozen AlcherLogic resolves");

@@ -5,6 +5,7 @@
 #[cfg(feature = "load")]
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "load")]
@@ -44,6 +45,214 @@ pub fn detect_shape(source: &str) -> LoadShape {
         LoadShape::NativeTick
     } else {
         LoadShape::Reject
+    }
+}
+
+/// Provenance for which public JS API a card was classified against.
+/// Not part of identity or the cache key.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ApiFamily {
+    /// Unversioned `export function tick` — today's Proxy (`api.tick` only).
+    Unversioned,
+    /// rs2b0t compatibility load path.
+    V1,
+    /// Native host authoring (`export const apiVersion = 2`).
+    V2,
+}
+
+impl ApiFamily {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unversioned => "unversioned",
+            Self::V1 => "v1",
+            Self::V2 => "v2",
+        }
+    }
+}
+
+/// Named load diagnostic for an explicit `apiVersion` declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionDiag {
+    Malformed(&'static str),
+    Unsupported(u32),
+}
+
+impl VersionDiag {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Malformed(_) => "api-version-malformed",
+            Self::Unsupported(_) => "api-version-unsupported",
+        }
+    }
+}
+
+impl fmt::Display for VersionDiag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed(why) => write!(f, "api-version-malformed: {why}"),
+            Self::Unsupported(n) => write!(f, "api-version-unsupported: {n}"),
+        }
+    }
+}
+
+/// Parse an exported `const apiVersion = <numeric>` declaration.
+///
+/// Comments and string literals are ignored. Numeric literal `2.0` equals `2`.
+/// Without `load`, classification stays marker-only.
+pub fn parse_declared_api_version(source: &str) -> Result<Option<u32>, VersionDiag> {
+    #[cfg(feature = "load")]
+    {
+        parse_declared_api_version_ast(source)
+    }
+    #[cfg(not(feature = "load"))]
+    {
+        let _ = source;
+        Ok(None)
+    }
+}
+
+/// Combine [`detect_shape`] with [`parse_declared_api_version`].
+/// Never silently falls back from an explicit version.
+pub fn resolve_api_family(source: &str) -> Result<(LoadShape, ApiFamily), String> {
+    let shape = detect_shape(source);
+    let version = parse_declared_api_version(source).map_err(|d| d.to_string())?;
+    match (shape, version) {
+        (LoadShape::NativeTick, Some(2)) => Ok((shape, ApiFamily::V2)),
+        (LoadShape::CompatDefineBot | LoadShape::CompatClass, Some(2)) => {
+            Err("api-version-conflict: v2 with compatibility shape".into())
+        }
+        (LoadShape::NativeTick, Some(1)) => Err("api-version-conflict: v1 with native tick".into()),
+        (LoadShape::CompatDefineBot | LoadShape::CompatClass, Some(1)) => {
+            Ok((shape, ApiFamily::V1))
+        }
+        (LoadShape::Reject, Some(2)) => Err("api-version-missing-tick".into()),
+        (LoadShape::Reject, Some(1)) => Ok((shape, ApiFamily::Unversioned)),
+        (LoadShape::NativeTick, None) => Ok((shape, ApiFamily::Unversioned)),
+        (LoadShape::CompatDefineBot | LoadShape::CompatClass, None) => Ok((shape, ApiFamily::V1)),
+        (LoadShape::Reject, None) => Ok((shape, ApiFamily::Unversioned)),
+        (_, Some(other)) => Err(format!("api-version-unsupported: {other}")),
+    }
+}
+
+#[cfg(feature = "load")]
+fn parse_declared_api_version_ast(source: &str) -> Result<Option<u32>, VersionDiag> {
+    use deno_ast::swc::ast::{Decl, ModuleDecl, ModuleItem, Pat, VarDeclKind};
+    use deno_ast::ProgramRef;
+
+    let specifier = deno_ast::ModuleSpecifier::parse("file:///bot.ts")
+        .map_err(|_| VersionDiag::Malformed("specifier"))?;
+    let parsed = match deno_ast::parse_module(deno_ast::ParseParams {
+        specifier,
+        text: source.to_string().into(),
+        media_type: deno_ast::MediaType::TypeScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    }) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+
+    let mut found: Option<Result<u32, VersionDiag>> = None;
+    let mut note = |next: Result<u32, VersionDiag>| -> Result<(), VersionDiag> {
+        if found.is_some() {
+            return Err(VersionDiag::Malformed("multiple apiVersion exports"));
+        }
+        found = Some(next);
+        Ok(())
+    };
+
+    let body: &[ModuleItem] = match parsed.program_ref() {
+        ProgramRef::Module(m) => &m.body,
+        ProgramRef::Script(_) => return Ok(None),
+    };
+    for item in body {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => match &export.decl {
+                Decl::Var(var) => {
+                    for declarator in &var.decls {
+                        let Pat::Ident(ident) = &declarator.name else {
+                            continue;
+                        };
+                        if ident.id.sym.as_str() != "apiVersion" {
+                            continue;
+                        }
+                        if var.kind != VarDeclKind::Const {
+                            note(Err(VersionDiag::Malformed(
+                                "apiVersion must be export const",
+                            )))?;
+                            continue;
+                        }
+                        let Some(init) = declarator.init.as_deref() else {
+                            note(Err(VersionDiag::Malformed("apiVersion has no initializer")))?;
+                            continue;
+                        };
+                        match numeric_literal_version(init) {
+                            Ok(n) => note(Ok(n))?,
+                            Err(d) => note(Err(d))?,
+                        }
+                    }
+                }
+                Decl::Fn(fun) if fun.ident.sym.as_str() == "apiVersion" => {
+                    note(Err(VersionDiag::Malformed(
+                        "apiVersion must be export const",
+                    )))?;
+                }
+                Decl::Class(class) if class.ident.sym.as_str() == "apiVersion" => {
+                    note(Err(VersionDiag::Malformed(
+                        "apiVersion must be export const",
+                    )))?;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    match found {
+        None => Ok(None),
+        Some(Ok(n @ 1 | n @ 2)) => Ok(Some(n)),
+        Some(Ok(other)) => Err(VersionDiag::Unsupported(other)),
+        Some(Err(d)) => Err(d),
+    }
+}
+
+#[cfg(feature = "load")]
+fn numeric_literal_version(expr: &deno_ast::swc::ast::Expr) -> Result<u32, VersionDiag> {
+    use deno_ast::swc::ast::{Expr, Lit};
+    let inner = unwrap_ts_assertion(expr);
+    match inner {
+        Expr::Lit(Lit::Num(n)) => {
+            if !n.value.is_finite() || n.value < 0.0 || n.value.fract() != 0.0 {
+                return Err(VersionDiag::Malformed(
+                    "apiVersion must be an integer numeric literal",
+                ));
+            }
+            if n.value > u32::MAX as f64 {
+                return Err(VersionDiag::Malformed("apiVersion out of range"));
+            }
+            Ok(n.value as u32)
+        }
+        Expr::Lit(Lit::Str(_)) => Err(VersionDiag::Malformed("apiVersion must not be a string")),
+        Expr::Lit(Lit::Bool(_)) => Err(VersionDiag::Malformed("apiVersion must not be a boolean")),
+        _ => Err(VersionDiag::Malformed(
+            "apiVersion must be a numeric literal",
+        )),
+    }
+}
+
+#[cfg(feature = "load")]
+fn unwrap_ts_assertion<'a>(expr: &'a deno_ast::swc::ast::Expr) -> &'a deno_ast::swc::ast::Expr {
+    use deno_ast::swc::ast::Expr;
+    match expr {
+        Expr::TsAs(n) => unwrap_ts_assertion(&n.expr),
+        Expr::TsTypeAssertion(n) => unwrap_ts_assertion(&n.expr),
+        Expr::TsConstAssertion(n) => unwrap_ts_assertion(&n.expr),
+        Expr::TsSatisfies(n) => unwrap_ts_assertion(&n.expr),
+        other => other,
     }
 }
 

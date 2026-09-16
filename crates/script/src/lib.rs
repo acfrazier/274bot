@@ -52,9 +52,10 @@ pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
 pub use load::{
     default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
-    live_file_fixture_path, live_file_fixture_stem, raw_content_fingerprint,
-    scan_import_specifiers, scan_same_folder_js_imports, sibling_module_url, CatalogApplyReport,
-    CatalogDiff, JsCard, LoadShape, PreparedCard, ScriptSel,
+    live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
+    raw_content_fingerprint, resolve_api_family, scan_import_specifiers,
+    scan_same_folder_js_imports, sibling_module_url, ApiFamily, CatalogApplyReport, CatalogDiff,
+    JsCard, LoadShape, PreparedCard, ScriptSel, VersionDiag,
 };
 /// Cache/transpile-backed library and sibling resolution (isolate feature).
 #[cfg(feature = "load")]

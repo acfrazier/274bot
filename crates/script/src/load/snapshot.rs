@@ -143,6 +143,43 @@ pub(super) fn materialize_snapshot(
         let bank_generation = num(&mut scope, 0.0);
         set(&mut scope, obj, "bank_generation", bank_generation)?;
     }
+    if snap.has_bank_approaches() {
+        let approaches = bank_approach_array(&mut scope, &snap.bank_approaches())?;
+        set(&mut scope, obj, "bank_approaches", approaches)?;
+    } else if !had {
+        set(&mut scope, obj, "bank_approaches", empty_rows)?;
+    }
+    if snap.has_walk_outcome_seq() {
+        let seq = num(&mut scope, snap.walk_outcome_seq() as f64);
+        set(&mut scope, obj, "walk_outcome_seq", seq)?;
+        let gen = num(&mut scope, snap.walk_outcome_generation() as f64);
+        set(&mut scope, obj, "walk_outcome_generation", gen)?;
+        let failed = v8::Boolean::new(&mut scope, snap.walk_outcome_failed());
+        set(&mut scope, obj, "walk_outcome_failed", failed.into())?;
+        let x = num(&mut scope, snap.walk_outcome_x() as f64);
+        set(&mut scope, obj, "walk_outcome_x", x)?;
+        let z = num(&mut scope, snap.walk_outcome_z() as f64);
+        set(&mut scope, obj, "walk_outcome_z", z)?;
+        let level = num(&mut scope, snap.walk_outcome_level() as f64);
+        set(&mut scope, obj, "walk_outcome_level", level)?;
+        let radius = num(&mut scope, snap.walk_outcome_radius() as f64);
+        set(&mut scope, obj, "walk_outcome_radius", radius)?;
+        let allow = v8::Boolean::new(&mut scope, snap.walk_outcome_allow_teleports());
+        set(&mut scope, obj, "walk_outcome_allow_teleports", allow.into())?;
+        let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
+        set(&mut scope, obj, "walk_outcome_request_id", rid)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "walk_outcome_seq", zero)?;
+        set(&mut scope, obj, "walk_outcome_generation", zero)?;
+        set(&mut scope, obj, "walk_outcome_failed", falsy)?;
+        set(&mut scope, obj, "walk_outcome_x", zero)?;
+        set(&mut scope, obj, "walk_outcome_z", zero)?;
+        set(&mut scope, obj, "walk_outcome_level", zero)?;
+        set(&mut scope, obj, "walk_outcome_radius", zero)?;
+        set(&mut scope, obj, "walk_outcome_allow_teleports", falsy)?;
+        set(&mut scope, obj, "walk_outcome_request_id", zero)?;
+    }
     if snap.has_count_dialog_open() {
         let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
         set(
@@ -1331,6 +1368,37 @@ fn bank_stand_array<'s>(
         }
         let obj = o.into();
         arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn bank_approach_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::BankApproachReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let loc_id = num(scope, row.loc_id() as f64);
+        set(scope, o, "loc_id", loc_id)?;
+        let x = num(scope, row.x() as f64);
+        set(scope, o, "x", x)?;
+        let z = num(scope, row.z() as f64);
+        set(scope, o, "z", z)?;
+        let level = num(scope, row.level() as f64);
+        set(scope, o, "level", level)?;
+        let can_operate = v8::Boolean::new(scope, row.can_operate());
+        set(scope, o, "can_operate", can_operate.into())?;
+        let dest_ok = v8::Boolean::new(scope, row.dest_ok());
+        set(scope, o, "dest_ok", dest_ok.into())?;
+        let dest_x = num(scope, row.dest_x() as f64);
+        set(scope, o, "dest_x", dest_x)?;
+        let dest_z = num(scope, row.dest_z() as f64);
+        set(scope, o, "dest_z", dest_z)?;
+        let dest_level = num(scope, row.dest_level() as f64);
+        set(scope, o, "dest_level", dest_level)?;
+        arr.set_index(scope, i as u32, o.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
