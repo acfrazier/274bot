@@ -294,3 +294,117 @@ fn isolate_same_target_old_request_id_does_not_settle_new_wait() {
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
     iso.join();
 }
+
+fn overlapping_walk_src() -> String {
+    format!(
+        r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__rs_done) return;
+        globalThis.__rs_a = null;
+        globalThis.__rs_b = null;
+        Traversal.walkResilient(
+            {{ x: 2820, z: 3556, level: 0 }},
+            {{ radius: 1, timeoutMs: 300000 }},
+        ).then(v => {{ globalThis.__rs_a = v; }});
+        globalThis.__rs_b = await Traversal.walkResilient(
+            {{ x: 2820, z: 3556, level: 0 }},
+            {{ radius: 1, timeoutMs: 300000 }},
+        );
+        globalThis.__rs_done = true;
+    }}
+}}
+"#
+    )
+}
+
+fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
+    iso.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+    assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
+    let drained = iso.drain_interacts();
+    match &drained[..] {
+        [InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            request_id: first,
+        }, InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            request_id: second,
+        }] => {
+            assert_ne!(*first, 0);
+            assert_ne!(*second, 0);
+            assert_ne!(first, second);
+            (*first, *second)
+        }
+        other => panic!("unexpected interacts: {other:?}"),
+    }
+}
+
+#[test]
+fn isolate_two_same_target_begins_delayed_first_id_does_not_settle_second() {
+    let iso = LoadIsolate::spawn(overlapping_walk_src(), LoadShape::CompatClass, vec![]).unwrap();
+    let (first_id, second_id) = park_two_walks(&iso);
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(2, far()),
+        fail_native(1, 0, first_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__rs_b").unwrap(),
+        serde_json::Value::Null,
+        "delayed first request id must not settle the later wait"
+    );
+    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(3, far()),
+        fail_native(2, 0, second_id, 2820, 3556, 1),
+    ));
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__rs_b").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn isolate_stop_start_does_not_consume_prior_request_id() {
+    let iso1 = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
+    let old_id = park_walk(&iso1);
+    iso1.join();
+    let leftover = fail_native(4, 1, old_id, 2820, 3556, 1);
+    let iso2 = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
+    iso2.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(1, far()),
+        leftover,
+    ));
+    iso2.on_game_tick(1);
+    assert_eq!(
+        iso2.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "leftover host outcome must not settle a new isolate wait"
+    );
+    let new_id = match &iso2.drain_interacts()[..] {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
+    assert_ne!(new_id, old_id);
+    iso2.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(2, far()),
+        fail_native(5, 1, old_id, 2820, 3556, 1),
+    ));
+    iso2.on_game_tick(2);
+    assert_eq!(
+        iso2.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "late old-worker request id must not settle the new isolate wait"
+    );
+    iso2.join();
+}
