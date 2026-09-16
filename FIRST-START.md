@@ -8,6 +8,19 @@ This repo does not ship Jagex assets and does not promise
 automatic asset distribution beyond the client’s ordinary `/crc` + jag
 fetch into the configured cache/unpack directory.
 
+## Downloaded Alpha 2 packages
+
+The macOS app opens on **public-289**. Standalone binaries use
+`./panel-play --profile public-289` or `./tui-play --profile public-289`
+(`.exe` on Windows). Keep the adjacent `nav/` directory; the macOS app
+contains its own resources. Initial distributed navigation targets the public
+289 cache. A custom local engine with different cache bytes needs a matching
+source build or explicit external navigation pack.
+
+No Rust toolchain or local engine is needed for the public package. Game assets
+are fetched from the configured public server, and catalog scripts still come
+from your chosen rs2b0t checkout. Public login requires your own account.
+
 ## Toolchain
 
 - Rust **1.98.0** (`rust-toolchain.toml` in this repo and in
