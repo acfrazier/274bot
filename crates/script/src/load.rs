@@ -2512,6 +2512,16 @@ mod isolate {
             .register_function("__rs2b0t_tile_distance", tile_distance)
             .map_err(|e| format!("register tile distance: {e}"))?;
         runtime
+            .register_function(
+                "__rs2b0t_range_supply_empty",
+                |args: &[serde_json::Value]| {
+                    Ok(serde_json::Value::Bool(
+                        crate::ranged::range_supply_empty_args(args),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register range supply empty: {e}"))?;
+        runtime
             .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
                 Ok(crate::bank_withdraw::step(
                     args.first().unwrap_or(&serde_json::Value::Null),

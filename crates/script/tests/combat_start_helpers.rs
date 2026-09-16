@@ -9,6 +9,46 @@ fn probe_json(src: &str) -> serde_json::Value {
 }
 
 #[test]
+fn range_supply_empty_exports_all_three_sources_and_edges() {
+    let value = probe_json(
+        r#"
+import { rangeSupplyEmpty } from '../../api/combat/ranged.js';
+export default class T extends LoopingBot {
+    loop() {
+        const direct = globalThis.rustyscript.functions.__rs2b0t_range_supply_empty;
+        globalThis.__probe = JSON.stringify({
+            allEmpty: rangeSupplyEmpty(0, 0, 0),
+            equipped: rangeSupplyEmpty(1, 0, 0),
+            carried: rangeSupplyEmpty(0, 1, 0),
+            ground: rangeSupplyEmpty(0, 0, 1),
+            allPresent: rangeSupplyEmpty(2, 3, 4),
+            negatives: rangeSupplyEmpty(-1, -2, -3),
+            fraction: rangeSupplyEmpty(0.5, 0, 0),
+            large: rangeSupplyEmpty(2147483648, 0, 0),
+            directEmpty: direct(0, 0, 0),
+            directGround: direct(0, 0, 1),
+            directNulls: direct(null, null, null),
+            directMissing: direct(),
+        });
+    }
+}
+"#,
+    );
+    assert_eq!(value["allEmpty"], true);
+    assert_eq!(value["equipped"], false);
+    assert_eq!(value["carried"], false);
+    assert_eq!(value["ground"], false);
+    assert_eq!(value["allPresent"], false);
+    assert_eq!(value["negatives"], true);
+    assert_eq!(value["fraction"], false);
+    assert_eq!(value["large"], false);
+    assert_eq!(value["directEmpty"], true);
+    assert_eq!(value["directGround"], false);
+    assert_eq!(value["directNulls"], true);
+    assert_eq!(value["directMissing"], false);
+}
+
+#[test]
 fn ranged_loadout_is_truthful_and_uses_dart_shape_only() {
     let value = probe_json(
         r#"

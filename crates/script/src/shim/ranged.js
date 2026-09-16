@@ -1,4 +1,4 @@
-import { host, notImpl } from '../../shim/_kernel.js';
+import { host } from '../../shim/_kernel.js';
 import { BOWS, DARTS } from './equipment.js';
 
 export const RANGED_WEAPONS = [...BOWS, ...DARTS];
@@ -29,6 +29,10 @@ export function rockCrabRangeLoadout(...args) {
     return rangeLoadoutOf(...args);
 }
 
-export function rangeSupplyEmpty() {
-    throw notImpl('ranged.rangeSupplyEmpty');
+export function rangeSupplyEmpty(equipped, carried, ground) {
+    return globalThis.rustyscript.functions.__rs2b0t_range_supply_empty(
+        equipped,
+        carried,
+        ground,
+    );
 }
