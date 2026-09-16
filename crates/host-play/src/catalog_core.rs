@@ -3265,9 +3265,10 @@ fn rich_chainbody_exhausted(observation: &Observation) -> bool {
 }
 
 /// Ordered High-alch interruption: first cast, targeted Swarm + positive hit,
-/// native guardian hold, actual flee under that hold, release/return near
-/// Varrock West, further rich cast from the release baseline that exhausts
-/// remaining notes, rich bank retirement, then poor-item consumption.
+/// native guardian hold, actual flee under that hold, native hold release
+/// independent of bank proximity, further rich cast from that release baseline
+/// that exhausts remaining notes, bank return and loaded rich retirement near
+/// Varrock West, then poor-item consumption.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AlcherSwarmDrainCycle {
     pub withdrawn: Option<Observation>,
@@ -3335,7 +3336,6 @@ impl AlcherSwarmDrainCycle {
             && self.released.is_none()
             && !now.guardian.hold
             && now.guardian.kind.as_deref() != Some("evade")
-            && near(now.tile, VARROCK_WEST_BANK, 6)
         {
             self.released = Some(now.clone());
         }
@@ -3363,6 +3363,7 @@ impl AlcherSwarmDrainCycle {
             && now.bank_item_id(RUNE_CHAINBODY_ID) == 0
             && now.bank_item_id(CERT_RUNE_CHAINBODY_ID) == 0
             && rich_chainbody_exhausted(now)
+            && near(now.tile, VARROCK_WEST_BANK, 6)
         {
             self.rich_retired = Some(now.clone());
         }
