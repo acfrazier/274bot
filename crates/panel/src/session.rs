@@ -1093,6 +1093,10 @@ pub struct Session {
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
     pub persist_ui: bool,
+    /// Explicit PREPARE / RUN-PREPARED fixture path (default live is unchanged).
+    pub fixture_mode: scenario::FixtureMode,
+    /// Optional identity receipt path; default `~/.274bot/fixtures/<scenario>.json`.
+    pub fixture_path: Option<PathBuf>,
 }
 
 /// Keep each per-name panel log bounded.
@@ -1354,6 +1358,8 @@ impl Session {
             external_ts: None,
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
+            fixture_mode: scenario::FixtureMode::Default,
+            fixture_path: None,
             options: {
                 let (host, port) = host_play::play_endpoint_for(client::bot_target());
                 PlayOptions {
@@ -1425,6 +1431,23 @@ impl Session {
 
     pub fn set_external_ts(&mut self, path: Option<PathBuf>) {
         self.external_ts = path;
+    }
+
+    /// Configure the optional prepare / run-prepared fixture path for the next live boot.
+    pub fn set_fixture_boot(
+        &mut self,
+        mode: scenario::FixtureMode,
+        path: Option<PathBuf>,
+    ) {
+        self.fixture_mode = mode;
+        self.fixture_path = path;
+    }
+
+    /// Resolve the identity receipt path for `scenario`.
+    pub fn fixture_identity_path(&self, scenario: &str) -> PathBuf {
+        self.fixture_path
+            .clone()
+            .unwrap_or_else(|| scenario::default_fixture_path(scenario))
     }
 
     pub fn external_core_watch(&self) -> Option<host_play::external_loader::ExternalWatch> {
@@ -2030,7 +2053,7 @@ impl Session {
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
-        let path = temp_live_vault_from(&entry_refs, 274_000_001, &pass);
+        let path = temp_live_vault_from(&entry_refs, 274_000_001, &pass, true);
         if !self.unlock_at(&path, &pass) {
             return Err(self
                 .error
@@ -2120,7 +2143,7 @@ impl Session {
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
         let pass = host_play::live_vault_passphrase_for(self.target());
-        let path = temp_live_vault_from(&entries, 274_000_100, &pass);
+        let path = temp_live_vault_from(&entries, 274_000_100, &pass, true);
         // Empty Play first: do not spawn last_focus before s00 focuses.
         if !self.start_vault(&path, &pass) {
             return Err(self
@@ -2185,11 +2208,66 @@ impl Session {
     pub fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         // Ephemeral boot: never persist focus/last_focus from a live run.
         self.persist_ui = false;
+        // Offline prepare never boots live — refuse here so a miswired path fails closed.
+        if matches!(self.fixture_mode, scenario::FixtureMode::Prepare) {
+            return Err(
+                "FixtureMode::Prepare is offline-only; use panel --prepare-fixture (no live boot)"
+                    .into(),
+            );
+        }
+        // Apply run-prepared rewrite (strips mainland/setup cheats) before seed.
+        let scenario = scenario::apply_fixture_mode(scenario, self.fixture_mode)?;
+        if matches!(self.fixture_mode, scenario::FixtureMode::RunPrepared)
+            && scenario::run_prepared_has_setup_cheats(&scenario)
+        {
+            return Err(format!(
+                "run-prepared scenario {:?} still has setup cheats after rewrite",
+                scenario.name
+            ));
+        }
         // Copy the view knobs before `scenario` moves into the runner.
         let view = scenario.settings.clone();
-        // Mint one name per seed slot (fleet included): both slots get a
-        // fresh account for this invocation.
-        let names = host_play::mint_live_names(scenario.seed.profiles.len());
+        let scenario_name = scenario.name.to_string();
+        let profile_count = scenario.seed.profiles.len();
+        let target = self.target();
+        // Run-prepared reuses the exact identity receipt (no fresh random suffix).
+        // Default live still mints.
+        let (names, entries, pass, auto_login) = match self.fixture_mode {
+            scenario::FixtureMode::RunPrepared => {
+                let path = self.fixture_identity_path(&scenario_name);
+                let identity = scenario::FixtureIdentity::read_from(&path)?;
+                identity.validate_for(&scenario_name, profile_count)?;
+                // Install .sav into engine players dir when the operator points one.
+                if let Ok(players) = std::env::var("BOT_PLAYERS_DIR") {
+                    let players = PathBuf::from(players);
+                    let installed = identity.install_into_players_dir(&players, true)?;
+                    for p in &installed {
+                        println!("[panel] installed fixture save -> {}", p.display());
+                    }
+                } else {
+                    println!(
+                        "[panel] run-prepared: BOT_PLAYERS_DIR unset; ensure engine already has {}",
+                        identity
+                            .accounts
+                            .iter()
+                            .map(|a| a.sav_path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                let names = identity.usernames();
+                let entries = identity.entries();
+                let pass = identity.vault_passphrase.clone();
+                (names, entries, pass, true)
+            }
+            scenario::FixtureMode::Default => {
+                let names = host_play::mint_live_names(profile_count);
+                let entries = host_play::mint_live_entries_for_target(&names, target);
+                let pass = host_play::live_vault_passphrase_for(target);
+                (names, entries, pass, true)
+            }
+            scenario::FixtureMode::Prepare => unreachable!("prepare rejected above"),
+        };
         if self.catalog_core_enabled && self.pair_core_enabled {
             return Err("catalog core and pair core watches are mutually exclusive".into());
         }
@@ -2225,9 +2303,7 @@ impl Session {
             }
         }
         self.set_script_settings_inject(inject);
-        let entries = host_play::mint_live_entries_for_target(&names, self.target());
-        let pass = host_play::live_vault_passphrase_for(self.target());
-        let path = temp_live_vault_from(&entries, 274_000_001, &pass);
+        let path = temp_live_vault_from(&entries, 274_000_001, &pass, auto_login);
         if !self.unlock_at(&path, &pass) {
             return Err(self
                 .error
@@ -4205,6 +4281,7 @@ fn temp_live_vault_from<S: AsRef<str>>(
     entries: &[(S, S)],
     uid_base: i32,
     vault_pass: &str,
+    auto_login: bool,
 ) -> PathBuf {
     // Unique per call: parallel tests boot several scenarios and must not
     // race on one temp vault path.
@@ -4232,7 +4309,8 @@ fn temp_live_vault_from<S: AsRef<str>>(
                     // Relog leaves run_client when !ingame; auto_login
                     // keeps want_login armed so the FIFO handshakes again
                     // instead of sitting on the title ("logging in…").
-                    auto_login: true,
+                    // Prepare-fixture turns this off so LoggedOut holds.
+                    auto_login,
                     ..vault::ProfileSettings::default()
                 },
             })
@@ -7624,7 +7702,7 @@ mod tests {
         let names = host_play::mint_live_names(2);
         let entries = host_play::mint_live_entries_for_target(&names, client::BotTarget::Prod);
         let pass = host_play::live_vault_passphrase_for(client::BotTarget::Prod);
-        let path = temp_live_vault_from(&entries, 274_000_001, &pass);
+        let path = temp_live_vault_from(&entries, 274_000_001, &pass, true);
         let vault = Vault::unlock(&path, &pass).unwrap();
         for p in vault.profiles() {
             assert_ne!(

@@ -17,6 +17,7 @@
 //! headless), so no thread sleeps inside the shared layer.
 
 pub mod evidence;
+pub mod fixture;
 pub mod proof;
 mod runner;
 pub mod shot;
@@ -34,6 +35,11 @@ use client::client::Client;
 use serde_json::{Map, Value};
 
 pub use evidence::{Evidence, InvRow, StatRow};
+pub use fixture::{
+    apply_fixture_mode, as_run_prepared, default_fixture_path, default_fixture_sav_dir,
+    fixture_prereqs_of, harness_writer_script, prepare_offline_fixture, run_prepared_has_setup_cheats,
+    FixtureAccount, FixtureIdentity, FixtureMode, OfflinePrepareOpts,
+};
 pub use proof::Proof;
 pub use runner::{RunnerStatus, ScenarioRunner};
 
@@ -95,6 +101,10 @@ pub struct ScenarioSettings {
     /// companion username (`names[1]`) into the script settings bag under
     /// this key after [`script_settings_inject`].
     pub inject_companion_as: Option<&'static str>,
+    /// Explicit world proofs prepare must acknowledge and run-prepared must
+    /// observe before Start. When `None`, [`fixture_prereqs_of`] derives them
+    /// from pre-StartScript wait arms (position/stat/item-like only).
+    pub fixture_prereqs: Option<&'static [Proof]>,
 }
 
 /// One injected script setting for live gold scenarios.
@@ -253,6 +263,7 @@ impl Default for ScenarioSettings {
             start_script: None,
             script_settings_inject: None,
             inject_companion_as: None,
+            fixture_prereqs: None,
         }
     }
 }
@@ -2240,6 +2251,22 @@ const THIEVER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+/// Durable prepare / run-prepared gates for Thiever (not script progress).
+const THIEVER_FIXTURE_PREREQS: &[Proof] = &[
+    Proof::ArrivedNear {
+        x: 2661,
+        z: 3306,
+        level: 0,
+        radius: 10,
+    },
+    Proof::Stat { id: 17, min: 50 },
+    Proof::Stat { id: 3, min: 50 },
+    Proof::Item {
+        name: "Lobster",
+        count: 10,
+    },
+];
+
 /// The `thiever` scenario: live Thiever gold — Guard pickpocket at the
 /// Ardougne tile, food via `give`, loot off. Proof is thieving XP delta.
 fn thiever_scenario() -> Scenario {
@@ -2296,6 +2323,7 @@ fn thiever_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("Thiever"),
             script_settings_inject: Some(THIEVER_INJECT),
+            fixture_prereqs: Some(THIEVER_FIXTURE_PREREQS),
             nav: gold_script_nav(),
             terminal_shot: Some("thiever paint"),
             ..Default::default()
