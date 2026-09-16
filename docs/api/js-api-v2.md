@@ -56,6 +56,30 @@ Completion is the next snapshots' seq/result fields, not a Promise.
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.
 
+## Worked example: BoneBurier v2
+
+`crates/script/examples/bone_burier_v2.ts` is the authoritative small
+author-facing example. `bone_burier_v2.js` is its normal `deno bundle`
+output, so either file can be loaded as a NativeApi v2 card; they are not two
+independent implementations. The example uses only the public `NativeApi`
+surface and demonstrates the intended synchronous, snapshot-polled shape:
+
+- `SETTINGS.boneName` selects the unnoted inventory and bank item while
+  unrelated inventory is left untouched;
+- a supported nearby bank is opened, the current `bank_generation` is passed
+  to `withdraw-load`, the bank is closed, and inventory change is observed
+  before the next bury request;
+- a loaded/current bank row with no matching unnoted supply is a clean,
+  confirmed exhaustion stop, while missing, stale, or unloaded contents are
+  unavailable (never exhaustion);
+- walk, open, close, withdraw, and bury operations have bounded observation
+  waits with useful refusal/stall reasons; paint reports phase, burials, and
+  observed Prayer XP.
+
+The corresponding `bone_burier_v2` integration tests are synthetic isolate
+tests (not LIVE tests). They load both the TypeScript source and bundled
+JavaScript, and verify per-isolate settings and bounded failure behavior.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that
