@@ -16,6 +16,7 @@ use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
 use nav::pack::{decode_canlight_sidecar, decode_reach_sidecar, sha256_hex};
 use nav::world::NavWorld;
+use sha2::{Digest, Sha256};
 
 use crate::cache::CacheAvailability;
 use crate::nav_identity::{
@@ -92,7 +93,11 @@ pub enum WorldMembersFact {
 pub enum WorldMembersSource {
     /// Guarded local `data/config/world.json` whose revision, port, and
     /// `node.members` bool all matched the selected loopback profile.
-    LocalWorldJson { path: PathBuf },
+    LocalWorldJson {
+        path: PathBuf,
+        sha256: String,
+        bytes: u64,
+    },
     /// `--world-members true|false` on this profile.
     ExplicitOverride,
 }
@@ -515,9 +520,14 @@ fn bind_world_members(
     let Some(members) = node.get("members").and_then(|v| v.as_bool()) else {
         return WorldMembersFact::Unknown;
     };
+    let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
     WorldMembersFact::Known {
         members,
-        source: WorldMembersSource::LocalWorldJson { path },
+        source: WorldMembersSource::LocalWorldJson {
+            path,
+            sha256,
+            bytes: text.len() as u64,
+        },
     }
 }
 

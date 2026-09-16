@@ -942,23 +942,32 @@ fn membergate_loc_defs(
         return (defs, open_leaves, conflicted);
     };
     let mut cur_name: Option<String> = None;
-    let mut op_open = false;
-    let mut op_close = false;
-    let mut category = String::new();
-    let mut open: Option<i32> = None;
+    let mut op1: Option<String> = None;
+    let mut category: Option<String> = None;
+    let mut open: Option<Option<i32>> = None;
+    let mut fields_conflicted = false;
     let flush = |name: &str,
-                 op_open: bool,
-                 op_close: bool,
-                 category: &str,
-                 open: Option<i32>,
+                 op1: &Option<String>,
+                 category: &Option<String>,
+                 open: Option<Option<i32>>,
+                 fields_conflicted: bool,
                  defs: &mut HashMap<i32, MembergateDef>,
                  open_leaves: &mut HashMap<i32, MembergateOpenLeaf>,
                  conflicted: &mut HashSet<i32>| {
         let Some(id) = loc_pack_id(name, ids) else {
             return;
         };
-        if name == MEMBERGATE_LEFT || name == MEMBERGATE_RIGHT {
-            let left = name == MEMBERGATE_LEFT;
+        let closed_left = ids.get(MEMBERGATE_LEFT).copied() == Some(id);
+        let closed_right = ids.get(MEMBERGATE_RIGHT).copied() == Some(id);
+        let open_left = loc_pack_id("loc_1560", ids) == Some(id);
+        let open_right = loc_pack_id("loc_1561", ids) == Some(id);
+        if closed_left || closed_right {
+            if closed_left == closed_right {
+                conflicted.insert(id);
+                defs.remove(&id);
+                return;
+            }
+            let left = closed_left;
             let want = if left {
                 MEMBERGATE_LEFT_CLOSED
             } else {
@@ -966,9 +975,9 @@ fn membergate_loc_defs(
             };
             let def = MembergateDef {
                 left,
-                op_open,
-                category_ok: category == want,
-                open,
+                op_open: !fields_conflicted && op1.as_deref() == Some("Open"),
+                category_ok: !fields_conflicted && category.as_deref() == Some(want),
+                open: (!fields_conflicted).then_some(open).flatten().flatten(),
             };
             match defs.get(&id) {
                 Some(prev) if *prev != def => {
@@ -981,16 +990,22 @@ fn membergate_loc_defs(
                     defs.insert(id, def);
                 }
             }
-        } else if name == "loc_1560" || name == "loc_1561" || open_leaves.contains_key(&id) {
-            let left = match category {
-                MEMBERGATE_LEFT_OPENED => true,
-                MEMBERGATE_RIGHT_OPENED => false,
-                _ => return,
+        } else if open_left || open_right {
+            if open_left == open_right {
+                conflicted.insert(id);
+                open_leaves.remove(&id);
+                return;
+            }
+            let left = open_left;
+            let want = if left {
+                MEMBERGATE_LEFT_OPENED
+            } else {
+                MEMBERGATE_RIGHT_OPENED
             };
             let leaf = MembergateOpenLeaf {
                 left,
-                op_close,
-                category_ok: true,
+                op_close: !fields_conflicted && op1.as_deref() == Some("Close"),
+                category_ok: !fields_conflicted && category.as_deref() == Some(want),
             };
             match open_leaves.get(&id) {
                 Some(prev) if *prev != leaf => {
@@ -1011,35 +1026,48 @@ fn membergate_loc_defs(
             if let Some(prev) = cur_name.take() {
                 flush(
                     &prev,
-                    op_open,
-                    op_close,
+                    &op1,
                     &category,
                     open,
+                    fields_conflicted,
                     &mut defs,
                     &mut open_leaves,
                     &mut conflicted,
                 );
             }
             cur_name = Some(name.to_string());
-            op_open = false;
-            op_close = false;
-            category.clear();
+            op1 = None;
+            category = None;
             open = None;
+            fields_conflicted = false;
             continue;
         }
         if cur_name.is_none() {
             continue;
         }
-        if line == "op1=Open" {
-            op_open = true;
-        } else if line == "op1=Close" {
-            op_close = true;
+        if let Some(value) = line.strip_prefix("op1=") {
+            let value = value.trim().to_string();
+            if op1.as_ref().is_some_and(|previous| previous != &value) {
+                fields_conflicted = true;
+            } else {
+                op1 = Some(value);
+            }
         } else if let Some(value) = line.strip_prefix("category=") {
-            category = value.trim().to_string();
+            let value = value.trim().to_string();
+            if category.as_ref().is_some_and(|previous| previous != &value) {
+                fields_conflicted = true;
+            } else {
+                category = Some(value);
+            }
         } else if let Some(rest) = line.strip_prefix("param=") {
             if let Some((key, value)) = rest.split_once(',') {
                 if key.trim() == "next_loc_stage" {
-                    open = stage_open_loc_id(value.trim(), ids);
+                    let value = stage_open_loc_id(value.trim(), ids);
+                    if open.is_some_and(|previous| previous != value) {
+                        fields_conflicted = true;
+                    } else {
+                        open = Some(value);
+                    }
                 }
             }
         }
@@ -1047,10 +1075,10 @@ fn membergate_loc_defs(
     if let Some(prev) = cur_name {
         flush(
             &prev,
-            op_open,
-            op_close,
+            &op1,
             &category,
             open,
+            fields_conflicted,
             &mut defs,
             &mut open_leaves,
             &mut conflicted,
@@ -8852,6 +8880,81 @@ return;
         );
     }
 
+    fn parse_membergate_defs(
+        text: &str,
+    ) -> (
+        HashMap<i32, MembergateDef>,
+        HashMap<i32, MembergateOpenLeaf>,
+        HashSet<i32>,
+    ) {
+        let fx = Fixture::new();
+        fx.write("scripts/doors/configs/doubledoors.loc", text);
+        membergate_loc_defs(
+            fx.path(),
+            &HashMap::from([
+                (MEMBERGATE_LEFT.to_string(), 1596),
+                (MEMBERGATE_RIGHT.to_string(), 1597),
+                ("loc_1560".to_string(), 1560),
+                ("loc_1561".to_string(), 1561),
+            ]),
+        )
+    }
+
+    #[test]
+    fn membergate_open_leaf_conflicts_are_order_independent_and_permanent() {
+        let valid = "[loc_1560]\nop1=Close\ncategory=door_left_opened\n";
+        let invalid = "[loc_1560]\nop1=Close\ncategory=other\n";
+        for text in [
+            format!("{valid}{invalid}"),
+            format!("{invalid}{valid}"),
+            format!("{valid}{invalid}{valid}"),
+        ] {
+            let (_, leaves, conflicted) = parse_membergate_defs(&text);
+            assert!(conflicted.contains(&1560), "{text:?}");
+            assert!(!leaves.contains_key(&1560), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn membergate_numeric_closed_alias_conflicts_with_named_definition() {
+        let valid =
+            "[membergatel]\nop1=Open\ncategory=door_left_closed\nparam=next_loc_stage,loc_1560\n";
+        let invalid = "[loc_1596]\nop1=Close\ncategory=other\n";
+        for text in [format!("{valid}{invalid}"), format!("{invalid}{valid}")] {
+            let (defs, _, conflicted) = parse_membergate_defs(&text);
+            assert!(conflicted.contains(&1596), "{text:?}");
+            assert!(!defs.contains_key(&1596), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn membergate_relevant_keys_cannot_promote_an_invalid_block() {
+        let text = "\
+[membergatel]
+op1=Close
+op1=Open
+category=other
+category=door_left_closed
+param=next_loc_stage,missing_leaf
+param=next_loc_stage,loc_1560
+";
+        let (defs, _, _) = parse_membergate_defs(text);
+        assert!(
+            defs.get(&1596)
+                .is_none_or(|def| !def.op_open || !def.category_ok || def.open.is_none()),
+            "contradictory repeated keys must not produce a valid definition: {defs:?}"
+        );
+    }
+
+    #[test]
+    fn membergate_identical_duplicate_definitions_remain_valid() {
+        let text = format!("{}{}", membergate_loc_blocks(), membergate_loc_blocks());
+        let (defs, leaves, conflicted) = parse_membergate_defs(&text);
+        assert!(conflicted.is_empty(), "{conflicted:?}");
+        assert_eq!(defs.len(), 2, "{defs:?}");
+        assert_eq!(leaves.len(), 2, "{leaves:?}");
+    }
+
     fn write_blocked_square(fx: &Fixture, mx: i32, mz: i32, walk: &[(i32, i32)], locs: &str) {
         let mut map = String::from("==== MAP ====\n");
         let ox = mx * 64;
@@ -9194,8 +9297,14 @@ if(map_members = ^false) {{
         };
         for root in roots {
             let (graph, wc) = derive_from_root_with(&root, &defs);
+            let crossings_at = |id, x, z| {
+                door_crossings(&graph, id)
+                    .into_iter()
+                    .filter(|((at_x, at_z), _, _)| *at_x == x && *at_z == z)
+                    .collect::<Vec<_>>()
+            };
             assert_eq!(
-                door_crossings(&graph, 1596),
+                crossings_at(1596, 2935, 3451),
                 vec![
                     ((2935, 3451), 'E', (2936, 3451)),
                     ((2935, 3451), 'W', (2934, 3451)),
@@ -9204,7 +9313,7 @@ if(map_members = ^false) {{
                 root.display()
             );
             assert_eq!(
-                door_crossings(&graph, 1597),
+                crossings_at(1597, 2935, 3450),
                 vec![
                     ((2935, 3450), 'E', (2936, 3450)),
                     ((2935, 3450), 'W', (2934, 3450)),
@@ -9212,12 +9321,31 @@ if(map_members = ^false) {{
                 "1597 ({})",
                 root.display()
             );
-            for e in graph
+            let family: Vec<_> = graph
                 .edges
                 .iter()
                 .filter(|e| matches!(e.loc_id, 1596 | 1597))
-            {
+                .collect();
+            let family_placements: HashSet<_> =
+                family.iter().map(|edge| (edge.loc_id, edge.at)).collect();
+            eprintln!(
+                "membergate proof {}: family_edges={} family_placements={}",
+                root.display(),
+                family.len(),
+                family_placements.len()
+            );
+            for e in &family {
                 assert!(e.members_req, "{e:?} ({})", root.display());
+                assert!(
+                    family.iter().any(|pair| {
+                        pair.loc_id != e.loc_id
+                            && pair.at.level == e.at.level
+                            && pair.dir == e.dir
+                            && (pair.at.x - e.at.x).abs() + (pair.at.z - e.at.z).abs() == 1
+                    }),
+                    "admitted family placement has no complementary pair: {e:?} ({})",
+                    root.display()
+                );
             }
             for id in [1598, 1599] {
                 assert!(
@@ -9227,13 +9355,18 @@ if(map_members = ^false) {{
                 );
             }
             let empty = crate::world_state::WorldState::empty();
-            for (label, from) in [("Taverley", taverley), ("passage", passage)] {
+            for (label, from, to) in [
+                ("Taverley -> bank", taverley, bank),
+                ("bank -> Taverley", bank, taverley),
+                ("passage -> bank", passage, bank),
+                ("bank -> passage", bank, passage),
+            ] {
                 assert!(
                     matches!(
-                        find_radius3(&wc, &graph, from, bank, &empty),
+                        find_radius3(&wc, &graph, from, to, &empty),
                         Err(RouteError::NoPath)
                     ),
-                    "{label} -> bank empty remains NoPath ({})",
+                    "{label} unknown/false membership remains NoPath ({})",
                     root.display()
                 );
             }
@@ -9254,21 +9387,57 @@ if(map_members = ^false) {{
                 "Taverley -> bank hops membergate ({})",
                 root.display()
             );
-            find_radius3(&wc, &graph, bank, taverley, &members).unwrap_or_else(|e| {
+            let route_fact = |label: &str, route: &crate::router::Route| {
+                let transports: Vec<_> = route
+                    .legs
+                    .iter()
+                    .filter_map(|leg| match leg {
+                        Leg::Transport { edge } => Some(edge.loc_id),
+                        _ => None,
+                    })
+                    .collect();
+                eprintln!(
+                    "{label}: dest=({},{},{}) legs={} transports={transports:?} ({})",
+                    route.dest.x,
+                    route.dest.z,
+                    route.dest.level,
+                    route.legs.len(),
+                    root.display()
+                );
+            };
+            route_fact("members Taverley -> bank radius3", &there);
+            let back = find_radius3(&wc, &graph, bank, taverley, &members).unwrap_or_else(|e| {
                 panic!("members bank -> Taverley ({e:?}) ({})", root.display())
             });
+            route_fact("members bank -> Taverley radius3", &back);
             let done = crate::world_state::WorldState {
                 quests: ["Death Plateau".to_string()].into(),
                 stats: std::collections::HashMap::from([(16, 1)]),
                 map_members: true,
                 ..crate::world_state::WorldState::default()
             };
-            find_radius3(&wc, &graph, passage, bank, &done).unwrap_or_else(|e| {
-                panic!(
-                    "passage -> bank with Death Plateau ({e:?}) ({})",
-                    root.display()
-                )
-            });
+            let passage_to_bank =
+                find_radius3(&wc, &graph, passage, bank, &done).unwrap_or_else(|e| {
+                    panic!(
+                        "passage -> bank with Death Plateau ({e:?}) ({})",
+                        root.display()
+                    )
+                });
+            route_fact(
+                "members passage -> bank radius3 Death Plateau",
+                &passage_to_bank,
+            );
+            let bank_to_passage =
+                find_radius3(&wc, &graph, bank, passage, &done).unwrap_or_else(|e| {
+                    panic!(
+                        "bank -> passage with Death Plateau ({e:?}) ({})",
+                        root.display()
+                    )
+                });
+            route_fact(
+                "members bank -> passage radius3 Death Plateau",
+                &bank_to_passage,
+            );
         }
     }
 
