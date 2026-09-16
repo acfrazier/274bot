@@ -533,6 +533,11 @@ impl AppWindow {
         // ImGui setup: ini before fonts; `restore_previous_geometry: false`
         // disables the ini file entirely.
         let mut context = imgui::Context::create();
+        // dear-imgui-sys disables OS clipboard funcs; DefaultImpl is a local
+        // buffer only. Install arboard so password-manager paste reaches
+        // InputText (##cred-pass still allows paste). Cmd/Ctrl-V mapping stays
+        // with dear-imgui-winit + ConfigMacOSXBehaviors.
+        let _clipboard_ok = crate::clipboard::install_native_clipboard(&mut context);
         if !cfg.restore_previous_geometry {
             let _ = context.set_ini_filename(None::<String>);
         } else if let Some(p) = &cfg.ini_filename {
