@@ -908,9 +908,31 @@ pub struct ProfileIdentity {
     pub unpack: InputDigest,
     #[serde(default)]
     pub world_members: Option<bool>,
+    /// Effective immutable WORLD membership from the resolved child profile.
+    /// This distinguishes unknown from known-free and binds a local declaration
+    /// to the exact bytes the resolver read.
+    #[serde(default)]
+    pub effective_world_members: EffectiveWorldMembersIdentity,
     pub lowmem: bool,
     pub mainland: bool,
     pub jobs: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveWorldMembersIdentity {
+    pub value: Option<bool>,
+    pub source: WorldMembersIdentitySource,
+    #[serde(default)]
+    pub declaration: Option<InputDigest>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldMembersIdentitySource {
+    #[default]
+    Unknown,
+    LocalWorldJson,
+    ExplicitOverride,
 }
 
 /// Suite settings that shape what a run does.

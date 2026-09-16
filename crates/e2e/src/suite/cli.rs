@@ -383,6 +383,36 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
         content: selection.content_dir().display().to_string(),
         unpack: selection.unpack_dir().display().to_string(),
     };
+    let effective_world_members = match selection.world_members() {
+        host_play::WorldMembersFact::Unknown => identity::EffectiveWorldMembersIdentity::default(),
+        host_play::WorldMembersFact::Known {
+            members,
+            source: host_play::WorldMembersSource::ExplicitOverride,
+        } => identity::EffectiveWorldMembersIdentity {
+            value: Some(*members),
+            source: identity::WorldMembersIdentitySource::ExplicitOverride,
+            declaration: None,
+        },
+        host_play::WorldMembersFact::Known {
+            members,
+            source:
+                host_play::WorldMembersSource::LocalWorldJson {
+                    path,
+                    sha256,
+                    bytes,
+                },
+        } => identity::EffectiveWorldMembersIdentity {
+            value: Some(*members),
+            source: identity::WorldMembersIdentitySource::LocalWorldJson,
+            declaration: Some(identity::InputDigest {
+                target: path.display().to_string(),
+                sha256: Some(sha256.clone()),
+                bytes: Some(*bytes),
+                files: 1,
+                note: None,
+            }),
+        },
+    };
     Ok(ProfileIdentity {
         profile: options
             .profile
@@ -402,6 +432,7 @@ fn bind_profile(config: &NativeConfig, cwd: &Path) -> SuiteResult<ProfileIdentit
         content: identity::bind_content(Path::new(&resolved.content)),
         unpack: identity::bind_unpack(Path::new(&resolved.unpack), revision, unpack_overridden),
         world_members: options.world_members.or(config.world_members),
+        effective_world_members,
         lowmem: config.lowmem,
         mainland: config.mainland,
         jobs: 1,
@@ -1059,6 +1090,104 @@ fn report(run_dir: &Path, summary: &Summary, selection: &Selection) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn profile_identity_config(profile: &str, engine: &Path) -> NativeConfig {
+        parse_args(&[
+            "list".to_string(),
+            "--profile".to_string(),
+            profile.to_string(),
+            "--engine".to_string(),
+            engine.display().to_string(),
+            "--catalog".to_string(),
+            engine
+                .parent()
+                .unwrap()
+                .join("missing-catalog")
+                .display()
+                .to_string(),
+        ])
+        .unwrap()
+        .config
+    }
+
+    fn write_world_members(engine: &Path, revision: u16, port: u16, members: bool) -> PathBuf {
+        let path = engine.join("data/config/world.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"engine":{{"revision":{revision}}},"node":{{"port":{port},"members":{members}}}}}"#
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn profile_identity_records_effective_world_membership_and_provenance() {
+        let root = std::env::temp_dir().join(format!(
+            "274bot-e2e-members-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let engine = root.join("engine");
+        let declaration = write_world_members(&engine, 274, 43594, true);
+
+        let inherited =
+            bind_profile(&profile_identity_config("local-274", &engine), &root).unwrap();
+        let inherited_json = serde_json::to_value(&inherited).unwrap();
+        assert_eq!(
+            inherited.world_members, None,
+            "legacy field remains the CLI override"
+        );
+        assert_eq!(inherited_json["effective_world_members"]["value"], true);
+        assert_eq!(
+            inherited_json["effective_world_members"]["source"],
+            "local_world_json"
+        );
+        assert_eq!(
+            inherited_json["effective_world_members"]["declaration"]["target"],
+            declaration.display().to_string()
+        );
+        assert!(
+            inherited_json["effective_world_members"]["declaration"]["sha256"]
+                .as_str()
+                .is_some_and(|digest| digest.len() == 64)
+        );
+
+        write_world_members(&engine, 274, 43594, false);
+        let known_free =
+            bind_profile(&profile_identity_config("local-274", &engine), &root).unwrap();
+        let known_free_json = serde_json::to_value(&known_free).unwrap();
+        assert_eq!(known_free_json["effective_world_members"]["value"], false);
+        assert_eq!(
+            known_free_json["effective_world_members"]["source"],
+            "local_world_json"
+        );
+
+        let public = bind_profile(&profile_identity_config("public-289", &engine), &root).unwrap();
+        let public_json = serde_json::to_value(&public).unwrap();
+        assert!(public_json["effective_world_members"]["value"].is_null());
+        assert_eq!(public_json["effective_world_members"]["source"], "unknown");
+        assert!(public_json["effective_world_members"]["declaration"].is_null());
+
+        let mut overridden = profile_identity_config("local-274", &engine);
+        overridden.world_members = Some(true);
+        overridden.extra_args = vec!["--world-members".into(), "false".into()];
+        let overridden = bind_profile(&overridden, &root).unwrap();
+        let overridden_json = serde_json::to_value(&overridden).unwrap();
+        assert_eq!(overridden.world_members, Some(false));
+        assert_eq!(overridden_json["effective_world_members"]["value"], false);
+        assert_eq!(
+            overridden_json["effective_world_members"]["source"],
+            "explicit_override"
+        );
+        assert!(overridden_json["effective_world_members"]["declaration"].is_null());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn argument_parsing_rejects_unknown_flags_and_missing_values() {
