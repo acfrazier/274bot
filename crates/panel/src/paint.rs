@@ -5,7 +5,7 @@
 //! 765×503 game texture. Canvas ops rasterize to a small cached transparent
 //! texture over the applet, using the same native font as measureText.
 
-use dear_imgui_rs::{MouseButton, TextureId, Ui};
+use dear_imgui_rs::{MouseButton, StyleVar, TextureId, Ui};
 use script::canvas::{self, CanvasOp};
 use script::shim::ScriptPaint;
 
@@ -15,6 +15,12 @@ use crate::theme::{ACCENT, BG_DEEP, TEXT};
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
 /// chat on the 765×503 stage.
 pub const CHATBOX: [f32; 4] = [8.0, 345.0, 506.0, 150.0];
+
+/// Native structured-paint chrome at 1× (applet display = 765×503).
+const PAD_X: f32 = 6.0;
+const HEADER_Y: f32 = 2.0;
+const LINE_STEP: f32 = 14.0;
+const ROW_H_FLOOR: f32 = 16.0;
 
 /// Map the applet-space chatbox onto the Game Image's display rect
 /// (`min` = the Image widget's top-left corner, `size` = its display
@@ -28,6 +34,15 @@ pub fn chatbox_rect(min: [f32; 2], size: [f32; 2]) -> [f32; 4] {
         CHATBOX[2] * sx,
         CHATBOX[3] * sy,
     ]
+}
+
+/// Uniform scale for structured paint text/padding/hit targets from the
+/// Game Image display size. `fit_applet` keeps aspect so sx == sy; `min`
+/// avoids stretching glyphs if a non-matching rect is passed.
+pub fn paint_uniform_scale(size: [f32; 2]) -> f32 {
+    (size[0] / APPLET_W as f32)
+        .min(size[1] / APPLET_H as f32)
+        .max(0.01)
 }
 
 struct CanvasGpu {
@@ -198,8 +213,13 @@ impl PaintOverlay {
         let Some(paint) = structured else {
             return None;
         };
+        let s = paint_uniform_scale(size);
         let [x, y, w, h] = chatbox_rect(min, size);
-        let row_h = ui.frame_height().max(16.0);
+        let row_h = (ui.frame_height().max(ROW_H_FLOOR) * s).max(1.0);
+        let pad = PAD_X * s;
+        let header_y = HEADER_Y * s;
+        let line_step = (LINE_STEP * s).max(1.0);
+        let font_sz = (ui.current_font_size() * s).max(1.0);
         let height = if self.collapsed { row_h } else { h };
         if ui.is_mouse_hovering_rect([x, y], [x + w, y + row_h])
             && ui.is_mouse_clicked(MouseButton::Left)
@@ -207,6 +227,7 @@ impl PaintOverlay {
             self.collapsed = !self.collapsed;
         }
         let dl = ui.get_window_draw_list();
+        let _clip = dl.push_clip_rect([x, y], [x + w, y + height], true);
         dl.add_rect(
             [x, y],
             [x + w, y + height],
@@ -222,7 +243,16 @@ impl PaintOverlay {
             Some(t) => format!("{glyph} {t}"),
             None => glyph.to_string(),
         };
-        dl.add_text([x + 6.0, y + 2.0], ACCENT, &header);
+        let font = ui.current_font();
+        dl.add_text_with_font(
+            font,
+            font_sz,
+            [x + pad, y + header_y],
+            ACCENT,
+            &header,
+            0.0,
+            None,
+        );
         let mut clicked = None;
         if !self.collapsed {
             if let Some(title) = &paint.title {
@@ -231,18 +261,28 @@ impl PaintOverlay {
             let mut ty = y + row_h;
             for row in &paint.lines {
                 self.lines.push(row.clone());
-                if ty + 14.0 <= y + height {
-                    dl.add_text([x + 6.0, ty], TEXT, row);
-                    ty += 14.0;
+                if ty + line_step <= y + height {
+                    dl.add_text_with_font(font, font_sz, [x + pad, ty], TEXT, row, 0.0, None);
+                    ty += line_step;
                 }
             }
+            let _font = ui.push_font_with_size(None, font_sz);
+            let fp = ui.clone_style().frame_padding();
+            let _pad = ui.push_style_var(StyleVar::FramePadding([
+                (fp[0] * s).max(0.0),
+                (fp[1] * s).max(0.0),
+            ]));
+            let btn_w = (w - pad * 2.0).max(1.0);
             for btn in &paint.buttons {
                 self.button_labels.push(btn.label.clone());
                 if ty + row_h <= y + height {
-                    ui.set_cursor_screen_pos([x + 6.0, ty]);
-                    let hit = [x + 6.0, ty, x + w - 6.0, ty + row_h];
+                    ui.set_cursor_screen_pos([x + pad, ty]);
+                    let hit = [x + pad, ty, x + w - pad, ty + row_h];
                     self.button_hits.push(hit);
-                    let pressed = ui.button(format!("{}##paint-{}", btn.label, btn.id));
+                    let pressed = ui.button_with_size(
+                        format!("{}##paint-{}", btn.label, btn.id),
+                        [btn_w, row_h],
+                    );
                     let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                     if pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)) {
                         clicked = Some((btn.id.clone(), paint.generation));
@@ -342,7 +382,7 @@ mod tests {
     use dear_imgui_rs::FramePrepareOptions;
     use script::shim::ScriptPaint;
 
-    use super::{chatbox_rect, PaintOverlay, CHATBOX};
+    use super::{chatbox_rect, paint_uniform_scale, PaintOverlay, CHATBOX, PAD_X};
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -826,6 +866,130 @@ mod tests {
         );
         assert!(!overlay.canvas_gpu_alive());
         assert_eq!(gpu.unregistered.len(), 2);
+    }
+
+    #[test]
+    fn paint_uniform_scale_is_aspect_min_not_axis_stretch() {
+        assert!((paint_uniform_scale([765.0, 503.0]) - 1.0).abs() < 0.001);
+        assert!((paint_uniform_scale([382.5, 251.5]) - 0.5).abs() < 0.001);
+        // Non-matching rect: do not stretch text on the long axis.
+        assert!((paint_uniform_scale([765.0, 251.5]) - 0.5).abs() < 0.001);
+        assert!((paint_uniform_scale([382.5, 503.0]) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn structured_paint_hit_targets_scale_with_grid_cell() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = paint_with_button(Some("NatureCrafter"), &["status"], "gobank", "Go bank");
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                });
+        }
+        ctx.render();
+        let native_hit = overlay.button_hits[0];
+        let native_chat = chatbox_rect([10.0, 20.0], [765.0, 503.0]);
+        assert!(
+            (native_hit[0] - (native_chat[0] + PAD_X)).abs() < 0.5,
+            "native pad anchors the hit left edge"
+        );
+        assert!(
+            (native_hit[2] - (native_chat[0] + native_chat[2] - PAD_X)).abs() < 0.5,
+            "native pad anchors the hit right edge"
+        );
+
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], [382.5, 251.5]);
+                });
+        }
+        ctx.render();
+        let half_hit = overlay.button_hits[0];
+        let half_chat = chatbox_rect([0.0, 0.0], [382.5, 251.5]);
+        let s = paint_uniform_scale([382.5, 251.5]);
+        assert!((s - 0.5).abs() < 0.001);
+        assert!(
+            (half_hit[0] - (half_chat[0] + PAD_X * s)).abs() < 0.5,
+            "half-scale pad left ({half_hit:?} vs chat {half_chat:?})"
+        );
+        assert!(
+            (half_hit[2] - (half_chat[0] + half_chat[2] - PAD_X * s)).abs() < 0.5,
+            "half-scale pad right"
+        );
+        let native_h = native_hit[3] - native_hit[1];
+        let half_h = half_hit[3] - half_hit[1];
+        assert!(
+            (half_h - native_h * s).abs() < 1.0,
+            "button hit height scales with the cell ({half_h} vs {native_h}*{s})"
+        );
+        // Hit stays inside the scaled chatbox.
+        assert!(half_hit[0] >= half_chat[0] - 0.5);
+        assert!(half_hit[2] <= half_chat[0] + half_chat[2] + 0.5);
+        assert!(half_hit[1] >= half_chat[1] - 0.5);
+        assert!(half_hit[3] <= half_chat[1] + half_chat[3] + 0.5);
+    }
+
+    #[test]
+    fn collapse_hit_strip_scales_with_grid_cell() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = paint(Some("BoneBurier"), &["a row"]);
+        let half = [382.5_f32, 251.5];
+        let chat = chatbox_rect([0.0, 0.0], half);
+        let s = paint_uniform_scale(half);
+        // Title strip center at half scale (row_h ≈ frame_height * s).
+        prepare_frame(&mut ctx);
+        let title = [chat[0] + chat[2] * 0.5, chat[1] + 4.0 * s];
+        ctx.io_mut().add_mouse_pos_event(title);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                });
+        }
+        ctx.render();
+        assert!(!overlay.collapsed);
+        prepare_frame(&mut ctx);
+        ctx.io_mut().add_mouse_pos_event(title);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                });
+        }
+        ctx.render();
+        assert!(
+            overlay.collapsed,
+            "title click inside the scaled strip collapses"
+        );
+        assert!(overlay.lines.is_empty());
     }
 
     #[test]
