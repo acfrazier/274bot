@@ -1938,6 +1938,35 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             },
         ],
     },
+    InteractVariant {
+        op: "mouse",
+        fields: &[
+            TsField {
+                name: "down",
+                ty: "boolean",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "x",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "y",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "button",
+                ty: "number",
+                optional: true,
+                doc: None,
+            },
+        ],
+    },
 ];
 
 #[cfg(test)]

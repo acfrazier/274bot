@@ -191,6 +191,12 @@ const VT_SNAP_WALK_OUTCOME_LEVEL: VOffsetT = 178;
 const VT_SNAP_WALK_OUTCOME_RADIUS: VOffsetT = 180;
 const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
 const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
+const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
+const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
+
+/// Logical applet posted as `canvasRect`. Must match `client::APPLET_W/H`.
+pub const SNAPSHOT_CANVAS_W: i32 = 765;
+pub const SNAPSHOT_CANVAS_H: i32 = 503;
 
 // BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
 const VT_BA_LOC_ID: VOffsetT = 4;
@@ -304,6 +310,8 @@ const VT_IN_SOURCE_ITEM_SLOT: VOffsetT = 34;
 const VT_IN_TARGET_ITEM_ID: VOffsetT = 36;
 const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
 const VT_IN_REQUEST_ID: VOffsetT = 40;
+const VT_IN_XF: VOffsetT = 42;
+const VT_IN_YF: VOffsetT = 44;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -1365,6 +1373,8 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_OUTCOME_REQUEST_ID,
                 false,
             )?
+            .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
+            .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
             .finish();
         Ok(())
     }
@@ -1734,6 +1744,15 @@ impl SnapshotReader<'_> {
     }
     pub fn walk_outcome_request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn has_canvas_width(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None).is_some() }
+    }
+    pub fn canvas_width(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None) }.unwrap_or(0)
+    }
+    pub fn canvas_height(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_HEIGHT, None) }.unwrap_or(0)
     }
     pub fn has_reach(&self) -> bool {
         unsafe {
@@ -3520,6 +3539,8 @@ fn encode_snapshot_masked_into(
             native.walk_outcome_request_id,
         );
     }
+    b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
+    b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -4346,6 +4367,12 @@ impl InteractReader<'_> {
     pub fn request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_REQUEST_ID, None) }.unwrap_or(0)
     }
+    pub fn xf(&self) -> Option<f64> {
+        unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
+    }
+    pub fn yf(&self) -> Option<f64> {
+        unsafe { self.tab.get::<f64>(VT_IN_YF, None) }
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4370,6 +4397,8 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("target_item_id", VT_IN_TARGET_ITEM_ID, false)?
             .visit_field::<i32>("target_item_slot", VT_IN_TARGET_ITEM_SLOT, false)?
             .visit_field::<u64>("request_id", VT_IN_REQUEST_ID, false)?
+            .visit_field::<f64>("xf", VT_IN_XF, false)?
+            .visit_field::<f64>("yf", VT_IN_YF, false)?
             .finish();
         Ok(())
     }
@@ -5657,6 +5686,12 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .to_string(),
                 code: row.kind().unwrap_or("").to_string(),
             }),
+            "mouse" => out.push(crate::shim::InteractReq::Mouse {
+                down: row.index() == Some(1),
+                x: row.xf().unwrap_or(f64::NAN),
+                y: row.yf().unwrap_or(f64::NAN),
+                button: row.level(),
+            }),
             other => return Err(format!("unknown interact op: {other}")),
         }
     }
@@ -5708,6 +5743,7 @@ fn interact_off<'b>(
         InteractReq::RecoveryAnchor { .. } => "recovery-anchor",
         InteractReq::RecoveryAnchorNone => "recovery-anchor-none",
         InteractReq::Key { .. } => "key",
+        InteractReq::Mouse { .. } => "mouse",
     });
     let kind_off = match req {
         InteractReq::OpenStand { kind, .. }
@@ -6042,6 +6078,12 @@ fn interact_off<'b>(
             }
             b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
         }
+        InteractReq::Mouse { down, x, y, button } => {
+            b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
+            b.push_slot_always(VT_IN_LEVEL, *button);
+            b.push_slot_always(VT_IN_XF, *x);
+            b.push_slot_always(VT_IN_YF, *y);
+        }
     }
     WIPOffset::new(b.end_table(tab).value())
 }
@@ -6293,6 +6335,51 @@ pub(crate) mod tests {
             decode_interact_batch(b"not a batch").is_err(),
             "unknown bytes fail closed"
         );
+    }
+
+    #[test]
+    fn encode_decode_interact_mouse_center_and_up_round_trips() {
+        let reqs = vec![
+            InteractReq::Mouse {
+                down: true,
+                x: 382.5,
+                y: 251.5,
+                button: 0,
+            },
+            InteractReq::Mouse {
+                down: false,
+                x: 382.5,
+                y: 251.5,
+                button: 0,
+            },
+            InteractReq::Key {
+                down: true,
+                key: "2".into(),
+                code: "2".into(),
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("mouse batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn encode_decode_mouse_preserves_negative_fraction() {
+        let reqs = vec![InteractReq::Mouse {
+            down: true,
+            x: -0.25,
+            y: 10.0,
+            button: 0,
+        }];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("neg fraction decodes");
+        match &got[0] {
+            InteractReq::Mouse { x, y, .. } => {
+                assert!((*x - -0.25).abs() < 1e-12, "{x}");
+                assert!((*y - 10.0).abs() < 1e-12, "{y}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// Task 8 fix — delta with mask set clears optional `chat_text`.

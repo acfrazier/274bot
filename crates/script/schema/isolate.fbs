@@ -301,6 +301,9 @@ table Snapshot {
   walk_outcome_radius: int = 0;
   walk_outcome_allow_teleports: bool = false;
   walk_outcome_request_id: ulong = 0;
+  // Logical applet size posted as `__rs2b0t_host.canvasRect`. Origin is 0.
+  canvas_width: int;
+  canvas_height: int;
 }
 
 // One shim interact request, tagged by `op`:
@@ -310,8 +313,9 @@ table Snapshot {
 // | "shop-button" | "make-panel"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
-// | "recovery-anchor" | "recovery-anchor-none" | "key".
+// | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
+// "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;
@@ -333,6 +337,8 @@ table Interact {
   target_item_id: int;
   target_item_slot: int;
   request_id: ulong = 0;
+  xf: double;
+  yf: double;
 }
 
 // The tick's shim interact queue, forwarded to the host.

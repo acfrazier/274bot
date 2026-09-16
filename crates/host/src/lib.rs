@@ -392,9 +392,10 @@ impl Host {
         knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
     ) -> RandomStatus {
         if let Some(inp) = input {
-            inp.drain(&mut client.shell);
+            inp.consume_native_frame(&mut client.shell);
+        } else {
+            client.shell.latch_click();
         }
-        client.shell.latch_click();
         let t_loop = std::time::Instant::now();
         client.mainloop();
         slot.loop_ns = slot
@@ -1865,6 +1866,33 @@ mod tests {
         inp.set_enabled(true);
         Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
         assert_eq!(c.shell.mouse_click_button, 1);
+    }
+
+    #[test]
+    fn client_frame_consumes_script_mouse_with_capture_off() {
+        let mut c = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let inp = SlotInput::new();
+        inp.authority().publish_live();
+        inp.set_enabled(false);
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0u32;
+        Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+        assert_eq!(
+            (
+                c.shell.mouse_click_button,
+                c.shell.mouse_click_x,
+                c.shell.mouse_click_y,
+                c.shell.mouse_button
+            ),
+            (1, 382, 251, 1)
+        );
     }
 
     #[test]

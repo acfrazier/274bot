@@ -2010,6 +2010,15 @@ mod isolate {
             std::mem::take(&mut *self.interacts.lock().unwrap())
         }
 
+        /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
+        pub fn discard_mouse_interacts(&self) {
+            self.pump_logs();
+            self.interacts
+                .lock()
+                .unwrap()
+                .retain(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. }));
+        }
+
         /// Drain generation-matched watchdog lifecycle facts (`note-progress`,
         /// loop/wait settle, recoveryAnchor replies) from the same FlatBuffer
         /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
@@ -3646,6 +3655,23 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         // overwrite the posted value; tick_loop also gates on `host_hold`.
         let hold_host = v8::Boolean::new(&mut scope, host_hold);
         set_readonly(&mut scope, host, "hold", hold_host.into())?;
+        if snap.has_canvas_width() && snap.canvas_width() > 0 && snap.canvas_height() > 0 {
+            let w = snap.canvas_width();
+            let h = snap.canvas_height();
+            let rect = v8::Object::new(&mut scope);
+            let zero = num(&mut scope, 0.0);
+            set(&mut scope, rect, "left", zero)?;
+            set(&mut scope, rect, "top", zero)?;
+            set(&mut scope, rect, "x", zero)?;
+            set(&mut scope, rect, "y", zero)?;
+            let width = num(&mut scope, w as f64);
+            let height = num(&mut scope, h as f64);
+            set(&mut scope, rect, "width", width)?;
+            set(&mut scope, rect, "height", height)?;
+            set(&mut scope, rect, "right", width)?;
+            set(&mut scope, rect, "bottom", height)?;
+            set_readonly(&mut scope, host, "canvasRect", rect.into())?;
+        }
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
             set(&mut scope, obj, "ours", ours.into())?;
@@ -5339,6 +5365,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     let layout = '';
     try { canvas.getBoundingClientRect(); }
     catch (e) { layout = String((e && e.message) || e); }
+    const frozen = new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5});
+    canvas.dispatchEvent(frozen);
+    let unknown = '';
+    try { canvas.dispatchEvent(new MouseEvent('mousemove')); }
+    catch (e) { unknown = String((e && e.message) || e); }
     return {
         canvas: canvas !== null && typeof canvas === 'object',
         other: other,
@@ -5346,6 +5377,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         mouseCtor,
         mouseDispatch,
         layout,
+        frozen: {x: frozen.clientX, y: frozen.clientY, button: frozen.button},
+        unknown,
     };
 })()
 "#,
@@ -5358,19 +5391,25 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 serde_json::json!([
                     {"op": "key", "down": true, "key": "2", "code": "2"},
                     {"op": "key", "down": false, "key": "2", "code": "2"},
+                    {"op": "mouse", "down": true, "x": 0, "y": 0, "button": 0},
+                    {"op": "mouse", "down": true, "x": 382.5, "y": 251.5, "button": 0},
                 ])
             );
             assert_eq!(report["mouseCtor"], true);
-            assert!(
-                report["mouseDispatch"]
-                    .as_str()
-                    .is_some_and(|s| s.contains("BLOCKED: missing mouse")),
-                "{report:?}"
-            );
+            assert_eq!(report["mouseDispatch"], "");
             assert!(
                 report["layout"]
                     .as_str()
                     .is_some_and(|s| s.contains("BLOCKED: missing getBoundingClientRect")),
+                "{report:?}"
+            );
+            assert_eq!(report["frozen"]["x"], 382.5);
+            assert_eq!(report["frozen"]["y"], 251.5);
+            assert_eq!(report["frozen"]["button"], 0);
+            assert!(
+                report["unknown"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("BLOCKED: missing mouse")),
                 "{report:?}"
             );
         }
@@ -5427,6 +5466,65 @@ export default class T extends LoopingBot {
                     .iter()
                     .all(|req| !matches!(req, crate::shim::InteractReq::Key { .. })),
                 "stale generation must not deliver keys: {stale:?}"
+            );
+            iso.join();
+        }
+
+        #[test]
+        fn canvas_mouse_producer_round_trips_fb_and_drops_stale_generation() {
+            let iso = LoadIsolate::spawn(
+                r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
+        canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            iso.on_game_tick(1);
+            iso.probe("true").unwrap();
+            let reqs = iso.drain_interacts();
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: true,
+                        x,
+                        y,
+                        button: 0,
+                    } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
+                )),
+                "{reqs:?}"
+            );
+            assert!(
+                reqs.iter()
+                    .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
+                "{reqs:?}"
+            );
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+                )),
+                "{reqs:?}"
+            );
+
+            iso.on_game_tick(2);
+            iso.probe("true").unwrap();
+            iso.reset_session_work();
+            let stale = iso.drain_interacts();
+            assert!(
+                stale
+                    .iter()
+                    .all(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. })),
+                "stale generation must not deliver mouse: {stale:?}"
             );
             iso.join();
         }

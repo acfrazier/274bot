@@ -847,7 +847,11 @@ fn script_observe_with_npc_boxes(
     hold: bool,
     ours: bool,
     canlight: Option<&[u64]>,
+    slot_input: Option<&SlotInput>,
 ) -> bool {
+    if let Some(inp) = slot_input {
+        inp.set_host_consume_allowed(up && !hold);
+    }
     let mut wrote = false;
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
@@ -1289,15 +1293,16 @@ fn script_observe_with_npc_boxes(
                     name,
                 ),
             }
+            slot.sync_native_input_gate();
             if slot.state() == script::RunState::Running {
                 if slot.watchdog().holds_script_actions() {
                     let _dropped = slot.drain_interacts();
                 } else {
-                    interact.extend(slot.drain_interacts());
+                    interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
                 }
             }
         } else if slot.state() == script::RunState::Running {
-            interact.extend(slot.drain_interacts());
+            interact.extend(take_script_interacts(slot.drain_interacts(), slot_input));
         }
     }
     // Dispatch the shim's interact requests through the slot's own Driver
@@ -1642,8 +1647,26 @@ fn script_observe(
 ) -> bool {
     script_observe_with_npc_boxes(
         driver, name, up, tick_edge, tick, here, inv, state, snapshot, None, obj_names, scripts,
-        cheats, navs, world, hold, ours, None,
+        cheats, navs, world, hold, ours, None, None,
     )
+}
+
+fn take_script_interacts(
+    reqs: Vec<script::shim::InteractReq>,
+    slot_input: Option<&SlotInput>,
+) -> Vec<script::shim::InteractReq> {
+    let mut out = Vec::with_capacity(reqs.len());
+    for req in reqs {
+        match req {
+            script::shim::InteractReq::Mouse { down, x, y, button } => {
+                if let Some(inp) = slot_input {
+                    inp.enqueue_script_mouse(down, x, y, button);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn dispatch_observed_bank_op(
@@ -2372,6 +2395,7 @@ fn dispatch_script_interact(
             InteractReq::Key { down, key, .. } => {
                 wrote |= ix.apply_amount_key(down, &key);
             }
+            InteractReq::Mouse { .. } => {}
             InteractReq::SetCameraYaw { .. } => {}
             InteractReq::NoteProgress
             | InteractReq::LoopSettled
@@ -5777,6 +5801,12 @@ fn spawn_slot_thread(
                 });
             }
             script_slot_or_insert(&slot_scripts, &username);
+            let slot_input = slot_input.unwrap_or_else(SlotInput::new);
+            if let Some(slot) = script_slot(&slot_scripts, &username) {
+                slot.lock()
+                    .unwrap()
+                    .bind_native_input(slot_input.authority());
+            }
             slot_cheats
                 .lock()
                 .unwrap()
@@ -5906,13 +5936,14 @@ fn spawn_slot_thread(
                     Arc::clone(&arm_obs.random_events),
                     Arc::clone(&arm_obs.lamp_auto),
                     Arc::clone(&arm_obs.lamp_skill),
-                    slot_input.clone(),
+                    Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
+                        let slot_input = Arc::clone(&slot_input);
                         let slot_cheats = Arc::clone(&slot_cheats);
                         let slot_wires = Arc::clone(&slot_wires);
                         let slot_obj_names = Arc::clone(&slot_obj_names);
@@ -6048,6 +6079,7 @@ fn spawn_slot_thread(
                                 hold,
                                 status.ours,
                                 slot_canlight.as_deref(),
+                                Some(slot_input.as_ref()),
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this
@@ -11877,6 +11909,207 @@ export default class T extends LoopingBot {
             &[137, 232],
             "the authentic 193rd frame poll still emits cyclelogic4"
         );
+    }
+
+    #[test]
+    fn canvas_mouse_producer_to_native_frame_center_click() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let inp = SlotInput::new();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        const r = canvas.getBoundingClientRect();
+        canvas.dispatchEvent(new MouseEvent('mousedown', {
+            clientX: r.left + r.width / 2,
+            clientY: r.top + r.height / 2,
+        }));
+    }
+}
+"#;
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("canvas mouse isolate starts");
+        }
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let before_modal = c.main_modal_id;
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(
+            (
+                c.shell.mouse_click_button,
+                c.shell.mouse_click_x,
+                c.shell.mouse_click_y,
+                c.shell.mouse_button
+            ),
+            (1, 382, 251, 1)
+        );
+        c.mainloop();
+        assert_eq!(c.main_modal_id, before_modal, "center click must not close");
+    }
+
+    #[test]
+    fn canvas_mouse_289_down_does_not_move_pointer() {
+        let inp = SlotInput::new();
+        inp.authority().publish_live();
+        let mut c = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        let before_x = c.shell.mouse_x;
+        let before_y = c.shell.mouse_y;
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_click_button, 1);
+        assert_eq!(c.shell.mouse_x, before_x);
+        assert_eq!(c.shell.mouse_y, before_y);
+        assert_eq!(c.shell.mouse_button, 1);
+    }
+
+    #[test]
+    fn canvas_mouse_pause_before_consume_does_not_latch() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let inp = SlotInput::new();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+    }
+}
+"#;
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("pause mouse isolate starts");
+        }
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pause();
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_click_button, 0);
+        assert_eq!(c.shell.mouse_button, 0);
     }
 
     #[test]

@@ -1,8 +1,11 @@
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use api::native_input::{NativeInputAuthority, NativeInputPermit};
 
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -183,6 +186,46 @@ pub fn map_image_to_applet(
     Some((x, y))
 }
 
+/// Who owns `GameShell` click/held bits. User and Script never share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseOwner {
+    None,
+    User,
+    Script { generation: u64, seq: u64 },
+}
+
+struct ScriptMouseEv {
+    generation: u64,
+    seq: u64,
+    down: bool,
+    button: i32,
+    x: i32,
+    y: i32,
+}
+
+struct MouseState {
+    q: VecDeque<ScriptMouseEv>,
+    next_seq: u64,
+    held: MouseOwner,
+    pending: MouseOwner,
+    overflow: bool,
+}
+
+impl MouseState {
+    fn new() -> Self {
+        Self {
+            q: VecDeque::new(),
+            next_seq: 0,
+            held: MouseOwner::None,
+            pending: MouseOwner::None,
+            overflow: false,
+        }
+    }
+}
+
+/// Total pending script-mouse events per slot (not per isolate batch).
+const SCRIPT_MOUSE_QUEUE_CAP: usize = 32;
+
 pub struct SlotInput {
     enabled: AtomicBool,
     /// 50 fps frame-cadence latch: the panel's sidecar-50 pref sets this
@@ -195,6 +238,13 @@ pub struct SlotInput {
     /// head (the `Client` and its socket stay up).
     prefer_cpu: AtomicBool,
     rx: Mutex<Option<Receiver<InputEv>>>,
+    /// SlotScript publishes/revokes; consume holds this across latch.
+    /// Lock order: authority, then [`Self::mouse`].
+    authority: Arc<NativeInputAuthority>,
+    mouse: Mutex<MouseState>,
+    /// Guardian / `!up` gate set by the slot thread before consume.
+    /// Default true so capture-off catalog slots still consume script mouse.
+    host_consume_allowed: AtomicBool,
 }
 
 impl SlotInput {
@@ -204,7 +254,18 @@ impl SlotInput {
             full_rate: AtomicBool::new(false),
             prefer_cpu: AtomicBool::new(false),
             rx: Mutex::new(None),
+            authority: NativeInputAuthority::new(),
+            mouse: Mutex::new(MouseState::new()),
+            host_consume_allowed: AtomicBool::new(true),
         })
+    }
+
+    pub fn authority(&self) -> Arc<NativeInputAuthority> {
+        Arc::clone(&self.authority)
+    }
+
+    pub fn set_host_consume_allowed(&self, on: bool) {
+        self.host_consume_allowed.store(on, Ordering::Release);
     }
     pub fn set_enabled(&self, on: bool) {
         self.enabled.store(on, Ordering::Relaxed);
@@ -231,21 +292,168 @@ impl SlotInput {
         *self.rx.lock().unwrap() = None;
     }
     pub fn drain(&self, shell: &mut GameShell) {
+        self.drain_user(shell);
+    }
+
+    fn drain_user(&self, shell: &mut GameShell) {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
         }
-        let mut g = self.rx.lock().unwrap();
-        let Some(rx) = g.as_mut() else {
+        let mut events = Vec::new();
+        {
+            let mut g = self.rx.lock().unwrap();
+            let Some(rx) = g.as_mut() else {
+                return;
+            };
+            while let Ok(ev) = rx.try_recv() {
+                events.push(ev);
+            }
+        }
+        if events.is_empty() {
             return;
-        };
-        while let Ok(ev) = rx.try_recv() {
+        }
+        let mut mouse = self.mouse.lock().unwrap();
+        for ev in events {
             match ev {
                 InputEv::Move { x, y } => shell.apply_mouse_move(x, y),
-                InputEv::Down { button, x, y } => shell.apply_mouse_down(button, x, y),
-                InputEv::Up => shell.apply_mouse_up(),
+                InputEv::Down { button, x, y } => {
+                    shell.apply_mouse_down(button, x, y);
+                    mouse.held = MouseOwner::User;
+                    mouse.pending = MouseOwner::User;
+                }
+                InputEv::Up => {
+                    shell.apply_mouse_up();
+                    mouse.held = MouseOwner::None;
+                }
                 InputEv::Key { down, ch } => shell.apply_key(down, 0, ch),
             }
         }
+    }
+
+    /// Map frozen/script client coordinates onto applet pixels.
+    /// Refuses non-finite, negative, outside, and non-left buttons.
+    /// DOM 0/1 → Java button 1. Does not truncate before the bounds check.
+    pub fn map_script_mouse(x: f64, y: f64, button: i32) -> Option<(i32, i32, i32)> {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        if button != 0 && button != 1 {
+            return None;
+        }
+        if x < 0.0 || y < 0.0 || x > f64::from(APPLET_W) || y > f64::from(APPLET_H) {
+            return None;
+        }
+        let ax = x.floor() as i32;
+        let ay = y.floor() as i32;
+        if ax < 0 || ax >= APPLET_W || ay < 0 || ay >= APPLET_H {
+            return None;
+        }
+        Some((ax, ay, 1))
+    }
+
+    pub fn enqueue_script_mouse(&self, down: bool, x: f64, y: f64, button: i32) {
+        let permit = self.authority.lock();
+        if !permit.eligible() {
+            return;
+        }
+        let Some((ax, ay, java_btn)) = Self::map_script_mouse(x, y, button) else {
+            return;
+        };
+        let generation = permit.identity();
+        let mut mouse = self.mouse.lock().unwrap();
+        if mouse.q.len() >= SCRIPT_MOUSE_QUEUE_CAP {
+            mouse.overflow = true;
+            mouse.q.clear();
+            return;
+        }
+        let seq = mouse.next_seq;
+        mouse.next_seq = mouse.next_seq.wrapping_add(1);
+        mouse.q.push_back(ScriptMouseEv {
+            generation,
+            seq,
+            down,
+            button: java_btn,
+            x: ax,
+            y: ay,
+        });
+    }
+
+    /// User drain, script consume, latch. Holds the authority mutex across
+    /// apply + latch, then returns so the caller can run mainloop.
+    pub fn consume_native_frame(&self, shell: &mut GameShell) {
+        let permit = self.authority.lock();
+        self.drain_user(shell);
+        self.consume_script_mouse(shell, &permit);
+        shell.latch_click();
+        let mut mouse = self.mouse.lock().unwrap();
+        mouse.pending = MouseOwner::None;
+    }
+
+    fn consume_script_mouse(&self, shell: &mut GameShell, permit: &NativeInputPermit) {
+        let mut mouse = self.mouse.lock().unwrap();
+        let host_ok = self.host_consume_allowed.load(Ordering::Acquire);
+        let script_ok = permit.eligible() && host_ok;
+
+        let release_script = |shell: &mut GameShell, mouse: &mut MouseState| {
+            if matches!(mouse.held, MouseOwner::Script { .. }) {
+                shell.apply_mouse_up();
+                mouse.held = MouseOwner::None;
+            }
+            if matches!(mouse.pending, MouseOwner::Script { .. }) {
+                shell.clear_unlatched_click();
+                mouse.pending = MouseOwner::None;
+            }
+        };
+
+        if mouse.overflow {
+            release_script(shell, &mut mouse);
+            mouse.q.clear();
+            mouse.overflow = false;
+            if !script_ok {
+                return;
+            }
+        }
+
+        if !script_ok {
+            release_script(shell, &mut mouse);
+            mouse.q.clear();
+            return;
+        }
+
+        let live = permit.identity();
+        mouse.q.retain(|ev| ev.generation == live);
+
+        let pending: Vec<ScriptMouseEv> = mouse.q.drain(..).collect();
+        for ev in pending {
+            if ev.down {
+                if mouse.pending != MouseOwner::None || matches!(mouse.held, MouseOwner::User) {
+                    continue;
+                }
+                shell.apply_mouse_down(ev.button, ev.x, ev.y);
+                let owner = MouseOwner::Script {
+                    generation: ev.generation,
+                    seq: ev.seq,
+                };
+                mouse.held = owner;
+                mouse.pending = owner;
+            } else if matches!(
+                mouse.held,
+                MouseOwner::Script { generation, .. } if generation == ev.generation
+            ) {
+                shell.apply_mouse_up();
+                mouse.held = MouseOwner::None;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn script_queue_len(&self) -> usize {
+        self.mouse.lock().unwrap().q.len()
+    }
+
+    #[cfg(test)]
+    fn script_held(&self) -> bool {
+        matches!(self.mouse.lock().unwrap().held, MouseOwner::Script { .. })
     }
 }
 
@@ -498,6 +706,213 @@ mod tests {
         inp.drain(&mut shell);
         shell.latch_click();
         assert_eq!((shell.mouse_click_button, shell.mouse_click_x), (1, 10));
+    }
+
+    fn live_input() -> std::sync::Arc<SlotInput> {
+        let inp = SlotInput::new();
+        inp.authority().publish_live();
+        inp
+    }
+
+    #[test]
+    fn map_script_mouse_keeps_fractional_center_and_refuses_negative() {
+        assert_eq!(
+            SlotInput::map_script_mouse(382.5, 251.5, 0),
+            Some((382, 251, 1))
+        );
+        assert_eq!(SlotInput::map_script_mouse(-0.25, 10.0, 0), None);
+        assert_eq!(SlotInput::map_script_mouse(f64::NAN, 10.0, 0), None);
+        assert_eq!(SlotInput::map_script_mouse(10.0, f64::INFINITY, 0), None);
+        assert_eq!(SlotInput::map_script_mouse(10.0, 10.0, 2), None);
+        assert_eq!(SlotInput::map_script_mouse(765.0, 0.0, 0), None);
+        assert_eq!(SlotInput::map_script_mouse(0.0, 0.0, 0), Some((0, 0, 1)));
+    }
+
+    #[test]
+    fn capture_off_consumes_script_center_down_then_up() {
+        let inp = live_input();
+        inp.set_enabled(false);
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            (
+                shell.mouse_click_button,
+                shell.mouse_click_x,
+                shell.mouse_click_y
+            ),
+            (1, 382, 251)
+        );
+        assert_eq!(shell.mouse_button, 1);
+        assert_eq!(shell.mouse_x, 382);
+        assert_eq!(shell.mouse_y, 251);
+        inp.enqueue_script_mouse(false, 382.5, 251.5, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+        assert_eq!(shell.mouse_click_button, 0);
+    }
+
+    #[test]
+    fn revoke_before_consume_drops_queued_down() {
+        let inp = live_input();
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        assert_eq!(inp.script_queue_len(), 1);
+        inp.authority().revoke();
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_click_button, 0);
+        assert_eq!(shell.mouse_button, 0);
+        assert_eq!(inp.script_queue_len(), 0);
+    }
+
+    #[test]
+    fn stop_after_consumed_down_releases_held_without_new_click() {
+        let inp = live_input();
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_click_button, 1);
+        assert!(inp.script_held());
+        inp.authority().revoke();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+        assert_eq!(shell.mouse_click_button, 0);
+        assert!(!inp.script_held());
+    }
+
+    #[test]
+    fn user_down_wins_same_frame_and_delayed_script_up_does_not_release() {
+        use std::sync::mpsc;
+        let inp = live_input();
+        let (tx, rx) = mpsc::channel();
+        inp.connect_rx(rx);
+        inp.set_enabled(true);
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 10,
+            y: 20,
+        })
+        .unwrap();
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            (
+                shell.mouse_click_button,
+                shell.mouse_click_x,
+                shell.mouse_click_y
+            ),
+            (1, 10, 20)
+        );
+        assert_eq!(shell.mouse_button, 1);
+        inp.enqueue_script_mouse(false, 382.5, 251.5, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 1,
+            "delayed script up must not release user hold"
+        );
+        tx.send(InputEv::Up).unwrap();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+    }
+
+    #[test]
+    fn script_click_works_after_consumed_user_click() {
+        use std::sync::mpsc;
+        let inp = live_input();
+        let (tx, rx) = mpsc::channel();
+        inp.connect_rx(rx);
+        inp.set_enabled(true);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 11,
+            y: 12,
+        })
+        .unwrap();
+        tx.send(InputEv::Up).unwrap();
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_click_button, 1);
+        assert_eq!(shell.mouse_button, 0);
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            (
+                shell.mouse_click_button,
+                shell.mouse_click_x,
+                shell.mouse_click_y
+            ),
+            (1, 382, 251)
+        );
+    }
+
+    #[test]
+    fn two_slots_stay_isolated() {
+        let a = live_input();
+        let b = live_input();
+        a.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        let mut shell_a = client::client::GameShell::new();
+        let mut shell_b = client::client::GameShell::new();
+        a.consume_native_frame(&mut shell_a);
+        b.consume_native_frame(&mut shell_b);
+        assert_eq!(shell_a.mouse_button, 1);
+        assert_eq!(shell_b.mouse_button, 0);
+        assert_eq!(shell_b.mouse_click_button, 0);
+        assert_eq!(shell_b.mouse_x, -1);
+    }
+
+    #[test]
+    fn queue_overflow_releases_script_hold() {
+        let inp = live_input();
+        inp.enqueue_script_mouse(true, 10.0, 10.0, 0);
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        for _ in 0..33 {
+            inp.enqueue_script_mouse(false, 10.0, 10.0, 0);
+        }
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+        assert_eq!(inp.script_queue_len(), 0);
+    }
+
+    #[test]
+    fn same_frame_down_up_latches_once_and_releases() {
+        let inp = live_input();
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        inp.enqueue_script_mouse(false, 382.5, 251.5, 0);
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_click_button, 1);
+        assert_eq!(shell.mouse_button, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_click_button, 0);
+    }
+
+    #[test]
+    fn host_hold_revokes_script_without_clearing_user() {
+        use std::sync::mpsc;
+        let inp = live_input();
+        let (tx, rx) = mpsc::channel();
+        inp.connect_rx(rx);
+        inp.set_enabled(true);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 5,
+            y: 6,
+        })
+        .unwrap();
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        inp.enqueue_script_mouse(true, 100.0, 100.0, 0);
+        inp.set_host_consume_allowed(false);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 1,
+            "user hold must survive script revoke"
+        );
+        assert_eq!(shell.mouse_click_x, 5);
     }
 
     #[test]

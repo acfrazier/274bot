@@ -257,26 +257,44 @@ globalThis.KeyboardEvent = function KeyboardEvent(type, init) {
     this.key = String(init.key || '');
     this.code = String(init.code || '');
 };
-globalThis.MouseEvent = function MouseEvent(type) {
+globalThis.MouseEvent = function MouseEvent(type, init) {
+    init = init || {};
     this.type = String(type || '');
+    this.clientX = Object.prototype.hasOwnProperty.call(init, 'clientX') ? init.clientX : 0;
+    this.clientY = Object.prototype.hasOwnProperty.call(init, 'clientY') ? init.clientY : 0;
+    this.button = Object.prototype.hasOwnProperty.call(init, 'button') ? init.button : 0;
 };
 globalThis.__rs2b0t_input_canvas = {
     getBoundingClientRect() {
-        throw new Error('BLOCKED: missing getBoundingClientRect');
+        const r = globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.canvasRect;
+        if (!r) throw new Error('BLOCKED: missing getBoundingClientRect');
+        return r;
     },
     dispatchEvent(ev) {
-        if (!ev || (ev.type !== 'keydown' && ev.type !== 'keyup')) {
-            throw new Error('BLOCKED: missing mouse');
+        if (ev && (ev.type === 'keydown' || ev.type === 'keyup')) {
+            const h = globalThis.__rs2b0t_host;
+            h.interact = h.interact || [];
+            h.interact.push({
+                op: 'key',
+                down: ev.type === 'keydown',
+                key: String(ev.key || ''),
+                code: String(ev.code || ''),
+            });
+            return true;
         }
-        const h = globalThis.__rs2b0t_host;
-        h.interact = h.interact || [];
-        h.interact.push({
-            op: 'key',
-            down: ev.type === 'keydown',
-            key: String(ev.key || ''),
-            code: String(ev.code || ''),
-        });
-        return true;
+        if (ev && (ev.type === 'mousedown' || ev.type === 'mouseup')) {
+            const h = globalThis.__rs2b0t_host;
+            h.interact = h.interact || [];
+            h.interact.push({
+                op: 'mouse',
+                down: ev.type === 'mousedown',
+                x: ev.clientX,
+                y: ev.clientY,
+                button: ev.button,
+            });
+            return true;
+        }
+        throw new Error('BLOCKED: missing mouse');
     },
 };
 globalThis.document = {
@@ -881,7 +899,7 @@ pub struct ScriptPaint {
 /// queue to the host after each tick, and host-play dispatches each op
 /// through the slot Driver. Missing targets fail closed at dispatch (no
 /// matching loc/npc/item row → nothing is sent).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(tag = "op")]
 pub enum InteractReq {
     /// Open the exact snapshot-selected loc. With no name/action the host
@@ -1131,6 +1149,85 @@ pub enum InteractReq {
         #[serde(default)]
         code: String,
     },
+    /// One canvas MouseEvent. Coordinates stay f64 until native mapping.
+    #[serde(rename = "mouse")]
+    Mouse {
+        down: bool,
+        #[serde(deserialize_with = "deserialize_js_f64")]
+        x: f64,
+        #[serde(deserialize_with = "deserialize_js_f64")]
+        y: f64,
+        #[serde(default, deserialize_with = "deserialize_js_button")]
+        button: i32,
+    },
+}
+
+fn deserialize_js_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    struct V;
+    impl<'de> serde::de::Visitor<'de> for V {
+        type Value = f64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a JS number")
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<f64, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<f64, E> {
+            Ok(f64::NAN)
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<f64, E> {
+            Ok(f64::NAN)
+        }
+        fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<f64, E> {
+            Ok(f64::NAN)
+        }
+        fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<f64, E> {
+            Ok(f64::NAN)
+        }
+    }
+    d.deserialize_any(V)
+}
+
+fn deserialize_js_button<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
+    struct V;
+    impl<'de> serde::de::Visitor<'de> for V {
+        type Value = i32;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a JS button number")
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<i32, E> {
+            Ok(v as i32)
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<i32, E> {
+            Ok(v as i32)
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<i32, E> {
+            if v.is_finite() && v.fract() == 0.0 && v >= i32::MIN as f64 && v <= i32::MAX as f64 {
+                Ok(v as i32)
+            } else {
+                Ok(i32::MIN)
+            }
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<i32, E> {
+            Ok(0)
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<i32, E> {
+            Ok(0)
+        }
+        fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<i32, E> {
+            Ok(i32::MIN)
+        }
+        fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<i32, E> {
+            Ok(i32::MIN)
+        }
+    }
+    d.deserialize_any(V)
 }
 
 impl InteractReq {
