@@ -398,6 +398,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "alcher_large_batch" => Some(alcher_large_batch_scenario()),
         "alcher_low" => Some(alcher_low_scenario()),
         "alcher_fire_battlestaff" => Some(alcher_fire_battlestaff_scenario()),
+        "alcher_swarm_drain" => Some(alcher_swarm_drain_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
         "bank_fletcher_shafts" => Some(bank_fletcher_shafts_scenario()),
         "bank_fletcher_headless" => Some(bank_fletcher_headless_scenario()),
@@ -522,6 +523,7 @@ pub fn names() -> Vec<&'static str> {
         "alcher_large_batch",
         "alcher_low",
         "alcher_fire_battlestaff",
+        "alcher_swarm_drain",
         "bank_fletcher",
         "bank_fletcher_shafts",
         "bank_fletcher_headless",
@@ -2924,6 +2926,222 @@ fn alcher_fire_battlestaff_scenario() -> Scenario {
             start_script: Some("Alcher"),
             script_settings_inject: Some(ALCHER_FIRE_BATTLESTAFF_INJECT),
             terminal_shot: Some("alcher_fire_battlestaff"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Frozen `alcher-swarm-drain-live`: Magic 70, 20 rich + 8 poor, High default,
+/// 20 alchs a trip. After the first native High cast, inject `~macro_event 1`
+/// once. CoreWatch owns interruption/recovery qualification.
+const ALCHER_SWARM_DRAIN_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["rune_chainbody", "yew_longbow"]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(20.0),
+    },
+];
+
+fn alcher_swarm_drain_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: HIGH_ALCH_MAGIC_XP,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic 70 and the exact swarm-drain stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat magic 70");
+                cheat(c, "givebank rune_chainbody 20");
+                cheat(c, "givebank yew_longbow 8");
+                cheat(c, "givebank naturerune 200");
+                cheat(c, "givebank staff_of_fire 1");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Magic 70 before Start",
+            Proof::Stat {
+                id: MAGIC_STAT,
+                min: 70,
+            },
+        ),
+        (
+            "confirm no seeded noted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unnoted rune chainbody before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted Yew longbow before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unnoted Yew longbow before Start",
+            Proof::ItemIdAtMost {
+                id: YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Nature rune outcome before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no staff in the pack before Start",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact rune chainbody seed bank",
+        Proof::BankItemId {
+            id: RUNE_CHAINBODY_ID,
+            count: 20,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact Yew longbow seed bank",
+            Proof::BankItemId {
+                id: YEW_LONGBOW_ID,
+                count: 8,
+            },
+        ),
+        (
+            "acknowledge the exact Nature rune seed bank",
+            Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 200,
+            },
+        ),
+        (
+            "acknowledge the exact Staff of fire seed bank",
+            Proof::BankItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge no seeded note of the chainbody in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded note of the Yew longbow in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch the noted rune chainbody land in the pack",
+            Proof::ItemId {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the Staff of fire worn natively",
+            Proof::EquipmentId {
+                id: STAFF_OF_FIRE_ID,
+            },
+        ),
+        ("watch Magic XP from a High Level Alchemy cast", xp),
+        (
+            "watch the exact High Level Alchemy coin payment",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(Step {
+        name: "inject the upstream swarm macro_event after the first native High cast",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~macro_event 1");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::StatXpGain {
+                id: MAGIC_STAT,
+                min: HIGH_ALCH_MAGIC_XP,
+            },
+            budget_ticks: 50,
+        },
+    });
+    Scenario {
+        name: "alcher_swarm_drain",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(420),
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_SWARM_DRAIN_INJECT),
+            terminal_shot: Some("alcher_swarm_drain"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -17145,6 +17363,7 @@ mod tests {
                 "alcher_large_batch",
                 "alcher_low",
                 "alcher_fire_battlestaff",
+                "alcher_swarm_drain",
                 "bank_fletcher",
                 "bank_fletcher_shafts",
                 "bank_fletcher_headless",
@@ -18064,8 +18283,7 @@ mod tests {
         let drain_i = approach.steps[..start]
             .iter()
             .position(|step| {
-                step.name
-                    == "drain setstat level-up dialogs before the hostile-field teleport"
+                step.name == "drain setstat level-up dialogs before the hostile-field teleport"
             })
             .expect("fire_giant_approach setstat drain");
         let tele_i = approach.steps[..start]
@@ -18536,6 +18754,95 @@ mod tests {
         );
         assert_eq!(
             staff.proof,
+            Proof::StatXpGain {
+                id: MAGIC_STAT,
+                min: HIGH_ALCH_MAGIC_XP,
+            }
+        );
+    }
+
+    #[test]
+    fn alcher_swarm_drain_preserves_frozen_seed_settings_and_macro_event_inject() {
+        let swarm = get("alcher_swarm_drain").expect("alcher_swarm_drain is registered");
+        assert_eq!(swarm.settings.start_script, Some("Alcher"));
+        assert_eq!(swarm.settings.deadline, Duration::from_secs(420));
+        assert_eq!(swarm.settings.terminal_shot, Some("alcher_swarm_drain"));
+        let inject = settings_inject_map(swarm.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("items"),
+            Some(&Value::Array(vec![
+                Value::String("rune_chainbody".into()),
+                Value::String("yew_longbow".into()),
+            ]))
+        );
+        assert_eq!(inject.get("alchs"), Some(&Value::from(20.0)));
+        assert!(!inject.contains_key("spell"));
+        let start = swarm
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(swarm.steps[start - 1].wait.arm, Proof::BankClosed);
+        let seed_arms = swarm.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed_arms.contains(&Proof::Stat {
+            id: MAGIC_STAT,
+            min: 70
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: RUNE_CHAINBODY_ID,
+            count: 20,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: YEW_LONGBOW_ID,
+            count: 8,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: NATURE_RUNE_ID,
+            count: 200,
+        }));
+        assert!(seed_arms.contains(&Proof::BankItemId {
+            id: STAFF_OF_FIRE_ID,
+            count: 1,
+        }));
+        let post = swarm.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            post,
+            vec![
+                Proof::ItemId {
+                    id: CERT_RUNE_CHAINBODY_ID,
+                    count: 1,
+                },
+                Proof::EquipmentId {
+                    id: STAFF_OF_FIRE_ID,
+                },
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: HIGH_ALCH_MAGIC_XP,
+                },
+                Proof::ItemId {
+                    id: COINS_ID,
+                    count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+                },
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: HIGH_ALCH_MAGIC_XP,
+                },
+            ]
+        );
+        let inject_step = swarm
+            .steps
+            .iter()
+            .find(|step| step.name.contains("macro_event"))
+            .expect("swarm inject step");
+        assert!(matches!(inject_step.kind, StepKind::Perform { .. }));
+        assert_eq!(
+            swarm.proof,
             Proof::StatXpGain {
                 id: MAGIC_STAT,
                 min: HIGH_ALCH_MAGIC_XP,
@@ -22033,8 +22340,7 @@ mod tests {
         let drain_i = giant.steps[..start]
             .iter()
             .position(|step| {
-                step.name
-                    == "drain setstat level-up dialogs before the hostile-field teleport"
+                step.name == "drain setstat level-up dialogs before the hostile-field teleport"
             })
             .expect("fire_giant setstat drain");
         let tele_i = giant.steps[..start]
@@ -23771,16 +24077,17 @@ mod tests {
         // varp snapshot (default 315 = 0 does not establish transmission).
         for (name, use_teleport, pack_coins) in [
             ("climbing_boots", false, CLIMBING_BOOTS_WALK_PACK_COINS),
-            ("climbing_boots_teleport", true, CLIMBING_BOOTS_TELE_PACK_COINS),
+            (
+                "climbing_boots_teleport",
+                true,
+                CLIMBING_BOOTS_TELE_PACK_COINS,
+            ),
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(scenario.settings.start_script, Some("ClimbingBoots"));
             assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
             let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
-            assert_eq!(
-                inject.get("useTeleport"),
-                Some(&Value::Bool(use_teleport))
-            );
+            assert_eq!(inject.get("useTeleport"), Some(&Value::Bool(use_teleport)));
             assert_eq!(inject.get("runeStock"), Some(&Value::from(1.0)));
 
             let index = |needle: &str| {
@@ -23790,9 +24097,8 @@ mod tests {
                     .position(|step| step.name == needle)
                     .unwrap_or_else(|| panic!("{name}: missing step {needle}"))
             };
-            let primary = index(
-                "complete Death Plateau primary by the authentic setvar and read it back",
-            );
+            let primary =
+                index("complete Death Plateau primary by the authentic setvar and read it back");
             let map =
                 index("retain Death Plateau map progress by the authentic setvar and read it back");
             let journal = index("acknowledge Death Plateau complete before Start");

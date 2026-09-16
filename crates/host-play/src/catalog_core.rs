@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -438,6 +438,7 @@ pub enum CoreCase {
     AlcherLargeBatch,
     AlcherLow,
     AlcherFireBattlestaff,
+    AlcherSwarmDrain,
     BankFletcher,
     BankFletcherShafts,
     BankFletcherHeadless,
@@ -544,6 +545,7 @@ impl CoreCase {
             "alcher_large_batch" => Ok(Self::AlcherLargeBatch),
             "alcher_low" => Ok(Self::AlcherLow),
             "alcher_fire_battlestaff" => Ok(Self::AlcherFireBattlestaff),
+            "alcher_swarm_drain" => Ok(Self::AlcherSwarmDrain),
             "bank_fletcher" => Ok(Self::BankFletcher),
             "bank_fletcher_shafts" => Ok(Self::BankFletcherShafts),
             "bank_fletcher_headless" => Ok(Self::BankFletcherHeadless),
@@ -653,6 +655,7 @@ impl CoreCase {
             Self::AlcherLargeBatch => "alcher_large_batch",
             Self::AlcherLow => "alcher_low",
             Self::AlcherFireBattlestaff => "alcher_fire_battlestaff",
+            Self::AlcherSwarmDrain => "alcher_swarm_drain",
             Self::BankFletcher => "bank_fletcher",
             Self::BankFletcherShafts => "bank_fletcher_shafts",
             Self::BankFletcherHeadless => "bank_fletcher_headless",
@@ -756,7 +759,8 @@ impl CoreCase {
             | Self::AlcherOrdered
             | Self::AlcherLargeBatch
             | Self::AlcherLow
-            | Self::AlcherFireBattlestaff => "Alcher",
+            | Self::AlcherFireBattlestaff
+            | Self::AlcherSwarmDrain => "Alcher",
             Self::BankFletcher
             | Self::BankFletcherShafts
             | Self::BankFletcherHeadless
@@ -846,6 +850,14 @@ pub fn validate_case_catalog(case: CoreCase, commit: &str) -> Result<(), String>
             "catalog {commit} HerbCleaner does not carry the frozen 96410ec5 eventual empty-bank Stop behavior"
         ));
     }
+    if case == CoreCase::AlcherSwarmDrain
+        && (commit == CATALOG_COMMIT_A || commit == CATALOG_COMMIT_B)
+    {
+        return Err(format!(
+            "catalog {commit} Alcher may batch a whole trip; alcher_swarm_drain is supported only by \
+             the current 96410ec5 Alcher (single-cast yield between loop iterations)"
+        ));
+    }
     Ok(())
 }
 #[derive(Debug, Clone, Default, Serialize)]
@@ -880,9 +892,14 @@ pub struct Observation {
     pub dormant_rocks_seen: bool,
     pub ground_loot: Vec<BoundedGround>,
     pub local_in_combat: bool,
+    /// Frozen snapshot positive-hit predicate. Zero/blocked/expired hits do not qualify.
+    pub taking_damage: bool,
     pub local_target_npc: Option<usize>,
     pub local_health: i32,
     pub local_animation: i32,
+    /// Prior-frame guardian publication. Snapshot observe runs before this
+    /// frame's status-row copy of `RandomStatus`.
+    pub guardian: BoundedGuardian,
     pub equipment_ids: BTreeMap<i32, i32>,
     pub main_modal: i32,
     pub widget_ids: BTreeSet<i32>,
@@ -988,6 +1005,15 @@ pub struct BoundedLoc {
     pub level: i32,
     pub name: Option<String>,
     pub open: bool,
+}
+
+/// Compact prior-frame guardian fact. Not a history buffer and not the chrome row.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct BoundedGuardian {
+    pub kind: Option<String>,
+    pub name: Option<String>,
+    pub ours: bool,
+    pub hold: bool,
 }
 
 /// Compact NPC identity used by combat cores. The live NPC sweep is not copied.
@@ -1330,9 +1356,11 @@ impl Observation {
             dormant_rocks_seen,
             ground_loot,
             local_in_combat,
+            taking_damage: snapshot.taking_damage(),
             local_target_npc,
             local_health,
             local_animation,
+            guardian: BoundedGuardian::default(),
             equipment_ids,
             main_modal: snapshot.modals().main,
             widget_ids: snapshot
@@ -1886,6 +1914,20 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
                 && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
         }
+        CoreCase::AlcherSwarmDrain => {
+            near(baseline.tile, VARROCK_WEST_BANK, 6)
+                && baseline.level("magic") >= HIGH_ALCH_LEVEL
+                && baseline.item_id(RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(CERT_RUNE_CHAINBODY_ID) == 0
+                && baseline.item_id(YEW_LONGBOW_ID) == 0
+                && baseline.item_id(CERT_YEW_LONGBOW_ID) == 0
+                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.item_id(FIRE_BATTLESTAFF_ID) == 0
+                && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.equipment_id(FIRE_BATTLESTAFF_ID) == 0
+        }
         CoreCase::AlcherDefaults => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= 55
@@ -2387,6 +2429,9 @@ pub fn validate_case_baseline_with_preparation(
             "Varrock West bank, Magic 55+ and Attack 30+, no staff worn or seeded, and no seeded \
              chainbody note, coins, or Nature rune"
         }
+        CoreCase::AlcherSwarmDrain => {
+            "Varrock West bank, Magic 55+, and no seeded chainbody/yew-longbow note, coins, Nature rune, or staff"
+        }
         CoreCase::AlcherDefaults => {
             "Varrock West bank, Magic 55, and no seeded yew-longbow note, coins, Nature rune, or chainbody"
         }
@@ -2666,6 +2711,7 @@ pub struct CoreWitness {
     pub alcher_defaults_cycle: AlcherGeneratedCustomCycle,
     pub alcher_generated_custom_cycle: AlcherGeneratedCustomCycle,
     pub alcher_spell_cycle: AlcherGeneratedCustomCycle,
+    pub alcher_swarm_cycle: AlcherSwarmDrainCycle,
     pub dart_fletcher_cycle: DartFletcherCycle,
     pub herb_cleaner_cycle: HerbCleanerCycle,
     pub herb_cleaner_empty_cycle: HerbCleanerEmptyCycle,
@@ -3177,6 +3223,153 @@ impl AlcherGeneratedCustomCycle {
             && self.baseline_staff.is_none()
             && self.required_staff.is_some()
             && self.cast_staff == self.required_staff
+    }
+}
+
+fn swarm_targeting_local(observation: &Observation) -> bool {
+    observation.npc_facts.iter().any(|npc| {
+        npc.name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Swarm"))
+            && npc.targeting_local
+    })
+}
+
+fn evade_hold(observation: &Observation) -> bool {
+    observation.guardian.kind.as_deref() == Some("evade")
+        && observation.guardian.hold
+        && observation.guardian.ours
+        && observation
+            .guardian
+            .name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Swarm"))
+}
+
+fn high_cast(from: &Observation, now: &Observation, noted: i32, coins_per_cast: i32) -> bool {
+    if now.bank_open || now.bank_loaded {
+        return false;
+    }
+    let casts = from.item_id(noted) - now.item_id(noted);
+    if casts < 1 {
+        return false;
+    }
+    from.item_id(NATURE_RUNE_ID) - now.item_id(NATURE_RUNE_ID) == casts
+        && now.item_id(COINS_ID) - from.item_id(COINS_ID) == coins_per_cast * casts
+        && now.skill_xp("magic") - from.skill_xp("magic") == HIGH_ALCH_MAGIC_XP * casts
+        && worn_fire_staff(now) == Some(STAFF_OF_FIRE_ID)
+}
+
+/// Ordered High-alch interruption: first cast, targeted Swarm + positive hit,
+/// native guardian hold/evade/release/return, further rich cast, rich bank
+/// retirement, then poor-item consumption.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AlcherSwarmDrainCycle {
+    pub withdrawn: Option<Observation>,
+    pub first_cast: Option<Observation>,
+    pub swarm_hit: Option<Observation>,
+    pub guardian_hold: Option<Observation>,
+    pub released: Option<Observation>,
+    pub further_cast: Option<Observation>,
+    pub rich_retired: Option<Observation>,
+    pub poor_withdrawn: Option<Observation>,
+    pub poor_consumed: bool,
+    pub baseline_staff: Option<i32>,
+    pub wrong_staff: bool,
+}
+
+impl AlcherSwarmDrainCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.baseline_staff.is_none() {
+            self.baseline_staff = worn_fire_staff(baseline);
+        }
+        self.wrong_staff |= worn_fire_staff(now).is_some_and(|worn| worn != STAFF_OF_FIRE_ID);
+        if self.withdrawn.is_none()
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(CERT_RUNE_CHAINBODY_ID) >= 1
+            && now.item_id(RUNE_CHAINBODY_ID) == 0
+            && now.item_id(CERT_RUNE_CHAINBODY_ID) > baseline.item_id(CERT_RUNE_CHAINBODY_ID)
+            && now.item_id(NATURE_RUNE_ID) >= 1
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        if self.first_cast.is_none() {
+            if let Some(withdrawn) = &self.withdrawn {
+                if high_cast(
+                    withdrawn,
+                    now,
+                    CERT_RUNE_CHAINBODY_ID,
+                    RUNE_CHAINBODY_HIGH_ALCH_COINS,
+                ) {
+                    self.first_cast = Some(now.clone());
+                }
+            }
+        }
+        if self.first_cast.is_some()
+            && self.swarm_hit.is_none()
+            && swarm_targeting_local(now)
+            && now.taking_damage
+        {
+            self.swarm_hit = Some(now.clone());
+        }
+        if self.swarm_hit.is_some() && self.guardian_hold.is_none() && evade_hold(now) {
+            self.guardian_hold = Some(now.clone());
+        }
+        if let Some(held) = &self.guardian_hold {
+            if self.released.is_none()
+                && !now.guardian.hold
+                && now.guardian.kind.as_deref() != Some("evade")
+                && (near(now.tile, VARROCK_WEST_BANK, 6)
+                    || held.tile.is_some_and(|tile| near(now.tile, tile, 6)))
+            {
+                self.released = Some(now.clone());
+            }
+        }
+        if self.further_cast.is_none() {
+            if let (Some(first), Some(_)) = (&self.first_cast, &self.released) {
+                if high_cast(
+                    first,
+                    now,
+                    CERT_RUNE_CHAINBODY_ID,
+                    RUNE_CHAINBODY_HIGH_ALCH_COINS,
+                ) {
+                    self.further_cast = Some(now.clone());
+                }
+            }
+        }
+        if self.further_cast.is_some()
+            && self.rich_retired.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.bank_item_id(RUNE_CHAINBODY_ID) == 0
+            && now.bank_item_id(CERT_RUNE_CHAINBODY_ID) == 0
+        {
+            self.rich_retired = Some(now.clone());
+        }
+        if self.rich_retired.is_some()
+            && self.poor_withdrawn.is_none()
+            && now.item_id(CERT_YEW_LONGBOW_ID) >= 1
+            && now.item_id(YEW_LONGBOW_ID) == 0
+            && now.item_id(CERT_YEW_LONGBOW_ID) > baseline.item_id(CERT_YEW_LONGBOW_ID)
+        {
+            self.poor_withdrawn = Some(now.clone());
+        }
+        if let Some(poor) = &self.poor_withdrawn {
+            self.poor_consumed |= high_cast(poor, now, CERT_YEW_LONGBOW_ID, YEW_LONGBOW_ALCH_COINS);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.first_cast.is_some()
+            && self.swarm_hit.is_some()
+            && self.guardian_hold.is_some()
+            && self.released.is_some()
+            && self.further_cast.is_some()
+            && self.rich_retired.is_some()
+            && self.poor_consumed
+            && !self.wrong_staff
+            && self.baseline_staff.is_none()
     }
 }
 
@@ -7323,6 +7516,7 @@ impl CoreWitness {
             alcher_defaults_cycle: AlcherGeneratedCustomCycle::default(),
             alcher_generated_custom_cycle: AlcherGeneratedCustomCycle::default(),
             alcher_spell_cycle: AlcherGeneratedCustomCycle::default(),
+            alcher_swarm_cycle: AlcherSwarmDrainCycle::default(),
             dart_fletcher_cycle: DartFletcherCycle::default(),
             herb_cleaner_cycle: HerbCleanerCycle::default(),
             herb_cleaner_empty_cycle: HerbCleanerEmptyCycle::default(),
@@ -7420,6 +7614,9 @@ impl CoreWitness {
                 RUNE_CHAINBODY_ID,
                 CERT_RUNE_CHAINBODY_ID,
             );
+        }
+        if matches!(self.case, CoreCase::AlcherSwarmDrain) {
+            self.alcher_swarm_cycle.observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::DartFletcher) {
             self.dart_fletcher_cycle.observe(
@@ -7833,6 +8030,7 @@ impl CoreWitness {
             CoreCase::AlcherLow | CoreCase::AlcherFireBattlestaff => {
                 self.alcher_spell_cycle.qualified_spell()
             }
+            CoreCase::AlcherSwarmDrain => self.alcher_swarm_cycle.qualified(),
             CoreCase::AlcherDefaults => self.alcher_defaults_cycle.consumed,
             CoreCase::BankFletcher => {
                 self.bank_fletcher_cycle.crafted_after_withdrawal
@@ -7973,6 +8171,7 @@ impl CoreWitness {
             "alcher_defaults_cycle": self.alcher_defaults_cycle,
             "alcher_generated_custom_cycle": self.alcher_generated_custom_cycle,
             "alcher_spell_cycle": self.alcher_spell_cycle,
+            "alcher_swarm_cycle": self.alcher_swarm_cycle,
             "dart_fletcher_cycle": self.dart_fletcher_cycle,
             "herb_cleaner_cycle": self.herb_cleaner_cycle,
             "herb_cleaner_empty_cycle": self.herb_cleaner_empty_cycle,
@@ -8256,17 +8455,26 @@ impl CoreWatch {
         names: &ObjNames,
         session_boundary: bool,
     ) {
-        self.observe_snapshot_with_lifecycle(account, snapshot, names, None, session_boundary);
+        self.observe_snapshot_with_lifecycle(
+            account,
+            snapshot,
+            names,
+            None,
+            BoundedGuardian::default(),
+            session_boundary,
+        );
     }
 
     /// Convert the published snapshot and attach the slot's bounded native
-    /// lifecycle receipt without touching the panel's pending-log consumer.
+    /// lifecycle receipt and prior-frame guardian fact without touching the
+    /// panel's pending-log consumer.
     pub fn observe_snapshot_with_lifecycle(
         &self,
         account: &str,
         snapshot: &GameSnapshot,
         names: &ObjNames,
         lifecycle: Option<script::ScriptLifecycleReceipt>,
+        guardian: BoundedGuardian,
         session_boundary: bool,
     ) {
         if !self.active.load(Ordering::Acquire) {
@@ -8283,6 +8491,7 @@ impl CoreWatch {
             // cannot attach this snapshot to a later run of the same account.
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
+            observation.guardian = guardian;
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
     }

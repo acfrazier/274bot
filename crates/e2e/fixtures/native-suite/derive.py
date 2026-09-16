@@ -166,7 +166,7 @@ MAPPING = [
          ],
          options=["bar selection"]),
     case("Alcher", "alcher_defaults",
-         reference=["alcher-nearest-bank-live", "alcher-swarm-drain-live"],
+         reference=["alcher-nearest-bank-live"],
          budget=12,
          variants=["alcher", "alcher_custom", "alcher_custom_alias", "alcher_custom_name", "alcher_ordered",
                    "alcher_large_batch",
@@ -183,7 +183,11 @@ MAPPING = [
                             "envelope; native inner SCRIPT_GOLD_DEADLINE stays 180s",
                     "unsupported": [("Magic 70 / Attack 40 fixture",
                                      "the cell needs the frozen Magic 70 / Attack 40 seed and a bank that holds no "
-                                     "Staff of fire, not the historical Magic 55 / Attack 1 seed")]}],
+                                     "Staff of fire, not the historical Magic 55 / Attack 1 seed")]},
+                   {"live": "alcher_swarm_drain", "reference": ["alcher-swarm-drain-live"], "budget": 7,
+                    "options": ["swarm interruption and ordered drain"],
+                    "note": "outer budget is the frozen harness 420s window; native inner deadline is the same 420s "
+                            "envelope. First High cast then ~macro_event 1 once; CoreWatch owns recovery qualification"}],
          options=["spell=High default", "spell=Low", "item alias/name/ordered/batch", "staff/swarm branches"],
          unsupported=[("full-cycle assertion for loader smoke", "no full-cycle assertion is claimed for the loader smoke")]),
     case("SmithingBot", "smithing_bot", reference=["smithingbot-bank-loop-live"], budget=10,
