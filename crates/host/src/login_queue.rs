@@ -108,9 +108,15 @@ impl LoginQueue {
         })
     }
 
-    /// Drop `uid` from the queue (rail ✕ while queued). No-op if absent.
-    pub fn leave(&mut self, uid: i32) {
+    /// Drop `uid` from the queue (rail ✕ while queued, a withdrawn login
+    /// intent, or a stale reservation from `Play::prefer_login`). Returns
+    /// whether a place was really held: the caller clears the published
+    /// `k of n` only on `true`, so a slot that never queued does not blank
+    /// another member's card. No-op for an absent uid.
+    pub fn leave(&mut self, uid: i32) -> bool {
+        let before = self.queue.len();
         self.queue.retain(|&u| u != uid);
+        self.queue.len() != before
     }
 
     /// Put `uid` at the front of the FIFO (TV head logs in first). If it
@@ -469,6 +475,27 @@ mod tests {
         assert_eq!(q.status(11).unwrap().position, 1);
         assert_eq!(q.status(12).unwrap().position, 2);
         assert_eq!(q.status(12).unwrap().total, 2);
+    }
+
+    #[test]
+    fn leave_reports_removal_and_unblocks_the_head() {
+        // A reservation (`prefer`, e.g. `Play::prefer_login` for the TV head
+        // before that slot's thread asks) holds the front for a uid that is
+        // not waiting. It must not strand a real waiter behind it, and
+        // `leave` must report whether a real place was dropped so the caller
+        // only clears the published `k of n` it actually owned.
+        let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
+        let base = Instant::now();
+        q.prefer(7);
+        assert!(matches!(q.request_permit(8, base), Permit::Wait(_)));
+        let s8 = q.status(8).unwrap();
+        assert_eq!((s8.position, s8.total), (2, 2));
+
+        assert!(q.leave(7), "the reserved front place was held");
+        assert!(!q.leave(7), "no place left to drop");
+        let s8 = q.status(8).unwrap();
+        assert_eq!((s8.position, s8.total), (1, 1));
+        assert_eq!(q.request_permit(8, base), Permit::Grant);
     }
 
     #[test]
