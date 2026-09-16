@@ -1610,6 +1610,11 @@ mod isolate {
             tick: u64,
             generation: u64,
         },
+        /// ScriptRunner.stop ended this isolate with its bounded script reason.
+        ScriptStopped {
+            tick: u64,
+            reason: String,
+        },
         /// ScriptRunner.stop ended this isolate lifetime.
         Stopped,
         /// A non-tick isolate command finished; clear matching `in_flight`.
@@ -1636,6 +1641,8 @@ mod isolate {
         /// match a later isolate that advertises the same button id.
         paint_generation: std::sync::atomic::AtomicU64,
         stopped: std::sync::atomic::AtomicBool,
+        /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
+        script_stop: Mutex<Option<ScriptStopReceipt>>,
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
         logs: Mutex<Vec<String>>,
@@ -1665,6 +1672,14 @@ mod isolate {
         teardown: std::sync::Arc<Mutex<TeardownState>>,
         /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
         proof: TeardownProof,
+    }
+
+    /// ScriptRunner.stop receipt copied off the isolate thread. This is a
+    /// single bounded value, independent of the panel's destructive log queue.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ScriptStopReceipt {
+        pub tick: u64,
+        pub reason: String,
     }
 
     impl LoadIsolate {
@@ -1797,6 +1812,7 @@ mod isolate {
                 work_generation,
                 paint_generation: std::sync::atomic::AtomicU64::new(paint_generation),
                 stopped: std::sync::atomic::AtomicBool::new(false),
+                script_stop: Mutex::new(None),
                 tx,
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
@@ -2032,6 +2048,12 @@ mod isolate {
             self.stopped.load(std::sync::atomic::Ordering::Acquire)
         }
 
+        /// Cached ScriptRunner.stop receipt. Reading it never drains logs.
+        pub fn script_stop_receipt(&self) -> Option<ScriptStopReceipt> {
+            self.pump_logs();
+            self.script_stop.lock().unwrap().clone()
+        }
+
         /// Per-isolate teardown evidence. Clone before `join`/`Drop`.
         #[doc(hidden)]
         pub fn teardown_proof(&self) -> TeardownProof {
@@ -2166,6 +2188,10 @@ mod isolate {
             for msg in msgs {
                 match msg {
                     ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                    ThreadMsg::ScriptStopped { tick, reason } => {
+                        *self.script_stop.lock().unwrap() =
+                            Some(ScriptStopReceipt { tick, reason });
+                    }
                     ThreadMsg::Stopped => {
                         self.stopped
                             .store(true, std::sync::atomic::Ordering::Release);
@@ -4874,6 +4900,25 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             .unwrap_or(false)
     }
 
+    const STOP_REASON_MAX_BYTES: usize = 256;
+
+    fn script_stop_reason(runtime: &mut Runtime) -> String {
+        let mut reason = runtime
+            .eval::<Option<String>>(
+                "(() => { const h = globalThis.__rs2b0t_host; return h && typeof h.stopReason === 'string' ? h.stopReason : null; })()",
+            )
+            .unwrap_or(None)
+            .unwrap_or_default();
+        if reason.len() > STOP_REASON_MAX_BYTES {
+            let mut end = STOP_REASON_MAX_BYTES;
+            while !reason.is_char_boundary(end) {
+                end -= 1;
+            }
+            reason.truncate(end);
+        }
+        reason
+    }
+
     /// The tick loop: commands are serialized on this thread; ticks run
     /// with a time budget, slow ticks are logged and stale queued ticks are
     /// skipped, and errors never kill the isolate.
@@ -5053,6 +5098,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             &mut runtime,
                         )));
                         if script_stop_requested(&mut runtime) {
+                            let _ = out.send(ThreadMsg::ScriptStopped {
+                                tick: n,
+                                reason: script_stop_reason(&mut runtime),
+                            });
                             let _ = out.send(ThreadMsg::Completed {
                                 tick: n,
                                 generation,
@@ -5206,6 +5255,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // exactly-once onStop under the isolate-owned 50 ms
                     // deadline, then break so the Runtime is dropped.
                     if script_stop_requested(&mut runtime) {
+                        let _ = out.send(ThreadMsg::ScriptStopped {
+                            tick: n,
+                            reason: script_stop_reason(&mut runtime),
+                        });
                         let _ = out.send(ThreadMsg::Completed {
                             tick: n,
                             generation,
@@ -5843,4 +5896,4 @@ export default class T extends LoopingBot {
 }
 
 #[cfg(feature = "load")]
-pub use isolate::{LoadIsolate, TeardownProof};
+pub use isolate::{LoadIsolate, ScriptStopReceipt, TeardownProof};

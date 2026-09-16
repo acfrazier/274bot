@@ -137,8 +137,16 @@ MAPPING = [
          variants=["herblore_secondaries_newt"], options=["secondary/egg/newt branches"],
          unsupported=[("pre-Start bank readiness", "fixture prerequisite"),
                       ("exact XP/product witness", "verify before any PASS claim")]),
-    case("HerbCleaner", "herb_cleaner", reference=["herbcleaner-empty-bank-live"], budget=8,
-         variants=["herb_cleaner_named"], options=["default/named herb filters", "empty-bank stop"]),
+    case("HerbCleaner", "herb_cleaner",
+         variants=[
+             "herb_cleaner_named",
+             {"live": "herb_cleaner_empty_bank", "reference": ["herbcleaner-empty-bank-live"],
+              "budget": 7, "options": ["eventual empty-bank Stop"],
+              "note": "outer budget is the frozen harness 420s window; the native fixture preserves "
+                      "Herblore 20, banked guam x20 and selected-but-absent Marrentill"},
+         ],
+         budget=8,
+         options=["default/named herb filters", "empty-bank stop"]),
     case("PotionMaker", "potion_maker", variants=["potion_maker_named"], options=["recipe/default/named"],
          unsupported=[("seed unfinished/finished products", "fixture prerequisite")]),
     case("BoneBurier", "bone_burier", reference=["external-script-test"],

@@ -740,6 +740,7 @@ mod tests {
             bank_open: false,
             bank_loaded: false,
             bank_generation: 0,
+            script_lifecycle: None,
             items: items
                 .iter()
                 .map(|(name, count)| ((*name).to_string(), *count))
@@ -1992,6 +1993,73 @@ mod tests {
             seeded.item_ids.insert(GUAM_LEAF_ID, 28);
             assert!(validate_case_baseline(case, &seeded).is_err());
         }
+    }
+
+    #[test]
+    fn herb_cleaner_empty_bank_requires_cleaning_fresh_exhaustion_and_script_stop() {
+        let case = CoreCase::parse("herb_cleaner_empty_bank").expect("empty-bank core case");
+        let mut baseline = herb_obs(&[], &[(UNIDENTIFIED_GUAM_ID, 20)], 1_000);
+        baseline.levels.insert("herblore".into(), 20);
+        baseline.bank_generation = 7;
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let cleaned = herb_obs(&[(GUAM_LEAF_ID, 20)], &[], 1_050);
+        let mut exhausted = cleaned.clone();
+        exhausted.bank_open = true;
+        exhausted.bank_loaded = true;
+        exhausted.bank_generation = 8;
+        let stop = script::ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state: script::ScriptTerminalState::Stopped,
+            tick: 12,
+            reason: "every selected herb is empty in the bank".into(),
+        };
+
+        let mut complete = witness(case, &baseline, [&cleaned, &exhausted]);
+        complete.observe_script_lifecycle(stop.clone());
+        assert!(complete.qualify().is_ok());
+
+        let mut empty_seed = baseline.clone();
+        empty_seed.bank_ids.clear();
+        assert!(validate_case_baseline(case, &empty_seed).is_err());
+
+        let mut empty_without_cleaning = herb_obs(&[], &[], 1_000);
+        empty_without_cleaning.bank_open = true;
+        empty_without_cleaning.bank_loaded = true;
+        empty_without_cleaning.bank_generation = 8;
+        let mut no_cleaning = witness(case, &baseline, [&empty_without_cleaning]);
+        no_cleaning.observe_script_lifecycle(stop.clone());
+        assert!(no_cleaning.qualify().is_err());
+
+        let mut stale = exhausted.clone();
+        stale.bank_generation = baseline.bank_generation;
+        let mut stale_witness = witness(case, &baseline, [&cleaned, &stale]);
+        stale_witness.observe_script_lifecycle(stop.clone());
+        assert!(stale_witness.qualify().is_err());
+
+        let mut guam_remains = exhausted.clone();
+        guam_remains.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 1);
+        let mut stocked_witness = witness(case, &baseline, [&cleaned, &guam_remains]);
+        stocked_witness.observe_script_lifecycle(stop.clone());
+        assert!(stocked_witness.qualify().is_err());
+
+        let mut marrentill_remains = exhausted.clone();
+        marrentill_remains
+            .bank_ids
+            .insert(UNIDENTIFIED_MARENTILL_ID, 1);
+        let mut marrentill_witness = witness(case, &baseline, [&cleaned, &marrentill_remains]);
+        marrentill_witness.observe_script_lifecycle(stop.clone());
+        assert!(marrentill_witness.qualify().is_err());
+
+        let mut wrong_reason = stop;
+        wrong_reason.reason = "harness stop".into();
+        let mut wrong_stop = witness(case, &baseline, [&cleaned, &exhausted]);
+        wrong_stop.observe_script_lifecycle(wrong_reason);
+        assert!(wrong_stop.qualify().is_err());
+
+        assert!(witness(case, &baseline, [&cleaned, &exhausted])
+            .qualify()
+            .is_err());
     }
 
     #[test]
@@ -7062,6 +7130,14 @@ mod tests {
             }
             validate_case_catalog(case, REFERENCE_COMMIT_964).unwrap();
         }
+        for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
+            let error = validate_case_catalog(CoreCase::HerbCleanerEmptyBank, commit).unwrap_err();
+            assert!(
+                error.contains("eventual empty-bank Stop") && error.contains("96410ec5"),
+                "{error}"
+            );
+        }
+        validate_case_catalog(CoreCase::HerbCleanerEmptyBank, REFERENCE_COMMIT_964).unwrap();
         validate_case_catalog(CoreCase::Alcher, CATALOG_COMMIT_A).unwrap();
         validate_case_catalog(CoreCase::AlcherDefaults, CATALOG_COMMIT_B).unwrap();
         for case in [

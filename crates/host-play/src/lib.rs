@@ -5214,6 +5214,12 @@ impl Play {
             .and_then(|slot| slot.lock().unwrap().last_error().map(str::to_string))
     }
 
+    /// Latest bounded ScriptRunner.stop receipt. This is non-consuming and
+    /// independent of [`Self::script_take_pending_logs`].
+    pub fn script_lifecycle_receipt(&self, name: &str) -> Option<script::ScriptLifecycleReceipt> {
+        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().lifecycle_receipt())
+    }
+
     /// Isolate log lines staged since the last take (panel log pane).
     pub fn script_take_pending_logs(&self, name: &str) -> Vec<String> {
         script_slot(&self.scripts, name)
@@ -5989,10 +5995,18 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
-                            obs_catalog_core.observe_snapshot(
+                            // `script_observe_with_npc_boxes` below reaps the
+                            // isolate and can publish a Stop receipt. The next
+                            // frame attaches that bounded value here before
+                            // status publication; pending panel logs are never
+                            // consumed by this read.
+                            let script_lifecycle = script_slot(&slot_scripts, name)
+                                .and_then(|slot| slot.lock().unwrap().lifecycle_receipt());
+                            obs_catalog_core.observe_snapshot_with_lifecycle(
                                 name,
                                 &nav_snapshot,
                                 &slot_obj_names,
+                                script_lifecycle,
                                 session_boundary,
                             );
                             obs_paired_core.observe_snapshot(name, &nav_snapshot, session_boundary);

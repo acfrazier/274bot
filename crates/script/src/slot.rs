@@ -16,6 +16,7 @@ use crate::load::{LoadIsolate, LoadShape};
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
+use serde::Serialize;
 
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
 /// the not-`is_up` gate; `stopping` is the Load-join window (later task).
@@ -26,6 +27,22 @@ pub enum RunState {
     Paused,
     Stopping,
     Error,
+}
+
+/// Terminal script lifecycle states retained by the native host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptTerminalState {
+    Stopped,
+}
+
+/// One bounded, non-consuming terminal receipt for the latest Start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScriptLifecycleReceipt {
+    pub runtime_generation: u64,
+    pub state: ScriptTerminalState,
+    pub tick: u64,
+    pub reason: String,
 }
 
 /// Host-owned second phase of a bank Withdraw-X operation. The first phase
@@ -236,6 +253,7 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     ipc: IsolateBuf,
     last_error: Option<String>,
+    lifecycle_receipt: Option<ScriptLifecycleReceipt>,
     /// Isolate log lines not yet taken by the panel (`take_pending_logs`).
     pending_logs: Vec<String>,
     /// Dispatched game ticks since the last Start.
@@ -284,6 +302,7 @@ impl SlotScript {
             #[cfg(feature = "load")]
             ipc: IsolateBuf::new(),
             last_error: None,
+            lifecycle_receipt: None,
             pending_logs: Vec::new(),
             ticks: 0,
             pending_withdraw_x: None,
@@ -326,6 +345,7 @@ impl SlotScript {
                 self.compiled = Some(script);
                 self.want_run = true;
                 self.last_error = None;
+                self.lifecycle_receipt = None;
                 self.ticks = 0;
                 self.pending_withdraw_x = None;
                 self.withdraw_x_result_seq = 0;
@@ -421,6 +441,7 @@ impl SlotScript {
                 self.watchdog.arm_fresh(Instant::now());
                 self.want_run = true;
                 self.last_error = None;
+                self.lifecycle_receipt = None;
                 self.ticks = 0;
                 self.pending_withdraw_x = None;
                 self.withdraw_x_result_seq = 0;
@@ -501,6 +522,7 @@ impl SlotScript {
     /// Operator Stop: join the Load isolate, run the compiled teardown
     /// hook, drop the instance, Idle.
     pub fn stop(&mut self) {
+        self.lifecycle_receipt = None;
         self.revoke_native_input();
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
@@ -1008,6 +1030,7 @@ impl SlotScript {
         }
         self.load = Some(isolate);
         self.last_error = None;
+        self.lifecycle_receipt = None;
         self.ticks = 0;
         self.state = RunState::Running;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
@@ -1155,16 +1178,21 @@ impl SlotScript {
         self.last_error.as_deref()
     }
 
+    /// Latest ScriptRunner.stop receipt. Reading it never drains panel logs.
+    pub fn lifecycle_receipt(&self) -> Option<ScriptLifecycleReceipt> {
+        self.lifecycle_receipt.clone()
+    }
+
     /// Drain isolate tick / `this.log` lines. Tick errors update
     /// [`Self::last_error`]. Copies are kept for [`Self::take_pending_logs`].
     #[cfg(feature = "load")]
     pub fn drain_logs(&mut self) -> Vec<String> {
-        let (logs, stopped) = match &self.load {
+        let (logs, stopped, script_stop) = match &self.load {
             Some(isolate) => {
                 let logs = isolate.drain_logs();
-                (logs, isolate.stopped())
+                (logs, isolate.stopped(), isolate.script_stop_receipt())
             }
-            None => (Vec::new(), false),
+            None => (Vec::new(), false, None),
         };
         if let Some(err) = logs
             .iter()
@@ -1175,7 +1203,14 @@ impl SlotScript {
         }
         self.pending_logs.extend(logs.iter().cloned());
         if stopped {
+            let runtime_generation = self.runtime_generation;
             self.stop();
+            self.lifecycle_receipt = script_stop.map(|receipt| ScriptLifecycleReceipt {
+                runtime_generation,
+                state: ScriptTerminalState::Stopped,
+                tick: receipt.tick,
+                reason: receipt.reason,
+            });
         }
         logs
     }
@@ -1288,6 +1323,15 @@ export default class T extends LoopingBot {
         assert_eq!(slot.last_world_id(), None);
         assert!(slot.drain_interacts().is_empty());
         assert!(slot.last_error().unwrap().contains("script requested stop"));
+        assert_eq!(
+            slot.lifecycle_receipt(),
+            Some(ScriptLifecycleReceipt {
+                runtime_generation: 1,
+                state: ScriptTerminalState::Stopped,
+                tick: 1,
+                reason: "finished".into(),
+            })
+        );
         assert_eq!(slot.take_pending_logs(), logs);
         slot.on_is_up(true);
         assert_eq!(
@@ -1307,7 +1351,52 @@ export default class T extends LoopingBot {
         assert_eq!(slot.probe("__rs_bot.n").unwrap(), 1);
         assert_eq!(slot.state(), RunState::Running);
         assert!(slot.last_error().is_none());
+        assert_eq!(
+            slot.lifecycle_receipt(),
+            None,
+            "fresh Start clears the receipt"
+        );
         slot.stop();
+        assert_eq!(
+            slot.lifecycle_receipt(),
+            None,
+            "operator Stop is not a script-requested Stopped receipt"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn script_stop_receipt_bounds_utf8_reason() {
+        let reason = "🙂".repeat(100);
+        let source = format!(
+            r#"
+import {{ ScriptRunner }} from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {{
+  loop() {{ ScriptRunner.stop({reason:?}); }}
+}}
+"#
+        );
+        let mut slot = SlotScript::new();
+        slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
+            .unwrap();
+        let input = crate::isolate_fb::tests::empty_input(1);
+        slot.encode_snapshot_delta(&input, false);
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut logs = Vec::new();
+        while slot.state() == RunState::Running && Instant::now() < deadline {
+            logs.extend(slot.drain_logs());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let receipt = slot.lifecycle_receipt().unwrap_or_else(|| {
+            panic!(
+                "script Stop receipt; state={:?} logs={logs:?}",
+                slot.state()
+            )
+        });
+        assert_eq!(receipt.state, ScriptTerminalState::Stopped);
+        assert!(receipt.reason.len() <= 256);
+        assert!(receipt.reason.chars().all(|ch| ch == '🙂'));
     }
 
     #[cfg(feature = "load")]

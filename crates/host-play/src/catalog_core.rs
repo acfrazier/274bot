@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -53,6 +53,7 @@ pub const FEATHER_ID: i32 = 314;
 pub const UNIDENTIFIED_GUAM_ID: i32 = 199;
 pub const GUAM_LEAF_ID: i32 = 249;
 pub const UNIDENTIFIED_MARENTILL_ID: i32 = 201;
+pub const MARRENTILL_ID: i32 = 251;
 pub const UNCUT_SAPPHIRE_ID: i32 = 1623;
 pub const SAPPHIRE_ID: i32 = 1607;
 pub const UNCUT_OPAL_ID: i32 = 1625;
@@ -446,6 +447,7 @@ pub enum CoreCase {
     DartFletcherIron,
     HerbCleaner,
     HerbCleanerNamed,
+    HerbCleanerEmptyBank,
     GemCutter,
     GemCutterNamed,
     DoorOpener,
@@ -551,6 +553,7 @@ impl CoreCase {
             "dart_fletcher_iron" => Ok(Self::DartFletcherIron),
             "herb_cleaner" => Ok(Self::HerbCleaner),
             "herb_cleaner_named" => Ok(Self::HerbCleanerNamed),
+            "herb_cleaner_empty_bank" => Ok(Self::HerbCleanerEmptyBank),
             "gem_cutter" => Ok(Self::GemCutter),
             "gem_cutter_named" => Ok(Self::GemCutterNamed),
             "door_opener" => Ok(Self::DoorOpener),
@@ -659,6 +662,7 @@ impl CoreCase {
             Self::DartFletcherIron => "dart_fletcher_iron",
             Self::HerbCleaner => "herb_cleaner",
             Self::HerbCleanerNamed => "herb_cleaner_named",
+            Self::HerbCleanerEmptyBank => "herb_cleaner_empty_bank",
             Self::GemCutter => "gem_cutter",
             Self::GemCutterNamed => "gem_cutter_named",
             Self::DoorOpener => "door_opener",
@@ -759,7 +763,9 @@ impl CoreCase {
             | Self::BankFletcherString
             | Self::BankFletcherCutString => "BankFletcher",
             Self::DartFletcher | Self::DartFletcherIron => "DartFletcher",
-            Self::HerbCleaner | Self::HerbCleanerNamed => "HerbCleaner",
+            Self::HerbCleaner | Self::HerbCleanerNamed | Self::HerbCleanerEmptyBank => {
+                "HerbCleaner"
+            }
             Self::GemCutter | Self::GemCutterNamed => "GemCutter",
             Self::DoorOpener | Self::DoorOpenerGate => "DoorOpener",
             Self::GnomeCourse | Self::GnomeCourseRadius => "GnomeCourse",
@@ -833,6 +839,13 @@ pub fn validate_case_catalog(case: CoreCase, commit: &str) -> Result<(), String>
              and pickFireStaff over FIRE_STAVES)"
         ));
     }
+    if case == CoreCase::HerbCleanerEmptyBank
+        && (commit == CATALOG_COMMIT_A || commit == CATALOG_COMMIT_B)
+    {
+        return Err(format!(
+            "catalog {commit} HerbCleaner does not carry the frozen 96410ec5 eventual empty-bank Stop behavior"
+        ));
+    }
     Ok(())
 }
 #[derive(Debug, Clone, Default, Serialize)]
@@ -850,6 +863,9 @@ pub struct Observation {
     pub bank_open: bool,
     pub bank_loaded: bool,
     pub bank_generation: u64,
+    /// Bounded native receipt for ScriptRunner.stop from this Start. The
+    /// panel log queue is not consumed to populate it.
+    pub script_lifecycle: Option<script::ScriptLifecycleReceipt>,
     /// Native base skill levels from the snapshot stat table.
     pub levels: BTreeMap<String, i32>,
     /// Native effective skill levels, retained separately for fixture gates.
@@ -1218,6 +1234,7 @@ impl Observation {
             bank_open: snapshot.bank_component_id() >= 0,
             bank_loaded: snapshot.bank_loaded(),
             bank_generation: snapshot.bank_session_generation(),
+            script_lifecycle: None,
             levels,
             effective_levels,
             xp,
@@ -1861,6 +1878,16 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                 && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
                 && baseline.level("herblore") >= 5
         }
+        CoreCase::HerbCleanerEmptyBank => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
+                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                && baseline.item_id(MARRENTILL_ID) == 0
+                && baseline.bank_item_id(UNIDENTIFIED_GUAM_ID) == 20
+                && baseline.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                && baseline.level("herblore") >= 20
+        }
         CoreCase::GemCutter => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.item_id(CHISEL_ID) == 0
@@ -2279,6 +2306,9 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
         CoreCase::HerbCleanerNamed => {
             "Varrock West bank, empty pack of 199/201/249, and Herblore 5"
         }
+        CoreCase::HerbCleanerEmptyBank => {
+            "Varrock West bank, Herblore 20, empty pack of 199/201/249/251, bank id 199x20 and bank id 201x0"
+        }
         CoreCase::GemCutter => {
             "Varrock West bank, empty pack of 1755/1623/1607/1633, and Crafting 20"
         }
@@ -2525,6 +2555,7 @@ pub struct CoreWitness {
     pub alcher_spell_cycle: AlcherGeneratedCustomCycle,
     pub dart_fletcher_cycle: DartFletcherCycle,
     pub herb_cleaner_cycle: HerbCleanerCycle,
+    pub herb_cleaner_empty_cycle: HerbCleanerEmptyCycle,
     pub gem_cutter_cycle: GemCutterCycle,
     pub door_opener_cycle: DoorOpenerCycle,
     pub gnome_course_cycle: GnomeCourseCycle,
@@ -3136,6 +3167,50 @@ impl HerbCleanerCycle {
 
     pub fn qualified(&self) -> bool {
         self.cleaned_after_withdrawal && !self.filter_violated
+    }
+}
+
+pub const HERB_CLEANER_EMPTY_STOP_REASON: &str = "every selected herb is empty in the bank";
+
+/// Frozen 20-guam/two-selected-herb terminal fixture. Work, a fresh loaded
+/// empty bank and the script's own Stop receipt must occur in that order.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HerbCleanerEmptyCycle {
+    pub cleaned: bool,
+    pub exhausted_bank: Option<Observation>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl HerbCleanerEmptyCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.cleaned |= baseline.item_id(GUAM_LEAF_ID) == 0
+            && now.item_id(GUAM_LEAF_ID) > 0
+            && now.item_id(UNIDENTIFIED_GUAM_ID) == 0
+            && now.skill_xp("herblore") > baseline.skill_xp("herblore");
+        if self.cleaned
+            && self.exhausted_bank.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.bank_item_id(UNIDENTIFIED_GUAM_ID) == 0
+            && now.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+        {
+            self.exhausted_bank = Some(now.clone());
+        }
+    }
+
+    pub fn observe_script_lifecycle(&mut self, receipt: script::ScriptLifecycleReceipt) {
+        if self.exhausted_bank.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == HERB_CLEANER_EMPTY_STOP_REASON
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.cleaned && self.exhausted_bank.is_some() && self.stopped.is_some()
     }
 }
 
@@ -7104,6 +7179,7 @@ impl CoreWitness {
             alcher_spell_cycle: AlcherGeneratedCustomCycle::default(),
             dart_fletcher_cycle: DartFletcherCycle::default(),
             herb_cleaner_cycle: HerbCleanerCycle::default(),
+            herb_cleaner_empty_cycle: HerbCleanerEmptyCycle::default(),
             gem_cutter_cycle: GemCutterCycle::default(),
             door_opener_cycle: DoorOpenerCycle::default(),
             gnome_course_cycle: GnomeCourseCycle::default(),
@@ -7228,6 +7304,10 @@ impl CoreWitness {
                 &self.baseline,
                 observation,
             );
+        }
+        if matches!(self.case, CoreCase::HerbCleanerEmptyBank) {
+            self.herb_cleaner_empty_cycle
+                .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::GemCutter | CoreCase::GemCutterNamed) {
             self.gem_cutter_cycle.observe(
@@ -7526,7 +7606,19 @@ impl CoreWitness {
             && observation.item("Rune platebody") == 0
             && observation.item("Rune chainbody") > 0;
         self.latest = observation.clone();
+        if let Some(receipt) = observation.script_lifecycle.clone() {
+            self.observe_script_lifecycle(receipt);
+        }
         self.post_start_observations += 1;
+    }
+
+    /// Observe one compact, non-consuming lifecycle value at the same native
+    /// publication boundary as the latest snapshot.
+    pub fn observe_script_lifecycle(&mut self, receipt: script::ScriptLifecycleReceipt) {
+        if self.case == CoreCase::HerbCleanerEmptyBank {
+            self.herb_cleaner_empty_cycle
+                .observe_script_lifecycle(receipt);
+        }
     }
 
     pub fn peak_item(&self, name: &str) -> i32 {
@@ -7615,6 +7707,7 @@ impl CoreWitness {
             CoreCase::HerbCleaner | CoreCase::HerbCleanerNamed => {
                 self.herb_cleaner_cycle.qualified()
             }
+            CoreCase::HerbCleanerEmptyBank => self.herb_cleaner_empty_cycle.qualified(),
             CoreCase::GemCutter | CoreCase::GemCutterNamed => self.gem_cutter_cycle.qualified(),
             CoreCase::DoorOpener | CoreCase::DoorOpenerGate => self.door_opener_cycle.qualified(),
             CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
@@ -7736,6 +7829,7 @@ impl CoreWitness {
             "alcher_spell_cycle": self.alcher_spell_cycle,
             "dart_fletcher_cycle": self.dart_fletcher_cycle,
             "herb_cleaner_cycle": self.herb_cleaner_cycle,
+            "herb_cleaner_empty_cycle": self.herb_cleaner_empty_cycle,
             "gem_cutter_cycle": self.gem_cutter_cycle,
             "door_opener_cycle": self.door_opener_cycle,
             "gnome_course_cycle": self.gnome_course_cycle,
@@ -7988,6 +8082,19 @@ impl CoreWatch {
         names: &ObjNames,
         session_boundary: bool,
     ) {
+        self.observe_snapshot_with_lifecycle(account, snapshot, names, None, session_boundary);
+    }
+
+    /// Convert the published snapshot and attach the slot's bounded native
+    /// lifecycle receipt without touching the panel's pending-log consumer.
+    pub fn observe_snapshot_with_lifecycle(
+        &self,
+        account: &str,
+        snapshot: &GameSnapshot,
+        names: &ObjNames,
+        lifecycle: Option<script::ScriptLifecycleReceipt>,
+        session_boundary: bool,
+    ) {
         if !self.active.load(Ordering::Acquire) {
             return;
         }
@@ -8000,12 +8107,9 @@ impl CoreWatch {
         ) {
             // Convert while the lifecycle lock is held so a reconfiguration
             // cannot attach this snapshot to a later run of the same account.
-            Self::observe_locked(
-                &mut state,
-                account,
-                Observation::from_snapshot(snapshot, names),
-                session_boundary,
-            );
+            let mut observation = Observation::from_snapshot(snapshot, names);
+            observation.script_lifecycle = lifecycle;
+            Self::observe_locked(&mut state, account, observation, session_boundary);
         }
     }
 
