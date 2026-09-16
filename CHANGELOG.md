@@ -27,6 +27,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.7` 
   Runner completion is not script qualification; visual captures remain
   `pending_visual_review` until readback. See [docs/e2e-suite.md](docs/e2e-suite.md).
 
+### Release startup and panel fixes
+
+- Drain buffered WSS messages during readiness checks and preserve payload reads
+  across WebSocket control frames.
+- Enable native clipboard paste into masked profile inputs.
+- Fix Loadouts equipment-grid widget IDs and quantity editing; enable item
+  search for the audited public-289 cache while rejecting unknown identities.
+
 ### Selected allocation, gameplay and portability corrections
 
 - Reuse completed dynamic sprite slots; read animation delay without cloning
