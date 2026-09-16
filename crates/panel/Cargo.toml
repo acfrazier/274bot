@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 api = { path = "../api" }
-arboard = "3"
+arboard = { version = "3", default-features = false }
 client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"
