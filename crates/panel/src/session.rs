@@ -1053,6 +1053,8 @@ pub struct Session {
     pub loadouts_search_slot: Option<String>,
     /// Supply row currently picking an item.
     pub loadouts_search_supply: Option<usize>,
+    /// Per-supply quantity text buffers (stable across frames while editing).
+    pub loadouts_qty_bufs: Vec<String>,
     /// Process-wide equipment/inventory presets.
     pub loadouts: script::LoadoutsStore,
     /// Scenario/live inject merged last on Start (Task 12 fills this).
@@ -1335,6 +1337,7 @@ impl Session {
             loadouts_search: String::new(),
             loadouts_search_slot: None,
             loadouts_search_supply: None,
+            loadouts_qty_bufs: Vec::new(),
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             js: {

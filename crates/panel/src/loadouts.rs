@@ -22,6 +22,15 @@ pub fn sync_draft(session: &mut Session) {
     session.loadouts_search.clear();
     session.loadouts_search_slot = None;
     session.loadouts_search_supply = None;
+    resync_qty_bufs(session);
+}
+
+fn resync_qty_bufs(session: &mut Session) {
+    session.loadouts_qty_bufs = session
+        .loadouts_draft
+        .as_ref()
+        .map(|draft| draft.carry.iter().map(|row| row.qty.to_string()).collect())
+        .unwrap_or_default();
 }
 
 pub fn save_draft(session: &mut Session) -> bool {
@@ -157,6 +166,42 @@ fn assign_slot(session: &mut Session, slot: &str, item: Option<String>) {
     draft.set_slot(slot, item);
 }
 
+/// Stable ImGui id for a layout spacer cell (must be unique across the grid).
+pub fn equipment_spacer_id(row: usize, col: usize) -> String {
+    format!("##spacer-{row}-{col}")
+}
+
+/// Apply a typed quantity buffer to one supply row. Empty/invalid text does not
+/// clobber the stored quantity; only positive parses commit.
+pub fn apply_qty_text(qty_text: &str, current: u32) -> u32 {
+    match qty_text.trim().parse::<u32>() {
+        Ok(parsed) if parsed > 0 => parsed,
+        _ => current,
+    }
+}
+
+/// Commit a free-typed item name into the active slot or supply row.
+pub fn apply_manual_item_name(session: &mut Session, name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some(slot) = session.loadouts_search_slot.clone() {
+        assign_slot(session, &slot, Some(trimmed.to_string()));
+        true
+    } else if let Some(i) = session.loadouts_search_supply {
+        if let Some(draft) = session.loadouts_draft.as_mut() {
+            if let Some(entry) = draft.carry.get_mut(i) {
+                entry.item = trimmed.to_string();
+                return true;
+            }
+        }
+        false
+    } else {
+        false
+    }
+}
+
 pub fn window(ui: &Ui, session: &mut Session) {
     if !session.loadouts_open {
         return;
@@ -257,7 +302,7 @@ pub fn window(ui: &Ui, session: &mut Session) {
 fn draw_equipment(ui: &Ui, session: &mut Session) {
     let cell_w = 150.0;
     let mut open_slot: Option<String> = None;
-    for row in WORN_SLOT_LAYOUT {
+    for (row_i, row) in WORN_SLOT_LAYOUT.iter().enumerate() {
         for (col, slot) in row.iter().enumerate() {
             if col > 0 {
                 ui.same_line();
@@ -282,7 +327,7 @@ fn draw_equipment(ui: &Ui, session: &mut Session) {
                 }
                 None => {
                     let _off = ui.begin_disabled_with_cond(true);
-                    ui.button_with_size("##spacer", [cell_w, 42.0]);
+                    ui.button_with_size(equipment_spacer_id(row_i, col), [cell_w, 42.0]);
                 }
             }
         }
@@ -303,26 +348,40 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
         .as_ref()
         .map(|d| d.carry.len())
         .unwrap_or(0);
+    if session.loadouts_qty_bufs.len() != count {
+        resync_qty_bufs(session);
+    }
     for i in 0..count {
-        let (item, qty) = session
+        let item = session
             .loadouts_draft
             .as_ref()
-            .map(|d| (d.carry[i].item.clone(), d.carry[i].qty))
+            .map(|d| d.carry[i].item.clone())
             .unwrap_or_default();
         if ui.button_with_size(format!("{item}##supply-item-{i}"), [220.0, 0.0]) {
             open_supply = Some(i);
         }
         ui.same_line();
-        let mut qty_text = qty.to_string();
+        if session.loadouts_qty_bufs.len() <= i {
+            resync_qty_bufs(session);
+        }
+        let qty_buf = session
+            .loadouts_qty_bufs
+            .get_mut(i)
+            .expect("qty bufs resynced");
         ui.set_next_item_width(72.0);
-        if ui
-            .input_text(format!("##supply-qty-{i}"), &mut qty_text)
-            .build()
-        {
+        if ui.input_text(format!("##supply-qty-{i}"), qty_buf).build() {
+            let parsed = apply_qty_text(qty_buf, 1);
             if let Some(draft) = session.loadouts_draft.as_mut() {
-                if let Ok(parsed) = qty_text.parse::<u32>() {
-                    if parsed > 0 {
-                        draft.carry[i].qty = parsed;
+                if let Some(entry) = draft.carry.get_mut(i) {
+                    // Keep the typed buffer; only commit positive parses.
+                    if qty_buf
+                        .trim()
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .is_some()
+                    {
+                        entry.qty = parsed;
                     }
                 }
             }
@@ -338,10 +397,14 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
                 draft.carry.remove(i);
             }
         }
+        if i < session.loadouts_qty_bufs.len() {
+            session.loadouts_qty_bufs.remove(i);
+        }
     }
     if ui.button("Add supply") {
         if let Some(draft) = session.loadouts_draft.as_mut() {
             draft.carry.push(CarryEntry::new("Lobster", 1));
+            session.loadouts_qty_bufs.push("1".into());
         }
     }
     if let Some(i) = open_supply {
@@ -374,7 +437,18 @@ fn search_popup(ui: &Ui, session: &mut Session) {
             Vec::new()
         };
         if data.is_none() {
-            ui.text_wrapped("Item search needs a bound selected-revision profile. Type a name after closing this picker, or bind a profile.");
+            ui.text_wrapped(
+                "Item catalog is unavailable for this profile's cache identity. Enter an exact item display name above, then use it below. Bind a profile whose cache matches the generated facts to enable search.",
+            );
+            let can_use = !session.loadouts_search.trim().is_empty();
+            {
+                let _off = ui.begin_disabled_with_cond(!can_use);
+                if ui.button("Use entered name") {
+                    if apply_manual_item_name(session, &session.loadouts_search.clone()) {
+                        ui.close_current_popup();
+                    }
+                }
+            }
         } else if hits.is_empty() {
             ui.text_disabled("No matches.");
         }
@@ -425,6 +499,7 @@ mod tests {
     use super::*;
     use crate::session::Session;
     use script::LoadoutsStore;
+    use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -522,5 +597,82 @@ mod tests {
             Some("Rune scimitar")
         );
         assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
+    }
+
+    #[test]
+    fn equipment_spacer_ids_are_unique_across_layout() {
+        let mut ids = HashSet::new();
+        for (row_i, row) in WORN_SLOT_LAYOUT.iter().enumerate() {
+            for (col, slot) in row.iter().enumerate() {
+                if slot.is_none() {
+                    assert!(ids.insert(equipment_spacer_id(row_i, col)));
+                }
+            }
+        }
+        assert_eq!(ids.len(), 4, "layout has four spacer cells");
+    }
+
+    #[test]
+    fn qty_text_keeps_prior_value_on_empty_or_invalid() {
+        assert_eq!(apply_qty_text("", 8), 8);
+        assert_eq!(apply_qty_text("  ", 8), 8);
+        assert_eq!(apply_qty_text("0", 8), 8);
+        assert_eq!(apply_qty_text("abc", 8), 8);
+        assert_eq!(apply_qty_text("12", 8), 12);
+    }
+
+    #[test]
+    fn qty_bufs_survive_empty_intermediate_edit() {
+        let mut session = session_with_store();
+        assert_eq!(session.loadouts_qty_bufs, vec!["8".to_string()]);
+        session.loadouts_qty_bufs[0] = String::new();
+        let current = session.loadouts_draft.as_ref().unwrap().carry[0].qty;
+        let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
+        assert_eq!(next, 8);
+        assert_eq!(session.loadouts_qty_bufs[0], "");
+        session.loadouts_qty_bufs[0] = "12".into();
+        let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
+        assert_eq!(next, 12);
+        session.loadouts_draft.as_mut().unwrap().carry[0].qty = next;
+        assert_eq!(session.loadouts_draft.as_ref().unwrap().carry[0].qty, 12);
+    }
+
+    #[test]
+    fn manual_item_name_assigns_slot_and_supply_without_catalog() {
+        let mut session = session_with_store();
+        session.loadouts_search_slot = Some("hat".into());
+        assert!(apply_manual_item_name(&mut session, "Rune full helm"));
+        assert_eq!(
+            session
+                .loadouts_draft
+                .as_ref()
+                .unwrap()
+                .worn
+                .get("hat")
+                .map(String::as_str),
+            Some("Rune full helm")
+        );
+        session.loadouts_search_slot = None;
+        session.loadouts_search_supply = Some(0);
+        assert!(apply_manual_item_name(&mut session, "Shark"));
+        assert_eq!(
+            session.loadouts_draft.as_ref().unwrap().carry[0].item,
+            "Shark"
+        );
+        assert!(!apply_manual_item_name(&mut session, "  "));
+    }
+
+    #[test]
+    fn duplicate_preserves_source_and_selects_copy() {
+        let mut session = session_with_store();
+        duplicate_loadout(&mut session);
+        assert_eq!(session.loadouts.loadouts().len(), 2);
+        assert_eq!(session.loadouts.loadouts()[0].name, "melee");
+        assert_eq!(session.loadouts.loadouts()[1].name, "melee copy");
+        assert_eq!(session.loadouts_sel, 1);
+        assert_eq!(
+            session.loadouts_draft.as_ref().unwrap().carry[0],
+            CarryEntry::new("Lobster", 8)
+        );
     }
 }

@@ -662,13 +662,38 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, S
     }
 }
 
-/// Load the revision static and require the immutable profile's selected cache.
+/// Audited revision-289 cache identities whose fact-relevant inputs match the
+/// generated static (`provenance.cache_identity.cache_id`).
+///
+/// Local and public 289 share identical `config` (and the other non-versionlist
+/// client archives). They differ only in `versionlist` compressed payload CRCs;
+/// decoded snapshot bins for those tables are byte-identical. Generated facts
+/// read server obj/npc packs plus client `config`, not versionlist, so binding
+/// the public known-cache identity is justified. Unknown same-revision caches
+/// are still rejected.
+const EQUIVALENT_CACHE_IDS_289: &[&str] = &[
+    // public-289 known-cache identity (versionlist 6dcb7c4ad1b85372…)
+    "37cdafd200703150d0f66339b7609944e1ea19d64ad729a72d94e3bcdfa89d92",
+];
+
+fn accepts_cache_id(data: &SelectedGameData, cache_id: &str) -> bool {
+    if data.cache_id() == cache_id {
+        return true;
+    }
+    match data.revision() {
+        289 => EQUIVALENT_CACHE_IDS_289.iter().any(|id| *id == cache_id),
+        _ => false,
+    }
+}
+
+/// Load the revision static and require the immutable profile's selected cache
+/// (or an audited fact-equivalent identity for that revision).
 pub fn for_profile(
     revision: ClientRevision,
     cache_id: &str,
 ) -> Result<Arc<SelectedGameData>, String> {
     let data = for_revision(revision)?;
-    if data.cache_id() != cache_id {
+    if !accepts_cache_id(&data, cache_id) {
         return Err(format!(
             "generated game data cache identity mismatch: expected {}, got {cache_id}",
             data.cache_id()
@@ -678,11 +703,12 @@ pub fn for_profile(
 }
 
 /// Return selected facts only when this profile uses the generated asset's
-/// audited cache identity. Other caches remain honestly metadata-free.
+/// audited cache identity, or an audited fact-equivalent identity for the
+/// same revision. Other caches remain honestly metadata-free.
 pub fn for_optional_profile(
     revision: ClientRevision,
     cache_id: &str,
 ) -> Result<Option<Arc<SelectedGameData>>, String> {
     let data = for_revision(revision)?;
-    Ok((data.cache_id() == cache_id).then_some(data))
+    Ok(accepts_cache_id(&data, cache_id).then_some(data))
 }
