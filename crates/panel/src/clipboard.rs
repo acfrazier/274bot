@@ -160,4 +160,100 @@ mod tests {
         );
     }
 
+    fn prep(ctx: &mut imgui::Context) {
+        ctx.prepare_frame(
+            imgui::FramePrepareOptions::new([400.0, 200.0], 1.0 / 60.0).renderer_has_textures(),
+        );
+    }
+
+    /// One frame: optional focus + draw password field into `buf`.
+    fn password_frame(ctx: &mut imgui::Context, buf: &mut String, focus: bool) {
+        prep(ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("pass-probe")
+                .position([0.0, 0.0], imgui::Condition::Always)
+                .size([400.0, 200.0], imgui::Condition::Always)
+                .build(|| {
+                    if focus {
+                        ui.set_keyboard_focus_here();
+                    }
+                    ui.input_text("##vault-pass", buf).password(true).build();
+                });
+        }
+        ctx.render();
+    }
+
+    /// Masked InputText: Ctrl/Cmd chord select-all then replace, and paste via
+    /// the installed clipboard backend. Exercises ImGui shortcut behavior, not
+    /// OS event delivery. Fixture text only; never logs contents.
+    #[test]
+    fn masked_inputtext_select_all_and_paste_via_shortcut_chords() {
+        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = imgui::Context::create();
+        let macos = ctx.io().config_macosx_behaviors();
+
+        let fixture = "ux-fixture-only";
+        let store = Arc::new(Mutex::new(Some(fixture.to_string())));
+        ctx.set_clipboard_backend(FakeClipboard {
+            value: store.clone(),
+        });
+
+        let mut buf = String::new();
+        // Focus request applies to the next item on this frame; activation is
+        // ready on the subsequent frame for character input.
+        password_frame(&mut ctx, &mut buf, true);
+        password_frame(&mut ctx, &mut buf, false);
+
+        // Seed five dummy chars (mirrors headed typeText into vault-pass).
+        for ch in ['a', 'b', 'c', 'd', 'e'] {
+            ctx.io_mut().add_input_character(ch);
+        }
+        password_frame(&mut ctx, &mut buf, false);
+        assert_eq!(buf.len(), 5, "seed typing must land in the masked field");
+
+        // Select-all: on macOS ConfigMacOSXBehaviors swaps Super↔Ctrl at
+        // AddKeyEvent, so physical Super (Cmd) is submitted as ModSuper.
+        // Off-mac, submit ModCtrl. Chord is ImGuiMod_Ctrl|A either way after swap.
+        let chord_mod = if macos {
+            imgui::Key::ModSuper
+        } else {
+            imgui::Key::ModCtrl
+        };
+        ctx.io_mut().add_key_event(chord_mod, true);
+        ctx.io_mut().add_key_event(imgui::Key::A, true);
+        password_frame(&mut ctx, &mut buf, false);
+        ctx.io_mut().add_key_event(imgui::Key::A, false);
+        ctx.io_mut().add_key_event(chord_mod, false);
+        password_frame(&mut ctx, &mut buf, false);
+
+        // Replacement after select-all must replace, not append.
+        ctx.io_mut().add_input_character('q');
+        password_frame(&mut ctx, &mut buf, false);
+        assert_eq!(
+            buf,
+            "q",
+            "select-all + type must replace seeded text (got len {})",
+            buf.len()
+        );
+
+        // Paste fixture over selection: select-all again, then Ctrl/Cmd+V.
+        ctx.io_mut().add_key_event(chord_mod, true);
+        ctx.io_mut().add_key_event(imgui::Key::A, true);
+        password_frame(&mut ctx, &mut buf, false);
+        ctx.io_mut().add_key_event(imgui::Key::A, false);
+        ctx.io_mut().add_key_event(imgui::Key::V, true);
+        password_frame(&mut ctx, &mut buf, false);
+        ctx.io_mut().add_key_event(imgui::Key::V, false);
+        ctx.io_mut().add_key_event(chord_mod, false);
+        password_frame(&mut ctx, &mut buf, false);
+
+        assert_eq!(
+            buf, fixture,
+            "Cmd/Ctrl+V must paste backend fixture into password field"
+        );
+        // Ensure backend still holds fixture (no secret logging path).
+        assert_eq!(store.lock().unwrap().as_deref(), Some(fixture));
+    }
 }
