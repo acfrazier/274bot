@@ -576,15 +576,11 @@ fn door_edges(
         inherited_closed_gates(content_root, ids, &positions, &supported_handlers, skipped);
     door_ids.extend(inherited.keys().copied());
     open_ids.extend(inherited.iter().map(|(&id, &open)| (id, open)));
-    let (door_reqs, mut free_arms) = {
-        let constants = script_constants(content_root);
-        let varps = varp_ids_by_name(content_root);
-        let door_names = door_config_names(content_root, ids);
-        (
-            quest_door_reqs(content_root, &door_names, ids, &constants, &varps),
-            quest_door_free_arms(content_root, &door_names, ids, &constants, &varps),
-        )
-    };
+    let constants = script_constants(content_root);
+    let varps = varp_ids_by_name(content_root);
+    let door_names = door_config_names(content_root, ids);
+    let door_reqs = quest_door_reqs(content_root, &door_names, ids, &constants, &varps);
+    let mut free_arms = quest_door_free_arms(content_root, &door_names, ids, &constants, &varps);
     // A door that also declares a readable direct-varp gate keeps the
     // existing two-edge gate: the two readings would disagree about the
     // same crossing, and the free arm is never a fallback for a gate.
@@ -622,7 +618,8 @@ fn door_edges(
             // A door is bidirectional: an edge in `dir` and one in its
             // opposite, each with an adjacent standable destination. A blocked
             // neighbor yields no edge; opening a door cannot erase scenery.
-            let quest_reverse = free_arm.and_then(|arm| completed_quest_reverse(*id, arm, ids));
+            let quest_reverse =
+                free_arm.and_then(|arm| completed_quest_reverse(*id, arm, ids, &varps));
             for dir in [angle_dir, opposite(angle_dir)] {
                 let is_free = free_arm.is_some_and(|arm| dir == arm.free_dir(angle_dir));
                 let is_gated_reverse = free_arm.is_some() && !is_free;
@@ -880,34 +877,47 @@ impl InheritedGate {
     }
 }
 
-/// A `param=next_loc_stage,<value>` value → the open leaf id (`loc_N`
-/// parses numerically, a bare name resolves through `pack/loc.pack`) — the
-/// same rule [`crate::pack::parse_door_open_ids`] applies.
+/// A `param=next_loc_stage,<value>` value → the open leaf id. Named values
+/// and `loc_N` aliases resolve through [`loc_pack_id`]; an integer that is
+/// not a pack id is refused.
 fn stage_open_loc_id(value: &str, ids: &HashMap<String, i32>) -> Option<i32> {
-    if let Some(n) = value.strip_prefix("loc_") {
-        n.parse().ok()
-    } else {
-        ids.get(value).copied()
+    loc_pack_id(value, ids)
+}
+
+/// Named loc row or `loc_N` alias → pack id. `loc_N` is admitted only when
+/// N is an id `pack/loc.pack` actually carries; an arbitrary integer is not
+/// a loc. Named rows win when the pack lists that name.
+fn loc_pack_id(name: &str, ids: &HashMap<String, i32>) -> Option<i32> {
+    if let Some(&id) = ids.get(name) {
+        return Some(id);
     }
+    let n = name.strip_prefix("loc_")?;
+    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let id: i32 = n.parse().ok()?;
+    ids.values().copied().any(|v| v == id).then_some(id)
 }
 
 /// Every closed-gate declaration in one `.loc` text: `(id, gate)` per block
 /// that names one of the two closed gate categories, with the block's
 /// `op1=Open` line and its resolved `next_loc_stage` open leaf. Numeric
-/// `[loc_N]` and `pack/loc.pack`-resolved `[name]` headers both count;
-/// unresolved headers and blocks whose category is `gate_*_open` (the open
-/// leaves) yield nothing.
+/// `[loc_N]` aliases resolve through [`loc_pack_id`]; every syntactically
+/// valid `[header]` ends the previous block even when the name does not
+/// resolve. Unresolved headers and blocks whose category is `gate_*_open`
+/// (the open leaves) yield nothing.
 fn closed_gate_blocks(text: &str, ids: &HashMap<String, i32>) -> Vec<(i32, InheritedGate)> {
     let mut out = Vec::new();
     let mut cur: Option<(i32, InheritedGate)> = None;
     for raw in text.lines() {
         let line = raw.trim();
-        let header = config_header(line).and_then(|n| ids.get(n).copied());
-        if let Some(id) = header {
+        if let Some(name) = config_header(line) {
             if let Some(done) = cur.take() {
                 out.push(done);
             }
-            cur = Some((id, InheritedGate::new()));
+            if let Some(id) = loc_pack_id(name, ids) {
+                cur = Some((id, InheritedGate::new()));
+            }
             continue;
         }
         let Some((_, gate)) = cur.as_mut() else {
@@ -975,8 +985,8 @@ fn gate_pair_tile(at: WorldTile, angle_dir: DoorDir, outer: bool) -> WorldTile {
 ///   this derivation does not support);
 /// - that category's generic handler is verified in the content
 ///   ([`generic_gate_handlers`], handler body plus proc);
-/// - a `next_loc_stage` open leaf resolves, and when that leaf's own config
-///   is present its category is the matching `gate_*_open`;
+/// - a `next_loc_stage` open leaf resolves through loc.pack, and that
+///   leaf's own config is present with the matching `gate_*_open`;
 /// - no loc-specific `[oploc1,<name>]` block exists anywhere under
 ///   `scripts` (the resolver's first priority — a named override, gated or
 ///   denied, is never promoted);
@@ -1018,7 +1028,7 @@ fn inherited_closed_gates(
             for raw in text.lines() {
                 let line = raw.trim();
                 if let Some(name) = config_header(line) {
-                    if let Some(&id) = ids.get(name) {
+                    if let Some(id) = loc_pack_id(name, ids) {
                         names.entry(id).or_default().insert(name.to_string());
                     }
                 }
@@ -1046,15 +1056,17 @@ fn inherited_closed_gates(
         let mut cur: Option<i32> = None;
         for raw in text.lines() {
             let line = raw.trim();
-            let header = config_header(line).and_then(|n| ids.get(n).copied());
-            if let Some(id) = header {
-                cur = Some(id);
-            } else if let Some(id) = cur {
-                if let Some(value) = line.strip_prefix("category=") {
-                    categories
-                        .entry(id)
-                        .or_insert_with(|| value.trim().to_string());
-                }
+            if let Some(name) = config_header(line) {
+                cur = loc_pack_id(name, ids);
+                continue;
+            }
+            let Some(id) = cur else {
+                continue;
+            };
+            if let Some(value) = line.strip_prefix("category=") {
+                categories
+                    .entry(id)
+                    .or_insert_with(|| value.trim().to_string());
             }
         }
     });
@@ -1100,10 +1112,7 @@ fn inherited_closed_gates(
             bump(skipped, SKIP_GATE_MEMBER_OVERRIDE, 1);
             continue;
         }
-        if categories
-            .get(&open)
-            .is_some_and(|c| c != open_gate_category(outer))
-        {
+        if categories.get(&open).map(String::as_str) != Some(open_gate_category(outer)) {
             bump(skipped, SKIP_GATE_MEMBER_STAGE, 1);
             continue;
         }
@@ -1495,6 +1504,11 @@ struct FreeDoorArm {
     free_when_check_axis: bool,
     /// Resolved `^const` minimum on the gated disjunct.
     gated_min: i32,
+    /// Proven `getbit_range` varp id, lower bit, and upper bit. Completion
+    /// is attached only when this identity is `%death_map` bits 0..3.
+    bitfield_varp: i32,
+    bitfield_lo: i32,
+    bitfield_hi: i32,
 }
 
 impl FreeDoorArm {
@@ -1576,13 +1590,14 @@ fn quest_door_free_arms(
 /// text whose body is exactly
 /// `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` with the varp in
 /// `pack/varp.pack` and both range constants resolving; and the arm must
-/// open directly (a top-level `~open_` / `open_and_close` call, no nested
-/// braces). Every other shape — a raw `%varp` compare, a different
-/// comparator, a missing or differently-shaped proc, an unresolved name, an
-/// arm that opens only inside a nested gate, an `else` on the opening `if`
-/// — proves nothing at all, so the door keeps no free arm and is never
-/// promoted to ungated. Knock and dialogue branches after the opening `if`
-/// are never read.
+/// open directly with the canonical `~open_and_close_door2(<loc>, $<b>,
+/// door_open)` statement (no nested braces, no earlier return or quoted
+/// text, no unrelated `~open_` name). Every other shape — a raw `%varp`
+/// compare, a different comparator, a missing or differently-shaped proc,
+/// an unresolved name, an arm that opens only inside a nested gate, an
+/// `else` on the opening `if` — proves nothing at all, so the door keeps
+/// no free arm and is never promoted to ungated. Knock and dialogue
+/// branches after the opening `if` are never read.
 fn free_door_arm(
     block: &str,
     script_text: &str,
@@ -1594,43 +1609,72 @@ fn free_door_arm(
     let (head, arm) = if_head_and_arm(stmts.get(1)?)?;
     let (free_when_check_axis, proc, cname) = check_axis_or_proc(&head, &axis_bool)?;
     let gated_min = *constants.get(&cname)?;
-    if !arm_opens_directly(&arm) {
+    if !arm_opens_directly(&arm, &axis_bool) {
         return None;
     }
-    proc_bitfield_varp(script_text, &proc, constants, varps)?;
+    let (bitfield_varp, bitfield_lo, bitfield_hi) =
+        proc_bitfield_varp(script_text, &proc, constants, varps)?;
     Some(FreeDoorArm {
         free_when_check_axis,
         gated_min,
+        bitfield_varp,
+        bitfield_lo,
+        bitfield_hi,
     })
 }
 
 /// Journal name of Death Plateau as the client stores a completed quest.
 const DEATH_PLATEAU_QUEST: &str = "Death Plateau";
-/// Front hut door (`death_sherpa_door`): gated min is `^death_spoken_tenzing`.
+/// Front hut door (`death_sherpa_door`): gated min is `^death_spoken_tenzing`,
+/// free when `$leaving = true`.
 const DEATH_FRONT_DOOR: &str = "death_sherpa_door";
 const DEATH_FRONT_GATED_MIN: i32 = 2;
-/// Rear hut door (`death_sherpa_backdoor`): gated min is `^death_got_map`.
+const DEATH_FRONT_FREE_WHEN_CHECK_AXIS: bool = true;
+/// Rear hut door (`death_sherpa_backdoor`): gated min is `^death_got_map`,
+/// free when `$leaving = false`.
 const DEATH_BACK_DOOR: &str = "death_sherpa_backdoor";
 const DEATH_BACK_GATED_MIN: i32 = 7;
+const DEATH_BACK_FREE_WHEN_CHECK_AXIS: bool = false;
+/// `%death_map` bits `^death_map_lower..^death_map_upper` (0..3).
+const DEATH_MAP_VARP: &str = "death_map";
+const DEATH_MAP_LO: i32 = 0;
+const DEATH_MAP_HI: i32 = 3;
 
 /// Conservative completed-quest requirement for a directional door's gated
 /// reverse, from an explicit source-backed mapping: only the two Death
 /// Plateau hut doors whose proven free-arm shape still carries the current
-/// thresholds (front entry ≥ 2, garden exit ≥ 7). Completion is reachable
+/// thresholds, polarities, and `%death_map` bits 0..3 (front entry ≥ 2
+/// leaving-true, garden exit ≥ 7 leaving-false). Completion is reachable
 /// only after `death_get_map >= death_scouted_area` (8), so a completed
 /// journal row implies both thresholds; in-progress map stages stay
 /// unsupported. Loc ids resolve from the selected content's `loc.pack`.
+/// An unrelated varp, a different bit range, the wrong polarity, or a
+/// loc that is not the canonical sherpa door does not borrow completion.
 /// This is not a general quest-implication engine and does not read varp
-/// 315.
+/// 315 as a raw gate.
 fn completed_quest_reverse(
     id: i32,
     arm: &FreeDoorArm,
     ids: &HashMap<String, i32>,
+    varps: &HashMap<String, i32>,
 ) -> Option<&'static str> {
-    if ids.get(DEATH_FRONT_DOOR) == Some(&id) && arm.gated_min == DEATH_FRONT_GATED_MIN {
+    let &death_map = varps.get(DEATH_MAP_VARP)?;
+    if arm.bitfield_varp != death_map
+        || arm.bitfield_lo != DEATH_MAP_LO
+        || arm.bitfield_hi != DEATH_MAP_HI
+    {
+        return None;
+    }
+    if ids.get(DEATH_FRONT_DOOR) == Some(&id)
+        && arm.gated_min == DEATH_FRONT_GATED_MIN
+        && arm.free_when_check_axis == DEATH_FRONT_FREE_WHEN_CHECK_AXIS
+    {
         return Some(DEATH_PLATEAU_QUEST);
     }
-    if ids.get(DEATH_BACK_DOOR) == Some(&id) && arm.gated_min == DEATH_BACK_GATED_MIN {
+    if ids.get(DEATH_BACK_DOOR) == Some(&id)
+        && arm.gated_min == DEATH_BACK_GATED_MIN
+        && arm.free_when_check_axis == DEATH_BACK_FREE_WHEN_CHECK_AXIS
+    {
         return Some(DEATH_PLATEAU_QUEST);
     }
     None
@@ -1832,10 +1876,12 @@ fn if_head_and_arm(stmt: &str) -> Option<(String, String)> {
     Some((head, arm))
 }
 
-/// True when the `if` arm opens the door directly: a top-level `~open_` /
-/// `open_and_close` call and no nested braces (nested opening gates and
-/// extra conditions fail closed). Labels are not followed.
-fn arm_opens_directly(arm: &str) -> bool {
+/// True when the `if` arm opens the door directly: the first top-level
+/// statement is the canonical `~open_and_close_door2(<loc>, $<b>, door_open)`
+/// call, any later statements are a bare `return`, and there are no nested
+/// braces. Quoted text, an earlier terminal, `~open_overlay`, and any other
+/// procedure name fail closed. Labels are not followed.
+fn arm_opens_directly(arm: &str, axis_bool: &str) -> bool {
     let inner = arm.trim();
     let Some(inner) = inner.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
         return false;
@@ -1843,7 +1889,46 @@ fn arm_opens_directly(arm: &str) -> bool {
     if inner.contains('{') {
         return false;
     }
-    inner.contains("open_and_close") || inner.contains("~open_")
+    let stmts = top_level_statements(inner);
+    let Some((first, rest)) = stmts.split_first() else {
+        return false;
+    };
+    canonical_door_open(first, axis_bool) && rest.iter().all(|s| bare_return(s))
+}
+
+/// `~open_and_close_door2(<loc>, $<axis>, door_open);` as a whole statement.
+/// `<loc>` is `loc_N` or a script identifier; the axis name must be the
+/// check-axis boolean this arm proved. An indiscriminate `~open_` prefix
+/// is not enough.
+fn canonical_door_open(stmt: &str, axis_bool: &str) -> bool {
+    let flat: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
+    let flat = flat.strip_suffix(';').unwrap_or(flat.as_str());
+    let Some(args) = flat
+        .strip_prefix("~open_and_close_door2(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let mut parts = args.split(',');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(open_loc), Some(axis), Some("door_open"), None) => {
+            axis == axis_bool && loc_open_arg(open_loc)
+        }
+        _ => false,
+    }
+}
+
+fn loc_open_arg(s: &str) -> bool {
+    if let Some(n) = s.strip_prefix("loc_") {
+        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
+    } else {
+        script_ident(s)
+    }
+}
+
+fn bare_return(stmt: &str) -> bool {
+    let flat: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
+    flat == "return;" || flat == "return"
 }
 
 /// A door head `$<b> = <true|false> | ~<proc> >= ^<const>` — exactly two
@@ -1908,8 +1993,8 @@ fn script_ident(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// The varp id of a `[proc,<name>](…)(…)` block whose body is exactly
-/// `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` (whitespace-tolerant),
+/// The `(varp id, lo, hi)` of a `[proc,<name>](…)(…)` block whose body is
+/// exactly `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` (whitespace-tolerant),
 /// with `<varp>` in `pack/varp.pack` and `<lo>`/`<hi>` in the script
 /// constants. A missing, duplicated, or differently-shaped proc — another
 /// varp, another read, an extra statement — yields `None`.
@@ -1918,7 +2003,7 @@ fn proc_bitfield_varp(
     name: &str,
     constants: &HashMap<String, i32>,
     varps: &HashMap<String, i32>,
-) -> Option<i32> {
+) -> Option<(i32, i32, i32)> {
     let bodies = proc_bodies(script_text, name);
     let [body] = bodies.as_slice() else {
         return None;
@@ -1937,9 +2022,7 @@ fn proc_bitfield_varp(
     let varp = varp.strip_prefix('%')?;
     let lo = lo.strip_prefix('^')?;
     let hi = hi.strip_prefix('^')?;
-    constants.get(lo)?;
-    constants.get(hi)?;
-    Some(*varps.get(varp)?)
+    Some((*varps.get(varp)?, *constants.get(lo)?, *constants.get(hi)?))
 }
 
 /// Every `[proc,<name>](…)(…)` body in a script text. [`script_blocks`]
@@ -7139,6 +7222,405 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
         }
     }
 
+    /// Quoted text, an unrelated `~open_` name, `~open_overlay`, and an
+    /// open after `return` must not prove a free arm. The control loc uses
+    /// the canonical `~open_and_close_door2(loc_1532, $leaving, door_open)`
+    /// sequence and must still emit.
+    #[test]
+    fn derive_transports_omits_noncanonical_directional_door_openers() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "5020=good_open\n5021=quoted_open\n5022=open_overlay\n\
+             5023=unrelated_open\n5024=open_after_return\n",
+        );
+        fx.write("pack/varp.pack", "315=death_map\n");
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.loc",
+            "\
+[good_open]
+op1=Open
+[quoted_open]
+op1=Open
+[open_overlay]
+op1=Open
+[unrelated_open]
+op1=Open
+[open_after_return]
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/quests/quest_death/configs/quest_death.constant",
+            "^death_spoken_tenzing = 2\n^death_map_lower = 0\n^death_map_upper = 3\n",
+        );
+        fx.write(
+            "scripts/quests/quest_death/scripts/quest_death.rs2",
+            "\
+[oploc1,good_open]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,quoted_open]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    mes(\\\"try ~open_and_close_door2(loc_1532, $leaving, door_open)\\\");
+    return;
+}
+
+[oploc1,open_overlay]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_overlay(overlay_door);
+    return;
+}
+
+[oploc1,unrelated_open]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_gate();
+    return;
+}
+
+[oploc1,open_after_return]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    return;
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+        );
+        fx.write(
+            "maps/m44_55.jm2",
+            "\
+==== MAP ====
+0 6 35: h98 f4 u64
+
+==== LOC ====
+0 6 35: 5020 0 2
+0 6 36: 5021 0 2
+0 6 37: 5022 0 2
+0 6 38: 5023 0 2
+0 6 39: 5024 0 2
+",
+        );
+        let defs = loc_defs(&[
+            (5020, 1, 1),
+            (5021, 1, 1),
+            (5022, 1, 1),
+            (5023, 1, 1),
+            (5024, 1, 1),
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        assert_eq!(
+            door_crossings(&graph, 5020),
+            vec![((2822, 3555), 'E', (2823, 3555))],
+            "the valid control must still prove its canonical opener"
+        );
+        for (id, why) in [
+            (5021, "a quoted open call must not prove a free arm"),
+            (5022, "~open_overlay must not prove a free arm"),
+            (5023, "an unrelated ~open_ name must not prove a free arm"),
+            (5024, "an open after return must not prove a free arm"),
+        ] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "loc {id} must not be packed: {why}"
+            );
+        }
+    }
+
+    /// Completed Death Plateau attaches only to the canonical sherpa loc
+    /// with `%death_map` bits 0..3 and the source polarity/threshold. An
+    /// unrelated varp, a different bit range, or the wrong polarity still
+    /// proves a free arm when the bitfield shape is valid, but must not
+    /// borrow the reverse. A duplicated proc proves nothing.
+    #[test]
+    fn derive_transports_omits_borrowed_death_plateau_reverse() {
+        fn graph_for(
+            script: &str,
+            loc_pack: &str,
+            varp_pack: &str,
+            constants: &str,
+            loc_line: &str,
+        ) -> TransportGraph {
+            let fx = Fixture::new();
+            fx.write("pack/loc.pack", loc_pack);
+            fx.write("pack/varp.pack", varp_pack);
+            fx.write(
+                "scripts/quests/quest_death/configs/quest_death.loc",
+                "\
+[death_sherpa_door]
+op1=Open
+[death_sherpa_backdoor]
+op1=Open
+[good_door]
+op1=Open
+",
+            );
+            fx.write(
+                "scripts/quests/quest_death/configs/quest_death.constant",
+                constants,
+            );
+            fx.write("scripts/quests/quest_death/scripts/quest_death.rs2", script);
+            fx.write(
+                "maps/m44_55.jm2",
+                &format!(
+                    "\
+==== MAP ====
+0 6 35: h98 f4 u64
+
+==== LOC ====
+{loc_line}
+"
+                ),
+            );
+            let defs = loc_defs(&[(3745, 1, 1), (3746, 1, 1), (5010, 1, 1)]);
+            let wc = bake_collision(&fx, &defs, &HashSet::new());
+            derive_transports(fx.path(), &defs, &wc)
+        }
+        let constants = "\
+^death_spoken_tenzing = 2
+^death_got_map = 7
+^death_map_lower = 0
+^death_map_upper = 3
+";
+        let loc_pack = "3745=death_sherpa_door\n3746=death_sherpa_backdoor\n5010=good_door\n";
+        let varps = "314=death_equiproom\n315=death_map\n";
+        let control_script = "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+";
+        let control = graph_for(
+            control_script,
+            loc_pack,
+            varps,
+            constants,
+            "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
+        );
+        assert_eq!(
+            door_crossings(&control, 3745),
+            vec![
+                ((2822, 3555), 'E', (2823, 3555)),
+                ((2822, 3555), 'W', (2821, 3555)),
+            ],
+            "the sherpa control keeps the free exit and gated reverse"
+        );
+        let gated = control
+            .edges
+            .iter()
+            .find(|e| e.loc_id == 3745 && e.dir == Some(DoorDir::W))
+            .expect("3745 W");
+        assert_eq!(gated.quest_req, vec!["Death Plateau".to_string()]);
+        assert_eq!(
+            door_crossings(&control, 5010),
+            vec![((2822, 3556), 'E', (2823, 3556))],
+            "an unrelated loc with the same shape must not be a dead pipeline"
+        );
+        assert!(
+            control
+                .edges
+                .iter()
+                .find(|e| e.loc_id == 5010)
+                .is_some_and(|e| e.quest_req.is_empty()),
+            "a non-sherpa loc must not borrow Death Plateau"
+        );
+
+        let wrong_varp = graph_for(
+            "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_equiproom, ^death_map_lower, ^death_map_upper));
+",
+            loc_pack,
+            varps,
+            constants,
+            "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
+        );
+        assert_eq!(
+            door_crossings(&wrong_varp, 3745),
+            vec![((2822, 3555), 'E', (2823, 3555))],
+            "a valid bitfield on the wrong varp still proves the free arm"
+        );
+        assert!(
+            wrong_varp
+                .edges
+                .iter()
+                .filter(|e| e.loc_id == 3745)
+                .all(|e| e.quest_req.is_empty() && e.dir == Some(DoorDir::E)),
+            "an unrelated varp must not borrow the Death Plateau reverse"
+        );
+        assert_eq!(
+            door_crossings(&wrong_varp, 5010),
+            vec![((2822, 3556), 'E', (2823, 3556))],
+            "the control loc in the wrong-varp fixture must still emit"
+        );
+
+        let wrong_range = graph_for(
+            "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~good_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_got_map));
+
+[proc,good_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+            loc_pack,
+            varps,
+            constants,
+            "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
+        );
+        assert_eq!(
+            door_crossings(&wrong_range, 3745),
+            vec![((2822, 3555), 'E', (2823, 3555))],
+            "bits 0..7 still prove a free arm"
+        );
+        assert!(
+            wrong_range
+                .edges
+                .iter()
+                .filter(|e| e.loc_id == 3745)
+                .all(|e| e.quest_req.is_empty()),
+            "a different bit range must not borrow Death Plateau"
+        );
+        assert_eq!(
+            door_crossings(&wrong_range, 5010),
+            vec![((2822, 3556), 'E', (2823, 3556))],
+            "the 0..3 control must still emit beside the range negative"
+        );
+
+        let wrong_polarity = graph_for(
+            "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = false | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+            loc_pack,
+            varps,
+            constants,
+            "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
+        );
+        assert_eq!(
+            door_crossings(&wrong_polarity, 3745),
+            vec![((2822, 3555), 'W', (2821, 3555))],
+            "the flipped polarity still proves its free crossing"
+        );
+        assert!(
+            wrong_polarity
+                .edges
+                .iter()
+                .filter(|e| e.loc_id == 3745)
+                .all(|e| e.quest_req.is_empty()),
+            "the wrong polarity must not borrow Death Plateau"
+        );
+        assert_eq!(
+            door_crossings(&wrong_polarity, 5010),
+            vec![((2822, 3556), 'E', (2823, 3556))],
+            "the polarity control must still emit"
+        );
+
+        let duplicate = graph_for(
+            "\
+[oploc1,death_sherpa_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~death_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[oploc1,good_door]
+def_boolean $leaving = ~check_axis(coord, loc_coord, loc_angle);
+if($leaving = true | ~good_get_map >= ^death_spoken_tenzing) {
+    ~open_and_close_door2(loc_1532, $leaving, door_open);
+    return;
+}
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+
+[proc,death_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+
+[proc,good_get_map]()(int)
+return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
+",
+            loc_pack,
+            varps,
+            constants,
+            "0 6 35: 3745 0 2\n0 6 36: 5010 0 2\n",
+        );
+        assert!(
+            door_crossings(&duplicate, 3745).is_empty(),
+            "a duplicated proc must not prove a free arm or borrow completion"
+        );
+        assert_eq!(
+            door_crossings(&duplicate, 5010),
+            vec![((2822, 3556), 'E', (2823, 3556))],
+            "the unique-proc control must still emit beside the duplicate"
+        );
+    }
+
     /// The real Server content (274) carries the same four Tenzing
     /// directions: 3745's free exit E and gated entry W (completed Death
     /// Plateau), 3746's free garden-to-hut S and gated garden exit N, while
@@ -7480,37 +7962,50 @@ p_delay(1);
         assert!(!graph.at.contains_key(&TELEPORT_PLACEHOLDER_AT));
     }
 
-    /// Derive the transport graph from one real content root (the same
-    /// collision bake the graph's doors walk against); `None` when the
-    /// client cache is absent.
-    fn derive_from_root(root: &Path) -> Option<(TransportGraph, WorldCollision)> {
-        let defs = real_loc_defs()?;
-        let wc =
-            bake_from_maps(&root.join("maps"), &defs, &HashSet::new()).expect("real content bakes");
-        let graph = derive_transports(root, &defs, &wc);
-        Some((graph, wc))
+    /// Explicit real-content qualification inputs. Ordinary `cargo test -p nav`
+    /// does not call this; the ignored tests below fail closed when the env
+    /// is missing or a named path is absent. Does not scan default
+    /// HOME/experiments layouts or unrelated worktrees.
+    fn required_qualification_inputs() -> (Vec<PathBuf>, LocDefs) {
+        let roots_raw = std::env::var("NAV_CONTENT_ROOT").unwrap_or_else(|_| {
+            panic!(
+                "NAV_CONTENT_ROOT is required (colon-separated content roots); \
+                 this ignored qualification must not skip"
+            )
+        });
+        let cache_raw = std::env::var("NAV_CACHE").unwrap_or_else(|_| {
+            panic!(
+                "NAV_CACHE is required (client config jag); \
+                 this ignored qualification must not skip"
+            )
+        });
+        let mut roots = Vec::new();
+        for raw in roots_raw.split(':').filter(|s| !s.is_empty()) {
+            let root = PathBuf::from(raw);
+            assert!(
+                root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file(),
+                "NAV_CONTENT_ROOT entry {} is missing maps/ or pack/loc.pack",
+                root.display()
+            );
+            roots.push(root);
+        }
+        assert!(
+            !roots.is_empty(),
+            "NAV_CONTENT_ROOT did not name any content root"
+        );
+        let cache_path = PathBuf::from(&cache_raw);
+        let bytes = std::fs::read(&cache_path).unwrap_or_else(|e| {
+            panic!("NAV_CACHE {} is unreadable: {e}", cache_path.display());
+        });
+        let cache = Cache::unpack(&JagFile::new(bytes));
+        (roots, LocDefs::from_locs(&cache.locs))
     }
 
-    /// The canonical 289 and 274 content roots this machine bakes against
-    /// (the same defaults `bundle.rs` resolves). Each present root runs the
-    /// assertions; an absent root is reported, never a silent pass.
-    fn real_content_roots() -> Vec<PathBuf> {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-        let mut out = Vec::new();
-        for root in [
-            home.join("experiments/lostcity-289/content"),
-            home.join("experiments/Server/content"),
-        ] {
-            if root.join("maps").is_dir() && root.join("pack").join("loc.pack").is_file() {
-                out.push(root);
-            } else {
-                eprintln!(
-                    "SKIP: content root {} not found (assertions not run for it)",
-                    root.display()
-                );
-            }
-        }
-        out
+    fn derive_from_root_with(root: &Path, defs: &LocDefs) -> (TransportGraph, WorldCollision) {
+        let wc = bake_from_maps(&root.join("maps"), defs, &HashSet::new())
+            .unwrap_or_else(|e| panic!("qualification content bakes ({e:?}) {}", root.display()));
+        let graph = derive_transports(root, defs, &wc);
+        (graph, wc)
     }
 
     /// The real 289 and 274 content must derive the closed fence-gate pair
@@ -7529,14 +8024,22 @@ p_delay(1);
     /// the members gate), so it must never be inherited. The previously
     /// supported `gates.loc` members keep their crossings.
     #[test]
+    #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
     fn derive_transports_tenzing_gate_pair_from_real_content() {
-        let roots = real_content_roots();
-        assert!(!roots.is_empty(), "no real content root present");
+        let (roots, defs) = required_qualification_inputs();
         for root in roots {
-            let Some((graph, _)) = derive_from_root(&root) else {
-                eprintln!("SKIP: client cache config jag missing ({})", root.display());
-                continue;
-            };
+            let (graph, _) = derive_from_root_with(&root, &defs);
+            let doors = graph
+                .edges
+                .iter()
+                .filter(|e| e.kind == TransportKind::Door)
+                .count();
+            eprintln!(
+                "qualification {} edges={} doors={}",
+                root.display(),
+                graph.edges.len(),
+                doors
+            );
             assert_eq!(
                 door_crossings(&graph, 3725),
                 vec![
@@ -7604,15 +8107,12 @@ p_delay(1);
     /// Hut → road stays free via 3745 E. 3746 S remains the garden return,
     /// not a road entry.
     #[test]
+    #[ignore = "NAV_CONTENT_ROOT and NAV_CACHE required; absence fails"]
     fn tenzing_passage_and_road_route_through_the_inherited_gate() {
         use crate::router::{find_with, FindOptions, Leg};
-        let roots = real_content_roots();
-        assert!(!roots.is_empty(), "no real content root present");
+        let (roots, defs) = required_qualification_inputs();
         for root in roots {
-            let Some((graph, wc)) = derive_from_root(&root) else {
-                eprintln!("SKIP: client cache config jag missing ({})", root.display());
-                continue;
-            };
+            let (graph, wc) = derive_from_root_with(&root, &defs);
             let state = crate::world_state::WorldState::empty();
             let passage = WorldTile {
                 x: 2823,
@@ -7789,6 +8289,27 @@ p_delay(1);
                 "3746 keeps garden -> hut free and the gated reverse ({})",
                 root.display()
             );
+            let bank = WorldTile {
+                x: 2946,
+                z: 3369,
+                level: 0,
+            };
+            for (label, from) in [("passage", passage), ("Taverley", taverley)] {
+                match find_with(&wc, &graph, from, bank, FindOptions::default(), &state) {
+                    Ok(route) => eprintln!(
+                        "{label} -> BANK_STAND(2946,3369) ok dest=({},{},{}) legs={} ({})",
+                        route.dest.x,
+                        route.dest.z,
+                        route.dest.level,
+                        route.legs.len(),
+                        root.display()
+                    ),
+                    Err(e) => eprintln!(
+                        "{label} -> BANK_STAND(2946,3369) {e:?} ({})",
+                        root.display()
+                    ),
+                }
+            }
         }
     }
 
@@ -8016,6 +8537,10 @@ param=next_loc_stage,death_gate_control_open
 op1=Open
 category=gate_outer_closed
 param=next_loc_stage,death_gate_control_open
+
+[death_gate_control_open]
+op1=Close
+category=gate_main_open
 ",
         );
         // The same member again, with a different category and stage.
@@ -8099,6 +8624,199 @@ return;
             (5041, "the member has no paired placement"),
             (5051, "the member is defined twice with different data"),
             (5061, "an unrelated op1=Open door without a gate category"),
+        ] {
+            assert!(
+                door_crossings(&graph, id).is_empty(),
+                "loc {id} must not be promoted: {why}"
+            );
+        }
+    }
+
+    /// Unresolvable headers must end the previous block, `loc_N` aliases
+    /// must resolve through loc.pack, and a missing or mismatched open-leaf
+    /// category must refuse the member. The control pair in the same
+    /// fixture still crosses.
+    #[test]
+    fn derive_transports_omits_malformed_inherited_gate_blocks() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "\
+5081=scan_control_main
+5082=scan_control_outer
+5083=scan_control_open
+5084=scan_control_outer_open
+5085=scan_leak_main
+5086=scan_leak_outer
+5087=scan_leak_open
+5088=scan_leak_outer_open
+5089=scan_missing_main
+5090=scan_missing_outer
+5091=scan_missing_open
+5092=scan_mismatch_main
+5093=scan_mismatch_outer
+5094=scan_mismatch_open
+5095=scan_bogus_main
+5096=scan_bogus_outer
+5097=scan_bogus_open
+",
+        );
+        fx.write(
+            "scripts/general_use/scripts/gates.rs2",
+            "\
+[proc,open_gate]
+return;
+
+[proc,open_outer_gate]
+return;
+
+[oploc1,_gate_main_closed] ~open_gate;
+[oploc1,_gate_outer_closed] ~open_outer_gate;
+",
+        );
+        fx.write(
+            "scripts/quests/quest_scan/configs/scan.loc",
+            "\
+[scan_control_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scan_control_open
+
+[scan_control_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_control_outer_open
+
+[scan_control_open]
+op1=Close
+category=gate_main_open
+
+[scan_control_outer_open]
+op1=Close
+category=gate_outer_open
+
+[scan_leak_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scan_leak_open
+
+[not_in_the_pack]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_leak_outer_open
+
+[scan_leak_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_leak_outer_open
+
+[scan_leak_open]
+op1=Close
+category=gate_main_open
+
+[scan_leak_outer_open]
+op1=Close
+category=gate_outer_open
+
+[scan_missing_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scan_missing_open
+
+[scan_missing_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_missing_open
+
+[scan_mismatch_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scan_mismatch_open
+
+[scan_mismatch_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_mismatch_open
+
+[scan_mismatch_open]
+op1=Close
+category=gate_outer_open
+
+[scan_bogus_main]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,loc_9999
+
+[scan_bogus_outer]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scan_bogus_open
+
+[scan_bogus_open]
+op1=Close
+category=gate_main_open
+",
+        );
+        fx.write(
+            "maps/m44_53.jm2",
+            "\
+==== MAP ====
+0 0 0: f0 u48
+
+==== LOC ====
+0 1 3: 5082 0 2
+0 1 4: 5081 0 2
+0 2 3: 5086 0 2
+0 2 4: 5085 0 2
+0 3 3: 5090 0 2
+0 3 4: 5089 0 2
+0 4 3: 5093 0 2
+0 4 4: 5092 0 2
+0 5 3: 5096 0 2
+0 5 4: 5095 0 2
+",
+        );
+        let defs = loc_defs(&[
+            (5081, 1, 1),
+            (5082, 1, 1),
+            (5085, 1, 1),
+            (5086, 1, 1),
+            (5089, 1, 1),
+            (5090, 1, 1),
+            (5092, 1, 1),
+            (5093, 1, 1),
+            (5095, 1, 1),
+            (5096, 1, 1),
+        ]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+
+        assert_eq!(
+            door_crossings(&graph, 5081),
+            vec![
+                ((2817, 3396), 'E', (2818, 3396)),
+                ((2817, 3396), 'W', (2816, 3396)),
+            ],
+            "the valid control must still be admitted"
+        );
+        assert_eq!(
+            door_crossings(&graph, 5085),
+            vec![
+                ((2818, 3396), 'E', (2819, 3396)),
+                ((2818, 3396), 'W', (2817, 3396)),
+            ],
+            "an unresolvable header must not steal the previous member"
+        );
+        for (id, why) in [
+            (
+                5089,
+                "a missing open-leaf category config must not be admitted",
+            ),
+            (5092, "a mismatched open-leaf category must not be admitted"),
+            (
+                5095,
+                "a loc_N alias that is not in loc.pack must not be admitted",
+            ),
         ] {
             assert!(
                 door_crossings(&graph, id).is_empty(),
