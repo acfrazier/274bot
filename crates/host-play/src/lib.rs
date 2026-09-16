@@ -1072,20 +1072,24 @@ fn script_observe_with_npc_boxes(
                     walk_radius,
                     walk_allow_teleports,
                 ) = {
-                    let all = navs.lock().unwrap();
-                    match all.get(name) {
-                        Some(b) => (
-                            b.allow_teleports,
-                            b.walk_outcome_seq,
-                            b.walk_outcome_generation,
-                            b.walk_outcome_request_id,
-                            b.walk_outcome_failed,
-                            b.walk_outcome_x,
-                            b.walk_outcome_z,
-                            b.walk_outcome_level,
-                            b.walk_outcome_radius,
-                            b.walk_outcome_allow_teleports,
-                        ),
+                    let mut all = navs.lock().unwrap();
+                    match all.get_mut(name) {
+                        Some(b) => {
+                            let posted = (
+                                b.allow_teleports,
+                                b.walk_outcome_seq,
+                                b.walk_outcome_generation,
+                                b.walk_outcome_request_id,
+                                b.walk_outcome_failed,
+                                b.walk_outcome_x,
+                                b.walk_outcome_z,
+                                b.walk_outcome_level,
+                                b.walk_outcome_radius,
+                                b.walk_outcome_allow_teleports,
+                            );
+                            b.mark_walk_outcome_posted();
+                            posted
+                        }
                         None => (false, 0, 0, 0, false, 0, 0, 0, 0, false),
                     }
                 };
@@ -3844,6 +3848,10 @@ struct NavBot {
     /// Isolate-allocated walk request id for the armed / in-flight find.
     /// Distinct from `route_generation`, which remains the worker / retained-route token.
     walk_request_id: u64,
+    /// Unpublished current-wait refusal id, distinct from `walk_request_id`.
+    /// Older armed-route NoPath / mid-follow terminals must not overwrite this
+    /// published outcome until a snapshot copies it.
+    walk_live_refusal_id: u64,
     /// Last packed-walk `allow_teleports` opt-in (`Traversal.teleportsEnabled`).
     allow_teleports: bool,
     /// Bounded published walk outcome. Seq `0` means never published.
@@ -4084,15 +4092,19 @@ fn apply_nav_follow_outcome(
         }
         Some(_) => {
             if let Some((to, radius, allow)) = bot.requested_route {
-                bot.note_failure(bot.route_generation, bot.walk_request_id, to, radius, allow);
+                if bot.armed_outcome_may_publish(bot.walk_request_id) {
+                    bot.note_failure(bot.route_generation, bot.walk_request_id, to, radius, allow);
+                }
             } else if let Some(route) = bot.route.as_ref() {
-                bot.note_failure(
-                    bot.route_generation,
-                    bot.walk_request_id,
-                    route.dest,
-                    0,
-                    bot.allow_teleports,
-                );
+                if bot.armed_outcome_may_publish(bot.walk_request_id) {
+                    bot.note_failure(
+                        bot.route_generation,
+                        bot.walk_request_id,
+                        route.dest,
+                        0,
+                        bot.allow_teleports,
+                    );
+                }
             }
             bot.route = None;
             if walking_stand {
@@ -6350,6 +6362,16 @@ impl NavBot {
         }
     }
 
+    /// Older armed-route results may publish only after the current wait
+    /// refusal has been copied into a snapshot, or when they *are* that wait.
+    fn armed_outcome_may_publish(&self, request_id: u64) -> bool {
+        self.walk_live_refusal_id == 0 || request_id == self.walk_live_refusal_id
+    }
+
+    fn mark_walk_outcome_posted(&mut self) {
+        self.walk_live_refusal_id = 0;
+    }
+
     fn note_failure(
         &mut self,
         generation: u64,
@@ -6358,6 +6380,11 @@ impl NavBot {
         radius: i32,
         allow_teleports: bool,
     ) {
+        // Legacy request id 0 never settles a wait. Do not replace a live
+        // nonzero refusal with it before the isolate can observe the refusal.
+        if request_id == 0 && self.walk_live_refusal_id != 0 {
+            return;
+        }
         self.bump_walk_outcome_seq();
         self.walk_outcome_generation = generation;
         self.walk_outcome_request_id = request_id;
@@ -6367,6 +6394,11 @@ impl NavBot {
         self.walk_outcome_level = to.level;
         self.walk_outcome_radius = radius;
         self.walk_outcome_allow_teleports = allow_teleports;
+        if request_id != 0 && request_id != self.walk_request_id {
+            self.walk_live_refusal_id = request_id;
+        } else {
+            self.walk_live_refusal_id = 0;
+        }
     }
 
     fn clear_walk_outcome(&mut self) {
@@ -6379,6 +6411,7 @@ impl NavBot {
         self.walk_outcome_level = 0;
         self.walk_outcome_radius = 0;
         self.walk_outcome_allow_teleports = false;
+        self.walk_live_refusal_id = 0;
     }
 
     fn publish_route(
@@ -6398,7 +6431,9 @@ impl NavBot {
             RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
             RouteOutcome::NoPath => {
                 if let Some((to, radius, allow)) = self.requested_route {
-                    self.note_failure(generation, request_id, to, radius, allow);
+                    if self.armed_outcome_may_publish(request_id) {
+                        self.note_failure(generation, request_id, to, radius, allow);
+                    }
                 }
                 // The retained route belongs to the previous request. A later
                 // request for this failed destination must be allowed to retry.
@@ -8439,6 +8474,94 @@ export default class T extends LoopingBot {{
     }
 
     #[test]
+    fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "coal".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: 7,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "coal".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            9
+        ));
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("coal").expect("nav bot");
+            assert_eq!(bot.walk_outcome_request_id, 9);
+            bot.note_failure(bot.route_generation, 0, dest, 1, false);
+            assert_eq!(
+                bot.walk_outcome_request_id, 9,
+                "legacy id 0 must not replace an unpublished current wait refusal"
+            );
+            bot.publish_route(1, 7, false, RouteOutcome::NoPath);
+            assert_eq!(bot.walk_outcome_request_id, 9);
+            assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+            assert_eq!(bot.walk_request_id, 7);
+            assert!(bot.requested_route.is_none());
+            bot.requested_route = Some((dest, 1, false));
+        }
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            11
+        ));
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("coal").expect("nav bot");
+            assert_eq!(
+                bot.walk_outcome_request_id, 11,
+                "a newer wait failure must still be publishable"
+            );
+            bot.publish_route(1, 7, false, RouteOutcome::NoPath);
+            assert_eq!(bot.walk_outcome_request_id, 11);
+            bot.mark_walk_outcome_posted();
+            bot.requested_route = Some((dest, 1, false));
+            bot.publish_route(1, 7, false, RouteOutcome::NoPath);
+            assert_eq!(
+                bot.walk_outcome_request_id, 7,
+                "after snapshot post the armed NoPath may occupy the outcome slot"
+            );
+            bot.clear_walk_outcome();
+            assert_eq!(bot.walk_outcome_request_id, 0);
+            assert!(!bot.walk_outcome_failed);
+            assert_eq!(bot.walk_live_refusal_id, 0);
+        }
+    }
+
+    #[test]
     fn same_key_pending_route_refuses_distinct_id() {
         let dest = WorldTile {
             x: 2820,
@@ -8566,6 +8689,9 @@ export default class T extends LoopingBot {{
             let bot = all.get_mut("coal").expect("nav bot");
             assert_eq!(bot.walk_request_id, first_id);
             assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+            // The isolate already observed the current wait refusal. A later
+            // coalesced NoPath may now occupy the single outcome slot.
+            bot.mark_walk_outcome_posted();
             bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
             assert_eq!(
                 bot.route.as_ref().map(|r| r.dest),
@@ -8582,6 +8708,182 @@ export default class T extends LoopingBot {{
             iso.probe("__rs_b").unwrap(),
             false,
             "delayed first NoPath must not unset the later wait"
+        );
+        assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+        iso.join();
+    }
+
+    #[test]
+    fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let iso = script::LoadIsolate::spawn(
+            overlapping_walk_src(dest.x, dest.z, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "coal".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: first_id,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "coal".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            first_id
+        ));
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            second_id
+        ));
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("coal").expect("nav bot");
+            assert_eq!(bot.walk_outcome_request_id, second_id);
+            assert_eq!(bot.walk_request_id, first_id);
+            bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
+            assert_eq!(
+                bot.walk_outcome_request_id, second_id,
+                "older coalesced NoPath must not overwrite an unpublished current wait refusal"
+            );
+            assert!(bot.walk_outcome_failed);
+            assert_eq!(bot.walk_request_id, first_id);
+            assert_eq!(bot.route_generation, 1);
+            assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
+            assert!(bot.route_worker.is_some());
+            assert!(bot.requested_route.is_none());
+        }
+        let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
+        assert_eq!(posted.request_id, second_id);
+        assert!(posted.failed);
+        iso.post_snapshot(encode_walk_snapshot(2, (2823, 3555, 0), posted));
+        iso.on_game_tick(2);
+        assert_eq!(
+            iso.probe("__rs_b").unwrap(),
+            false,
+            "later wait must settle false from its own refusal after pre-snapshot NoPath"
+        );
+        assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
+        iso.join();
+    }
+
+    #[test]
+    fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
+        let dest = WorldTile {
+            x: 2820,
+            z: 3556,
+            level: 0,
+        };
+        let old = Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        };
+        let iso = script::LoadIsolate::spawn(
+            overlapping_walk_src(dest.x, dest.z, 1),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "coal".to_string(),
+            NavBot {
+                route: Some(old.clone()),
+                route_generation: 1,
+                route_worker: Some(Arc::new(())),
+                requested_route: Some((dest, 1, false)),
+                walk_request_id: first_id,
+                ..Default::default()
+            },
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((2823, 3555, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "coal".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            first_id
+        ));
+        assert!(!arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            second_id
+        ));
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("coal").expect("nav bot");
+            assert_eq!(bot.walk_outcome_request_id, second_id);
+            apply_nav_follow_outcome(
+                bot,
+                Some(nav::traveller::TravelOutcome::GaveUp { at: dest, hops: 3 }),
+                false,
+            );
+            assert_eq!(
+                bot.walk_outcome_request_id, second_id,
+                "older mid-follow terminal must not overwrite an unpublished current wait refusal"
+            );
+            assert!(bot.walk_outcome_failed);
+            assert_eq!(bot.walk_request_id, first_id);
+            assert_eq!(bot.route_generation, 1);
+            assert!(bot.route.is_none());
+            assert!(bot.route_worker.is_some());
+        }
+        let posted = posted_from_bot(&navs.lock().unwrap()["coal"]);
+        assert_eq!(posted.request_id, second_id);
+        assert!(posted.failed);
+        iso.post_snapshot(encode_walk_snapshot(2, (2823, 3555, 0), posted));
+        iso.on_game_tick(2);
+        assert_eq!(
+            iso.probe("__rs_b").unwrap(),
+            false,
+            "later wait must settle false from its own refusal after pre-snapshot terminal"
         );
         assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
         iso.join();
