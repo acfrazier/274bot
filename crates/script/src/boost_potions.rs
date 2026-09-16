@@ -12,20 +12,32 @@
 //! op "table"  -> the descriptor rows, the floor and the drained flask name
 //! op "faded"  -> `boostFaded(base, effective[, floor])`
 //! op "plan"   -> `plannedPotions(carry)`, one step per dose comparison
-//! op "sip"    -> `potionToSip(state)`, one step per callback
+//! op "sip"    -> `potionToSip(state)`, one step per observation
 //! ```
+//!
+//! The sip step asks for one callback per reply, in the frozen order: the
+//! caller's `levels` answer for the plan its iteration reached, then
+//! `s.held(plan)`, then — only once the pack is known to hold a dose — the
+//! marshaled level numbers the boost arithmetic needs.
 //!
 //! Every step is stateless, so a callback that re-enters a helper cannot disturb
 //! the selection in flight, and no caller object, carry row, plan or callback
 //! answer crosses the rustyscript bridge: the shim reports a single bounded
 //! observation per step (the item key the frozen comparison reads at that dose,
-//! level numbers, held truthiness).
+//! the held count, level numbers).
 //!
-//! JS number semantics stay at the marshaling boundary. The shim converts the
-//! values it reads with `Number()` — the same coercion the frozen arithmetic
-//! would apply — and tags the three non-finite results with `String(value)`,
-//! because no JSON number can carry them. The threshold arithmetic below is
-//! then the frozen IEEE-754 arithmetic.
+//! JS number semantics stay at the marshaling boundary, and only there. The shim
+//! converts the one operand it sends with `Number()`, which for the values the
+//! typed frozen callers supply (numbers, numeric strings, booleans, `null`) is
+//! the same conversion the frozen operator applies, and it tags the three
+//! non-finite results with `String(value)`, because no JSON number can carry
+//! them. That is not a general replay of JS coercion: `Number(bigint)` succeeds
+//! where the frozen `-` and `*` throw on a BigInt/Number mix, and an exotic
+//! object operand is converted once here where one frozen expression may convert
+//! it again (`boostFaded` reads `base` in `base > 0`, in `effective - base` and
+//! in `floor * base`). The predicates and arithmetic below are the frozen
+//! IEEE-754 ones, and each conversion happens when the frozen expression would
+//! reach its operand.
 
 use serde_json::{json, Value};
 
@@ -289,24 +301,54 @@ fn plan_exhausted(payload: &Value) -> Value {
     json!({ "kind": "fallback", "flask": potion.flask(), "want": DEFAULT_WANT })
 }
 
+/// Whether the caller's pack holds the potion: the frozen `s.held(plan) > 0`.
+///
+/// The shim reports `s.held(plan)` as a marshaled number, so the predicate
+/// itself stays here: a tagged `NaN` is not positive, a tagged `Infinity` is.
+fn held_positive(held: JsNumber) -> bool {
+    held.get() > 0.0
+}
+
 /// One step of `potionToSip(state)`.
 ///
-/// The shim reports one observation per call: `reached` (the caller's own
-/// iteration produced a plan), then the `levels` answer for that plan's skill,
-/// then whether the pack holds that potion. The reply is the next callback to
-/// run, the next iteration, the selected plan or the no-sip outcome.
+/// The shim reports one observation per call — `reached` (the caller's own
+/// iteration produced a plan), then the held count, then the level numbers that
+/// plan's `levels` answer captured — and runs the one callback the reply asks
+/// for: `levels` for the reached plan's skill, `boost` for the level numbers the
+/// arithmetic needs. The reply is the next observation to send, the next
+/// iteration, the selected plan or the no-sip outcome.
 ///
-/// Native owns the levels-before-held order and the first-match exit, so a
-/// later plan's callbacks are never requested and a plan the caller already
-/// reported is never re-decided.
+/// Native owns the positive-held predicate, the levels-before-held callback
+/// order and the first-match exit. The frozen `s.held(plan) > 0 &&
+/// boostFaded(base, effective)` short-circuits on the pack, so the level numbers
+/// are asked for only once a dose is known to be held, and a later plan's
+/// callbacks are never requested.
 fn sip_step(payload: &Value) -> Value {
     match payload.get("reached").and_then(Value::as_bool) {
         Some(true) => {}
         Some(false) => return json!({ "kind": "none" }),
         None => return feature_error("boostPotions.potionToSip"),
     }
+    let Some(held) = payload.get("held") else {
+        // Nothing observed but the reached plan: ask for its levels answer.
+        if payload.get("base").is_some() || payload.get("effective").is_some() {
+            return feature_error("boostPotions.potionToSip");
+        }
+        return json!({ "kind": "levels" });
+    };
+    let Some(held) = JsNumber::from_json(held) else {
+        return feature_error("boostPotions.potionToSip");
+    };
     let (base, effective) = match (payload.get("base"), payload.get("effective")) {
-        (None, None) => return json!({ "kind": "levels" }),
+        // The pack observation arrives on its own, so an empty pack decides the
+        // plan without the level numbers ever being converted.
+        (None, None) => {
+            return if held_positive(held) {
+                json!({ "kind": "boost" })
+            } else {
+                json!({ "kind": "next" })
+            };
+        }
         (base, effective) => {
             let (Some(base), Some(effective)) = (
                 base.and_then(JsNumber::from_json),
@@ -317,14 +359,7 @@ fn sip_step(payload: &Value) -> Value {
             (base, effective)
         }
     };
-    let held_ok = match payload.get("held_ok") {
-        None => return json!({ "kind": "held" }),
-        Some(value) => match value.as_bool() {
-            Some(held_ok) => held_ok,
-            None => return feature_error("boostPotions.potionToSip"),
-        },
-    };
-    if held_ok && boost_faded(base, effective, JsNumber::Finite(BOOST_FLOOR)) {
+    if held_positive(held) && boost_faded(base, effective, JsNumber::Finite(BOOST_FLOOR)) {
         json!({ "kind": "hit" })
     } else {
         json!({ "kind": "next" })
@@ -642,59 +677,128 @@ mod tests {
     }
 
     #[test]
-    fn sip_asks_levels_then_held_and_decides_the_first_due_plan() {
+    fn sip_asks_levels_then_the_pack_and_takes_the_short_circuit() {
         assert_eq!(sip(json!({ "reached": true })), json!({ "kind": "levels" }));
         assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 77 })),
-            json!({ "kind": "held" }),
-            "held is asked only after the caller's levels answer"
+            sip(json!({ "reached": true, "held": 1 })),
+            json!({ "kind": "boost" }),
+            "a held dose asks for the level numbers, after the caller's levels answer"
         );
         assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 77, "held_ok": true })),
-            json!({ "kind": "hit" })
-        );
-        assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 78, "held_ok": true })),
-            json!({ "kind": "next" })
-        );
-        assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 77, "held_ok": false })),
+            sip(json!({ "reached": true, "held": 0 })),
             json!({ "kind": "next" }),
-            "an empty pack never selects its plan"
-        );
-        assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 60, "held_ok": true })),
-            json!({ "kind": "next" }),
-            "a drained skill is not a decayed boost"
+            "an empty pack never reaches the boost arithmetic"
         );
         assert_eq!(
             sip(json!({ "reached": false })),
             json!({ "kind": "none" }),
             "an exhausted caller iteration sips nothing"
         );
+        assert_eq!(
+            sip(json!({ "reached": false, "held": 1, "base": 70, "effective": 70 })),
+            json!({ "kind": "none" })
+        );
+    }
+
+    #[test]
+    fn sip_owns_the_positive_held_predicate_for_every_marshaled_count() {
+        let held = |held: Value| sip(json!({ "reached": true, "held": held }));
+        assert_eq!(held(json!(1)), json!({ "kind": "boost" }));
+        assert_eq!(held(json!(0.5)), json!({ "kind": "boost" }));
+        assert_eq!(
+            held(json!("Infinity")),
+            json!({ "kind": "boost" }),
+            "a tagged Infinity is a held pack"
+        );
+        assert_eq!(held(json!(0)), json!({ "kind": "next" }));
+        assert_eq!(held(json!(-1)), json!({ "kind": "next" }));
+        assert_eq!(held(json!("-Infinity")), json!({ "kind": "next" }));
+        assert_eq!(
+            held(json!("NaN")),
+            json!({ "kind": "next" }),
+            "a tagged NaN is never a held pack"
+        );
+        // The frozen `&&` is short-circuited by the pack, so a non-positive
+        // count decides the plan even when the level numbers are present.
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 0, "base": 70, "effective": 70 })),
+            json!({ "kind": "next" })
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": "NaN", "base": 70, "effective": 77 })),
+            json!({ "kind": "next" })
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": -3, "base": 70, "effective": 70 })),
+            json!({ "kind": "next" })
+        );
+    }
+
+    #[test]
+    fn sip_decides_the_plan_from_the_levels_the_pack_observation_unlocked() {
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": 77 })),
+            json!({ "kind": "hit" })
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": 70 })),
+            json!({ "kind": "hit" }),
+            "an unboosted skill is due its first dose"
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": 78 })),
+            json!({ "kind": "next" })
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": 60 })),
+            json!({ "kind": "next" }),
+            "a drained skill is not a decayed boost"
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 0, "effective": 0 })),
+            json!({ "kind": "next" }),
+            "an unread skill is never worth a dose"
+        );
+        assert_eq!(
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": "Infinity" })),
+            json!({ "kind": "next" }),
+            "the boost arithmetic stays native: a tagged value still crosses"
+        );
     }
 
     #[test]
     fn sip_rejects_a_malformed_observation_instead_of_repeating_a_step() {
+        let error = json!({ "kind": "error", "feature": "boostPotions.potionToSip" });
+        assert_eq!(sip(json!({})), error);
+        assert_eq!(sip(json!({ "reached": "yes" })), error);
         assert_eq!(
-            sip(json!({})),
-            json!({ "kind": "error", "feature": "boostPotions.potionToSip" })
+            sip(json!({ "reached": true, "held": null })),
+            error,
+            "a null count is not a caller number"
+        );
+        assert_eq!(sip(json!({ "reached": true, "held": true })), error);
+        assert_eq!(
+            sip(json!({ "reached": true, "held": "lots" })),
+            error,
+            "only the three non-finite tags cross as strings"
         );
         assert_eq!(
-            sip(json!({ "reached": true, "base": 70 })),
-            json!({ "kind": "error", "feature": "boostPotions.potionToSip" })
+            sip(json!({ "reached": true, "base": 70, "effective": 77 })),
+            error,
+            "level numbers without the pack observation"
         );
         assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": null })),
-            json!({ "kind": "error", "feature": "boostPotions.potionToSip" })
+            sip(json!({ "reached": true, "held": 1, "base": 70 })),
+            error,
+            "half a levels answer"
         );
         assert_eq!(
-            sip(json!({ "reached": true, "base": 70, "effective": 77, "held_ok": 1 })),
-            json!({ "kind": "error", "feature": "boostPotions.potionToSip" })
+            sip(json!({ "reached": true, "held": 1, "effective": 77 })),
+            error
         );
         assert_eq!(
-            sip(json!({ "reached": "yes" })),
-            json!({ "kind": "error", "feature": "boostPotions.potionToSip" })
+            sip(json!({ "reached": true, "held": 1, "base": 70, "effective": null })),
+            error
         );
     }
 
