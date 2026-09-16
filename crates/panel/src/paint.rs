@@ -236,7 +236,7 @@ impl PaintOverlay {
         .filled(true)
         .build();
         dl.add_rect([x, y], [x + w, y + height], ACCENT)
-            .thickness(1.0)
+            .thickness(s)
             .build();
         let glyph = if self.collapsed { "+" } else { "–" };
         let header = match &paint.title {
