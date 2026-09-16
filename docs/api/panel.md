@@ -295,16 +295,21 @@ the `PROCESS` key.
 
 **Script** Browse / Load / Reload / Start / Pause / Stop are wired
 ([script.md](script.md)). Load is enabled except while a script is active.
-**Reload** hashes the selected File/catalog card; unchanged origins skip
-transpile; confirm restarts matching running bots and **Stops** matching
-paused bots. Browse’s **Refresh catalog** re-scans the catalog root with
-the same confirm policy when owners are affected. MultiBox rail
-**Start all / Stop all** are script bulk controls (not login). Parameters
-**Edit** is live for a loaded card with a settings schema (typed editors
-honour `showIf` / `group`; File Load parses `export const SETTINGS` with
-no V8) and writes the focused profile’s vault settings bag. Uncollapse
-shows merged rows, or `(no parameters)` when the schema is empty.
-Successful Start persists the per-profile script assignment. **Nav config**
+**Reload** hashes the selected File/catalog card; unchanged origins report
+“Nothing changed; nothing to reload” and skip transpile; confirm restarts
+matching running bots and **Stops** matching paused bots. Browse’s
+**Refresh catalog** re-scans the catalog root (“Nothing changed.” when the
+scan is identical) with the same confirm/restart/stop policy when owners
+are affected. MultiBox rail **Start all / Stop all** are script bulk
+controls (not login): Start all skips already running/paused/stopping
+members; Stop all stops running and paused wall members and live slots.
+Parameters **Edit** is live for a loaded card with a settings schema
+(typed editors honour `showIf` / `group`; File Load parses
+`export const SETTINGS` with no V8) and writes the focused profile’s vault
+settings bag. Start-only keys apply on the next Start; live edits reach a
+matching running or paused isolate without restart. Uncollapse shows
+merged rows, or `(no parameters)` when the schema is empty. Successful
+Start persists the per-profile script assignment. **Nav config**
 is live (debug paints / labels / FindOptions toggles) as its own
 non-blocking window. **General config** (under WalkTo, above profile) is
 **slot** (capture, auto-login on title), **render** (none/GPU/CPU; click
