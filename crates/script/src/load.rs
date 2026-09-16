@@ -12,9 +12,9 @@
 //! Start of a JS card (`LoadIsolate::spawn`); nothing here `include_str!`s
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
-#[cfg(feature = "load")]
-use std::collections::HashMap;
 use std::collections::HashSet;
+#[cfg(feature = "load")]
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "load")]
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -1398,6 +1398,48 @@ mod isolate {
     const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
     /// Heap cap for the isolate (~64 MB, the brief's number).
     const MAX_HEAP: usize = 64 * 1024 * 1024;
+    /// Bounded native pairing metadata for mouse gestures produced by one
+    /// isolate. Overflow invalidates every unmatched pair rather than letting
+    /// a later up inherit a newer gesture's identity.
+    const MAX_MOUSE_GESTURES: usize = 32;
+
+    #[derive(Default)]
+    struct MouseGestureIdentities {
+        pairs: VecDeque<u64>,
+        /// Number of leading ups that cannot be paired after overflow. The
+        /// count is bounded storage and makes them fail closed at identity 0.
+        unpairable: u64,
+    }
+
+    fn stamp_mouse_gesture_identities(
+        reqs: &mut [crate::shim::InteractReq],
+        input_identity: u64,
+        gestures: &mut MouseGestureIdentities,
+    ) {
+        for req in reqs {
+            let crate::shim::InteractReq::Mouse { down, identity, .. } = req else {
+                continue;
+            };
+            if *down {
+                *identity = input_identity;
+                if gestures.unpairable != 0 {
+                    gestures.unpairable = gestures.unpairable.saturating_add(1);
+                } else if gestures.pairs.len() >= MAX_MOUSE_GESTURES {
+                    gestures.unpairable = (gestures.pairs.len() as u64).saturating_add(1);
+                    gestures.pairs.clear();
+                } else {
+                    gestures.pairs.push_back(input_identity);
+                }
+            } else if gestures.unpairable != 0 {
+                gestures.unpairable -= 1;
+                *identity = 0;
+            } else {
+                // FIFO is deliberate: if a second down precedes the first
+                // up, that old up must retain the oldest gesture identity.
+                *identity = gestures.pairs.pop_front().unwrap_or(0);
+            }
+        }
+    }
 
     struct SnapshotMessage {
         bytes: Vec<u8>,
@@ -4865,6 +4907,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         // and paint frames share it (`reset` between messages).
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
         let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
+        let mut mouse_gestures = MouseGestureIdentities::default();
         loop {
             #[cfg(feature = "memory-profile")]
             if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
@@ -5115,15 +5158,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         .unwrap_or_default()
                         .into_iter()
                         .filter_map(|row| match row {
-                            crate::shim::MaybeInteractReq::Req(mut req) => {
-                                if let crate::shim::InteractReq::Mouse { identity, .. } = &mut req {
-                                    *identity = input_identity;
-                                }
-                                Some(req)
-                            }
+                            crate::shim::MaybeInteractReq::Req(req) => Some(req),
                             crate::shim::MaybeInteractReq::Skip(_) => None,
                         })
                         .collect();
+                    stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                     let (enqueued, settled) = take_wait_facts(&mut runtime);
                     append_wait_facts(&mut reqs, enqueued, settled);
                     if !reqs.is_empty() {
@@ -5600,6 +5639,147 @@ export default class T extends LoopingBot {
                 "{reqs:?}"
             );
             iso.join();
+        }
+
+        #[test]
+        fn root_mouse_parked_up_keeps_revoked_gesture_identity() {
+            let iso = LoadIsolate::spawn(
+                r#"
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+        await new Promise((resolve) => {
+            globalThis.__release = () => {
+                globalThis.__rs2b0t_host.parked = false;
+                resolve();
+            };
+            globalThis.__rs2b0t_host.parked = true;
+        });
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+
+            iso.on_game_tick_at(1, 42);
+            iso.probe("true").unwrap();
+            let first = iso.drain_interacts();
+            assert!(
+                first.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: true,
+                        identity: 42,
+                        ..
+                    }
+                )),
+                "{first:?}"
+            );
+
+            iso.pause();
+            iso.resume();
+            iso.probe("globalThis.__release(); true").unwrap();
+            iso.on_game_tick_at(2, 43);
+            iso.probe("true").unwrap();
+            let second = iso.drain_interacts();
+            assert!(
+                second.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: false,
+                        identity: 42,
+                        ..
+                    }
+                )),
+                "parked old up was restamped: {second:?}"
+            );
+            iso.join();
+        }
+
+        #[test]
+        fn execution_delay_ticks_mouse_up_keeps_down_identity() {
+            let iso = LoadIsolate::spawn(
+                r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+        await Execution.delayTicks(1);
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+
+            iso.on_game_tick_at(1, 42);
+            iso.probe("true").unwrap();
+            let first = iso.drain_interacts();
+            assert!(first.iter().any(|req| matches!(
+                req,
+                crate::shim::InteractReq::Mouse {
+                    down: true,
+                    identity: 42,
+                    ..
+                }
+            )));
+
+            iso.pause();
+            iso.resume();
+            iso.on_game_tick_at(2, 43);
+            iso.probe("true").unwrap();
+            let second = iso.drain_interacts();
+            assert!(
+                second.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: false,
+                        identity: 42,
+                        ..
+                    }
+                )),
+                "{second:?}"
+            );
+            iso.join();
+        }
+
+        #[test]
+        fn mouse_gesture_identity_overflow_fails_closed() {
+            let mouse = |down| crate::shim::InteractReq::Mouse {
+                down,
+                x: 10.0,
+                y: 10.0,
+                button: 0,
+                identity: 99,
+            };
+            let mut gestures = MouseGestureIdentities::default();
+            let mut downs: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(true)).collect();
+            stamp_mouse_gesture_identities(&mut downs, 7, &mut gestures);
+            assert!(downs
+                .iter()
+                .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 7, .. })));
+            assert!(gestures.pairs.is_empty());
+            assert_eq!(gestures.unpairable, 33);
+
+            let mut ups: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(false)).collect();
+            stamp_mouse_gesture_identities(&mut ups, 7, &mut gestures);
+            assert!(ups
+                .iter()
+                .all(|req| matches!(req, crate::shim::InteractReq::Mouse { identity: 0, .. })));
+            assert_eq!(gestures.unpairable, 0);
         }
 
         #[test]

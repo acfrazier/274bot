@@ -12408,6 +12408,133 @@ export default class T extends LoopingBot {
     }
 
     #[test]
+    fn canvas_mouse_parked_old_up_preserves_fresh_producer_hold() {
+        let inp = SlotInput::new();
+        let authority = inp.authority();
+        let old_identity = authority.publish_live();
+        let iso = script::LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+        await new Promise((resolve) => {
+            globalThis.__release = () => {
+                globalThis.__rs2b0t_host.parked = false;
+                resolve();
+            };
+            globalThis.__rs2b0t_host.parked = true;
+        });
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+    }
+}
+"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("parked mouse isolate starts");
+        let mut shell = client::client::GameShell::new();
+
+        iso.on_game_tick_at(1, old_identity);
+        iso.probe("true").unwrap();
+        let old_down = iso.drain_interacts();
+        assert!(
+            old_down.iter().any(|req| matches!(
+                req,
+                script::shim::InteractReq::Mouse {
+                    down: true,
+                    identity,
+                    ..
+                } if *identity == old_identity
+            )),
+            "{old_down:?}"
+        );
+        assert!(take_script_interacts(old_down, Some(&inp)).is_empty());
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        assert_eq!(shell.mouse_click_x, 100);
+
+        iso.pause();
+        authority.revoke();
+        authority.resume();
+        iso.resume();
+        let fresh_identity = authority.lock().identity();
+        assert_ne!(fresh_identity, old_identity);
+
+        iso.probe(
+            "(() => { document.getElementById('canvas').dispatchEvent(new MouseEvent('mousedown', {clientX: 50, clientY: 50})); return true; })()",
+        )
+        .unwrap();
+        iso.on_game_tick_at(2, fresh_identity);
+        iso.probe("true").unwrap();
+        let fresh_down = iso.drain_interacts();
+        assert!(
+            fresh_down.iter().any(|req| matches!(
+                req,
+                script::shim::InteractReq::Mouse {
+                    down: true,
+                    identity,
+                    ..
+                } if *identity == fresh_identity
+            )),
+            "{fresh_down:?}"
+        );
+        assert!(take_script_interacts(fresh_down, Some(&inp)).is_empty());
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        assert_eq!(shell.mouse_click_x, 50);
+
+        iso.probe("globalThis.__release(); true").unwrap();
+        iso.on_game_tick_at(3, fresh_identity);
+        iso.probe("true").unwrap();
+        let old_up = iso.drain_interacts();
+        assert!(
+            old_up.iter().any(|req| matches!(
+                req,
+                script::shim::InteractReq::Mouse {
+                    down: false,
+                    identity,
+                    ..
+                } if *identity == old_identity
+            )),
+            "{old_up:?}"
+        );
+        assert!(take_script_interacts(old_up, Some(&inp)).is_empty());
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 1,
+            "the parked old up must not release the fresh hold"
+        );
+        assert_eq!(shell.mouse_click_x, 50);
+
+        iso.probe(
+            "(() => { document.getElementById('canvas').dispatchEvent(new MouseEvent('mouseup', {clientX: 50, clientY: 50})); return true; })()",
+        )
+        .unwrap();
+        iso.on_game_tick_at(4, fresh_identity);
+        iso.probe("true").unwrap();
+        let fresh_up = iso.drain_interacts();
+        assert!(
+            fresh_up.iter().any(|req| matches!(
+                req,
+                script::shim::InteractReq::Mouse {
+                    down: false,
+                    identity,
+                    ..
+                } if *identity == fresh_identity
+            )),
+            "{fresh_up:?}"
+        );
+        assert!(take_script_interacts(fresh_up, Some(&inp)).is_empty());
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+        iso.join();
+    }
+
+    #[test]
     fn canvas_mouse_logout_before_frame_releases_script_hold() {
         let inp = SlotInput::new();
         inp.authority().publish_live();

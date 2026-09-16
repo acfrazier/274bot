@@ -203,8 +203,15 @@ struct ScriptMouseEv {
     y: i32,
 }
 
+#[derive(Clone, Copy)]
+struct ScriptMouseGesture {
+    generation: u64,
+    seq: u64,
+}
+
 struct MouseState {
     q: VecDeque<ScriptMouseEv>,
+    gestures: VecDeque<ScriptMouseGesture>,
     next_seq: u64,
     held: MouseOwner,
     pending: MouseOwner,
@@ -215,6 +222,7 @@ impl MouseState {
     fn new() -> Self {
         Self {
             q: VecDeque::new(),
+            gestures: VecDeque::new(),
             next_seq: 0,
             held: MouseOwner::None,
             pending: MouseOwner::None,
@@ -360,23 +368,50 @@ impl SlotInput {
     /// Does not restamp the live permit onto stale work.
     pub fn enqueue_script_mouse_at(&self, identity: u64, down: bool, x: f64, y: f64, button: i32) {
         let permit = self.authority.lock();
-        if !permit.eligible() || identity != permit.identity() {
-            return;
-        }
         let Some((ax, ay, java_btn)) = Self::map_script_mouse(x, y, button) else {
             return;
         };
         let mut mouse = self.mouse.lock().unwrap();
+        let pair = if down {
+            if !permit.eligible() || identity != permit.identity() {
+                return;
+            }
+            if mouse.gestures.len() >= SCRIPT_MOUSE_QUEUE_CAP {
+                mouse.overflow = true;
+                mouse.q.clear();
+                mouse.gestures.clear();
+                return;
+            }
+            let pair = ScriptMouseGesture {
+                generation: identity,
+                seq: mouse.next_seq,
+            };
+            mouse.next_seq = mouse.next_seq.wrapping_add(1);
+            mouse.gestures.push_back(pair);
+            pair
+        } else {
+            let Some(pos) = mouse
+                .gestures
+                .iter()
+                .position(|pair| pair.generation == identity)
+            else {
+                return;
+            };
+            let pair = mouse.gestures.remove(pos).expect("mouse gesture position");
+            if !permit.eligible() || identity != permit.identity() {
+                return;
+            }
+            pair
+        };
         if mouse.q.len() >= SCRIPT_MOUSE_QUEUE_CAP {
             mouse.overflow = true;
             mouse.q.clear();
+            mouse.gestures.clear();
             return;
         }
-        let seq = mouse.next_seq;
-        mouse.next_seq = mouse.next_seq.wrapping_add(1);
         mouse.q.push_back(ScriptMouseEv {
-            generation: identity,
-            seq,
+            generation: pair.generation,
+            seq: pair.seq,
             down,
             button: java_btn,
             x: ax,
@@ -449,7 +484,8 @@ impl SlotInput {
                 mouse.pending = owner;
             } else if matches!(
                 mouse.held,
-                MouseOwner::Script { generation, .. } if generation == ev.generation
+                MouseOwner::Script { generation, seq }
+                    if generation == ev.generation && seq == ev.seq
             ) {
                 shell.apply_mouse_up();
                 mouse.held = MouseOwner::None;
@@ -804,6 +840,30 @@ mod tests {
     }
 
     #[test]
+    fn older_script_up_does_not_release_newer_same_identity_hold() {
+        let inp = live_input();
+        let mut shell = client::client::GameShell::new();
+
+        inp.enqueue_script_mouse(true, 10.0, 10.0, 0);
+        inp.consume_native_frame(&mut shell);
+        inp.enqueue_script_mouse(true, 20.0, 20.0, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        assert_eq!(shell.mouse_click_x, 20);
+
+        inp.enqueue_script_mouse(false, 10.0, 10.0, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 1,
+            "the older gesture's up must not release the newer hold"
+        );
+
+        inp.enqueue_script_mouse(false, 20.0, 20.0, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+    }
+
+    #[test]
     fn root_mouse_revoked_hold_must_not_survive_resume_before_frame() {
         let inp = live_input();
         let mut shell = client::client::GameShell::new();
@@ -934,7 +994,7 @@ mod tests {
         inp.consume_native_frame(&mut shell);
         assert_eq!(shell.mouse_button, 1);
         for _ in 0..33 {
-            inp.enqueue_script_mouse(false, 10.0, 10.0, 0);
+            inp.enqueue_script_mouse(true, 10.0, 10.0, 0);
         }
         inp.consume_native_frame(&mut shell);
         assert_eq!(shell.mouse_button, 0);
