@@ -5010,21 +5010,49 @@ impl Play {
     }
 
     /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before slots that already queued. Mirrors the place onto the
-    /// status row so the queue card can show *k of n* during maininit
-    /// (the slot has not entered [`wait_for_permit`] yet).
+    /// before slots that already queued. Mirrors the place onto the status row
+    /// so the queue card can show *k of n* during maininit (the slot has not
+    /// entered [`wait_for_permit`] yet). A slot that cannot wait — already
+    /// ingame, or a thread that already returned — only gets the precedence
+    /// remembered: reserving a place for it would be an orphan FIFO entry that
+    /// strands real waiters behind a phantom and publishes *k of n* for a
+    /// running bot.
     pub fn prefer_login(&self, uid: i32) {
-        let mut q = self.queue.lock().unwrap();
-        q.prefer(uid);
-        let pos = q.status(uid);
-        drop(q);
         let name = self
             .arms
             .iter()
             .find(|(_, arm)| arm.uid.load(Ordering::Relaxed) == uid)
             .map(|(n, _)| n.clone());
+        let reserve = name.as_deref().is_some_and(|name| self.slot_can_wait(name));
+        let mut q = self.queue.lock().unwrap();
+        if reserve {
+            q.prefer(uid);
+            let pos = q.status(uid);
+            drop(q);
+            if let Some(name) = name {
+                apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
+            }
+            return;
+        }
+        // Keep the head's precedence without a place: `request_permit`
+        // pushes a preferred uid to the front when it really asks.
+        q.set_preferred(Some(uid));
+        q.leave(uid);
+        drop(q);
         if let Some(name) = name {
-            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
+            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, None);
+        }
+    }
+
+    /// Whether `name`'s slot thread can still enter [`wait_for_permit`]: a
+    /// starting slot (its row is published by the thread before maininit) or
+    /// a title-screen slot. An ingame slot waits for a disconnect first, and a
+    /// slot whose prepare/login gave up has no thread left to ask.
+    fn slot_can_wait(&self, name: &str) -> bool {
+        let all = self.statuses.lock().unwrap();
+        match all.iter().find(|s| s.username == name) {
+            None => true,
+            Some(row) => !row.ingame && row.startup_phase != StartupPhase::Error,
         }
     }
 
@@ -5921,13 +5949,24 @@ fn spawn_slot_thread(
                 }
                 if !client.ingame {
                     if !should_handshake(&arm, client.ingame) {
+                        // No pending intent (title hold, latched logout, a
+                        // withdrawn wait): a parked slot holds no FIFO place
+                        // and publishes no `k of n`, so a reservation
+                        // (`Play::prefer_login` for the TV head) that
+                        // outlived its intent cannot strand later members.
+                        drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                         thread::sleep(Duration::from_millis(20));
                         continue;
                     }
-                    wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm.stop);
+                    let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if arm.stop.load(Ordering::Relaxed) {
                         slot_queue.lock().unwrap().leave(uid);
                         return;
+                    }
+                    // A withdrawal that lands on the granted poll spends the
+                    // permit but must not start the handshake it cancelled.
+                    if wait == PermitWait::Cancelled || !should_handshake(&arm, client.ingame) {
+                        continue;
                     }
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
@@ -6340,24 +6379,88 @@ fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) 
     }
 }
 
+/// Refresh cadence for a waiting slot's published place. A window-blocked
+/// head can sleep a whole 60 s deadline in one wait, so the card would
+/// otherwise miss members that queue behind it. Read-only: the refresh
+/// re-reads `status(uid)` and never requests a permit.
+const QUEUE_PUBLISH: Duration = Duration::from_millis(200);
+
+/// Outcome of [`wait_for_permit`]. `Granted` may handshake (the caller still
+/// re-checks the intent); `Cancelled` means the request was withdrawn before
+/// any handshake and neither its FIFO place nor its published `k of n`
+/// survives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermitWait {
+    Granted,
+    Cancelled,
+}
+
+/// Drop `uid`'s login-FIFO place and the slot's published `k of n`.
+/// [`LoginQueue::leave`] reports whether a place was really held, so a slot
+/// that never queued leaves its row alone. Guessing here would blank a card
+/// the panel legitimately shows through its FIFO-head fallback.
+fn drop_queue_place(
+    queue: &Arc<Mutex<LoginQueue>>,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    uid: i32,
+) {
+    let removed = queue.lock().unwrap().leave(uid);
+    if removed {
+        apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
+    }
+}
+
+/// Whether a pending permit wait must be withdrawn before any handshake:
+/// `stop` (rail ✕ / slot removal), the intent itself (`want_login` cleared by
+/// an intentional logout or by the wall re-applying auto-login), the logout
+/// latch, or the auto-login checkbox that armed the intent being cleared.
+/// `auto_sourced` latches once the pending intent is observed armed by
+/// auto-login — [`SlotArm::new`] seeds `want_login = auto_login`, so clearing
+/// the checkbox withdraws the wait it armed, while an explicit Log in /
+/// Login all intent (armed with auto-login off) survives the same toggle.
+fn permit_wait_cancelled(arm: &SlotArm, auto_sourced: &mut bool) -> bool {
+    let want = arm.want_login.load(Ordering::Relaxed);
+    let auto = arm.auto_login.load(Ordering::Relaxed);
+    if want && auto {
+        *auto_sourced = true;
+    }
+    arm.stop.load(Ordering::Relaxed)
+        || !want
+        || arm.latch.load(Ordering::Relaxed)
+        || (*auto_sourced && !auto)
+}
+
 /// Block until the login queue grants `uid` a handshake permit, mirroring
-/// the queue position onto the slot's status row while it waits. Observes
-/// `stop` each iteration **before** `request_permit` so a `leave` from
-/// [`Play::stop_slot`] is not undone by a re-enqueue, and returns without
-/// granting when stop is set.
+/// the queue position onto the slot's status row while it waits. Every
+/// withdrawal is observed each poll **before** `request_permit`, so a `leave`
+/// from [`Play::stop_slot`] or a cancelled login intent is never undone by a
+/// re-enqueue; a withdrawn wait also clears `want_login` so the caller's loop
+/// does not re-enter the queue for an intent the operator dropped.
 fn wait_for_permit(
     queue: &Arc<Mutex<LoginQueue>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
-    stop: &AtomicBool,
-) {
+    arm: &SlotArm,
+) -> PermitWait {
+    let mut auto_sourced = false;
+    // Withdraw a dead request: clear `want_login` so the caller's loop does
+    // not re-enter the queue for an intent the operator dropped, drop the
+    // FIFO place and clear the published `k of n`.
+    let withdraw = || {
+        arm.want_login.store(false, Ordering::Relaxed);
+        drop_queue_place(queue, statuses, username, uid);
+        if debug_enabled() {
+            eprintln!("[host-play] slot {username}: permit wait withdrawn");
+        }
+    };
     loop {
-        if stop.load(Ordering::Relaxed) {
-            queue.lock().unwrap().leave(uid);
-            let mut all = statuses.lock().unwrap();
-            apply_queue_wait(&mut all, username, None);
-            return;
+        // Before `request_permit`: it enqueues, so a place dropped by
+        // `stop_slot` (or by a withdrawn intent) must not be recreated.
+        if permit_wait_cancelled(arm, &mut auto_sourced) {
+            withdraw();
+            return PermitWait::Cancelled;
         }
         let wait = {
             let mut q = queue.lock().unwrap();
@@ -6366,7 +6469,7 @@ fn wait_for_permit(
                     drop(q);
                     let mut all = statuses.lock().unwrap();
                     apply_queue_wait(&mut all, username, None);
-                    return;
+                    return PermitWait::Granted;
                 }
                 Permit::Wait(wait) => {
                     let pos = q.status(uid);
@@ -6378,13 +6481,19 @@ fn wait_for_permit(
                 }
             }
         };
+        // Interruptible sleep: a withdrawal must not wait out a 60 s address
+        // deadline, and the published `k of n` must not freeze for that long
+        // either — a window-blocked head sleeping its deadline would not show
+        // members that queue behind it. This is a read-only re-read of the
+        // place (no `request_permit`), so no grant can happen here.
         let deadline = Instant::now() + wait;
-        while Instant::now() < deadline {
-            if stop.load(Ordering::Relaxed) {
-                queue.lock().unwrap().leave(uid);
-                let mut all = statuses.lock().unwrap();
-                apply_queue_wait(&mut all, username, None);
-                return;
+        let mut next_publish = Instant::now() + QUEUE_PUBLISH;
+        while Instant::now() < deadline && !permit_wait_cancelled(arm, &mut auto_sourced) {
+            let now = Instant::now();
+            if now >= next_publish {
+                let pos = queue.lock().unwrap().status(uid);
+                apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+                next_publish = now + QUEUE_PUBLISH;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             thread::sleep(left.min(Duration::from_millis(20)));
@@ -7490,32 +7599,343 @@ mod tests {
         );
     }
 
+    /// Fill the default 30/60 s address window so the next real request has
+    /// to wait instead of being granted on arrival.
+    fn fill_address_window(queue: &Arc<Mutex<LoginQueue>>) -> Instant {
+        let now = Instant::now();
+        let mut q = queue.lock().unwrap();
+        for i in 0..30 {
+            assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+        }
+        now
+    }
+
+    /// `(queue_position, queue_total)` of `name`'s published row.
+    fn row_queue(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) -> (i32, i32) {
+        let all = statuses.lock().unwrap();
+        all.iter()
+            .find(|s| s.username == name)
+            .map(|s| (s.queue_position, s.queue_total))
+            .expect("slot status row")
+    }
+
+    fn rows(names: &[&str]) -> Arc<Mutex<Vec<SlotStatus>>> {
+        Arc::new(Mutex::new(
+            names
+                .iter()
+                .map(|n| SlotStatus {
+                    username: (*n).into(),
+                    ..SlotStatus::default()
+                })
+                .collect(),
+        ))
+    }
+
     #[test]
     fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
         let queue = Arc::new(Mutex::new(LoginQueue::default()));
-        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
-            username: "alice".into(),
-            ..SlotStatus::default()
-        }]));
-        let stop = AtomicBool::new(false);
+        let statuses = rows(&["alice"]);
+        let arm = SlotArm::new(7, true);
         // Fill the 30/60s address window so alice waits on the FIFO.
         {
-            let mut q = queue.lock().unwrap();
-            let now = Instant::now();
-            for i in 0..30 {
-                assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
-            }
-            assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
+            let now = fill_address_window(&queue);
+            assert!(matches!(
+                queue.lock().unwrap().request_permit(7, now),
+                Permit::Wait(_)
+            ));
         }
         // Simulate stop_slot: leave then set stop; the waiter must not
         // request_permit again (which would Grant or re-queue uid 7).
         queue.lock().unwrap().leave(7);
-        stop.store(true, Ordering::Relaxed);
-        wait_for_permit(&queue, &statuses, "alice", 7, &stop);
+        arm.stop.store(true, Ordering::Relaxed);
+        assert_eq!(
+            wait_for_permit(&queue, &statuses, "alice", 7, &arm),
+            PermitWait::Cancelled
+        );
         assert!(
             queue.lock().unwrap().status(7).is_none(),
             "stop must not re-enqueue after leave"
         );
+    }
+
+    #[test]
+    fn wait_for_permit_grant_clears_the_published_place() {
+        // Grant: the accepted handshake pops the FIFO place, so the card and
+        // any queue position must be gone (no pending login anywhere).
+        let queue = Arc::new(Mutex::new(LoginQueue::default()));
+        let statuses = rows(&["alice"]);
+        let arm = SlotArm::new(7, true);
+        assert_eq!(
+            wait_for_permit(&queue, &statuses, "alice", 7, &arm),
+            PermitWait::Granted
+        );
+        assert!(queue.lock().unwrap().status(7).is_none());
+        assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+    }
+
+    #[test]
+    fn waiting_slot_withdraws_when_auto_login_is_cleared() {
+        // Auto-login armed the intent (`SlotArm::new(uid, true)`). Clearing
+        // the checkbox while the slot waits must withdraw the request: no
+        // FIFO place, no published k of n, and no handshake afterwards.
+        let queue = Arc::new(Mutex::new(LoginQueue::default()));
+        let statuses = rows(&["alice"]);
+        let arm = SlotArm::new(7, true);
+        fill_address_window(&queue);
+        let waiter = {
+            let queue = Arc::clone(&queue);
+            let statuses = Arc::clone(&statuses);
+            let arm = Arc::clone(&arm);
+            thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
+        };
+        assert!(
+            wait_until(2000, || row_queue(&statuses, "alice") == (1, 1)),
+            "a waiting slot publishes k of n, got {:?}",
+            row_queue(&statuses, "alice")
+        );
+
+        arm.auto_login.store(false, Ordering::Relaxed);
+
+        assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
+        assert!(queue.lock().unwrap().status(7).is_none());
+        assert!(
+            !arm.want_login.load(Ordering::Relaxed),
+            "a withdrawn intent must not handshake on the next loop"
+        );
+        assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+    }
+
+    #[test]
+    fn explicit_login_intent_survives_the_auto_login_toggle() {
+        // A one-shot Log in with auto-login off (the wall's explicit arm) is
+        // not auto-sourced, so toggling the checkbox cannot withdraw it.
+        let queue = Arc::new(Mutex::new(LoginQueue::default()));
+        let statuses = rows(&["alice"]);
+        let arm = SlotArm::new(7, false);
+        arm.want_login.store(true, Ordering::Relaxed);
+        assert_eq!(
+            wait_for_permit(&queue, &statuses, "alice", 7, &arm),
+            PermitWait::Granted
+        );
+        assert!(arm.want_login.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
+        // `Session::logout` clears the intent and latches. The waiting slot
+        // must abandon the request without consuming the head, so the member
+        // that queued behind it takes position 1 and the next grant.
+        let queue = Arc::new(Mutex::new(LoginQueue::default()));
+        let statuses = rows(&["alice", "bob"]);
+        let alice = SlotArm::new(7, true);
+        let now = fill_address_window(&queue);
+        let waiter = {
+            let queue = Arc::clone(&queue);
+            let statuses = Arc::clone(&statuses);
+            let arm = Arc::clone(&alice);
+            thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
+        };
+        assert!(
+            wait_until(2000, || row_queue(&statuses, "alice") == (1, 1)),
+            "alice queues first, got {:?}",
+            row_queue(&statuses, "alice")
+        );
+        // bob asks while she waits, so he lands behind her.
+        assert!(matches!(
+            queue.lock().unwrap().request_permit(8, Instant::now()),
+            Permit::Wait(_)
+        ));
+        assert!(
+            wait_until(2000, || row_queue(&statuses, "alice") == (1, 2)),
+            "alice waits ahead of bob, got {:?}",
+            row_queue(&statuses, "alice")
+        );
+
+        // Credentials Logout: latch, drop the intent, arm the IF logout.
+        alice.want_login.store(false, Ordering::Relaxed);
+        alice.latch.store(true, Ordering::Relaxed);
+        alice.want_logout.store(true, Ordering::Relaxed);
+
+        assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
+        assert!(queue.lock().unwrap().status(7).is_none());
+        assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+        let bob = queue
+            .lock()
+            .unwrap()
+            .status(8)
+            .expect("bob keeps his place");
+        assert_eq!((bob.position, bob.total), (1, 1));
+        // The withdrawn request must not have spent a grant: once the 60 s
+        // window elapses, bob's handshake is next.
+        let later = now + Duration::from_secs(61);
+        assert_eq!(
+            queue.lock().unwrap().request_permit(8, later),
+            Permit::Grant
+        );
+    }
+
+    #[test]
+    fn retried_login_re_enters_at_the_fifo_tail() {
+        // Backoff/reconnect: a rejected handshake leaves nothing behind, and
+        // the retry joins the FIFO tail instead of jumping the members that
+        // queued while it slept.
+        let queue = Arc::new(Mutex::new(LoginQueue::new(
+            Duration::from_secs(60),
+            30,
+            Duration::from_secs(60),
+        )));
+        let statuses = rows(&["alice", "bob"]);
+        let alice = SlotArm::new(7, true);
+        assert_eq!(
+            wait_for_permit(&queue, &statuses, "alice", 7, &alice),
+            PermitWait::Granted
+        );
+        assert!(
+            queue.lock().unwrap().status(7).is_none(),
+            "a granted login holds no place while it backs off"
+        );
+        assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+
+        // bob asks first; alice's retry must land behind him.
+        let now = Instant::now();
+        assert!(matches!(
+            queue.lock().unwrap().request_permit(8, now),
+            Permit::Wait(_)
+        ));
+        let retry = {
+            let queue = Arc::clone(&queue);
+            let statuses = Arc::clone(&statuses);
+            let arm = Arc::clone(&alice);
+            thread::spawn(move || wait_for_permit(&queue, &statuses, "alice", 7, &arm))
+        };
+        assert!(
+            wait_until(2000, || row_queue(&statuses, "alice") == (2, 2)),
+            "the retry queues behind bob, got {:?}",
+            row_queue(&statuses, "alice")
+        );
+        assert_eq!(queue.lock().unwrap().queued_uids(), vec![8, 7]);
+
+        alice.stop.store(true, Ordering::Relaxed);
+        assert_eq!(retry.join().unwrap(), PermitWait::Cancelled);
+        queue.lock().unwrap().leave(8);
+    }
+
+    #[test]
+    fn parked_slot_drops_a_reservation_that_outlived_its_intent() {
+        // `Login all` reserves the TV head's place. If the intent is dropped
+        // before the slot ever waits (Logout all / a title hold), the running
+        // slot thread must reap both the phantom place and its published
+        // k of n, so later members are not stranded and no card remains.
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        // `auto_login = false`: the slot parks on the title without an intent.
+        play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
+        assert!(
+            wait_until(2000, || !play.statuses().is_empty()),
+            "the slot thread publishes its row"
+        );
+        play.prefer_login(1);
+        assert_eq!(
+            play.login_queue_uids(),
+            vec![1],
+            "a title-screen head is reserved while it starts"
+        );
+
+        assert!(
+            wait_until(5000, || play.login_queue_uids().is_empty()),
+            "the parked slot reaps a reservation it will never use"
+        );
+        let row = play
+            .statuses()
+            .into_iter()
+            .find(|s| s.username == "a")
+            .expect("row");
+        assert_eq!((row.queue_position, row.queue_total), (-1, -1));
+        play.stop_slot("a");
+    }
+
+    #[test]
+    fn ingame_focused_slot_takes_no_place_and_the_real_waiter_publishes() {
+        // The operator's case: the focused bot is already running and Login
+        // all is pressed. The running slot must not hold a phantom FIFO place
+        // (which would hide the real waiter behind its own k of n), and the
+        // member that is actually waiting must show 1 of 1.
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        let alice = SlotArm::new(1, true);
+        let bob = SlotArm::new(2, true);
+        play.attach_arm("alice", Arc::clone(&alice));
+        play.attach_arm("bob", Arc::clone(&bob));
+        play.statuses.lock().unwrap().extend([
+            SlotStatus {
+                username: "alice".into(),
+                ingame: true,
+                ..SlotStatus::default()
+            },
+            SlotStatus {
+                username: "bob".into(),
+                ..SlotStatus::default()
+            },
+        ]);
+        // A full address window keeps bob's request queued so it publishes.
+        fill_address_window(&play.queue);
+
+        play.prefer_login(1);
+
+        assert!(
+            play.login_queue_uids().is_empty(),
+            "a running slot holds no login-FIFO place"
+        );
+        let alice_row = play
+            .statuses()
+            .into_iter()
+            .find(|s| s.username == "alice")
+            .expect("row");
+        assert_eq!((alice_row.queue_position, alice_row.queue_total), (-1, -1));
+
+        let waiter = {
+            let (queue, statuses, arm) = (
+                Arc::clone(&play.queue),
+                Arc::clone(&play.statuses),
+                Arc::clone(&bob),
+            );
+            thread::spawn(move || wait_for_permit(&queue, &statuses, "bob", 2, &arm))
+        };
+        assert!(
+            wait_until(2000, || {
+                play.statuses()
+                    .into_iter()
+                    .find(|s| s.username == "bob")
+                    .map(|s| (s.queue_position, s.queue_total))
+                    == Some((1, 1))
+            }),
+            "the real waiter publishes 1 of 1, got {:?}",
+            play.statuses()
+        );
+        assert_eq!(play.login_queue_uids(), vec![2]);
+
+        bob.stop.store(true, Ordering::Relaxed);
+        assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
     }
 
     #[test]
