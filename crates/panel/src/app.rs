@@ -880,7 +880,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
+    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -890,6 +890,8 @@ pub enum RunMode {
     Interactive,
     Live(String),
     Smoke,
+    /// Offline prepare only — no GPU/window; writes `.sav` + identity receipt.
+    PrepareFixture(String),
 }
 
 #[derive(Debug, Clone)]
@@ -908,6 +910,12 @@ pub struct PanelArgs {
     pub nav_paints: Option<bool>,
     /// Session-only memory choice; absent preserves the vault profile and UI gate.
     pub memory_override: Option<bool>,
+    /// When set with `--live script_*`, apply run-prepared fixture mode.
+    pub run_prepared: bool,
+    /// Identity receipt path override (`~/.274bot/fixtures/<scenario>.json`).
+    pub fixture_path: Option<std::path::PathBuf>,
+    /// Server engine root for offline prepare (or `BOT_SERVER_ROOT`).
+    pub server_root: Option<std::path::PathBuf>,
 }
 
 pub fn parse_args(
@@ -918,8 +926,30 @@ pub fn parse_args(
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
-    let (external_ts, live_args) = parse_external_ts(rest)?;
+    let (external_ts, rest) = parse_external_ts(rest)?;
+    let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
     let mode = parse_live_args(live_args, env_live)?;
+    let mode = match (mode, fixture_flags.prepare_fixture) {
+        (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
+        (_, Some(_)) => {
+            return Err((
+                2,
+                "panel-play: --prepare-fixture cannot combine with --live/--smoke".into(),
+            ));
+        }
+        (other, None) => other,
+    };
+    if fixture_flags.run_prepared {
+        match &mode {
+            RunMode::Live(name) if name.starts_with("script_") => {}
+            _ => {
+                return Err((
+                    2,
+                    "panel-play: --run-prepared requires --live script_<scenario>".into(),
+                ));
+            }
+        }
+    }
     Ok(PanelArgs {
         mode,
         profile,
@@ -929,7 +959,61 @@ pub fn parse_args(
         external_ts,
         nav_paints,
         memory_override,
+        run_prepared: fixture_flags.run_prepared,
+        fixture_path: fixture_flags.fixture_path,
+        server_root: fixture_flags.server_root,
     })
+}
+
+#[derive(Debug, Default)]
+struct FixtureFlags {
+    prepare_fixture: Option<String>,
+    run_prepared: bool,
+    fixture_path: Option<PathBuf>,
+    server_root: Option<PathBuf>,
+}
+
+fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>), (i32, String)> {
+    let mut flags = FixtureFlags::default();
+    let mut rest = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--prepare-fixture" => {
+                let Some(name) = it.next() else {
+                    return Err((2, "panel-play: --prepare-fixture needs a scenario name".into()));
+                };
+                if scenario::get(&name).is_none() {
+                    return Err((
+                        2,
+                        format!("panel-play: unknown prepare-fixture scenario {name}"),
+                    ));
+                }
+                flags.prepare_fixture = Some(name);
+            }
+            "--run-prepared" => flags.run_prepared = true,
+            "--fixture-path" => {
+                let Some(raw) = it.next() else {
+                    return Err((2, "panel-play: --fixture-path needs a path".into()));
+                };
+                flags.fixture_path = Some(PathBuf::from(raw));
+            }
+            "--server-root" => {
+                let Some(raw) = it.next() else {
+                    return Err((2, "panel-play: --server-root needs a path".into()));
+                };
+                flags.server_root = Some(PathBuf::from(raw));
+            }
+            _ => rest.push(arg),
+        }
+    }
+    if flags.prepare_fixture.is_some() && flags.run_prepared {
+        return Err((
+            2,
+            "panel-play: --prepare-fixture and --run-prepared are mutually exclusive".into(),
+        ));
+    }
+    Ok((flags, rest))
 }
 
 fn parse_memory_override(
@@ -1017,6 +1101,13 @@ impl RunMode {
 
     fn is_smoke(&self) -> bool {
         matches!(self, RunMode::Smoke)
+    }
+
+    fn prepare_fixture_name(&self) -> Option<&str> {
+        match self {
+            RunMode::PrepareFixture(name) => Some(name),
+            _ => None,
+        }
     }
 }
 
@@ -5305,11 +5396,87 @@ fn arm_scenario_shots(state: &mut PanelState) {
     }
 }
 
+/// Offline prepare: mint isolated identity, write server-native `.sav` via
+/// `tools/harness`, write durable fixture identity — no live engine/window.
+fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
+    let sc = scenario::get(scenario)
+        .ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let profile_count = sc.seed.profiles.len();
+    if profile_count == 0 {
+        return Err(format!("scenario {scenario} has zero seed profiles"));
+    }
+    // Fixture preset id matches scenario name for thiever; fail closed if unknown.
+    let fixture_preset = match scenario {
+        "thiever" => "thiever",
+        other => {
+            return Err(format!(
+                "offline prepare has no server-native preset for {other} yet (known: thiever)"
+            ));
+        }
+    };
+    let server_root = args
+        .server_root
+        .clone()
+        .or_else(|| std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/Users/acfrazier/experiments/Server/engine"));
+    if !server_root.join("data/pack/server/obj.dat").is_file() {
+        return Err(format!(
+            "server root missing pack data: {} (pass --server-root or BOT_SERVER_ROOT)",
+            server_root.display()
+        ));
+    }
+    let identity_path = args
+        .fixture_path
+        .clone()
+        .unwrap_or_else(|| scenario::default_fixture_path(scenario));
+    let sav_dir = identity_path
+        .parent()
+        .map(|p| p.join(scenario))
+        .unwrap_or_else(|| scenario::default_fixture_sav_dir(scenario));
+    let target = client::bot_target();
+    let names = host_play::mint_live_names(profile_count);
+    let entries = host_play::mint_live_entries_for_target(&names, target);
+    let pass = host_play::live_vault_passphrase_for(target);
+    let passwords: Vec<String> = entries.iter().map(|(_, p)| p.clone()).collect();
+    let identity = scenario::prepare_offline_fixture(scenario::OfflinePrepareOpts {
+        scenario: scenario.to_string(),
+        fixture_preset: fixture_preset.to_string(),
+        profile: "main".into(),
+        server_root,
+        identity_path: identity_path.clone(),
+        sav_dir,
+        usernames: names,
+        passwords,
+        vault_passphrase: pass,
+        overwrite: true,
+    })?;
+    println!(
+        "[panel] offline fixture prepared: scenario={} identity={} accounts={}",
+        identity.scenario,
+        identity_path.display(),
+        identity.accounts.len()
+    );
+    for a in &identity.accounts {
+        println!(
+            "[panel]   {} sav={} sha256={} bytes={}",
+            a.username, a.sav_path, a.sav_sha256, a.sav_bytes
+        );
+    }
+    println!("PASS: offline prepare fixture {scenario}");
+    Ok(())
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
-/// exit 0).
+/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
+    if let Some(scenario) = args.mode.prepare_fixture_name() {
+        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        });
+    }
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
@@ -5319,6 +5486,14 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts);
+    let fixture_mode = if args.run_prepared {
+        scenario::FixtureMode::RunPrepared
+    } else {
+        scenario::FixtureMode::Default
+    };
+    state
+        .session
+        .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
         .configure_profile(args.profile)
@@ -7019,6 +7194,32 @@ mod tests {
             parse_live_args(["--live", "script_"], None),
             Err((2, LIVE_USAGE.into()))
         );
+    }
+
+    #[test]
+    fn parse_args_prepare_fixture_is_offline_mode() {
+        let parsed = parse_args(["--prepare-fixture", "thiever"], None).unwrap();
+        assert_eq!(parsed.mode, RunMode::PrepareFixture("thiever".into()));
+        assert!(!parsed.run_prepared);
+    }
+
+    #[test]
+    fn parse_args_run_prepared_requires_script_live() {
+        let parsed = parse_args(
+            ["--live", "script_thiever", "--run-prepared", "--fixture-path", "/tmp/t.json"],
+            None,
+        )
+        .unwrap();
+        assert_eq!(parsed.mode, RunMode::Live("script_thiever".into()));
+        assert!(parsed.run_prepared);
+        assert_eq!(
+            parsed.fixture_path.as_deref(),
+            Some(std::path::Path::new("/tmp/t.json"))
+        );
+        assert!(parse_args(["--run-prepared"], None).is_err());
+        assert!(parse_args(["--prepare-fixture", "thiever", "--live", "script_thiever"], None).is_err());
+        assert!(parse_args(["--prepare-fixture", "thiever", "--run-prepared"], None).is_err());
+        assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
     }
 
     #[test]

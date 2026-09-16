@@ -135,6 +135,9 @@ pub enum Proof {
         action: &'static str,
         present: bool,
     },
+    /// Player is offline (`!ingame`) after a clean IF_BUTTON logout — the
+    /// prepare-fixture save receipt arm. Fail-closed while still ingame.
+    LoggedOut,
 }
 
 impl Proof {
@@ -214,6 +217,7 @@ impl Proof {
                 let rel = if *present { "has" } else { "lacks" };
                 format!("loc_id({id})@({x},{z},{level},r{radius})_{rel}_{action}")
             }
+            Proof::LoggedOut => "logged_out".to_string(),
         }
     }
 
@@ -496,6 +500,7 @@ impl Proof {
                     .is_some_and(|loc| loc_action_matches(loc, action));
                 has == *present
             }
+            Proof::LoggedOut => !snap.ingame(),
         }
     }
 }
