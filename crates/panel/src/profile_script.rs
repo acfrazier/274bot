@@ -1431,6 +1431,48 @@ mod tests {
     }
 
     #[test]
+    fn initial_runtime_load_failure_survives_another_card_start() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let bad_source = "export const apiVersion = 2;\nthrow new Error('initial-load-proof');\nexport function tick(api) {}\n";
+        let bad_path = write_bot(&dir, "bad.ts", bad_source);
+        let bad = s.js.load(&bad_path).unwrap();
+        s.script_sel = Some(script::ScriptSel::Loaded(
+            bad.source,
+            bad_path.to_string_lossy().into_owned(),
+        ));
+        s.script_start_selected();
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("initial-load-proof"),
+            "{:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Idle
+        );
+
+        let good_path = write_bot(&dir, "good.ts", BOT_TS);
+        s.js.load(&good_path).unwrap();
+        start_file_on(&mut s, "bob", &good_path);
+        let failure = s
+            .js
+            .load_failure(&bad.identity_key())
+            .expect("initial runtime failure must remain inspectable after another card starts");
+        assert_eq!(failure.path, bad_path);
+        assert_eq!(failure.stage, script::load::LoadStage::RuntimeLoad);
+        assert_eq!(
+            failure.fingerprint,
+            script::raw_content_fingerprint(&bad_path, bad_source)
+        );
+        assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
+        assert!(s.js.named_failure_output().contains("initial-load-proof"));
+        s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
     fn claim_legacy_read_path_writes_vault_once() {
         let (mut s, dir) = session_with_profiles(&["alice"]);
         let vault_path = dir.join("v.vault");
