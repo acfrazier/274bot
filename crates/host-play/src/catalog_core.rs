@@ -895,6 +895,90 @@ pub struct Observation {
     pub main_make_ids: BTreeSet<i32>,
 }
 
+/// Compact proof that this run observed the exact HerbCleaner seed in a
+/// loaded bank before the bank was closed for Start. Closed snapshots
+/// intentionally do not retain bank contents.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HerbCleanerStartPreparationReceipt {
+    pub player: String,
+    pub tick: u32,
+    pub bank_generation: u64,
+    pub guam_count: i32,
+    pub marrentill_count: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HerbCleanerStartPreparation {
+    loaded: Option<HerbCleanerStartPreparationReceipt>,
+    closed_after_loaded: bool,
+}
+
+impl HerbCleanerStartPreparation {
+    pub fn observe(&mut self, account: &str, observation: &Observation) {
+        let expected = client::util::jstring::JString::to_screen_name(account);
+        if !observation.ingame
+            || observation.scene_state != 2
+            || !observation
+                .player
+                .as_deref()
+                .is_some_and(|player| player.eq_ignore_ascii_case(&expected))
+        {
+            *self = Self::default();
+            return;
+        }
+
+        if observation.bank_open && observation.bank_loaded {
+            let guam_count = observation.bank_item_id(UNIDENTIFIED_GUAM_ID);
+            let marrentill_count = observation.bank_item_id(UNIDENTIFIED_MARENTILL_ID);
+            self.loaded = (guam_count == 20 && marrentill_count == 0).then(|| {
+                HerbCleanerStartPreparationReceipt {
+                    player: observation.player.clone().expect("player checked above"),
+                    tick: observation.tick,
+                    bank_generation: observation.bank_generation,
+                    guam_count,
+                    marrentill_count,
+                }
+            });
+            self.closed_after_loaded = false;
+            return;
+        }
+
+        if observation.bank_open || observation.bank_loaded {
+            *self = Self::default();
+            return;
+        }
+
+        self.closed_after_loaded = self.loaded.as_ref().is_some_and(|loaded| {
+            observation.bank_generation > loaded.bank_generation
+                && observation.tick >= loaded.tick
+                && observation.bank.is_empty()
+                && observation.bank_ids.is_empty()
+        });
+    }
+
+    pub fn receipt_for(
+        &self,
+        account: &str,
+        baseline: &Observation,
+    ) -> Option<HerbCleanerStartPreparationReceipt> {
+        if !self.closed_after_loaded || baseline.bank_open || baseline.bank_loaded {
+            return None;
+        }
+        let expected = client::util::jstring::JString::to_screen_name(account);
+        let loaded = self.loaded.as_ref()?;
+        (baseline.bank.is_empty()
+            && baseline.bank_ids.is_empty()
+            && baseline.bank_generation > loaded.bank_generation
+            && baseline.tick >= loaded.tick
+            && baseline
+                .player
+                .as_deref()
+                .is_some_and(|player| player.eq_ignore_ascii_case(&expected))
+            && loaded.player.eq_ignore_ascii_case(&expected))
+        .then(|| loaded.clone())
+    }
+}
+
 /// One loc retained for these named cases. The live loc sweep is not copied.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BoundedLoc {
@@ -1746,6 +1830,14 @@ pub fn runecraft_baseline_ready(
 }
 
 pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), String> {
+    validate_case_baseline_with_preparation(case, baseline, None)
+}
+
+pub fn validate_case_baseline_with_preparation(
+    case: CoreCase,
+    baseline: &Observation,
+    start_preparation: Option<&HerbCleanerStartPreparationReceipt>,
+) -> Result<(), String> {
     let ready = match case {
         CoreCase::BoneBurier => {
             near(baseline.tile, (3220, 3212, 0), 8) && baseline.item("Bones") >= 5
@@ -1884,9 +1976,29 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
                 && baseline.item_id(GUAM_LEAF_ID) == 0
                 && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
                 && baseline.item_id(MARRENTILL_ID) == 0
-                && baseline.bank_item_id(UNIDENTIFIED_GUAM_ID) == 20
-                && baseline.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 0
                 && baseline.level("herblore") >= 20
+                && match start_preparation {
+                    Some(receipt) => {
+                        !baseline.bank_open
+                            && !baseline.bank_loaded
+                            && baseline.bank.is_empty()
+                            && baseline.bank_ids.is_empty()
+                            && baseline
+                                .player
+                                .as_deref()
+                                .is_some_and(|player| player.eq_ignore_ascii_case(&receipt.player))
+                            && receipt.guam_count == 20
+                            && receipt.marrentill_count == 0
+                            && baseline.bank_generation > receipt.bank_generation
+                            && baseline.tick >= receipt.tick
+                    }
+                    None => {
+                        baseline.bank_open
+                            && baseline.bank_loaded
+                            && baseline.bank_item_id(UNIDENTIFIED_GUAM_ID) == 20
+                            && baseline.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                    }
+                }
         }
         CoreCase::GemCutter => {
             near(baseline.tile, (3185, 3440, 0), 6)
@@ -2307,7 +2419,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
             "Varrock West bank, empty pack of 199/201/249, and Herblore 5"
         }
         CoreCase::HerbCleanerEmptyBank => {
-            "Varrock West bank, Herblore 20, empty pack of 199/201/249/251, bank id 199x20 and bank id 201x0"
+            "Varrock West bank, Herblore 20, empty pack of 199/201/249/251, and this run's loaded bank id 199x20/id 201x0 acknowledged before a closed-bank Start"
         }
         CoreCase::GemCutter => {
             "Varrock West bank, empty pack of 1755/1623/1607/1633, and Crafting 20"
@@ -2540,6 +2652,7 @@ pub fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<
 pub struct CoreWitness {
     pub case: CoreCase,
     pub baseline: Observation,
+    pub start_preparation: Option<HerbCleanerStartPreparationReceipt>,
     pub latest: Observation,
     pub max_items: BTreeMap<String, i32>,
     pub max_xp: BTreeMap<String, i32>,
@@ -7161,11 +7274,20 @@ impl FiremakerCycle {
 
 impl CoreWitness {
     pub fn new(case: CoreCase, baseline: Observation) -> Self {
+        Self::new_with_start_preparation(case, baseline, None)
+    }
+
+    pub fn new_with_start_preparation(
+        case: CoreCase,
+        baseline: Observation,
+        start_preparation: Option<HerbCleanerStartPreparationReceipt>,
+    ) -> Self {
         Self {
             max_items: baseline.items.clone(),
             max_xp: baseline.xp.clone(),
             latest: baseline.clone(),
             baseline,
+            start_preparation,
             case,
             saw_bury_chat: false,
             post_start_observations: 0,
@@ -7894,6 +8016,7 @@ enum CoreWatchState {
         case: CoreCase,
         account: String,
         latest: Option<Observation>,
+        start_preparation: HerbCleanerStartPreparation,
     },
     Running {
         account: String,
@@ -7920,6 +8043,7 @@ impl CoreWatch {
             case,
             account: account.into(),
             latest: None,
+            start_preparation: HerbCleanerStartPreparation::default(),
         };
         self.active.store(true, Ordering::Release);
     }
@@ -7945,39 +8069,58 @@ impl CoreWatch {
                 case,
                 account: expected,
                 latest,
+                start_preparation,
             } if expected == account => match latest {
                 None => {
                     *state = CoreWatchState::Ready {
                         case,
                         account: expected,
                         latest: None,
+                        start_preparation,
                     };
                     Err("catalog core has no published pre-Start observation".into())
                 }
-                Some(observation) => match validate_start_baseline(case, &expected, &observation) {
-                    Ok(()) => {
-                        *state = CoreWatchState::Running {
-                            account: expected,
-                            witness: Box::new(CoreWitness::new(case, observation)),
-                        };
-                        Ok(())
+                Some(observation) => {
+                    let preparation = if case == CoreCase::HerbCleanerEmptyBank {
+                        start_preparation.receipt_for(&expected, &observation)
+                    } else {
+                        None
+                    };
+                    match validate_start_baseline(
+                        case,
+                        &expected,
+                        &observation,
+                        preparation.as_ref(),
+                    ) {
+                        Ok(()) => {
+                            *state = CoreWatchState::Running {
+                                account: expected,
+                                witness: Box::new(CoreWitness::new_with_start_preparation(
+                                    case,
+                                    observation,
+                                    preparation,
+                                )),
+                            };
+                            Ok(())
+                        }
+                        Err(error) => {
+                            *state = CoreWatchState::Failed {
+                                case,
+                                account: expected,
+                                error: error.clone(),
+                                latest: Some(observation),
+                                witness: None,
+                            };
+                            Err(error)
+                        }
                     }
-                    Err(error) => {
-                        *state = CoreWatchState::Failed {
-                            case,
-                            account: expected,
-                            error: error.clone(),
-                            latest: Some(observation),
-                            witness: None,
-                        };
-                        Err(error)
-                    }
-                },
+                }
             },
             CoreWatchState::Ready {
                 case,
                 account: expected,
                 latest,
+                start_preparation,
             } => {
                 let error = format!(
                     "catalog core Start slot {account:?} is not configured account {expected:?}"
@@ -7986,6 +8129,7 @@ impl CoreWatch {
                     case,
                     account: expected,
                     latest,
+                    start_preparation,
                 };
                 Err(error)
             }
@@ -8035,18 +8179,24 @@ impl CoreWatch {
                 case,
                 account: expected,
                 latest: _,
+                mut start_preparation,
             } if expected == account => {
                 if session_boundary {
                     CoreWatchState::Ready {
                         case,
                         account: expected,
                         latest: None,
+                        start_preparation: HerbCleanerStartPreparation::default(),
                     }
                 } else {
+                    if case == CoreCase::HerbCleanerEmptyBank {
+                        start_preparation.observe(&expected, &observation);
+                    }
                     CoreWatchState::Ready {
                         case,
                         account: expected,
                         latest: Some(observation),
+                        start_preparation,
                     }
                 }
             }
@@ -8206,11 +8356,13 @@ impl CoreWatch {
                 case,
                 account,
                 latest,
+                start_preparation,
             } => json!({
                 "phase": "ready",
                 "case": case,
                 "account": account,
                 "latest": latest,
+                "start_preparation": start_preparation,
             }),
             CoreWatchState::Running { account, witness } => json!({
                 "phase": "running",
@@ -8245,6 +8397,7 @@ fn validate_start_baseline(
     case: CoreCase,
     account: &str,
     observation: &Observation,
+    start_preparation: Option<&HerbCleanerStartPreparationReceipt>,
 ) -> Result<(), String> {
     if !observation.ingame || observation.scene_state != 2 {
         return Err(format!(
@@ -8261,5 +8414,11 @@ fn validate_start_baseline(
             "Start baseline player {player:?} is not fresh account {account:?}"
         ));
     }
-    validate_case_baseline(case, observation)
+    if case == CoreCase::HerbCleanerEmptyBank && start_preparation.is_none() {
+        return Err(format!(
+            "{} Start baseline lacks this run's loaded-bank preparation receipt before closed-bank Start: {observation:?}",
+            case.scenario_name()
+        ));
+    }
+    validate_case_baseline_with_preparation(case, observation, start_preparation)
 }
