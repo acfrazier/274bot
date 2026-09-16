@@ -16,6 +16,15 @@ import { rangeSupplyEmpty } from '../../api/combat/ranged.js';
 export default class T extends LoopingBot {
     loop() {
         const direct = globalThis.rustyscript.functions.__rs2b0t_range_supply_empty;
+        // Root hold probe (exported f): [f(), f(NaN,0,0), f(Infinity,0,0),
+        // f(-Infinity,0,0), f(undefined,0,0)] → [false,false,false,true,false].
+        const rootProbe = [
+            rangeSupplyEmpty(),
+            rangeSupplyEmpty(NaN, 0, 0),
+            rangeSupplyEmpty(Infinity, 0, 0),
+            rangeSupplyEmpty(-Infinity, 0, 0),
+            rangeSupplyEmpty(undefined, 0, 0),
+        ];
         globalThis.__probe = JSON.stringify({
             allEmpty: rangeSupplyEmpty(0, 0, 0),
             equipped: rangeSupplyEmpty(1, 0, 0),
@@ -25,6 +34,13 @@ export default class T extends LoopingBot {
             negatives: rangeSupplyEmpty(-1, -2, -3),
             fraction: rangeSupplyEmpty(0.5, 0, 0),
             large: rangeSupplyEmpty(2147483648, 0, 0),
+            bareCall: rootProbe[0],
+            nanEquipped: rootProbe[1],
+            infEquipped: rootProbe[2],
+            negInfEquipped: rootProbe[3],
+            undefEquipped: rootProbe[4],
+            rootProbe,
+            exportedNulls: rangeSupplyEmpty(null, null, null),
             directEmpty: direct(0, 0, 0),
             directGround: direct(0, 0, 1),
             directNulls: direct(null, null, null),
@@ -42,6 +58,16 @@ export default class T extends LoopingBot {
     assert_eq!(value["negatives"], true);
     assert_eq!(value["fraction"], false);
     assert_eq!(value["large"], false);
+    assert_eq!(value["bareCall"], false);
+    assert_eq!(value["nanEquipped"], false);
+    assert_eq!(value["infEquipped"], false);
+    assert_eq!(value["negInfEquipped"], true);
+    assert_eq!(value["undefEquipped"], false);
+    assert_eq!(
+        value["rootProbe"],
+        serde_json::json!([false, false, false, true, false])
+    );
+    assert_eq!(value["exportedNulls"], true);
     assert_eq!(value["directEmpty"], true);
     assert_eq!(value["directGround"], false);
     assert_eq!(value["directNulls"], true);
