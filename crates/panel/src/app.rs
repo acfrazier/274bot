@@ -213,7 +213,7 @@ struct LiveScript {
     soak: bool,
     soak_until: Option<Instant>,
     announced_pass: bool,
-    /// Native-core failure has issued its one current terminal-shot request.
+    /// A native-core terminal decision has issued its one current capture.
     /// This prevents the write frame from re-arming the same label again.
     native_failure_capture_requested: bool,
     /// Separate wall-clock ceiling when scenario PASS arrives before the
@@ -1381,8 +1381,8 @@ fn request_native_failure_capture(
         return;
     }
     // A prerequisite terminal shot may have consumed its drain while the
-    // shared core was still pending. The failure-state capture gets a fresh
-    // bounded window, without extending the gameplay deadline.
+    // shared core was still pending. The native terminal decision gets a
+    // fresh bounded window, without extending the gameplay deadline.
     live.native_failure_capture_requested = true;
     live.drain_started = None;
     if let (Some(shots), Some(label)) = (shots, terminal_shot) {
@@ -1665,6 +1665,11 @@ fn live_script_tick(
                 || matches!(ext_gate, CoreGate::Pending)
             {
                 return None;
+            }
+            if core_watch.as_ref().is_some_and(|watch| watch.configured())
+                && matches!(core_gate, CoreGate::Qualified(_))
+            {
+                request_native_failure_capture(live, session, shots, terminal_shot);
             }
             match hold_script_terminal_shot(
                 live,
@@ -7446,7 +7451,23 @@ mod tests {
         assert!(error.contains("catalog core did not qualify"), "{error}");
 
         live.failed = None;
+        live.native_failure_capture_requested = false;
         live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
+        s.scenario
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .set_terminal_shot("core-pass");
+        s.focus.lock().unwrap().focused = Some("catalogtest".into());
+        let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
+        terminal_snapshot.rebuild(&script_client());
+        s.nav_states.lock().unwrap().insert(
+            "catalogtest".into(),
+            (terminal_snapshot, nav::WorldState::default()),
+        );
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots.lock().unwrap().mark_written("core-pass");
         let mut baseline = host_play::catalog_core::Observation {
             ingame: true,
             scene_state: 2,
@@ -7466,10 +7487,24 @@ mod tests {
         baseline.items.insert("Coins".into(), 1);
         watch.observe("catalogtest", baseline, false);
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
-        assert!(live.passed, "full shared core permits headed PASS");
+        assert!(!live.passed, "qualified core waits for its current capture");
+        assert_eq!(
+            shots.lock().unwrap().status("core-pass"),
+            ShotStatus::Requested,
+            "the scenario's earlier XP capture cannot discharge the terminal core proof"
+        );
+        shots.lock().unwrap().mark_written("core-pass");
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, Some(&shots),),
+            None
+        );
+        assert!(
+            live.passed,
+            "full shared core and its capture permit headed PASS"
+        );
         watch.clear();
 
         live.passed = false;
@@ -7477,7 +7512,7 @@ mod tests {
         live.soak = true;
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
@@ -7485,7 +7520,7 @@ mod tests {
         assert!(live.announced_pass);
         live.soak_until = Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
             None
         );
         assert!(live.passed, "exit 0 only after BUDGET_S elapses");

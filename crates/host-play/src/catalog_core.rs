@@ -3284,6 +3284,24 @@ impl HerbCleanerCycle {
 }
 
 pub const HERB_CLEANER_EMPTY_STOP_REASON: &str = "every selected herb is empty in the bank";
+pub const HERB_CLEANER_BANK_TRIP_STOP_REASON: &str = "bank has no eligible herbs";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HerbCleanerEmptyStopKind {
+    LoopExhausted,
+    BankTripNoEligibleHerbs,
+}
+
+impl HerbCleanerEmptyStopKind {
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            HERB_CLEANER_EMPTY_STOP_REASON => Some(Self::LoopExhausted),
+            HERB_CLEANER_BANK_TRIP_STOP_REASON => Some(Self::BankTripNoEligibleHerbs),
+            _ => None,
+        }
+    }
+}
 
 /// Frozen 20-guam/two-selected-herb terminal fixture. Work, a fresh loaded
 /// empty bank and the script's own Stop receipt must occur in that order.
@@ -3291,6 +3309,7 @@ pub const HERB_CLEANER_EMPTY_STOP_REASON: &str = "every selected herb is empty i
 pub struct HerbCleanerEmptyCycle {
     pub cleaned: bool,
     pub exhausted_bank: Option<Observation>,
+    pub stop_kind: Option<HerbCleanerEmptyStopKind>,
     pub stopped: Option<script::ScriptLifecycleReceipt>,
 }
 
@@ -3313,17 +3332,22 @@ impl HerbCleanerEmptyCycle {
     }
 
     pub fn observe_script_lifecycle(&mut self, receipt: script::ScriptLifecycleReceipt) {
+        let stop_kind = HerbCleanerEmptyStopKind::from_reason(&receipt.reason);
         if self.exhausted_bank.is_some()
             && receipt.runtime_generation > 0
             && receipt.state == script::ScriptTerminalState::Stopped
-            && receipt.reason == HERB_CLEANER_EMPTY_STOP_REASON
+            && stop_kind.is_some()
         {
+            self.stop_kind = stop_kind;
             self.stopped = Some(receipt);
         }
     }
 
     pub fn qualified(&self) -> bool {
-        self.cleaned && self.exhausted_bank.is_some() && self.stopped.is_some()
+        self.cleaned
+            && self.exhausted_bank.is_some()
+            && self.stop_kind.is_some()
+            && self.stopped.is_some()
     }
 }
 

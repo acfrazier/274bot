@@ -664,12 +664,24 @@ fn run_cell() -> Result<(), String> {
 
     let outer_deadline = Instant::now() + deadline + Duration::from_secs(5);
     let outcome = loop {
-        if let Some(error) = play.script_last_error(&account) {
-            let state = state.lock().unwrap();
-            let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
-            break Err(format!("script error: {error}; diagnostic={diagnostic}"));
-        }
+        let script_lifecycle = play.script_lifecycle_receipt(&account);
+        let script_error = play.script_last_error(&account);
         let mut state = state.lock().unwrap();
+        if case == CoreCase::HerbCleanerEmptyBank {
+            if let (Some(witness), Some(receipt)) =
+                (state.witness.as_mut(), script_lifecycle.clone())
+            {
+                witness.observe_script_lifecycle(receipt);
+            }
+        }
+        if let Some(error) = script_error {
+            let expected_stop =
+                case == CoreCase::HerbCleanerEmptyBank && script_lifecycle.is_some();
+            if !expected_stop {
+                let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
+                break Err(format!("script error: {error}; diagnostic={diagnostic}"));
+            }
+        }
         if let Some(error) = state.start_error.take() {
             let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
             break Err(format!("{error}; diagnostic={diagnostic}"));
@@ -1842,6 +1854,50 @@ mod tests {
         observation
     }
 
+    fn native_script_stop(reason: &str) -> script::ScriptLifecycleReceipt {
+        let source = format!(
+            r#"
+import {{ ScriptRunner }} from '../../runtime/ScriptRunner.js';
+export default class NativeStop extends LoopingBot {{
+    loop() {{ ScriptRunner.stop({reason:?}); }}
+}}
+"#
+        );
+        let mut slot = script::SlotScript::new();
+        slot.start_load_with_loadouts(source, script::LoadShape::CompatClass, vec![], &[])
+            .unwrap();
+        let mut client = client::client::Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        });
+        let mut ctx = script::ScriptCtx {
+            driver: &mut client,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+        };
+        slot.on_game_tick(&mut ctx);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while slot.state() == script::RunState::Running && Instant::now() < deadline {
+            slot.drain_logs();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        slot.lifecycle_receipt().unwrap_or_else(|| {
+            panic!(
+                "native ScriptRunner.stop did not publish a lifecycle receipt: state={:?} error={:?}",
+                slot.state(),
+                slot.last_error()
+            )
+        })
+    }
+
     fn gem_obs(item_ids: &[(i32, i32)], bank_ids: &[(i32, i32)], crafting_xp: i32) -> Observation {
         let mut observation = observation(&[], &[("crafting", crafting_xp)], &[]);
         observation.tile = Some((3185, 3440, 0));
@@ -2037,16 +2093,29 @@ mod tests {
         exhausted.bank_open = true;
         exhausted.bank_loaded = true;
         exhausted.bank_generation = 8;
-        let stop = script::ScriptLifecycleReceipt {
-            runtime_generation: 1,
-            state: script::ScriptTerminalState::Stopped,
-            tick: 12,
-            reason: "every selected herb is empty in the bank".into(),
-        };
+        let bank_trip_stop = native_script_stop(HERB_CLEANER_BANK_TRIP_STOP_REASON);
+        assert_eq!(bank_trip_stop.state, script::ScriptTerminalState::Stopped);
+        assert_eq!(bank_trip_stop.reason, HERB_CLEANER_BANK_TRIP_STOP_REASON);
 
         let mut complete = witness(case, &baseline, [&cleaned, &exhausted]);
-        complete.observe_script_lifecycle(stop.clone());
-        assert!(complete.qualify().is_ok());
+        complete.observe_script_lifecycle(bank_trip_stop.clone());
+        let bank_trip_evidence = complete.qualify().unwrap();
+        assert_eq!(
+            bank_trip_evidence["herb_cleaner_empty_cycle"]["stop_kind"],
+            "bank_trip_no_eligible_herbs"
+        );
+
+        let loop_stop = script::ScriptLifecycleReceipt {
+            reason: HERB_CLEANER_EMPTY_STOP_REASON.into(),
+            ..bank_trip_stop.clone()
+        };
+        let mut loop_complete = witness(case, &baseline, [&cleaned, &exhausted]);
+        loop_complete.observe_script_lifecycle(loop_stop.clone());
+        let loop_evidence = loop_complete.qualify().unwrap();
+        assert_eq!(
+            loop_evidence["herb_cleaner_empty_cycle"]["stop_kind"],
+            "loop_exhausted"
+        );
 
         let mut empty_seed = baseline.clone();
         empty_seed.bank_ids.clear();
@@ -2057,19 +2126,19 @@ mod tests {
         empty_without_cleaning.bank_loaded = true;
         empty_without_cleaning.bank_generation = 8;
         let mut no_cleaning = witness(case, &baseline, [&empty_without_cleaning]);
-        no_cleaning.observe_script_lifecycle(stop.clone());
+        no_cleaning.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(no_cleaning.qualify().is_err());
 
         let mut stale = exhausted.clone();
         stale.bank_generation = baseline.bank_generation;
         let mut stale_witness = witness(case, &baseline, [&cleaned, &stale]);
-        stale_witness.observe_script_lifecycle(stop.clone());
+        stale_witness.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(stale_witness.qualify().is_err());
 
         let mut guam_remains = exhausted.clone();
         guam_remains.bank_ids.insert(UNIDENTIFIED_GUAM_ID, 1);
         let mut stocked_witness = witness(case, &baseline, [&cleaned, &guam_remains]);
-        stocked_witness.observe_script_lifecycle(stop.clone());
+        stocked_witness.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(stocked_witness.qualify().is_err());
 
         let mut marrentill_remains = exhausted.clone();
@@ -2077,14 +2146,22 @@ mod tests {
             .bank_ids
             .insert(UNIDENTIFIED_MARENTILL_ID, 1);
         let mut marrentill_witness = witness(case, &baseline, [&cleaned, &marrentill_remains]);
-        marrentill_witness.observe_script_lifecycle(stop.clone());
+        marrentill_witness.observe_script_lifecycle(bank_trip_stop.clone());
         assert!(marrentill_witness.qualify().is_err());
 
-        let mut wrong_reason = stop;
+        let mut wrong_reason = bank_trip_stop.clone();
         wrong_reason.reason = "harness stop".into();
         let mut wrong_stop = witness(case, &baseline, [&cleaned, &exhausted]);
         wrong_stop.observe_script_lifecycle(wrong_reason);
         assert!(wrong_stop.qualify().is_err());
+
+        let mut stop_before_exhaustion = witness(case, &baseline, [&cleaned]);
+        stop_before_exhaustion.observe_script_lifecycle(bank_trip_stop);
+        stop_before_exhaustion.observe(&exhausted);
+        assert!(
+            stop_before_exhaustion.qualify().is_err(),
+            "a lifecycle receipt observed before the fresh empty bank cannot qualify later"
+        );
 
         assert!(witness(case, &baseline, [&cleaned, &exhausted])
             .qualify()
