@@ -751,6 +751,7 @@ impl TuiSession {
                     kind: card.kind,
                     source: card.source,
                     shape: None,
+                    api_family: Some(card.api_family.as_str().into()),
                 },
             )?;
             *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
@@ -974,6 +975,7 @@ impl TuiSession {
                                             kind: card.kind,
                                             source: card.source,
                                             shape: None,
+                                            api_family: Some(card.api_family.as_str().into()),
                                         },
                                     ) {
                                         Ok(siblings) => play.script_start_load(

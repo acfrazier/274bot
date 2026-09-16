@@ -235,6 +235,7 @@ impl Session {
                 kind: card.kind,
                 source: card.source,
                 shape: None,
+                api_family: Some(card.api_family.as_str().into()),
             },
         )
     }
