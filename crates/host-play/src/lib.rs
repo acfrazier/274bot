@@ -439,6 +439,33 @@ impl SlotStatus {
     pub fn is_up(&self) -> bool {
         self.ingame && self.scene_state == 2
     }
+
+    /// A preparation failure that is terminal for the current slot lifetime.
+    /// Login errors also use `StartupPhase::Error`, but are retryable and do
+    /// not carry this producer-owned asset-initialization fact.
+    pub fn terminal_startup_error(&self) -> Option<&str> {
+        if self.startup_phase != StartupPhase::Error {
+            return None;
+        }
+        self.error
+            .as_deref()
+            .filter(|error| error.starts_with("profile asset initialization failed:"))
+    }
+}
+
+/// Find a terminal asset-init failure among the slots owned by one run.
+/// Ownership is explicit so unrelated user slots cannot fail a live watch.
+pub fn owned_terminal_startup_error(
+    statuses: &[SlotStatus],
+    owned_names: &[String],
+) -> Option<String> {
+    statuses
+        .iter()
+        .filter(|slot| owned_names.iter().any(|name| name == &slot.username))
+        .find_map(|slot| {
+            slot.terminal_startup_error()
+                .map(|error| format!("{}: {error}", slot.username))
+        })
 }
 
 /// Absolute world tile from the scene origin plus the local-player route
@@ -6675,6 +6702,60 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    #[test]
+    fn terminal_startup_error_is_only_the_producer_asset_failure() {
+        let mut status = SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::Error,
+            error: Some("profile asset initialization failed: Cache identity mismatch".into()),
+            ..SlotStatus::default()
+        };
+        assert_eq!(
+            status.terminal_startup_error(),
+            Some("profile asset initialization failed: Cache identity mismatch")
+        );
+
+        status.error = Some("code 16: login rejected".into());
+        assert_eq!(status.terminal_startup_error(), None);
+        status.startup_phase = StartupPhase::Preparing;
+        status.error = Some("profile asset initialization failed: stale row".into());
+        assert_eq!(status.terminal_startup_error(), None);
+
+        let statuses = vec![
+            SlotStatus {
+                username: "unrelated".into(),
+                startup_phase: StartupPhase::Error,
+                error: Some("profile asset initialization failed: foreign".into()),
+                ..SlotStatus::default()
+            },
+            SlotStatus {
+                username: "owned".into(),
+                startup_phase: StartupPhase::Preparing,
+                ..SlotStatus::default()
+            },
+        ];
+        assert_eq!(
+            owned_terminal_startup_error(&statuses, &["owned".into()]),
+            None,
+            "unrelated or healthy slots do not fail the run"
+        );
+        assert_eq!(
+            owned_terminal_startup_error(
+                &[
+                    statuses[1].clone(),
+                    SlotStatus {
+                        username: "owned-2".into(),
+                        startup_phase: StartupPhase::Error,
+                        error: Some("profile asset initialization failed: mismatch".into()),
+                        ..SlotStatus::default()
+                    },
+                ],
+                &["owned".into(), "owned-2".into()]
+            ),
+            Some("owned-2: profile asset initialization failed: mismatch".into())
+        );
+    }
 
     #[test]
     fn startup_progress_is_latest_only_and_clears_on_completion() {
