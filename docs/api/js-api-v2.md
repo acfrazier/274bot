@@ -59,10 +59,11 @@ random handling and recovery stay in Rust.
 ## Worked example: BoneBurier v2
 
 `crates/script/examples/bone_burier_v2.ts` is the authoritative small
-author-facing example. `bone_burier_v2.js` is its normal `deno bundle`
-output, so either file can be loaded as a NativeApi v2 card; they are not two
-independent implementations. The example uses only the public `NativeApi`
-surface and demonstrates the intended synchronous, snapshot-polled shape:
+author-facing example. `bone_burier_v2.js` is the checked-in normal-build
+JavaScript form with the same logic and loadable v2 export declarations; it is
+not a second implementation. Either file can be loaded as a NativeApi v2 card.
+The example uses only the public `NativeApi` surface and demonstrates the
+intended synchronous, snapshot-polled shape:
 
 - `SETTINGS.boneName` selects the unnoted inventory and bank item while
   unrelated inventory is left untouched;

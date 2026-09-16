@@ -33,21 +33,21 @@ function count(items: ItemRow[], name: string): number {
         .reduce((total, item) => total + item.count, 0);
 }
 
-function prayer(api: NativeApi): number {
-    const row = api.snapshot.stats.find((stat) => stat.name.toLowerCase() === 'prayer');
+function prayer(api: NativeApi, stats: NativeApi['snapshot']['stats']): number {
+    const row = stats.find((stat) => stat.name.toLowerCase() === 'prayer');
     if (!row) return prayerXp;
     if (initialPrayerXp === null) initialPrayerXp = row.xp;
     prayerXp = Math.max(0, row.xp - (initialPrayerXp ?? row.xp));
     return prayerXp;
 }
 
-function paint(api: NativeApi, bone: string): void {
+function paint(api: NativeApi, bone: string, stats: NativeApi['snapshot']['stats']): void {
     api.paint.begin({ accent: '#ffb15b' })
         .title('BoneBurier v2')
         .row('bone', bone)
         .row('phase', phase)
         .row('burials', buried)
-        .row('prayer XP', prayer(api))
+        .row('prayer XP', prayer(api, stats))
         .end();
 }
 
@@ -70,8 +70,8 @@ function timedOut(api: NativeApi): boolean {
     return false;
 }
 
-function supportedStand(api: NativeApi): BankStand | null {
-    return api.snapshot.banks.find((stand) => api.snapshot.bank_approaches.some((approach) =>
+function supportedStand(api: NativeApi, banks: NativeApi['snapshot']['banks'], bankApproaches: NativeApi['snapshot']['bank_approaches']): BankStand | null {
+    return banks.find((stand) => bankApproaches.some((approach) =>
         approach.can_operate && approach.dest_ok &&
         approach.x === stand.x && approach.z === stand.z && approach.level === stand.level)) ?? null;
 }
@@ -131,12 +131,18 @@ export function tick(api: NativeApi): void {
         api.log(`BoneBurier v2: bone changed to ${bone}`);
     }
     activeBone = bone;
-    paint(api, bone);
-    if (!api.snapshot.ingame) {
+    if (!api.snapshot?.ingame) {
         fail(api, 'not in game');
         return;
     }
-    const invCount = count(api.snapshot.inv, bone);
+    const snapshot = api.snapshot;
+    const inv = Array.isArray(snapshot.inv) ? snapshot.inv : [];
+    const stats = Array.isArray(snapshot.stats) ? snapshot.stats : [];
+    const banks = Array.isArray(snapshot.banks) ? snapshot.banks : [];
+    const bank = Array.isArray(snapshot.bank) ? snapshot.bank : [];
+    const bankApproaches = Array.isArray(snapshot.bank_approaches) ? snapshot.bank_approaches : [];
+    paint(api, bone, stats);
+    const invCount = count(inv, bone);
     if (timedOut(api) || observePending(api, bone, invCount)) return;
     if (phase === 'stopping') return;
 
@@ -166,7 +172,7 @@ export function tick(api: NativeApi): void {
             return;
         }
         waitingForBankSince = 0;
-        const row = api.snapshot.bank.find((item) =>
+        const row = bank.find((item) =>
             item.name?.toLowerCase() === bone.toLowerCase() && !item.noted && item.count > 0);
         if (!row) {
             fail(api, 'confirmed loaded current-generation bank exhaustion');
@@ -183,9 +189,9 @@ export function tick(api: NativeApi): void {
         return;
     }
 
-    const stand = supportedStand(api);
+    const stand = supportedStand(api, banks, bankApproaches);
     if (!stand) {
-        if (!api.snapshot.banks.length || !api.snapshot.bank_approaches.length) {
+        if (!banks.length || !bankApproaches.length) {
             fail(api, 'no supported nearby bank');
         } else if (!pending) {
             phase = 'finding-bank';

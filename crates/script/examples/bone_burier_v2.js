@@ -18,17 +18,17 @@ var initialPrayerXp = null;
 function count(items, name) {
   return items.filter((item) => item.name?.toLowerCase() === name.toLowerCase() && !item.noted).reduce((total, item) => total + item.count, 0);
 }
-function prayer(api) {
-  const row = api.snapshot.stats.find((stat) => stat.name.toLowerCase() === "prayer");
+function prayer(api, stats) {
+  const row = stats.find((stat) => stat.name.toLowerCase() === "prayer");
   if (!row) return prayerXp;
   if (initialPrayerXp === null) initialPrayerXp = row.xp;
   prayerXp = Math.max(0, row.xp - (initialPrayerXp ?? row.xp));
   return prayerXp;
 }
-function paint(api, bone) {
+function paint(api, bone, stats) {
   api.paint.begin({
     accent: "#ffb15b"
-  }).title("BoneBurier v2").row("bone", bone).row("phase", phase).row("burials", buried).row("prayer XP", prayer(api)).end();
+  }).title("BoneBurier v2").row("bone", bone).row("phase", phase).row("burials", buried).row("prayer XP", prayer(api, stats)).end();
 }
 function fail(api, reason) {
   phase = "stopping";
@@ -47,8 +47,8 @@ function timedOut(api) {
   }
   return false;
 }
-function supportedStand(api) {
-  return api.snapshot.banks.find((stand) => api.snapshot.bank_approaches.some((approach) => approach.can_operate && approach.dest_ok && approach.x === stand.x && approach.z === stand.z && approach.level === stand.level)) ?? null;
+function supportedStand(api, banks, bankApproaches) {
+  return banks.find((stand) => bankApproaches.some((approach) => approach.can_operate && approach.dest_ok && approach.x === stand.x && approach.z === stand.z && approach.level === stand.level)) ?? null;
 }
 function observePending(api, bone, invCount) {
   if (!pending) return false;
@@ -104,12 +104,18 @@ export function tick(api) {
     api.log(`BoneBurier v2: bone changed to ${bone}`);
   }
   activeBone = bone;
-  paint(api, bone);
-  if (!api.snapshot.ingame) {
+  if (!api.snapshot?.ingame) {
     fail(api, "not in game");
     return;
   }
-  const invCount = count(api.snapshot.inv, bone);
+  const snapshot = api.snapshot;
+  const inv = Array.isArray(snapshot.inv) ? snapshot.inv : [];
+  const stats = Array.isArray(snapshot.stats) ? snapshot.stats : [];
+  const banks = Array.isArray(snapshot.banks) ? snapshot.banks : [];
+  const bank = Array.isArray(snapshot.bank) ? snapshot.bank : [];
+  const bankApproaches = Array.isArray(snapshot.bank_approaches) ? snapshot.bank_approaches : [];
+  paint(api, bone, stats);
+  const invCount = count(inv, bone);
   if (timedOut(api) || observePending(api, bone, invCount)) return;
   if (phase === "stopping") return;
   if (invCount > 0) {
@@ -148,7 +154,7 @@ export function tick(api) {
       return;
     }
     waitingForBankSince = 0;
-    const row = api.snapshot.bank.find((item) => item.name?.toLowerCase() === bone.toLowerCase() && !item.noted && item.count > 0);
+    const row = bank.find((item) => item.name?.toLowerCase() === bone.toLowerCase() && !item.noted && item.count > 0);
     if (!row) {
       fail(api, "confirmed loaded current-generation bank exhaustion");
       return;
@@ -167,9 +173,9 @@ export function tick(api) {
     });
     return;
   }
-  const stand = supportedStand(api);
+  const stand = supportedStand(api, banks, bankApproaches);
   if (!stand) {
-    if (!api.snapshot.banks.length || !api.snapshot.bank_approaches.length) {
+    if (!banks.length || !bankApproaches.length) {
       fail(api, "no supported nearby bank");
     } else if (!pending) {
       phase = "finding-bank";
@@ -205,4 +211,3 @@ export function tick(api) {
     } : {}
   });
 }
-
