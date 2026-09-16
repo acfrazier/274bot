@@ -170,7 +170,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "client",
  "serde",
@@ -1647,7 +1647,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e2e"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "host"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -2321,7 +2321,7 @@ dependencies = [
 
 [[package]]
 name = "host-play"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -2957,7 +2957,7 @@ dependencies = [
 
 [[package]]
 name = "nav"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "panel"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -4491,7 +4491,7 @@ dependencies = [
 
 [[package]]
 name = "scenario"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -4524,7 +4524,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "script"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "ab_glyph",
  "api",
@@ -5874,7 +5874,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tui"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "api",
  "client",
@@ -6110,7 +6110,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vault"
-version = "0.1.0"
+version = "0.1.7"
 dependencies = [
  "aes-gcm",
  "pbkdf2",

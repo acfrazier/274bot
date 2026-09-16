@@ -1,9 +1,9 @@
 # Changelog
 
-All notable public changes to 274bot. Crate versions are `0.1.0` and
+All notable public changes to 274bot. Host workspace crate versions are `0.1.7` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [Unreleased] — 0.1.5
+## [Unreleased] — 0.1.7 / Alpha 2
 
 ### Server profiles and operator script controls
 
