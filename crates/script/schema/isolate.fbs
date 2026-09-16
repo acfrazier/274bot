@@ -316,6 +316,7 @@ table Snapshot {
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
+// input_identity is the native permit at production (0 when absent).
 // Optional fields are absent (not written) when the request has none.
 table Interact {
   op: string;
@@ -339,6 +340,7 @@ table Interact {
   request_id: ulong = 0;
   xf: double;
   yf: double;
+  input_identity: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

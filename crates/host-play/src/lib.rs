@@ -1658,9 +1658,15 @@ fn take_script_interacts(
     let mut out = Vec::with_capacity(reqs.len());
     for req in reqs {
         match req {
-            script::shim::InteractReq::Mouse { down, x, y, button } => {
+            script::shim::InteractReq::Mouse {
+                down,
+                x,
+                y,
+                button,
+                identity,
+            } => {
                 if let Some(inp) = slot_input {
-                    inp.enqueue_script_mouse(down, x, y, button);
+                    inp.enqueue_script_mouse_at(identity, down, x, y, button);
                 }
             }
             other => out.push(other),
@@ -12110,6 +12116,333 @@ export default class T extends LoopingBot {
         inp.consume_native_frame(&mut c.shell);
         assert_eq!(c.shell.mouse_click_button, 0);
         assert_eq!(c.shell.mouse_button, 0);
+    }
+
+    #[test]
+    fn canvas_mouse_slot_pause_resume_before_frame_releases_held() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let inp = SlotInput::new();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+    }
+}
+"#;
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("pause/resume mouse isolate starts");
+        }
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 1);
+        {
+            let slot = script_slot(&scripts, "alice").unwrap();
+            let mut slot = slot.lock().unwrap();
+            slot.pause();
+            slot.resume();
+        }
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 0);
+        assert_eq!(c.shell.mouse_click_button, 0);
+    }
+
+    #[test]
+    fn canvas_mouse_slot_stop_start_before_frame_releases_held() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let inp = SlotInput::new();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+    }
+}
+"#;
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("stop/start mouse isolate starts");
+        }
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            Some(&inp),
+        );
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 1);
+        {
+            let slot = script_slot(&scripts, "alice").unwrap();
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("replacement start");
+        }
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 0);
+        assert_eq!(c.shell.mouse_click_button, 0);
+    }
+
+    #[test]
+    fn canvas_mouse_delayed_old_up_does_not_release_new_hold() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let inp = SlotInput::new();
+        let source = r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
+    }
+}
+"#;
+        {
+            let slot = script_slot_or_insert(&scripts, "alice");
+            let mut slot = slot.lock().unwrap();
+            slot.bind_native_input(inp.authority());
+            slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+                .expect("delayed up isolate starts");
+        }
+        let mut c = bank_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        script_observe_with_npc_boxes(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&[]),
+            None,
+            Some(&snap),
+            None,
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            None,
+            None,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        let reqs = script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .drain_interacts();
+        let bytes = script::isolate_fb::encode_interact_batch(&reqs);
+        let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("fb mouse batch");
+        let old_down = decoded
+            .iter()
+            .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: true, .. }))
+            .cloned()
+            .expect("produced down");
+        let old_up = decoded
+            .iter()
+            .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. }))
+            .cloned()
+            .expect("produced up");
+        let script::shim::InteractReq::Mouse {
+            down,
+            x,
+            y,
+            button,
+            identity,
+        } = old_down
+        else {
+            panic!("down");
+        };
+        inp.enqueue_script_mouse_at(identity, down, x, y, button);
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 1);
+        {
+            let slot = script_slot(&scripts, "alice").unwrap();
+            let mut slot = slot.lock().unwrap();
+            slot.pause();
+            slot.resume();
+        }
+        inp.enqueue_script_mouse(true, 50.0, 50.0, 0);
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_button, 1);
+        assert_eq!(c.shell.mouse_click_x, 50);
+        let script::shim::InteractReq::Mouse {
+            down,
+            x,
+            y,
+            button,
+            identity,
+        } = old_up
+        else {
+            panic!("up");
+        };
+        inp.enqueue_script_mouse_at(identity, down, x, y, button);
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(
+            c.shell.mouse_button, 1,
+            "stale up must not release the newer hold"
+        );
+        assert_eq!(c.shell.mouse_click_x, 50);
+    }
+
+    #[test]
+    fn canvas_mouse_logout_before_frame_releases_script_hold() {
+        let inp = SlotInput::new();
+        inp.authority().publish_live();
+        inp.enqueue_script_mouse(true, 100.0, 100.0, 0);
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        inp.set_host_consume_allowed(false);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 0);
+    }
+
+    #[test]
+    fn canvas_mouse_289_sample_after_down_does_not_publish_click_coords() {
+        let inp = SlotInput::new();
+        inp.authority().publish_live();
+        let mut c = Client::new_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        let before_x = c.shell.mouse_x;
+        let before_y = c.shell.mouse_y;
+        inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
+        inp.consume_native_frame(&mut c.shell);
+        assert_eq!(c.shell.mouse_click_button, 1);
+        c.shell.sample_mouse();
+        assert_eq!(c.shell.mouse_x, before_x);
+        assert_eq!(c.shell.mouse_y, before_y);
+        assert_eq!(c.shell.mouse_button, 1);
     }
 
     #[test]

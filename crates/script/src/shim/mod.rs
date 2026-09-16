@@ -1150,6 +1150,7 @@ pub enum InteractReq {
         code: String,
     },
     /// One canvas MouseEvent. Coordinates stay f64 until native mapping.
+    /// `identity` is the native permit at production; JS does not set it.
     #[serde(rename = "mouse")]
     Mouse {
         down: bool,
@@ -1159,7 +1160,16 @@ pub enum InteractReq {
         y: f64,
         #[serde(default, deserialize_with = "deserialize_js_button")]
         button: i32,
+        #[serde(default)]
+        identity: u64,
     },
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub(crate) enum MaybeInteractReq {
+    Req(InteractReq),
+    Skip(serde::de::IgnoredAny),
 }
 
 fn deserialize_js_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
@@ -1190,6 +1200,17 @@ fn deserialize_js_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::
         fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<f64, E> {
             Ok(f64::NAN)
         }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<f64, A::Error> {
+            while map
+                .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                .is_some()
+            {}
+            Ok(f64::NAN)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<f64, A::Error> {
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+            Ok(f64::NAN)
+        }
     }
     d.deserialize_any(V)
 }
@@ -1202,10 +1223,10 @@ fn deserialize_js_button<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, 
             write!(f, "a JS button number")
         }
         fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<i32, E> {
-            Ok(v as i32)
+            Ok(i32::try_from(v).unwrap_or(i32::MIN))
         }
         fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<i32, E> {
-            Ok(v as i32)
+            Ok(i32::try_from(v).unwrap_or(i32::MIN))
         }
         fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<i32, E> {
             if v.is_finite() && v.fract() == 0.0 && v >= i32::MIN as f64 && v <= i32::MAX as f64 {
@@ -1215,15 +1236,26 @@ fn deserialize_js_button<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, 
             }
         }
         fn visit_none<E: serde::de::Error>(self) -> Result<i32, E> {
-            Ok(0)
+            Ok(i32::MIN)
         }
         fn visit_unit<E: serde::de::Error>(self) -> Result<i32, E> {
-            Ok(0)
+            Ok(i32::MIN)
         }
         fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<i32, E> {
             Ok(i32::MIN)
         }
         fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<i32, E> {
+            Ok(i32::MIN)
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<i32, A::Error> {
+            while map
+                .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                .is_some()
+            {}
+            Ok(i32::MIN)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<i32, A::Error> {
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
             Ok(i32::MIN)
         }
     }

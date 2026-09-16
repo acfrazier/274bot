@@ -194,9 +194,9 @@ const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
 const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
 const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
 
-/// Logical applet posted as `canvasRect`. Must match `client::APPLET_W/H`.
-pub const SNAPSHOT_CANVAS_W: i32 = 765;
-pub const SNAPSHOT_CANVAS_H: i32 = 503;
+/// Logical applet posted as `canvasRect`. Bound to `api::native_input::APPLET_*`.
+pub const SNAPSHOT_CANVAS_W: i32 = api::native_input::APPLET_W;
+pub const SNAPSHOT_CANVAS_H: i32 = api::native_input::APPLET_H;
 
 // BankApproach: { loc_id, x, z, level, can_operate, dest_ok, dest_x, dest_z, dest_level }
 const VT_BA_LOC_ID: VOffsetT = 4;
@@ -312,6 +312,7 @@ const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
 const VT_IN_REQUEST_ID: VOffsetT = 40;
 const VT_IN_XF: VOffsetT = 42;
 const VT_IN_YF: VOffsetT = 44;
+const VT_IN_INPUT_IDENTITY: VOffsetT = 46;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -4373,6 +4374,9 @@ impl InteractReader<'_> {
     pub fn yf(&self) -> Option<f64> {
         unsafe { self.tab.get::<f64>(VT_IN_YF, None) }
     }
+    pub fn input_identity(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_INPUT_IDENTITY, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4399,6 +4403,7 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<u64>("request_id", VT_IN_REQUEST_ID, false)?
             .visit_field::<f64>("xf", VT_IN_XF, false)?
             .visit_field::<f64>("yf", VT_IN_YF, false)?
+            .visit_field::<u64>("input_identity", VT_IN_INPUT_IDENTITY, false)?
             .finish();
         Ok(())
     }
@@ -5691,6 +5696,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 x: row.xf().unwrap_or(f64::NAN),
                 y: row.yf().unwrap_or(f64::NAN),
                 button: row.level(),
+                identity: row.input_identity(),
             }),
             other => return Err(format!("unknown interact op: {other}")),
         }
@@ -6078,11 +6084,20 @@ fn interact_off<'b>(
             }
             b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
         }
-        InteractReq::Mouse { down, x, y, button } => {
+        InteractReq::Mouse {
+            down,
+            x,
+            y,
+            button,
+            identity,
+        } => {
             b.push_slot_always(VT_IN_INDEX, if *down { 1 } else { 0 });
             b.push_slot_always(VT_IN_LEVEL, *button);
             b.push_slot_always(VT_IN_XF, *x);
             b.push_slot_always(VT_IN_YF, *y);
+            if *identity != 0 {
+                b.push_slot_always(VT_IN_INPUT_IDENTITY, *identity);
+            }
         }
     }
     WIPOffset::new(b.end_table(tab).value())
@@ -6345,12 +6360,14 @@ pub(crate) mod tests {
                 x: 382.5,
                 y: 251.5,
                 button: 0,
+                identity: 7,
             },
             InteractReq::Mouse {
                 down: false,
                 x: 382.5,
                 y: 251.5,
                 button: 0,
+                identity: 7,
             },
             InteractReq::Key {
                 down: true,
@@ -6370,6 +6387,7 @@ pub(crate) mod tests {
             x: -0.25,
             y: 10.0,
             button: 0,
+            identity: 0,
         }];
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("neg fraction decodes");

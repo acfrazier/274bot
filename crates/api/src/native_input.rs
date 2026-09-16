@@ -12,6 +12,11 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// Logical applet size, bound to the client constants so script/host agree
+/// without a script→client import.
+pub const APPLET_W: i32 = client::client::APPLET_W;
+pub const APPLET_H: i32 = client::client::APPLET_H;
+
 /// Snapshot of the live identity and whether script input may consume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeInputPermit {
@@ -128,5 +133,13 @@ mod tests {
         a.sync_live(true);
         assert!(a.lock().eligible());
         assert_eq!(a.lock().identity(), after);
+    }
+
+    #[test]
+    fn applet_constants_bind_client_source() {
+        assert_eq!(super::APPLET_W, client::client::APPLET_W);
+        assert_eq!(super::APPLET_H, client::client::APPLET_H);
+        assert_eq!(super::APPLET_W, 765);
+        assert_eq!(super::APPLET_H, 503);
     }
 }

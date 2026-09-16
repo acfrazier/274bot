@@ -21,10 +21,10 @@ pub use raster::{dirty_bounds, rasterize};
 
 use geom::{append_arc, finite_f32};
 
-/// Client applet width in pixels (same as `panel::game_view::APPLET_W`).
-pub const APPLET_W: i32 = 765;
-/// Client applet height in pixels (same as `panel::game_view::APPLET_H`).
-pub const APPLET_H: i32 = 503;
+/// Client applet width in pixels (bound to `api::native_input::APPLET_W`).
+pub const APPLET_W: i32 = api::native_input::APPLET_W;
+/// Client applet height in pixels (bound to `api::native_input::APPLET_H`).
+pub const APPLET_H: i32 = api::native_input::APPLET_H;
 
 /// Max recorded canvas ops per onPaint call / paint frame.
 pub const MAX_CANVAS_OPS: usize = 256;
