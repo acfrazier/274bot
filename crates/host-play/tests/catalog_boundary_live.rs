@@ -1994,6 +1994,55 @@ mod tests {
             "native release away from bank, then exact remaining rich casts, then bank return must qualify"
         );
 
+        let mut notes_first = retired.clone();
+        notes_first.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        notes_first.item_ids.remove(&NATURE_RUNE_ID);
+        notes_first.item_ids.remove(&COINS_ID);
+        notes_first.bank_ids.insert(NATURE_RUNE_ID, 180);
+        notes_first
+            .bank_ids
+            .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 20);
+        let mut runes_second = notes_first.clone();
+        runes_second.item_ids.insert(NATURE_RUNE_ID, 8);
+        runes_second.bank_ids.insert(NATURE_RUNE_ID, 172);
+        let mut restock_closed = runes_second.clone();
+        restock_closed.bank_open = false;
+        restock_closed.bank_loaded = false;
+        restock_closed.bank_ids.clear();
+        let mut staged_cast = restock_closed.clone();
+        staged_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
+        staged_cast.item_ids.insert(NATURE_RUNE_ID, 7);
+        staged_cast
+            .item_ids
+            .insert(COINS_ID, YEW_LONGBOW_ALCH_COINS);
+        staged_cast.xp.insert(
+            "magic".into(),
+            10_000 + HIGH_ALCH_MAGIC_XP * 20 + HIGH_ALCH_MAGIC_XP,
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &further,
+                    &retired,
+                    &notes_first,
+                    &runes_second,
+                    &restock_closed,
+                    &staged_cast
+                ]
+            )
+            .qualify()
+            .is_ok(),
+            "notes-first then Nature fuel then close then exact poor cast must qualify"
+        );
+
         let first_only = witness(case, &baseline, [&withdrawn, &first]);
         let first_only_error = first_only
             .qualify()
@@ -2086,6 +2135,113 @@ mod tests {
             .qualify()
             .is_err(),
             "poor withdrawal without consumption must not qualify"
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &further,
+                    &retired,
+                    &notes_first,
+                    &runes_second,
+                    &restock_closed
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "complete poor restock without an actual bank-closed cast must not qualify"
+        );
+        let mut fuel_missing_closed = notes_first.clone();
+        fuel_missing_closed.bank_open = false;
+        fuel_missing_closed.bank_loaded = false;
+        fuel_missing_closed.bank_ids.clear();
+        let mut fuel_missing_cast = fuel_missing_closed.clone();
+        fuel_missing_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
+        fuel_missing_cast
+            .item_ids
+            .insert(COINS_ID, YEW_LONGBOW_ALCH_COINS);
+        fuel_missing_cast.xp.insert(
+            "magic".into(),
+            10_000 + HIGH_ALCH_MAGIC_XP * 20 + HIGH_ALCH_MAGIC_XP,
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &further,
+                    &retired,
+                    &notes_first,
+                    &fuel_missing_closed,
+                    &fuel_missing_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "noted poor without Nature fuel must not freeze a consumption baseline"
+        );
+        let mut dropped = restock_closed.clone();
+        dropped.item_ids.insert(CERT_YEW_LONGBOW_ID, 0);
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &further,
+                    &retired,
+                    &notes_first,
+                    &runes_second,
+                    &restock_closed,
+                    &dropped
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "dropping restocked poor notes must not qualify as a cast"
+        );
+        let mut deposited = runes_second.clone();
+        deposited.item_ids.insert(CERT_YEW_LONGBOW_ID, 0);
+        deposited.bank_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &further,
+                    &retired,
+                    &notes_first,
+                    &runes_second,
+                    &deposited
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "depositing restocked poor notes must not qualify as a cast"
         );
         let mut further_before_release = first.clone();
         further_before_release
