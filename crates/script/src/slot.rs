@@ -1087,7 +1087,7 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         if let Some(isolate) = &self.load {
-            isolate.on_game_tick(ctx.tick);
+            isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             return;
         }
         let Some(script) = self.compiled.as_mut() else {

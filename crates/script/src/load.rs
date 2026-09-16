@@ -1409,6 +1409,7 @@ mod isolate {
         Tick {
             tick: u64,
             generation: u64,
+            input_identity: u64,
         },
         ResetSession,
         /// The host's FlatBuffer snapshot blob (schema: `crates/script/
@@ -1811,6 +1812,12 @@ mod isolate {
         /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
         /// skipped.
         pub fn on_game_tick(&self, snap_tick: u64) {
+            self.on_game_tick_at(snap_tick, 0);
+        }
+
+        /// Dispatch one observed game tick, tagging produced mouse rows with
+        /// the native permit identity that was live at production.
+        pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
             self.pump_logs();
             if self.stopped.load(std::sync::atomic::Ordering::Acquire)
                 || self.teardown_blocks_dispatch()
@@ -1851,6 +1858,7 @@ mod isolate {
             let _ = self.tx.send(IsolateCmd::Tick {
                 tick: snap_tick,
                 generation,
+                input_identity,
             });
         }
 
@@ -3671,6 +3679,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, rect, "right", width)?;
             set(&mut scope, rect, "bottom", height)?;
             set_readonly(&mut scope, host, "canvasRect", rect.into())?;
+        } else {
+            delete_key(&mut scope, host, "canvasRect")?;
         }
         if snap.has_ours() {
             let ours = v8::Boolean::new(&mut scope, snap.ours());
@@ -4004,6 +4014,18 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
         obj.define_own_property(scope, name.into(), value, v8::PropertyAttribute::READ_ONLY)
             .ok_or_else(|| format!("v8 define_own_property failed for {key}"))?;
+        Ok(())
+    }
+
+    fn delete_key<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        obj: v8::Local<'s, v8::Object>,
+        key: &str,
+    ) -> Result<(), String> {
+        let name =
+            v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+        obj.delete(scope, name.into())
+            .ok_or_else(|| format!("v8 object delete failed for {key}"))?;
         Ok(())
     }
 
@@ -4933,6 +4955,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 IsolateCmd::Tick {
                     tick: n,
                     generation,
+                    input_identity,
                 } => {
                     if paused
                         || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
@@ -5083,10 +5106,24 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // reaches the host exactly once. The queue is read
                     // through the runtime's value bridge (v8 object walk,
                     // not `JSON.parse`) and forwarded as a FlatBuffer
-                    // batch, not a stringified JSON document.
-                    let interact: Result<Vec<crate::shim::InteractReq>, rustyscript::Error> =
+                    // batch, not a stringified JSON document. Each row is
+                    // accepted or rejected locally so a malformed mouse
+                    // object cannot drop a sibling key.
+                    let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
                         runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                    let mut reqs = interact.unwrap_or_default();
+                    let mut reqs: Vec<crate::shim::InteractReq> = rows
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|row| match row {
+                            crate::shim::MaybeInteractReq::Req(mut req) => {
+                                if let crate::shim::InteractReq::Mouse { identity, .. } = &mut req {
+                                    *identity = input_identity;
+                                }
+                                Some(req)
+                            }
+                            crate::shim::MaybeInteractReq::Skip(_) => None,
+                        })
+                        .collect();
                     let (enqueued, settled) = take_wait_facts(&mut runtime);
                     append_wait_facts(&mut reqs, enqueued, settled);
                     if !reqs.is_empty() {
@@ -5150,6 +5187,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 Ok(IsolateCmd::Tick {
                                     tick: next,
                                     generation: next_generation,
+                                    input_identity: _,
                                 }) if next_generation == generation => latest = next,
                                 Ok(other) => {
                                     pending = Some(other);
@@ -5311,6 +5349,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 .send(IsolateCmd::Tick {
                     tick: 1,
                     generation: 0,
+                    input_identity: 0,
                 })
                 .unwrap();
             assert_eq!(
@@ -5499,6 +5538,7 @@ export default class T extends LoopingBot {
                         x,
                         y,
                         button: 0,
+                        ..
                     } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
                 )),
                 "{reqs:?}"
@@ -5525,6 +5565,97 @@ export default class T extends LoopingBot {
                     .iter()
                     .all(|req| !matches!(req, crate::shim::InteractReq::Mouse { .. })),
                 "stale generation must not deliver mouse: {stale:?}"
+            );
+            iso.join();
+        }
+
+        #[test]
+        fn canvas_mouse_production_stamps_input_identity() {
+            let iso = LoadIsolate::spawn(
+                r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            iso.on_game_tick_at(1, 42);
+            iso.probe("true").unwrap();
+            let reqs = iso.drain_interacts();
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: true,
+                        identity: 42,
+                        ..
+                    }
+                )),
+                "{reqs:?}"
+            );
+            iso.join();
+        }
+
+        #[test]
+        fn canvas_mouse_malformed_rows_keep_sibling_key_and_center() {
+            let iso = LoadIsolate::spawn(
+                r#"
+export default class T extends LoopingBot {
+    loop() {
+        const canvas = document.getElementById('canvas');
+        const h = globalThis.__rs2b0t_host;
+        h.interact = h.interact || [];
+        h.interact.push({op:'mouse', down:true, x:{}, y:10, button:0});
+        h.interact.push({op:'mouse', down:true, x:[1], y:10, button:0});
+        h.interact.push({op:'mouse', down:true, x: Number.NaN, y:10, button:0});
+        h.interact.push({op:'mouse', down:true, x:100, y:100, button: 4294967296});
+        h.interact.push({op:'mouse', down:true, x:100, y:100, button: 1.5});
+        h.interact.push({op:'mouse', down:true, x:100, y:100, button: null});
+        h.interact.push([1, 2, 3]);
+        canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '2', code: '2'}));
+        canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 382.5, clientY: 251.5}));
+        canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 382.5, clientY: 251.5}));
+    }
+}
+"#
+                .into(),
+                LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            iso.on_game_tick(1);
+            iso.probe("true").unwrap();
+            let reqs = iso.drain_interacts();
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+                )),
+                "sibling key dropped: {reqs:?}"
+            );
+            assert!(
+                reqs.iter().any(|req| matches!(
+                    req,
+                    crate::shim::InteractReq::Mouse {
+                        down: true,
+                        x,
+                        y,
+                        button: 0,
+                        ..
+                    } if (*x - 382.5).abs() < 1e-9 && (*y - 251.5).abs() < 1e-9
+                )),
+                "valid center down dropped: {reqs:?}"
+            );
+            assert!(
+                reqs.iter()
+                    .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
+                "valid center up dropped: {reqs:?}"
             );
             iso.join();
         }

@@ -352,14 +352,20 @@ impl SlotInput {
     }
 
     pub fn enqueue_script_mouse(&self, down: bool, x: f64, y: f64, button: i32) {
+        let identity = self.authority.lock().identity();
+        self.enqueue_script_mouse_at(identity, down, x, y, button);
+    }
+
+    /// Enqueue a mouse event that already carries its production identity.
+    /// Does not restamp the live permit onto stale work.
+    pub fn enqueue_script_mouse_at(&self, identity: u64, down: bool, x: f64, y: f64, button: i32) {
         let permit = self.authority.lock();
-        if !permit.eligible() {
+        if !permit.eligible() || identity != permit.identity() {
             return;
         }
         let Some((ax, ay, java_btn)) = Self::map_script_mouse(x, y, button) else {
             return;
         };
-        let generation = permit.identity();
         let mut mouse = self.mouse.lock().unwrap();
         if mouse.q.len() >= SCRIPT_MOUSE_QUEUE_CAP {
             mouse.overflow = true;
@@ -369,7 +375,7 @@ impl SlotInput {
         let seq = mouse.next_seq;
         mouse.next_seq = mouse.next_seq.wrapping_add(1);
         mouse.q.push_back(ScriptMouseEv {
-            generation,
+            generation: identity,
             seq,
             down,
             button: java_btn,
@@ -421,6 +427,11 @@ impl SlotInput {
         }
 
         let live = permit.identity();
+        if let MouseOwner::Script { generation, .. } = mouse.held {
+            if generation != live {
+                release_script(shell, &mut mouse);
+            }
+        }
         mouse.q.retain(|ev| ev.generation == live);
 
         let pending: Vec<ScriptMouseEv> = mouse.q.drain(..).collect();
@@ -778,6 +789,60 @@ mod tests {
         assert_eq!(shell.mouse_button, 0);
         assert_eq!(shell.mouse_click_button, 0);
         assert!(!inp.script_held());
+    }
+
+    #[test]
+    fn produced_identity_mismatch_does_not_restamp() {
+        let inp = live_input();
+        let live = inp.authority().lock().identity();
+        inp.enqueue_script_mouse_at(live.wrapping_add(1), true, 100.0, 100.0, 0);
+        assert_eq!(inp.script_queue_len(), 0);
+        inp.enqueue_script_mouse_at(0, true, 100.0, 100.0, 0);
+        assert_eq!(inp.script_queue_len(), 0);
+        inp.enqueue_script_mouse_at(live, true, 100.0, 100.0, 0);
+        assert_eq!(inp.script_queue_len(), 1);
+    }
+
+    #[test]
+    fn root_mouse_revoked_hold_must_not_survive_resume_before_frame() {
+        let inp = live_input();
+        let mut shell = client::client::GameShell::new();
+        inp.enqueue_script_mouse(true, 100.0, 100.0, 0);
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        inp.authority().revoke();
+        inp.authority().resume();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 0,
+            "revoked old hold survives Resume before next frame"
+        );
+    }
+
+    #[test]
+    fn resume_before_frame_preserves_user_hold() {
+        use std::sync::mpsc;
+        let inp = live_input();
+        let (tx, rx) = mpsc::channel();
+        inp.connect_rx(rx);
+        inp.set_enabled(true);
+        tx.send(InputEv::Down {
+            button: 1,
+            x: 5,
+            y: 6,
+        })
+        .unwrap();
+        let mut shell = client::client::GameShell::new();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(shell.mouse_button, 1);
+        inp.authority().revoke();
+        inp.authority().resume();
+        inp.consume_native_frame(&mut shell);
+        assert_eq!(
+            shell.mouse_button, 1,
+            "user hold must survive script revoke+resume"
+        );
+        assert_eq!(shell.mouse_click_x, 5);
     }
 
     #[test]
