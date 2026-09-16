@@ -3,7 +3,7 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{GameSnapshot, LocView, WorldTile};
+use api::snapshot::{ActorKind, GameSnapshot, LocView, WorldTile};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -111,6 +111,9 @@ pub enum Proof {
         level: i32,
         radius: i32,
     },
+    /// An NPC with exact `name` currently targets the local player.
+    /// Fail-closed when `self_slot` is unset or the face target is missing.
+    NpcNameTargetingLocal { name: &'static str },
     /// A placed loc of exact `id` stands within chebyshev `radius` of
     /// `(x, z, level)` on the snapshot loc sweep.
     LocIdNear {
@@ -189,6 +192,9 @@ impl Proof {
                 level,
                 radius,
             } => format!("npc_name({name})@({x},{z},{level},r{radius})"),
+            Proof::NpcNameTargetingLocal { name } => {
+                format!("npc_name({name})_targeting_local")
+            }
             Proof::LocIdNear {
                 id,
                 x,
@@ -457,6 +463,16 @@ impl Proof {
                     && npc.tile.level == *level
                     && (npc.tile.x - *x).abs().max((npc.tile.z - *z).abs()) <= *radius
             }),
+            Proof::NpcNameTargetingLocal { name } => {
+                let slot = snap.self_slot();
+                slot >= 0
+                    && snap.npcs().iter().any(|npc| {
+                        npc.name.as_deref() == Some(*name)
+                            && npc.target.is_some_and(|target| {
+                                target.kind == ActorKind::Player && target.index == slot as usize
+                            })
+                    })
+            }
             Proof::LocIdNear {
                 id,
                 x,
@@ -1250,6 +1266,59 @@ mod tests {
             radius: 2,
         }
         .check(&s, None));
+    }
+
+    #[test]
+    fn npc_name_targeting_local_requires_the_named_npc_face_the_player_slot() {
+        let mut c = seeded();
+        c.self_slot = 4;
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Swarm".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 4;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        let proof = Proof::NpcNameTargetingLocal { name: "Swarm" };
+        assert!(proof.check(&s, None));
+        assert_eq!(proof.name(), "npc_name(Swarm)_targeting_local");
+
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.face_entity = api::snapshot::PLAYER_FACE_BASE + 5;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, None),
+            "facing another player slot is not local targeting"
+        );
+
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.face_entity = 3;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, None),
+            "facing an NPC is not local targeting"
+        );
+
+        c.self_slot = -1;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.face_entity = api::snapshot::PLAYER_FACE_BASE;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let s = snap(&mut c);
+        assert!(!proof.check(&s, None), "unset self_slot fails closed");
+
+        assert!(!Proof::NpcNameTargetingLocal { name: "Rocks" }.check(&s, None));
     }
 
     #[test]
