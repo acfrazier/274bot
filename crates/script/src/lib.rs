@@ -27,6 +27,8 @@ pub mod js_cache;
 pub mod load;
 pub mod loadouts_store;
 pub mod params;
+/// Pure ranged supply predicate (`rangeSupplyEmpty`).
+pub mod ranged;
 pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
