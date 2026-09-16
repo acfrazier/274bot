@@ -1874,6 +1874,11 @@ mod tests {
         observation
     }
 
+    fn swarm_at(mut observation: Observation, tile: (i32, i32, i32)) -> Observation {
+        observation.tile = Some(tile);
+        observation
+    }
+
     #[test]
     fn alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption() {
         let case = CoreCase::parse("alcher_swarm_drain").expect("swarm core case");
@@ -1881,6 +1886,8 @@ mod tests {
         baseline.bank_generation = 1;
         validate_case_baseline(case, &baseline).unwrap();
 
+        let bank = VARROCK_WEST_BANK;
+        let flee = (bank.0, bank.1 - 12, bank.2);
         let mut withdrawn = swarm_obs(
             &[(CERT_RUNE_CHAINBODY_ID, 20), (NATURE_RUNE_ID, 20)],
             10_000,
@@ -1911,17 +1918,18 @@ mod tests {
             ours: true,
             hold: true,
         };
-        let mut released = hold.clone();
+        let fled = swarm_at(hold.clone(), flee);
+        let mut released = swarm_at(hold.clone(), bank);
         released.taking_damage = false;
         released.npc_facts.clear();
         released.guardian = BoundedGuardian::default();
         let further = swarm_obs(
             &[
-                (CERT_RUNE_CHAINBODY_ID, 18),
-                (NATURE_RUNE_ID, 18),
-                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+                (CERT_RUNE_CHAINBODY_ID, 0),
+                (NATURE_RUNE_ID, 0),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 20),
             ],
-            10_000 + HIGH_ALCH_MAGIC_XP * 2,
+            10_000 + HIGH_ALCH_MAGIC_XP * 20,
             false,
             false,
             false,
@@ -1930,29 +1938,28 @@ mod tests {
         retired.bank_open = true;
         retired.bank_loaded = true;
         retired.bank_generation = 3;
-        retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
         let mut poor_out = retired.clone();
         poor_out.bank_open = false;
         poor_out.bank_loaded = false;
         poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
-        poor_out.item_ids.insert(NATURE_RUNE_ID, 18);
+        poor_out.item_ids.insert(NATURE_RUNE_ID, 8);
         let mut poor_cast = poor_out.clone();
         poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
-        poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        poor_cast.item_ids.insert(NATURE_RUNE_ID, 7);
         poor_cast.item_ids.insert(
             COINS_ID,
-            RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
+            RUNE_CHAINBODY_HIGH_ALCH_COINS * 20 + YEW_LONGBOW_ALCH_COINS,
         );
         poor_cast.xp.insert(
             "magic".into(),
-            10_000 + HIGH_ALCH_MAGIC_XP * 2 + HIGH_ALCH_MAGIC_XP,
+            10_000 + HIGH_ALCH_MAGIC_XP * 20 + HIGH_ALCH_MAGIC_XP,
         );
 
         assert!(witness(
             case,
             &baseline,
             [
-                &withdrawn, &first, &hit, &hold, &released, &further, &retired, &poor_out,
+                &withdrawn, &first, &hit, &hold, &fled, &released, &further, &retired, &poor_out,
                 &poor_cast
             ]
         )
@@ -2000,7 +2007,16 @@ mod tests {
             witness(
                 case,
                 &baseline,
-                [&withdrawn, &first, &hold_without_hit, &released, &further]
+                [
+                    &withdrawn,
+                    &first,
+                    &hold_without_hit,
+                    &released,
+                    &further,
+                    &retired,
+                    &poor_out,
+                    &poor_cast
+                ]
             )
             .qualify()
             .is_err(),
@@ -2010,7 +2026,7 @@ mod tests {
             witness(
                 case,
                 &baseline,
-                [&withdrawn, &first, &hit, &hold, &released, &further]
+                [&withdrawn, &first, &hit, &hold, &fled, &released, &further]
             )
             .qualify()
             .is_err(),
@@ -2020,7 +2036,10 @@ mod tests {
             witness(
                 case,
                 &baseline,
-                [&withdrawn, &first, &hit, &hold, &released, &further, &retired, &poor_out]
+                [
+                    &withdrawn, &first, &hit, &hold, &fled, &released, &further, &retired,
+                    &poor_out
+                ]
             )
             .qualify()
             .is_err(),
@@ -2046,6 +2065,169 @@ mod tests {
             .qualify()
             .is_err(),
             "further cast before release must not qualify"
+        );
+
+        let extra_before_hit = swarm_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 18),
+                (NATURE_RUNE_ID, 18),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+            ],
+            10_000 + HIGH_ALCH_MAGIC_XP * 2,
+            false,
+            false,
+            false,
+        );
+        let mut extra_hit = extra_before_hit.clone();
+        extra_hit.taking_damage = true;
+        extra_hit.npc_facts = vec![swarm_npc(true)];
+        let mut extra_hold = extra_hit.clone();
+        extra_hold.guardian = BoundedGuardian {
+            kind: Some("evade".into()),
+            name: Some("Swarm".into()),
+            ours: true,
+            hold: true,
+        };
+        let mut extra_released = extra_hold.clone();
+        extra_released.taking_damage = false;
+        extra_released.npc_facts.clear();
+        extra_released.guardian = BoundedGuardian::default();
+        let mut extra_retired = extra_released.clone();
+        extra_retired.bank_open = true;
+        extra_retired.bank_loaded = true;
+        extra_retired.bank_generation = 3;
+        extra_retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        extra_retired.item_ids.insert(NATURE_RUNE_ID, 18);
+        let mut extra_poor_out = extra_retired.clone();
+        extra_poor_out.bank_open = false;
+        extra_poor_out.bank_loaded = false;
+        extra_poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        let mut extra_poor_cast = extra_poor_out.clone();
+        extra_poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
+        extra_poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        extra_poor_cast.item_ids.insert(
+            COINS_ID,
+            RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
+        );
+        extra_poor_cast.xp.insert(
+            "magic".into(),
+            10_000 + HIGH_ALCH_MAGIC_XP * 2 + HIGH_ALCH_MAGIC_XP,
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &extra_before_hit,
+                    &extra_hit,
+                    &extra_hold,
+                    &extra_released,
+                    &extra_retired,
+                    &extra_poor_out,
+                    &extra_poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "extra cast before the event with no movement and no post-release cast must not qualify"
+        );
+
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn, &first, &hit, &hold, &released, &further, &retired, &poor_out,
+                    &poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "evade hold without flee displacement must not qualify"
+        );
+
+        let mut drop_notes = released.clone();
+        drop_notes.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        let mut drop_retired = drop_notes.clone();
+        drop_retired.bank_open = true;
+        drop_retired.bank_loaded = true;
+        drop_retired.bank_generation = 3;
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &drop_notes,
+                    &drop_retired,
+                    &poor_out,
+                    &poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "dropping remaining notes without a post-release cast must not qualify"
+        );
+
+        let partial = swarm_obs(
+            &[
+                (CERT_RUNE_CHAINBODY_ID, 18),
+                (NATURE_RUNE_ID, 18),
+                (COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS * 2),
+            ],
+            10_000 + HIGH_ALCH_MAGIC_XP * 2,
+            false,
+            false,
+            false,
+        );
+        let mut partial_retired = partial.clone();
+        partial_retired.bank_open = true;
+        partial_retired.bank_loaded = true;
+        partial_retired.bank_generation = 3;
+        partial_retired.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 0);
+        let mut partial_poor_out = partial_retired.clone();
+        partial_poor_out.bank_open = false;
+        partial_poor_out.bank_loaded = false;
+        partial_poor_out.item_ids.insert(CERT_YEW_LONGBOW_ID, 8);
+        partial_poor_out.item_ids.insert(NATURE_RUNE_ID, 18);
+        let mut partial_poor_cast = partial_poor_out.clone();
+        partial_poor_cast.item_ids.insert(CERT_YEW_LONGBOW_ID, 7);
+        partial_poor_cast.item_ids.insert(NATURE_RUNE_ID, 17);
+        partial_poor_cast.item_ids.insert(
+            COINS_ID,
+            RUNE_CHAINBODY_HIGH_ALCH_COINS * 2 + YEW_LONGBOW_ALCH_COINS,
+        );
+        partial_poor_cast.xp.insert(
+            "magic".into(),
+            10_000 + HIGH_ALCH_MAGIC_XP * 2 + HIGH_ALCH_MAGIC_XP,
+        );
+        assert!(
+            witness(
+                case,
+                &baseline,
+                [
+                    &withdrawn,
+                    &first,
+                    &hit,
+                    &hold,
+                    &fled,
+                    &released,
+                    &partial,
+                    &partial_retired,
+                    &partial_poor_out,
+                    &partial_poor_cast
+                ]
+            )
+            .qualify()
+            .is_err(),
+            "one post-release cast then dropping remaining notes must not prove rich retirement"
         );
 
         let mut seeded = baseline.clone();

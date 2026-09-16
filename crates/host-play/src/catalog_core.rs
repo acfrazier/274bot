@@ -3260,15 +3260,21 @@ fn high_cast(from: &Observation, now: &Observation, noted: i32, coins_per_cast: 
         && worn_fire_staff(now) == Some(STAFF_OF_FIRE_ID)
 }
 
+fn rich_chainbody_exhausted(observation: &Observation) -> bool {
+    observation.item_id(CERT_RUNE_CHAINBODY_ID) == 0 && observation.item_id(RUNE_CHAINBODY_ID) == 0
+}
+
 /// Ordered High-alch interruption: first cast, targeted Swarm + positive hit,
-/// native guardian hold/evade/release/return, further rich cast, rich bank
-/// retirement, then poor-item consumption.
+/// native guardian hold, actual flee under that hold, release/return near
+/// Varrock West, further rich cast from the release baseline that exhausts
+/// remaining notes, rich bank retirement, then poor-item consumption.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AlcherSwarmDrainCycle {
     pub withdrawn: Option<Observation>,
     pub first_cast: Option<Observation>,
     pub swarm_hit: Option<Observation>,
     pub guardian_hold: Option<Observation>,
+    pub fled: Option<Observation>,
     pub released: Option<Observation>,
     pub further_cast: Option<Observation>,
     pub rich_retired: Option<Observation>,
@@ -3316,34 +3322,47 @@ impl AlcherSwarmDrainCycle {
             self.guardian_hold = Some(now.clone());
         }
         if let Some(held) = &self.guardian_hold {
-            if self.released.is_none()
-                && !now.guardian.hold
-                && now.guardian.kind.as_deref() != Some("evade")
-                && (near(now.tile, VARROCK_WEST_BANK, 6)
-                    || held.tile.is_some_and(|tile| near(now.tile, tile, 6)))
+            if self.fled.is_none()
+                && evade_hold(now)
+                && now.tile.is_some()
+                && held.tile.is_some()
+                && now.tile != held.tile
             {
-                self.released = Some(now.clone());
+                self.fled = Some(now.clone());
             }
         }
+        if self.fled.is_some()
+            && self.released.is_none()
+            && !now.guardian.hold
+            && now.guardian.kind.as_deref() != Some("evade")
+            && near(now.tile, VARROCK_WEST_BANK, 6)
+        {
+            self.released = Some(now.clone());
+        }
         if self.further_cast.is_none() {
-            if let (Some(first), Some(_)) = (&self.first_cast, &self.released) {
+            if let Some(released) = &self.released {
                 if high_cast(
-                    first,
+                    released,
                     now,
                     CERT_RUNE_CHAINBODY_ID,
                     RUNE_CHAINBODY_HIGH_ALCH_COINS,
-                ) {
+                ) && rich_chainbody_exhausted(now)
+                {
                     self.further_cast = Some(now.clone());
                 }
             }
         }
-        if self.further_cast.is_some()
+        if self
+            .further_cast
+            .as_ref()
+            .is_some_and(rich_chainbody_exhausted)
             && self.rich_retired.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
             && now.bank_item_id(RUNE_CHAINBODY_ID) == 0
             && now.bank_item_id(CERT_RUNE_CHAINBODY_ID) == 0
+            && rich_chainbody_exhausted(now)
         {
             self.rich_retired = Some(now.clone());
         }
@@ -3364,6 +3383,7 @@ impl AlcherSwarmDrainCycle {
         self.first_cast.is_some()
             && self.swarm_hit.is_some()
             && self.guardian_hold.is_some()
+            && self.fled.is_some()
             && self.released.is_some()
             && self.further_cast.is_some()
             && self.rich_retired.is_some()

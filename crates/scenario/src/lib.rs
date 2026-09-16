@@ -3107,6 +3107,20 @@ fn alcher_swarm_drain_scenario() -> Scenario {
                 count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
             },
         ),
+        (
+            "watch the first High cast consume a noted rune chainbody",
+            Proof::ItemIdAtMost {
+                id: CERT_RUNE_CHAINBODY_ID,
+                count: 19,
+            },
+        ),
+        (
+            "watch the first High cast consume a Nature rune",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 19,
+            },
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
@@ -18828,6 +18842,14 @@ mod tests {
                 Proof::ItemId {
                     id: COINS_ID,
                     count: RUNE_CHAINBODY_HIGH_ALCH_COINS,
+                },
+                Proof::ItemIdAtMost {
+                    id: CERT_RUNE_CHAINBODY_ID,
+                    count: 19,
+                },
+                Proof::ItemIdAtMost {
+                    id: NATURE_RUNE_ID,
+                    count: 19,
                 },
                 Proof::StatXpGain {
                     id: MAGIC_STAT,
