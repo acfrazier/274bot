@@ -3,6 +3,12 @@ use std::sync::Arc;
 use api::game_data::{for_optional_profile, for_profile, for_revision};
 use client::io::ClientRevision;
 
+/// Local 289 known-cache identity (versionlist 37214163…).
+const LOCAL_289_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
+/// Public 289 known-cache identity (versionlist 6dcb7c4a…; config identical).
+const PUBLIC_289_CACHE_ID: &str =
+    "37cdafd200703150d0f66339b7609944e1ea19d64ad729a72d94e3bcdfa89d92";
+
 #[test]
 fn generated_revision_data_is_static_distinct_and_fail_closed() {
     let first_274 = for_revision(ClientRevision::R274).expect("revision 274 data");
@@ -28,6 +34,49 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
         for_optional_profile(ClientRevision::R274, first_274.cache_id())
             .expect("matching profile")
             .is_some()
+    );
+}
+
+#[test]
+fn public_289_audited_identity_binds_and_unknown_same_revision_stays_closed() {
+    let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
+    assert_eq!(data_289.cache_id(), LOCAL_289_CACHE_ID);
+    assert_ne!(PUBLIC_289_CACHE_ID, LOCAL_289_CACHE_ID);
+
+    assert!(
+        for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
+            .expect("decode")
+            .is_some(),
+        "audited public identity must bind 289 facts"
+    );
+    assert!(
+        for_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID).is_ok(),
+        "for_profile accepts audited public identity"
+    );
+    assert!(
+        for_optional_profile(ClientRevision::R289, LOCAL_289_CACHE_ID)
+            .expect("decode")
+            .is_some(),
+        "local primary identity still binds"
+    );
+
+    // Unknown same-revision identity stays closed (not an arbitrary bypass).
+    assert!(
+        for_optional_profile(ClientRevision::R289, "not-an-audited-289-cache")
+            .expect("decode")
+            .is_none()
+    );
+    assert!(
+        for_profile(ClientRevision::R289, "not-an-audited-289-cache")
+            .unwrap_err()
+            .contains("cache identity")
+    );
+
+    // Public 289 id must not unlock revision 274 facts.
+    assert!(
+        for_optional_profile(ClientRevision::R274, PUBLIC_289_CACHE_ID)
+            .expect("decode")
+            .is_none()
     );
 }
 
