@@ -13,7 +13,9 @@ use api::interact::{
     op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY,
 };
 use api::query::npc_by_index;
-use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext};
+use api::snapshot::{
+    ActorKind, ActorTargetView, GameSnapshot, ItemView, NpcView, ReadContext, StatView,
+};
 use vault::ProfileSettings;
 
 // The detect/claim contracts live in `api::random` so `script` can answer
@@ -54,7 +56,8 @@ const EVADE_NAMES: &[&str] = &[
     "tree spirit",
 ];
 
-/// The growing plant (pick kind): shown even when not ours yet.
+/// The growing plant (pick kind): acted on only with current ownership
+/// evidence — see [`owned_pickable_plant`].
 const PICK_NAME: &str = "strange plant";
 
 /// `Strange box` obj id (verified against the Lost City pack).
@@ -69,33 +72,37 @@ const MIME_IF_ROOT: i32 = 6543;
 /// The eight emote buttons, answer index → child id (`com_2..com_9`).
 const MIME_IF_BUTTONS: [i32; 8] = [6546, 6547, 6548, 6549, 6550, 6551, 6552, 6553];
 
-/// Genie-lamp skill IF root (Lost City `xplamp.if`; rs2b0t `rubLamp`).
+/// Genie-lamp skill IF root (Lost City `xplamp.if`; rs2b0t `LAMP_IF.root`).
 const LAMP_IF_ROOT: i32 = 2808;
 /// First skill button (`attack`); `strength` is 2813, `fletching` is 2830.
 const LAMP_IF_FIRST: i32 = 2812;
 /// Confirm button after the skill pick.
 const LAMP_IF_CONFIRM: i32 = 2831;
-/// Skill names in xplamp.if button order (2812..=2830).
+/// Skill names in xplamp.if component order (2812..=2830). The 274 and
+/// 289 `xplamp.if` declare the nineteen `option` buttons in exactly this
+/// order (`attack` → `fletching`), which is also rs2b0t's `LAMP_IF.skills`
+/// map. `runecraft` is the 12th button; the client's own skill table
+/// spells it `runecraft` (`Skill.names`). `slayer` has no lamp button.
 const LAMP_IF_SKILLS: [&str; 19] = [
     "attack",
     "strength",
+    "ranged",
+    "magic",
     "defence",
     "hitpoints",
-    "ranged",
     "prayer",
-    "magic",
+    "agility",
+    "herblore",
+    "thieving",
+    "crafting",
+    "runecraft",
+    "mining",
+    "smithing",
+    "fishing",
     "cooking",
+    "firemaking",
     "woodcutting",
     "fletching",
-    "fishing",
-    "firemaking",
-    "crafting",
-    "smithing",
-    "mining",
-    "herblore",
-    "agility",
-    "thieving",
-    "slayer",
 ];
 
 /// Strange-box cube root (rs2b0t `CUBE_IF.root`; Lost City `macro_cube`,
@@ -246,12 +253,17 @@ fn detect_scene(
                 npc_index: Some(npc.index),
             });
         }
-        // Growing plants give no client tell; the TUI can still name it.
-        if name == PICK_NAME {
+        // Growing plants give no client tell of their own, so the host
+        // acts on one only with current ownership evidence (`is_ours`)
+        // plus a pickable op. A foreign plant — and the aggressive type,
+        // which offers only `Attack` — is not our event: no Pick, no
+        // walk, no hold, and it must not shadow the box/lamp candidates
+        // that follow this scene pass.
+        if name == PICK_NAME && owned_pickable_plant(npc, self_slot, display_name.as_deref()) {
             return Some(DetectedRandom {
                 kind: RandomKind::Pick,
                 name,
-                ours,
+                ours: true,
                 npc_index: Some(npc.index),
             });
         }
@@ -289,14 +301,10 @@ fn detect_scene(
                 npc_index: None,
             });
         }
-        if name == PICK_NAME {
-            return Some(DetectedRandom {
-                kind: RandomKind::Pick,
-                name,
-                ours: true,
-                npc_index: None,
-            });
-        }
+        // No `strange plant` loc branch: both supported packs define the
+        // plant as an NPC only (`antimacro.npc`), and a loc carries no
+        // ownership tell at all, so a loc-shaped plant can never satisfy
+        // the pick evidence rule above.
     }
     None
 }
@@ -316,6 +324,33 @@ fn is_ours(npc: &NpcView, self_slot: i32, display_name: Option<&str>) -> bool {
         (Some(name), Some(text)) => text.contains(name),
         _ => false,
     }
+}
+
+/// Whether this actor is a *currently* ours, pickable strange plant: the
+/// name, the ownership evidence and the offered op are all re-read at the
+/// call site, so a reused actor slot, a lost ownership tell or the
+/// aggressive type (`antimacro.npc` `macro_triffidseed_angry` offers only
+/// `Attack`) stops the pick instead of chasing another player's plant.
+/// Aggression, proximity, the name alone and a cached slot index are all
+/// insufficient on their own.
+fn owned_pickable_plant(npc: &NpcView, self_slot: i32, display_name: Option<&str>) -> bool {
+    npc.name
+        .as_deref()
+        .is_some_and(|n| n.eq_ignore_ascii_case(PICK_NAME))
+        && is_ours(npc, self_slot, display_name)
+        && plant_offers_pick(npc)
+}
+
+/// Whether the actor's cached ops offer the plant's `Pick` (the pick arm
+/// of rs2b0t `plantStrategy`). The growing seed offers `Pick`/`Take`; the
+/// aggressive type offers `Attack` only.
+fn plant_offers_pick(npc: &NpcView) -> bool {
+    npc.actions.iter().any(|action| {
+        action.as_deref().is_some_and(|label| {
+            let label = label.trim();
+            label.eq_ignore_ascii_case("pick") || label.eq_ignore_ascii_case("take")
+        })
+    })
 }
 
 /// The random's axe/pickaxe handle sits in the inventory, worn, or on
@@ -380,13 +415,38 @@ fn flee_candidates(from: (i32, i32)) -> Vec<(i32, i32)> {
 }
 
 /// xplamp.if button id for the vault `lamp_skill` (default `"strength"`
-/// → 2813). Unknown skills → `None` (fail-closed: hold, no click).
+/// → 2813). Unknown skills → `None` (fail-closed: no click).
 fn lamp_skill_button(skill: &str) -> Option<i32> {
     let want = skill.trim().to_lowercase();
     LAMP_IF_SKILLS
         .iter()
         .position(|s| *s == want.as_str())
         .map(|i| LAMP_IF_FIRST + i as i32)
+}
+
+/// Whether the pack holds the genie lamp (obj 2528).
+fn lamp_held(snap: &GameSnapshot) -> bool {
+    snap.inventory().iter().any(|i| i.def.id == LAMP_OBJ)
+}
+
+/// The client's stat slot named `skill` (the client's own skill names,
+/// the same strings the xplamp buttons carry).
+fn stat_by_name<'a>(snap: &'a GameSnapshot, skill: &str) -> Option<&'a StatView> {
+    let want = skill.trim();
+    snap.stats()
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(want))
+}
+
+/// Whether the redeemed skill's reward landed: the stat advanced past the
+/// baseline captured when Confirm went out (the `xplamp_confirm`
+/// `stat_advance`). The confirm packet, a closed interface and a consumed
+/// lamp are all not the reward.
+fn reward_landed(snap: &GameSnapshot, skill: &str, baseline: Option<(i32, i32)>) -> bool {
+    let Some((xp, base)) = baseline else {
+        return false;
+    };
+    stat_by_name(snap, skill).is_some_and(|s| s.xp > xp || s.base > base)
 }
 
 /// Mime anim seq → answer index (rs2b0t `MIME_EMOTE_BY_SEQ`; the Lost
@@ -515,6 +575,15 @@ fn item_named(name: Option<&str>, want: &str) -> bool {
 /// The dialog-continue ceiling (rs2b0t `MAX_DIALOGUE_STEPS`).
 const MAX_CONTINUES: u32 = 25;
 
+/// Lamp: ticks one phase of the redemption may stall before the guardian
+/// gives up (the Rub→IF wait, then the Confirm→reward wait). The server
+/// settles the whole flow within a tick or two.
+const MAX_LAMP_WAIT: u32 = 8;
+
+/// Lamp: award-dialogue continues before the redemption is given up
+/// (`xplamp_confirm`'s `mesbox` award is a single page).
+const MAX_LAMP_DIALOGUE: u32 = 4;
+
 /// Wrong-talk cooldown for an NPC slot (rs2b0t 45 s).
 const WRONG_TALK_COOLDOWN_MS: u64 = 45_000;
 
@@ -614,6 +683,24 @@ pub struct Guardian {
     /// Lamp: the skill button went out — the next tick on the IF presses
     /// confirm (2831).
     lamp_skill_sent: bool,
+    /// Lamp: Confirm went out — the redemption is in flight (the server
+    /// closes the IF, consumes the lamp, advances the skill and opens the
+    /// award dialogue).
+    lamp_confirmed: bool,
+    /// Lamp: the configured skill's (xp, base) as the Confirm tick's
+    /// snapshot read them — the reward is witnessed by the advance past
+    /// this baseline, never by a later stale read.
+    lamp_reward: Option<(i32, i32)>,
+    /// Lamp: award-dialogue continues sent since Confirm
+    /// ([`MAX_LAMP_DIALOGUE`] cap).
+    lamp_dialog: u32,
+    /// Lamp: ticks the current phase has waited without progress
+    /// ([`MAX_LAMP_WAIT`] cap).
+    lamp_wait: u32,
+    /// Lamp: the redemption failed with the lamp still held — no act and
+    /// no hold (the status row still detects it) until the lamp leaves the
+    /// pack or `lamp_auto` is switched off.
+    lamp_stalled: bool,
     /// Box: Open went out — do not Open again until the cube IF closes
     /// and the answer is consumed.
     box_opened: bool,
@@ -648,6 +735,11 @@ impl Guardian {
             box_answer_count: None,
             lamp_rubbed: false,
             lamp_skill_sent: false,
+            lamp_confirmed: false,
+            lamp_reward: None,
+            lamp_dialog: 0,
+            lamp_wait: 0,
+            lamp_stalled: false,
             box_opened: false,
             maze: None,
         }
@@ -731,11 +823,21 @@ impl Guardian {
             }
         }
 
-        let inert_lamp =
-            ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp) && !settings.lamp_auto;
+        // A stalled redemption unlocks on the two operator-visible state
+        // changes: the lamp left the pack, or lamp auto went off (the next
+        // auto-on redemption starts clean).
+        if self.lamp_stalled && (!lamp_held(snap) || !settings.lamp_auto) {
+            self.clear_lamp();
+        }
+        // An inert lamp is detect-only: `lamp_auto` off, or a redemption
+        // that already gave up. No act, no hold, no `ours` — the script
+        // must not stay frozen behind a lamp the host will not redeem.
+        let inert_lamp = ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp)
+            && (!settings.lamp_auto || self.lamp_stalled);
         if inert_lamp {
             // Drop a previous auto-on latch the moment the operator
-            // turns lamp auto off with the lamp still in inv.
+            // turns lamp auto off with the lamp still in inv, or the
+            // redemption gave up with the lamp still held.
             self.acting = false;
         }
 
@@ -748,6 +850,12 @@ impl Guardian {
             self.act(driver, snap, ev.as_ref(), settings, now_ms);
         }
         self.last_tick = tick;
+
+        // `act` may have stalled the redemption just above: a lamp the
+        // host has given up on is inert in the same tick, so the script's
+        // `EventSignal.pending` (hold OR ours) clears immediately.
+        let inert_lamp = inert_lamp
+            || (self.lamp_stalled && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Lamp));
 
         let cooldown = ev
             .as_ref()
@@ -835,6 +943,15 @@ impl Guardian {
         settings: &ProfileSettings,
         now_ms: u64,
     ) {
+        // A confirmed lamp redemption outlives its own detect: the server
+        // consumes the lamp and opens the award dialogue in the same step,
+        // so the drain must run while `detect` already shows nothing (or a
+        // newly spawned event). It takes the slot, like the dialog handle,
+        // until it completes or gives up.
+        if self.acting && self.acting_kind == RandomKind::Lamp && self.lamp_confirmed {
+            self.step_lamp(driver, snap, settings);
+            return;
+        }
         let Some(ev) = ev else {
             if self.acting {
                 self.resolve(driver, snap);
@@ -944,8 +1061,7 @@ impl Guardian {
         self.mime_last_seen = None;
         self.mime_answered = false;
         self.box_answer_count = None;
-        self.lamp_rubbed = false;
-        self.lamp_skill_sent = false;
+        self.clear_lamp();
         self.box_opened = false;
         self.maze = None;
     }
@@ -996,42 +1112,35 @@ impl Guardian {
         }
     }
 
-    /// Pick the growing plant, gated on range like Talk-to. Pick is not
-    /// owner-gated (rs2b0t picks even when the overhead is another name).
+    /// Pick the growing plant, gated on range like Talk-to. The owner is
+    /// re-read here, at the send: only a currently ours, pickable plant
+    /// (see [`owned_pickable_plant`]) is walked to and picked, so a reused
+    /// actor slot or a foreign plant never turns into a chase or a click.
     fn step_pick<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, ev: &DetectedRandom) {
         let Some((px, pz, _)) = snap.tile() else {
             return;
         };
-        if let Some(index) = ev.npc_index {
-            let Some(npc) = npc_by_index(snap.npcs(), index) else {
-                self.acting = false;
-                return;
-            };
-            if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
-                walk(driver, npc.tile.x, npc.tile.z);
-                return;
-            }
-            let mut ix = Interactions::new(snap, driver);
-            match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
-                SendResult::Sent { .. } => {}
-                SendResult::Refused { .. } => self.acting = false,
-            }
-            return;
-        }
-        let Some(loc) = snap.locs().iter().find(|l| {
-            l.name
-                .as_deref()
-                .is_some_and(|n| n.eq_ignore_ascii_case(PICK_NAME))
-        }) else {
+        let Some(index) = ev.npc_index else {
             self.acting = false;
             return;
         };
-        if cheb((px, pz), (loc.tile.x, loc.tile.z)) > 1 {
-            walk(driver, loc.tile.x, loc.tile.z);
+        let Some(npc) = npc_by_index(snap.npcs(), index) else {
+            self.acting = false;
+            return;
+        };
+        let display_name = snap
+            .local_player()
+            .and_then(|lp| lp.player.actor.name.clone());
+        if !owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()) {
+            self.acting = false;
+            return;
+        }
+        if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
+            walk(driver, npc.tile.x, npc.tile.z);
             return;
         }
         let mut ix = Interactions::new(snap, driver);
-        match ix.interact(OpTarget::Loc(loc), ActionSpec::Label("Pick".to_string())) {
+        match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
             SendResult::Sent { .. } => {}
             SendResult::Refused { .. } => self.acting = false,
         }
@@ -1225,8 +1334,13 @@ impl Guardian {
         }
     }
 
-    /// Lamp auto-use: Rub the held lamp once, wait for the skill IF
-    /// (2808), press the vault `lamp_skill` button, then confirm 2831.
+    /// Lamp auto-use, driven to a real redemption: Rub (held op 1,
+    /// `opheld1`), wait for the skill IF (2808), press the vault
+    /// `lamp_skill` button, then Confirm (2831) — after which the server
+    /// runs `xplamp_confirm`: it closes the IF, consumes the lamp,
+    /// `stat_advance`s the chosen skill and opens the award `mesbox`. Only
+    /// the observed reward with that dialogue drained releases the hold;
+    /// a refused or stalled redemption gives up instead of replaying.
     /// `lamp_auto` off keeps the 0.1.2 behavior (detect, no op, no hold).
     fn step_lamp<D: Driver>(
         &mut self,
@@ -1237,31 +1351,59 @@ impl Guardian {
         if !settings.lamp_auto {
             // Detect-only: tick() already skipped act + ours. Keep the
             // latch down if we still land here (live toggle mid-step).
+            self.clear_lamp();
             self.acting = false;
             return;
         }
-        let lamp_here = snap.inventory().iter().any(|i| i.def.id == LAMP_OBJ);
+        let lamp_here = lamp_held(snap);
+        if self.lamp_confirmed {
+            // Confirm is out: the redemption is in flight.
+            self.step_lamp_redeem(driver, snap, settings, lamp_here);
+            return;
+        }
         if !lamp_here {
+            // The lamp left the pack without a Confirm of ours (another
+            // actor consumed it): nothing left to drive.
+            self.clear_lamp();
             self.acting = false;
-            self.lamp_rubbed = false;
-            self.lamp_skill_sent = false;
             return;
         }
         if snap.modals().main == LAMP_IF_ROOT {
+            self.lamp_wait = 0;
             if !self.lamp_skill_sent {
-                if let Some(btn) = lamp_skill_button(&settings.lamp_skill) {
-                    press(driver, btn);
-                    self.lamp_skill_sent = true;
-                } else if crate::debug_enabled() {
-                    eprintln!("[host] lamp: unknown skill {:?}", settings.lamp_skill);
-                }
+                let Some(btn) = lamp_skill_button(&settings.lamp_skill) else {
+                    // An unknown `lamp_skill` cannot be clicked at all.
+                    // No click (fail closed) — and no endless hold behind
+                    // a lamp the host will not redeem.
+                    if crate::debug_enabled() {
+                        eprintln!("[host] lamp: unknown skill {:?}", settings.lamp_skill);
+                    }
+                    self.stall_lamp();
+                    return;
+                };
+                press(driver, btn);
+                self.lamp_skill_sent = true;
                 return;
             }
+            // The skill press has settled: confirm, and take the reward
+            // baseline from *this* tick's snapshot.
+            self.lamp_reward = stat_by_name(snap, &settings.lamp_skill).map(|s| (s.xp, s.base));
+            self.lamp_dialog = 0;
+            self.lamp_wait = 0;
+            self.lamp_confirmed = true;
             press(driver, LAMP_IF_CONFIRM);
             return;
         }
         self.lamp_skill_sent = false;
         if self.lamp_rubbed {
+            // Waiting for the skill IF to open after the Rub.
+            self.lamp_wait += 1;
+            if self.lamp_wait > MAX_LAMP_WAIT {
+                if crate::debug_enabled() {
+                    eprintln!("[host] lamp: the skill interface never opened; giving up");
+                }
+                self.stall_lamp();
+            }
             return;
         }
         let Some(lamp) = snap.inventory().iter().find(|i| i.def.id == LAMP_OBJ) else {
@@ -1272,9 +1414,75 @@ impl Guardian {
         match ix.interact(OpTarget::Item(lamp), ActionSpec::Label("Rub".to_string())) {
             SendResult::Sent { .. } => {
                 self.lamp_rubbed = true;
+                self.lamp_wait = 0;
             }
             SendResult::Refused { .. } => self.acting = false,
         }
+    }
+
+    /// The post-Confirm half of [`Guardian::step_lamp`]. The reward is
+    /// witnessed by the chosen skill's stat advance (`stat_advance`, read
+    /// against the Confirm-tick baseline) and the award dialogue drained;
+    /// the lamp leaving the pack alone is not completion. Nothing here
+    /// replays a confirmation or drains a dialogue the Confirm did not
+    /// open.
+    fn step_lamp_redeem<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        settings: &ProfileSettings,
+        lamp_here: bool,
+    ) {
+        let rewarded = reward_landed(snap, &settings.lamp_skill, self.lamp_reward);
+        let chat = chat_is_open(snap);
+        if !lamp_here {
+            if rewarded && !chat {
+                // Consumed, awarded and the award dialogue drained: the
+                // redemption is real — release the hold.
+                self.clear_lamp();
+                self.acting = false;
+                return;
+            }
+            if chat && self.lamp_dialog < MAX_LAMP_DIALOGUE {
+                let mut ix = Interactions::new(snap, driver);
+                if matches!(ix.continue_dialog(), SendResult::Sent { .. }) {
+                    self.lamp_dialog += 1;
+                    self.lamp_wait = 0;
+                    return;
+                }
+            }
+        }
+        self.lamp_wait += 1;
+        if self.lamp_wait > MAX_LAMP_WAIT {
+            // The lamp is still held (Confirm did not take: the IF stayed
+            // open / the selection was refused) or the reward never
+            // arrived. Give up without replaying Confirm; the stall latch
+            // keeps a fresh Rub from starting while the lamp is held.
+            if crate::debug_enabled() {
+                eprintln!("[host] lamp: redemption did not complete; giving up");
+            }
+            self.stall_lamp();
+        }
+    }
+
+    /// Drop the lamp flow state (a resolved, consumed or abandoned lamp).
+    fn clear_lamp(&mut self) {
+        self.lamp_rubbed = false;
+        self.lamp_skill_sent = false;
+        self.lamp_confirmed = false;
+        self.lamp_reward = None;
+        self.lamp_dialog = 0;
+        self.lamp_wait = 0;
+        self.lamp_stalled = false;
+    }
+
+    /// Give up on this lamp: release the hold, keep the latch that stops
+    /// `tick` from acting/holding again until the lamp leaves the pack or
+    /// `lamp_auto` goes off.
+    fn stall_lamp(&mut self) {
+        self.clear_lamp();
+        self.lamp_stalled = true;
+        self.acting = false;
     }
 
     /// Take the named lost fishing gear from the ground (Chebyshev ≤ 10,
@@ -1984,14 +2192,16 @@ mod tests {
         let ev = detect(&snap, 0, &no_cooldown()).expect("dialog");
         assert_eq!(ev.kind, RandomKind::Dialog);
 
-        // Pick (strange plant) is shown without requiring damage.
+        // Pick (strange plant) is shown without requiring damage — it is
+        // gated on the owner, not on combat.
         let mut c = new_client();
         plant_player(&mut c, "Test", 0, 0);
-        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
         let snap = snap_at(&mut c);
         assert!(!snap.taking_damage());
         let ev = detect(&snap, 0, &no_cooldown()).expect("pick");
         assert_eq!(ev.kind, RandomKind::Pick);
+        assert!(ev.ours);
     }
 
     #[test]
@@ -2487,9 +2697,24 @@ mod tests {
         plant_inv_named(c, obj_id, None);
     }
 
-    /// Like [`plant_inv_obj`] with a cache name and a `Rub` held op (the
-    /// lamp and lost-tool handle shapes).
+    /// The held genie lamp (obj 2528) with the pack's own held ops
+    /// (`xplamp.obj`: `iop1=Rub`, the `opheld1` handler).
+    fn plant_inv_lamp(c: &mut Client) {
+        plant_inv_ops(
+            c,
+            LAMP_OBJ,
+            Some("Lamp"),
+            [Some("Rub"), None, None, None, None],
+        );
+    }
+
+    /// Like [`plant_inv_obj`] with a cache name.
     fn plant_inv_named(c: &mut Client, obj_id: i32, name: Option<&str>) {
+        plant_inv_ops(c, obj_id, name, [None, None, None, None, None]);
+    }
+
+    /// Like [`plant_inv_obj`] with a cache name and cache held ops.
+    fn plant_inv_ops(c: &mut Client, obj_id: i32, name: Option<&str>, iop: [Option<&str>; 5]) {
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             while cache.objs.len() <= obj_id as usize {
@@ -2498,7 +2723,7 @@ mod tests {
             cache.objs[obj_id as usize] = client::config::ObjType {
                 id: obj_id,
                 name: name.map(str::to_string).unwrap_or_default(),
-                iop: [None, None, None, Some("Rub".into()), None],
+                iop: iop.map(|op| op.map(str::to_string)),
                 ..Default::default()
             };
         }
@@ -2613,6 +2838,27 @@ mod tests {
         }
         c.main_modal_id = LAMP_IF_ROOT;
         c.gens.iface += 1;
+    }
+
+    /// Close the main modal (the `xplamp_confirm` `if_close`).
+    fn close_main_modal(c: &mut Client) {
+        c.main_modal_id = -1;
+        c.gens.iface += 1;
+    }
+
+    /// Close the chat modal (the drained award `mesbox`).
+    fn close_chat(c: &mut Client) {
+        c.chat_modal_id = -1;
+        c.gens.iface += 1;
+    }
+
+    /// Write one skill stat (client index) and publish it — the host reads
+    /// `StatView` through the stat generation.
+    fn plant_stat(c: &mut Client, index: usize, xp: i32, base: i32) {
+        c.stat_xp[index] = xp;
+        c.stat_base_level[index] = base;
+        c.stat_effective_level[index] = base;
+        c.gens.stat += 1;
     }
 
     #[test]
@@ -2784,28 +3030,32 @@ mod tests {
     }
 
     #[test]
-    fn lamp_auto_rubs_then_answers_the_skill_button() {
+    fn lamp_auto_redeems_and_drains_the_award_dialogue() {
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
-        plant_inv_obj(&mut c, LAMP_OBJ);
+        plant_inv_lamp(&mut c);
+        // The chosen skill's baseline: strength (client stat index 2) at
+        // 1,000 xp / base 7, as the Confirm tick reads it.
+        plant_stat(&mut c, 2, 1_000, 7);
         let mut g = Guardian::new();
         let mut drv = FakeDriver::default();
         let settings = ProfileSettings::default(); // lamp_auto on, skill strength
         let mut snap = GameSnapshot::new();
 
-        // Tick 1: rub the lamp once and hold while waiting for the IF.
+        // Tick 1: Rub — the pack's own held op 1 (`xplamp.obj` `iop1`,
+        // the `opheld1` handler that opens the skill IF).
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(status.kind, Some(RandomKind::Lamp));
-        assert!(status.hold, "lamp auto-use holds while rubbing");
+        assert!(status.hold, "the redemption holds while it is in flight");
         assert_eq!(
             drv.menus,
-            vec![(0, MiniMenuAction::OP_HELD4, LAMP_OBJ, 0, 301)],
-            "Rub is the lamp's 4th held op"
+            vec![(0, MiniMenuAction::OP_HELD1, LAMP_OBJ, 0, 301)],
+            "Rub is the lamp's 1st held op"
         );
 
-        // Tick 2: IF not open yet → no second Rub.
+        // Tick 2: the IF is not open yet → no second Rub.
         drv.menus.clear();
         drv.actions.clear();
         tick_at(&mut c, &mut snap);
@@ -2836,9 +3086,142 @@ mod tests {
             "next tick presses confirm"
         );
 
-        // Tick 5: the lamp is consumed → the hold lifts.
+        // Tick 5: `xplamp_confirm` ran — the IF closed, the lamp is
+        // consumed and the skill advanced (`stat_advance`) — but the award
+        // `mesbox` is open. The lamp leaving the pack is not completion:
+        // drain the award page and keep holding.
         drv.menus.clear();
         drv.actions.clear();
+        close_main_modal(&mut c);
+        clear_inv(&mut c);
+        open_chat(&mut c);
+        plant_stat(&mut c, 2, 1_070, 7);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(status.hold, "the award dialogue still holds the slot");
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+            "the award page is clicked through, not left open"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        // Tick 6: the award dialogue closed and the reward observed → the
+        // redemption is real and the hold lifts.
+        drv.menus.clear();
+        drv.actions.clear();
+        close_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold, "a redeemed lamp releases the slot");
+        assert!(drv.menus.is_empty(), "no replay after completion");
+        assert!(drv.actions.is_empty());
+    }
+
+    #[test]
+    fn lamp_redeem_without_the_reward_gives_up_bounded() {
+        // The lamp is consumed and the IF closed, but the reward never
+        // lands and no award dialogue is up: the hold must not sit on a
+        // stale "the lamp left the pack" read forever.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_lamp(&mut c);
+        plant_stat(&mut c, 2, 1_000, 7);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // Rub
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // waiting for the IF
+        open_lamp(&mut c);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // skill button
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None); // confirm
+        assert!(status.hold);
+
+        // The lamp went away with the IF, but no stat packet and no award
+        // dialogue: held for the bounded wait, then released.
+        close_main_modal(&mut c);
+        clear_inv(&mut c);
+        let mut held_ticks = 0;
+        let mut released = false;
+        for _ in 0..=MAX_LAMP_WAIT {
+            drv.menus.clear();
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, None);
+            assert!(drv.menus.is_empty(), "nothing is replayed after Confirm");
+            if status.hold {
+                held_ticks += 1;
+            } else {
+                released = true;
+                break;
+            }
+        }
+        assert!(released, "a reward that never lands must not hold forever");
+        assert_eq!(held_ticks, MAX_LAMP_WAIT as i32, "the give-up is bounded");
+    }
+
+    #[test]
+    fn lamp_confirm_refused_stalls_without_replaying() {
+        // `xplamp_confirm` refuses when no skill is selected
+        // (`%xplamp` none: members-only or quest-locked picks, an unknown
+        // vault skill): the IF stays open and the lamp stays held. The
+        // host must not replay Confirm, re-Rub or hold the script.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_lamp(&mut c);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // Rub
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // waiting for the IF
+        open_lamp(&mut c);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // skill button
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None); // confirm
+        assert!(status.hold);
+
+        // The IF stays open with the lamp still in the pack: bounded wait,
+        // then the stall releases the slot without a second Confirm/Rub.
+        let mut released = false;
+        for _ in 0..=MAX_LAMP_WAIT {
+            drv.menus.clear();
+            drv.actions.clear();
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, None);
+            assert!(
+                drv.menus.is_empty(),
+                "a refused Confirm is never replayed (and no fresh Rub)"
+            );
+            if !status.hold {
+                released = true;
+                assert_eq!(
+                    status.kind,
+                    Some(RandomKind::Lamp),
+                    "the stalled lamp is still detected for the status row"
+                );
+                assert!(
+                    !status.ours,
+                    "a stalled lamp must not publish ours (EventSignal.pending)"
+                );
+                break;
+            }
+        }
+        assert!(released, "a refused redemption must not hold the script");
+
+        // The stall clears once the lamp is gone: a later lamp redeems.
         clear_inv(&mut c);
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
@@ -2847,7 +3230,85 @@ mod tests {
     }
 
     #[test]
-    fn not_ours_strange_plant_still_gets_picked() {
+    fn lamp_unknown_skill_stalls_instead_of_holding() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_lamp(&mut c);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings {
+            lamp_skill: "not a skill".into(),
+            ..ProfileSettings::default()
+        };
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // Rub
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None); // waiting for the IF
+        open_lamp(&mut c);
+        let mut released = false;
+        for _ in 0..=MAX_LAMP_WAIT {
+            drv.menus.clear();
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, None);
+            assert!(drv.menus.is_empty(), "an unknown skill is never clicked");
+            if !status.hold {
+                released = true;
+                break;
+            }
+        }
+        assert!(released, "an unclickable skill must not hold the script");
+    }
+
+    #[test]
+    fn lamp_skill_map_matches_the_xplamp_buttons() {
+        // The `xplamp.if` component order (identical in the 274 and 289
+        // packs), as rs2b0t's `LAMP_IF.skills` maps it.
+        let expected = [
+            ("attack", 2812),
+            ("strength", 2813),
+            ("ranged", 2814),
+            ("magic", 2815),
+            ("defence", 2816),
+            ("hitpoints", 2817),
+            ("prayer", 2818),
+            ("agility", 2819),
+            ("herblore", 2820),
+            ("thieving", 2821),
+            ("crafting", 2822),
+            ("runecraft", 2823),
+            ("mining", 2824),
+            ("smithing", 2825),
+            ("fishing", 2826),
+            ("cooking", 2827),
+            ("firemaking", 2828),
+            ("woodcutting", 2829),
+            ("fletching", 2830),
+        ];
+        for (skill, button) in expected {
+            assert_eq!(
+                lamp_skill_button(skill),
+                Some(button),
+                "{skill} is xplamp button {button}"
+            );
+        }
+        assert_eq!(
+            lamp_skill_button(" Agility "),
+            Some(2819),
+            "the setting is trimmed and case-insensitive"
+        );
+        assert_eq!(lamp_skill_button("slayer"), None, "no slayer button");
+        assert_eq!(lamp_skill_button(""), None);
+    }
+
+    #[test]
+    fn foreign_strange_plant_is_not_picked_held_or_chased() {
+        // Another player's plant (its overhead names them): no Pick, no
+        // walk, no hold. The slot must keep running the script.
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
@@ -2859,14 +3320,159 @@ mod tests {
 
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
-        assert_eq!(status.kind, Some(RandomKind::Pick));
-        assert!(!status.ours, "overhead is another name");
-        assert!(status.hold);
+        assert_eq!(status.kind, None, "a foreign plant is not our event");
+        assert!(!status.ours);
+        assert!(!status.hold, "a foreign plant must not pause the script");
+        assert!(drv.menus.is_empty(), "no Pick for another player's plant");
+        assert!(drv.actions.is_empty());
+        assert!(drv.walks.is_empty(), "and no chase");
+    }
+
+    #[test]
+    fn unknown_strange_plant_is_not_picked_held_or_chased() {
+        // A growing seed carries no ownership tell of its own (no facing,
+        // no overhead — `macro_event_triffid_spawn` only animates it), so
+        // an unidentified plant must not drive the host.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        // Out of reach, so a chase would be visible.
+        c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
+        c.npc[0].as_mut().expect("planted").entity.z = 64;
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None, "unknown ownership is not ours");
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty());
+        assert!(drv.walks.is_empty(), "no chase without ownership evidence");
+    }
+
+    #[test]
+    fn aggressive_strange_plant_is_not_picked_or_chased() {
+        // The aggressive type offers only `Attack` (`antimacro.npc`
+        // `macro_triffidseed_angry`: `op2=Attack`, no Pick), so even with
+        // ownership evidence there is nothing to pick — and no chase.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Attack");
+        c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
+        c.npc[0].as_mut().expect("planted").entity.z = 64;
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None, "an attackable plant is not a pick");
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty());
+        assert!(drv.walks.is_empty(), "an aggressive plant is not chased");
+
+        // The same attackable type without any ownership tell either.
+        c.npc[0].as_mut().expect("planted").entity.chat_message = None;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty());
+        assert!(drv.walks.is_empty());
+    }
+
+    #[test]
+    fn foreign_strange_plant_does_not_starve_a_held_lamp() {
+        // The plant sits earlier in `detect` than the inventory-held lamp:
+        // a foreign plant must not shadow the lamp the host must redeem.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Bob!"), "Pick");
+        plant_inv_lamp(&mut c);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Lamp), "the lamp is detected");
+        assert!(status.ours);
+        assert!(status.hold, "the lamp's own redemption holds");
         assert_eq!(
             drv.menus,
-            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
-            "Pick even when not ours"
+            vec![(0, MiniMenuAction::OP_HELD1, LAMP_OBJ, 0, 301)],
+            "the lamp is rubbed, not the foreign plant picked"
         );
+    }
+
+    #[test]
+    fn plant_ownership_is_revalidated_when_the_slot_changes() {
+        // Tick 1: an ours plant out of reach → walk to it. Tick 2: the
+        // same slot now holds a foreign plant (a reused index) → the walk
+        // and the pick stop.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
+        c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
+        c.npc[0].as_mut().expect("planted").entity.z = 64;
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Pick));
+        assert!(status.ours);
+        assert_eq!(drv.walks, vec![(3, 0)], "the ours plant is walked to");
+        assert!(drv.menus.is_empty(), "no Pick while out of range");
+
+        // The slot is reused by another player's plant.
+        drv.walks.clear();
+        c.npc[0].as_mut().expect("planted").entity.chat_message = Some("Pick Bob!".into());
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold, "the stale ownership must not hold the slot");
+        assert!(drv.walks.is_empty(), "no chase for the reused slot");
+        assert!(drv.menus.is_empty());
+
+        // The foreign plant on the slot the host was walking to stays
+        // ignored on the next tick too.
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(drv.walks.is_empty());
+    }
+
+    #[test]
+    fn strange_plant_loc_is_not_picked() {
+        // Both supported packs define the plant as an NPC (`antimacro.npc`)
+        // and a loc carries no ownership tell, so a loc-shaped plant is
+        // never our event.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_loc_with_op(&mut c, 510, "Strange plant", 0, 0, Some("Pick"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty());
+        assert!(drv.walks.is_empty());
     }
 
     #[test]
@@ -3030,6 +3636,31 @@ mod tests {
             "Pick is the plant's 1st op"
         );
         assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn our_strange_plant_facing_self_is_picked() {
+        // The other ownership channel (`FACEENTITY`, the aggressive type
+        // turning on its owner): a plant that faces us is ours.
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        // `face_entity` >= 32768 decodes as Player kind; + self_slot (0).
+        plant_npc_with_op(&mut c, 0, "Strange plant", 32768, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(status.kind, Some(RandomKind::Pick));
+        assert!(status.ours);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
+            "the ours plant is picked"
+        );
     }
 
     // --- Task 10: mime + strange-box solvers ---
