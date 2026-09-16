@@ -318,7 +318,7 @@ the lowmem/highmem button for a sticky picker like Teles), and **global**
 presets; `optionsFrom: 'loadouts'` combos in Parameters). Text and buttons
 wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
-is a live toggle), dim **build line** (`alpha 1 ·` git short SHA,
+is a live toggle), dim **build line** (`alpha 2 ·` git short SHA,
 `-dirty` when the tree was dirty; hover is crate version then full
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.

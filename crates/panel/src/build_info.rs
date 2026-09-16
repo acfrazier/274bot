@@ -1,11 +1,11 @@
 //! Deploy fingerprint: static release label plus rs2b0t git stamp.
 //!
-//! Visible line is `alpha 1 · e978193` (same ` · ` as the old 4.5c line).
-//! Hover is the crate version (`0.1.0`), then full commit + `builtAt`.
+//! Visible line is `alpha 2 · e978193` (same ` · ` as the old 4.5c line).
+//! Hover is the crate version (`0.1.7`), then full commit + `builtAt`.
 //! Bump [`RELEASE`] by hand when the public name changes.
 
 /// Public name on the dim line. Not derived from git or Cargo.toml.
-pub const RELEASE: &str = "alpha 1";
+pub const RELEASE: &str = "alpha 2";
 /// Crate version (`Cargo.toml`), shown on hover.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Full 40-char SHA when known, else `"unknown"`.
@@ -26,7 +26,7 @@ pub fn git_stamp(short: &str, dirty: bool) -> String {
     }
 }
 
-/// `alpha 1 · e978193`
+/// `alpha 2 · e978193`
 pub fn line(release: &str, stamp: &str) -> String {
     format!("{release} · {stamp}")
 }
@@ -60,22 +60,22 @@ mod tests {
 
     #[test]
     fn line_matches_the_old_dot_format() {
-        assert_eq!(line("alpha 1", "e978193"), "alpha 1 · e978193");
-        assert_eq!(line(RELEASE, "e978193-dirty"), "alpha 1 · e978193-dirty");
+        assert_eq!(line("alpha 2", "e978193"), "alpha 2 · e978193");
+        assert_eq!(line(RELEASE, "e978193-dirty"), "alpha 2 · e978193-dirty");
     }
 
     #[test]
     fn tooltip_leads_with_crate_version() {
         assert_eq!(
-            tooltip("0.1.0", "abcdef0123456789", false, "2026-08-29T12:00:00Z"),
-            "0.1.0\ncommit abcdef0123456789\nbuilt 2026-08-29T12:00:00Z"
+            tooltip("0.1.7", "abcdef0123456789", false, "2026-08-29T12:00:00Z"),
+            "0.1.7\ncommit abcdef0123456789\nbuilt 2026-08-29T12:00:00Z"
         );
         assert_eq!(
-            tooltip("0.1.0", "abcdef0123456789", true, ""),
-            "0.1.0\ncommit abcdef0123456789 (dirty tree)\nbuilt —"
+            tooltip("0.1.7", "abcdef0123456789", true, ""),
+            "0.1.7\ncommit abcdef0123456789 (dirty tree)\nbuilt —"
         );
-        assert_eq!(VERSION, "0.1.0");
-        assert_eq!(RELEASE, "alpha 1");
+        assert_eq!(VERSION, "0.1.7");
+        assert_eq!(RELEASE, "alpha 2");
     }
 
     #[test]
