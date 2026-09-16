@@ -1,9 +1,9 @@
 //! Boost potions: isolate export -> native step -> caller callback marshaling.
 //!
 //! The shim exports keep their synchronous signatures; the descriptor rows, the
-//! planning defaults, the boost floor, the levels-before-held callback order,
-//! the first-match exit and the returned-object identity are decided by
-//! `script::boost_potions::dispatch`.
+//! planning defaults, the boost floor, the positive-held predicate, the
+//! levels-then-held callback order, the first-match exit and the returned-object
+//! identity are decided by `script::boost_potions::dispatch`.
 
 use script::{LoadIsolate, LoadShape};
 
@@ -186,6 +186,44 @@ globalThis.__sipNone = (() => {
     };
 })();
 
+// The pack decides the plan before the captured levels are read as numbers:
+// an empty pack never converts them, a held dose converts each one once.
+globalThis.__sipShortCircuit = (() => {
+    const log = [];
+    const spy = (tag) => ({ valueOf() { log.push('valueOf:' + tag); return 70; } });
+    const attack = plan(SUPER_ATTACK);
+    const strength = plan(SUPER_STRENGTH);
+    const chosen = potionToSip({
+        plans: [attack, strength],
+        held: (p) => { log.push('held:' + p.potion.short); return p === attack ? 0 : 1; },
+        levels: (skill) => {
+            log.push('levels:' + skill);
+            return { base: spy(skill + '.base'), effective: spy(skill + '.effective') };
+        },
+    });
+    return { chosenIsStrength: chosen === strength, log };
+})();
+
+// Every count the caller returns crosses as a number, and the native step decides it.
+globalThis.__sipHeldValues = (() => {
+    const attack = plan(SUPER_ATTACK);
+    const choose = (held) => potionToSip({
+        plans: [attack],
+        held: () => held,
+        levels: () => ({ base: 70, effective: 70 }),
+    });
+    return {
+        positive: choose(1) === attack,
+        fractional: choose(0.5) === attack,
+        stringCount: choose('2') === attack,
+        infinity: choose(Infinity) === attack,
+        zero: choose(0) === null,
+        negative: choose(-1) === null,
+        nan: choose(NaN) === null,
+        missing: choose(undefined) === null,
+    };
+})();
+
 // The caller's own plan objects decide the skill as well as the result.
 globalThis.__sipCaller = (() => {
     let skillReads = 0;
@@ -301,8 +339,10 @@ globalThis.__wire = (() => {
         skipped: step({ op: 'plan', what: 'entry', potion: 0, dose: 3, item: 'lobster' }),
         fallback: step({ op: 'plan', what: 'exhausted', potion: 0 }),
         sipStart: step({ op: 'sip', reached: true }),
-        sipLevels: step({ op: 'sip', reached: true, base: 70, effective: 77 }),
-        sipHit: step({ op: 'sip', reached: true, base: 70, effective: 77, held_ok: true }),
+        sipHeld: step({ op: 'sip', reached: true, held: 1 }),
+        sipEmpty: step({ op: 'sip', reached: true, held: 0 }),
+        sipTagged: step({ op: 'sip', reached: true, held: 'Infinity' }),
+        sipHit: step({ op: 'sip', reached: true, held: 1, base: 70, effective: 77 }),
         sipNone: step({ op: 'sip', reached: false }),
         tagged: step({ op: 'faded', base: 70, effective: 'Infinity' }),
         unknown: step({ op: 'nope' }),
@@ -523,6 +563,35 @@ fn potion_to_sip_asks_levels_then_held_and_returns_the_callers_plan() {
         "a held boost, an empty pack and a drained skill all sip nothing"
     );
     assert_eq!(
+        iso.probe("__sipShortCircuit").unwrap(),
+        serde_json::json!({
+            "chosenIsStrength": true,
+            "log": [
+                "levels:attack",
+                "held:Att",
+                "levels:strength",
+                "held:Str",
+                "valueOf:strength.base",
+                "valueOf:strength.effective"
+            ],
+        }),
+        "the empty pack's level numbers are never converted; the held one's are converted once each"
+    );
+    assert_eq!(
+        iso.probe("__sipHeldValues").unwrap(),
+        serde_json::json!({
+            "positive": true,
+            "fractional": true,
+            "stringCount": true,
+            "infinity": true,
+            "zero": true,
+            "negative": true,
+            "nan": true,
+            "missing": true,
+        }),
+        "positive, fractional, string and Infinity counts hold the pack; zero, negative, NaN and undefined do not"
+    );
+    assert_eq!(
         iso.probe("__sipCaller").unwrap(),
         serde_json::json!({
             "sameObject": true,
@@ -602,7 +671,9 @@ fn native_step_wire_contract_is_round_accept_and_sip() {
             "skipped": {"kind": "next"},
             "fallback": {"kind": "fallback", "flask": "Super attack(3)", "want": 1},
             "sipStart": {"kind": "levels"},
-            "sipLevels": {"kind": "held"},
+            "sipHeld": {"kind": "boost"},
+            "sipEmpty": {"kind": "next"},
+            "sipTagged": {"kind": "boost"},
             "sipHit": {"kind": "hit"},
             "sipNone": {"kind": "none"},
             "tagged": {"kind": "value", "value": false},
@@ -630,7 +701,7 @@ fn the_helpers_answer_through_the_native_binding() {
     assert_eq!(
         bridge["calls"],
         serde_json::json!(9),
-        "two default plans, one sip walk and one faded comparison: {bridge}"
+        "two default plans (five steps), one three-observation sip walk and one faded comparison: {bridge}"
     );
     iso.join();
 }

@@ -80,15 +80,19 @@ export function plannedPotions(carry) {
 /** The one potion to drink this tick, or null. */
 export function potionToSip(s) {
     for (const plan of s.plans) {
-        const step = call({ op: 'sip', reached: true });
+        let step = call({ op: 'sip', reached: true });
         if (step.kind !== 'levels') fail(step);
+        // The frozen destructuring reads the level properties here, before `held` is asked.
         const { base, effective } = s.levels(plan.potion.skill);
-        const levels = { op: 'sip', reached: true, base: jsNumber(base), effective: jsNumber(effective) };
-        const held = call(levels);
-        if (held.kind !== 'held') fail(held);
-        const decided = call({ ...levels, held_ok: s.held(plan) > 0 });
-        if (decided.kind === 'hit') return plan;
-        if (decided.kind !== 'next') fail(decided);
+        // The held count crosses as a number; the native step owns `held(plan) > 0`.
+        const held = { op: 'sip', reached: true, held: jsNumber(s.held(plan)) };
+        step = call(held);
+        if (step.kind === 'boost') {
+            // The pack holds the dose: only now do the captured levels become numbers.
+            step = call({ ...held, base: jsNumber(base), effective: jsNumber(effective) });
+        }
+        if (step.kind === 'hit') return plan;
+        if (step.kind !== 'next') fail(step);
     }
     const step = call({ op: 'sip', reached: false });
     if (step.kind !== 'none') fail(step);
