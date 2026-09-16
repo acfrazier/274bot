@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use host_play::catalog_core::{
     firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
-    OAK_LOGS_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID, UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK,
+    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, NATURE_RUNE_ID, OAK_LOGS_ID,
+    RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
+    UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
 
 fn thiever_observation() -> Observation {
@@ -266,5 +268,115 @@ fn firemaker_does_not_reuse_stale_xp_or_old_fire_after_partial_restock() {
     assert!(
         cycle.qualified(),
         "a post-restock log loss and XP gain qualifies"
+    );
+}
+
+fn swarm_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(VARROCK_WEST_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("magic".into(), 70);
+    observation.xp.insert("magic".into(), 10_000);
+    observation
+}
+
+fn swarm_stop_receipt() -> script::ScriptLifecycleReceipt {
+    script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: 200,
+        reason: "the bank is out of every selected item — stopping".into(),
+    }
+}
+
+#[test]
+fn alcher_swarm_stop_without_recovery_fails_the_headed_watch_with_phase_status() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::AlcherSwarmDrain, "catalogtest");
+    let baseline = swarm_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut withdrawn = baseline.clone();
+    withdrawn.bank_generation = 2;
+    withdrawn.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 20);
+    withdrawn.item_ids.insert(NATURE_RUNE_ID, 20);
+    watch.observe("catalogtest", withdrawn.clone(), false);
+
+    let mut first = withdrawn;
+    first.item_ids.insert(CERT_RUNE_CHAINBODY_ID, 19);
+    first.item_ids.insert(NATURE_RUNE_ID, 19);
+    first
+        .item_ids
+        .insert(COINS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS);
+    first.xp.insert("magic".into(), 10_000 + HIGH_ALCH_MAGIC_XP);
+    first.equipment_ids.insert(STAFF_OF_FIRE_ID, 1);
+    watch.observe("catalogtest", first.clone(), false);
+    assert_eq!(watch.status(), CoreWatchStatus::Running);
+
+    let mut stopped = first;
+    stopped.script_lifecycle = Some(swarm_stop_receipt());
+    watch.observe("catalogtest", stopped, false);
+
+    assert_eq!(watch.status(), CoreWatchStatus::Failed);
+    let error = watch.failure().expect("incomplete swarm stop is terminal");
+    assert!(
+        error.contains("stopped without ordered recovery"),
+        "{error}"
+    );
+    assert!(error.contains("\"firstcast\":true"), "{error}");
+    assert!(error.contains("\"swarm_hit\":false"), "{error}");
+    assert!(error.contains("\"guardianhold\":false"), "{error}");
+    assert!(error.contains("\"fled\":false"), "{error}");
+    assert!(error.contains("\"released\":false"), "{error}");
+    assert!(error.contains("\"further\":false"), "{error}");
+    assert!(error.contains("\"richretired\":false"), "{error}");
+    assert!(error.contains("\"poor\":false"), "{error}");
+    let evidence = watch.evidence();
+    assert_eq!(evidence["phase"], "failed");
+    assert!(evidence["witness"]["alcher_swarm_cycle"]["first_cast"].is_object());
+    assert!(evidence["witness"]["alcher_swarm_cycle"]["swarm_hit"].is_null());
+}
+
+#[test]
+fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::AlcherSwarmDrain, "catalogtest");
+    let baseline = swarm_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut qualified = baseline;
+    qualified.script_lifecycle = Some(swarm_stop_receipt());
+    // A stop on an unqualified empty run fails; this test only checks that a
+    // later stop cannot clobber an already-cached qualification.
+    watch.observe("catalogtest", qualified, false);
+    assert_eq!(watch.status(), CoreWatchStatus::Failed);
+
+    let keep = CoreWatch::default();
+    keep.configure(CoreCase::Thiever, "catalogtest");
+    let thiever = thiever_observation();
+    keep.observe("catalogtest", thiever.clone(), false);
+    keep.begin_start("catalogtest").unwrap();
+    let mut worked = thiever;
+    worked.tick += 1;
+    worked.xp.insert("thieving".into(), 1);
+    worked.items.insert("Coins".into(), 1);
+    keep.observe("catalogtest", worked, false);
+    assert_eq!(keep.status(), CoreWatchStatus::Qualified);
+    let mut after_stop = thiever_observation();
+    after_stop.tick += 2;
+    after_stop.xp.insert("thieving".into(), 1);
+    after_stop.items.insert("Coins".into(), 1);
+    after_stop.script_lifecycle = Some(swarm_stop_receipt());
+    keep.observe("catalogtest", after_stop, false);
+    assert_eq!(
+        keep.status(),
+        CoreWatchStatus::Qualified,
+        "a later Stop must not move a different qualified core"
     );
 }

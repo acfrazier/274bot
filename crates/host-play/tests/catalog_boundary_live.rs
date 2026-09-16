@@ -1966,11 +1966,25 @@ mod tests {
         .qualify()
         .is_ok());
 
+        let first_only = witness(case, &baseline, [&withdrawn, &first]);
+        let first_only_error = first_only
+            .qualify()
+            .expect_err("first cast alone must not qualify");
         assert!(
-            witness(case, &baseline, [&withdrawn, &first])
-                .qualify()
-                .is_err(),
-            "first cast alone must not qualify"
+            first_only_error.contains("\"firstcast\":true"),
+            "{first_only_error}"
+        );
+        assert!(
+            first_only_error.contains("\"swarm_hit\":false"),
+            "{first_only_error}"
+        );
+        assert!(
+            first_only_error.contains("\"guardianhold\":false"),
+            "{first_only_error}"
+        );
+        assert!(
+            first_only_error.contains("\"poor\":false"),
+            "{first_only_error}"
         );
         let mut spawn_only = first.clone();
         spawn_only.npc_facts = vec![swarm_npc(true)];

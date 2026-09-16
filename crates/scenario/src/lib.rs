@@ -2935,6 +2935,8 @@ fn alcher_fire_battlestaff_scenario() -> Scenario {
 /// Frozen `alcher-swarm-drain-live`: Magic 70, 20 rich + 8 poor, High default,
 /// 20 alchs a trip. After the first native High cast, inject `~macro_event 1`
 /// once. CoreWatch owns interruption/recovery qualification.
+const SWARM_MACRO_EVENT_CHEAT: &str = "~macro_event 1";
+
 const ALCHER_SWARM_DRAIN_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "items",
@@ -3127,10 +3129,7 @@ fn alcher_swarm_drain_scenario() -> Scenario {
     steps.push(Step {
         name: "inject the upstream swarm macro_event after the first native High cast",
         kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~macro_event 1");
-                true
-            }),
+            send: Box::new(move |c, _| cheat(c, SWARM_MACRO_EVENT_CHEAT)),
         },
         wait: Wait {
             arm: Proof::StatXpGain {
@@ -18863,6 +18862,7 @@ mod tests {
             .find(|step| step.name.contains("macro_event"))
             .expect("swarm inject step");
         assert!(matches!(inject_step.kind, StepKind::Perform { .. }));
+        assert_eq!(SWARM_MACRO_EVENT_CHEAT, "~macro_event 1");
         assert_eq!(
             swarm.proof,
             Proof::StatXpGain {
