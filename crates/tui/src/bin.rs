@@ -1367,8 +1367,9 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
 /// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let selection = args.profile.resolve(None)?;
-    let profile = selection.bind()?;
-    let template = SharedClientTemplate::load(profile)?;
+    // Runtime startup must prepare the selected cache before constructing the
+    // shared template; fixture tests intentionally use bind/load below.
+    let template = selection.prepare_template()?;
     let mut session = TuiSession::new_bound(template);
     session
         .server_profile

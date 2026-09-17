@@ -4103,9 +4103,7 @@ impl Session {
     /// Generated facts for the bound profile, when the cache identity matches.
     pub fn selected_game_data(&self) -> Option<std::sync::Arc<api::game_data::SelectedGameData>> {
         let profile = self.server_profile.as_ref()?;
-        api::game_data::for_optional_profile(profile.revision(), profile.cache_id())
-            .ok()
-            .flatten()
+        profile.game_data()
     }
 
     /// Observed equipment names/ids for the focused ingame character.
