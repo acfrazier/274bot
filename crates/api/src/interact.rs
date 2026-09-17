@@ -110,6 +110,10 @@ pub trait Driver {
     }
     /// Existing single-character chat-branch body, without a frame poll.
     fn consume_chat_key(&mut self, _key: i32) {}
+    /// Zero native GameShell idle after a successfully accepted input-class
+    /// send. Recorders default to no-op; the real client driver writes
+    /// `shell.idle_cycles = 0` the same way mouse/key entrypoints do.
+    fn note_input_activity(&mut self) {}
 }
 
 impl Driver for Client {
@@ -252,18 +256,31 @@ impl Driver for Client {
     fn consume_chat_key(&mut self, key: i32) {
         Client::consume_chat_key(self, key);
     }
+
+    fn note_input_activity(&mut self) {
+        self.shell.idle_cycles = 0;
+    }
+}
+
+fn mark_input_activity<D: Driver + ?Sized>(driver: &mut D, accepted: bool) -> bool {
+    if accepted {
+        driver.note_input_activity();
+    }
+    accepted
 }
 
 /// Dispatch the already-prepared menu option at `slot`.
 pub fn interact<D: Driver + ?Sized>(driver: &mut D, slot: i32) -> bool {
-    driver.do_action(slot)
+    let accepted = driver.do_action(slot);
+    mark_input_activity(driver, accepted)
 }
 
 /// Press an interface button (`IF_BUTTON` on `iface_id`) via the doAction
 /// path, so client-code vetoes (logout, social) still apply.
 pub fn press<D: Driver + ?Sized>(driver: &mut D, iface_id: i32) -> bool {
     driver.set_menu(0, MiniMenuAction::IF_BUTTON, 0, 0, iface_id);
-    driver.do_action(0)
+    let accepted = driver.do_action(0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Set run on (iface 153) or off (iface 152) via the `doAction` IF_BUTTON
@@ -282,7 +299,8 @@ pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
         return false;
     };
     let (bx, bz) = driver.build_base();
-    driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0)
+    let accepted = driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Interact with a loc via OP_LOC1 through the `doAction` path. The client
@@ -298,13 +316,15 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
     let sz = z - bz;
     let a = driver.loc_typecode(sx, sz).unwrap_or(loc_id);
     driver.set_menu(0, MiniMenuAction::OP_LOC1, a, sx, sz);
-    driver.do_action(0)
+    let accepted = driver.do_action(0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
     let revision = driver.revision();
-    Send::close_modal().write_for_revision(revision, driver.out())
+    let accepted = Send::close_modal().write_for_revision(revision, driver.out());
+    mark_input_activity(driver, accepted)
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
@@ -314,7 +334,7 @@ pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
         return false;
     }
     driver.count_dialog_submitted();
-    true
+    mark_input_activity(driver, true)
 }
 
 /// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.
@@ -1442,6 +1462,9 @@ impl<'a> Interactions<'a> {
     ) -> SendResult<'t> {
         let accepted = self.send_command(&command);
         if accepted {
+            if counts_as_input_activity(&command) {
+                self.driver.note_input_activity();
+            }
             SendResult::Sent { tick, command }
         } else {
             SendResult::Refused {
@@ -1593,6 +1616,24 @@ fn refuse<'t>(snapshot: &GameSnapshot, reason: SendReason) -> SendResult<'t> {
     SendResult::Refused {
         tick: snapshot.tick() as u64,
         reason,
+    }
+}
+
+/// Packet-class user events (OPNPC/walk/button/close/count/etc). Local tab
+/// flips, login handshakes, cheats, keepalives, and refused sends are not.
+fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
+    match command {
+        WireCommand::Op { .. }
+        | WireCommand::UseItem { .. }
+        | WireCommand::UseWidget { .. }
+        | WireCommand::Button { .. }
+        | WireCommand::Continue { .. }
+        | WireCommand::Close
+        | WireCommand::ClearLocalModal { .. }
+        | WireCommand::Count { .. }
+        | WireCommand::Walk { .. }
+        | WireCommand::DoorStep { .. } => true,
+        WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }
 }
 

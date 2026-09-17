@@ -3848,3 +3848,155 @@ fn nearest_booth_real_diagonal_ties_choose_only_an_operable_nearest() {
         }
     }
 }
+
+fn idle_npc_snapshot() -> GameSnapshot {
+    let mut s = scene();
+    plant_npc_type(
+        &mut s.client,
+        9,
+        "Guard",
+        &["Attack", "Pickpocket", "Examine"],
+    );
+    plant_npc(&mut s.client, 7, 9);
+    rebuild(&mut s.client)
+}
+
+fn idle_client(revision: ClientRevision) -> Client {
+    let mut c = Client::new_with_revision(cfg(), revision);
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+    c.shell.idle_cycles = 4500;
+    c.no_timeout_timer = 0;
+    c
+}
+
+fn idle_timer_opcode(revision: ClientRevision) -> u8 {
+    client::io::map_client_prot(revision, ClientProt::IDLE_TIMER).id as u8
+}
+
+fn game_loop_wrote_idle_timer(c: &Client) -> bool {
+    c.out.data()[..c.out.pos].contains(&idle_timer_opcode(c.revision()))
+}
+
+/// Successful OPNPC through the real Client driver resets shell idle on
+/// both shared revision bindings.
+#[test]
+fn successful_opnpc_resets_idle_on_real_client_driver() {
+    let snap = idle_npc_snapshot();
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut driver = idle_client(revision);
+        assert!(matches!(
+            Interactions::new(&snap, &mut driver).interact(
+                OpTarget::Npc(&snap.npcs()[0]),
+                ActionSpec::Label("Pickpocket".into()),
+            ),
+            SendResult::Sent { .. }
+        ));
+        assert!(driver.out.pos > 0, "{revision:?} must emit OPNPC");
+        assert_eq!(
+            driver.shell.idle_cycles, 0,
+            "{revision:?} accepted OPNPC must count as input"
+        );
+    }
+}
+
+/// Refused/unsupported/noop/local/background writes must not look like input.
+#[test]
+fn rejected_noop_and_background_paths_do_not_reset_idle() {
+    let snap = idle_npc_snapshot();
+    let mut refused = idle_client(ClientRevision::R289);
+    assert!(matches!(
+        Interactions::new(&snap, &mut refused).interact(
+            OpTarget::Npc(&snap.npcs()[0]),
+            ActionSpec::Operation(MAX_OPERATIONS + 1),
+        ),
+        SendResult::Refused {
+            reason: SendReason::InvalidAction,
+            ..
+        }
+    ));
+    assert_eq!(refused.out.pos, 0);
+    assert_eq!(refused.shell.idle_cycles, 4500);
+
+    let mut no_route = idle_client(ClientRevision::R289);
+    no_route.local_player = None;
+    assert!(!walk(&mut no_route, 10, 10));
+    assert_eq!(no_route.shell.idle_cycles, 4500);
+
+    let mut tab = idle_client(ClientRevision::R289);
+    tab.side_icon[5] = 700;
+    assert!(tab.click_side_tab(5));
+    assert_eq!(tab.out.pos, 0);
+    assert_eq!(tab.shell.idle_cycles, 4500);
+
+    let mut cheater = idle_client(ClientRevision::R289);
+    assert!(cheat(&mut cheater, "ping"));
+    assert!(cheater.out.pos > 0, "cheat still writes CLIENT_CHEAT");
+    assert_eq!(cheater.shell.idle_cycles, 4500);
+
+    let mut keepalive = idle_client(ClientRevision::R289);
+    keepalive.shell.idle_cycles = 100;
+    keepalive.no_timeout_timer = 50;
+    keepalive.out.pos = 0;
+    keepalive.game_loop();
+    assert_eq!(keepalive.shell.idle_cycles, 101);
+    assert!(
+        !game_loop_wrote_idle_timer(&keepalive),
+        "NO_TIMEOUT must not reset idle or emit IDLE_TIMER"
+    );
+}
+
+/// Close/walk free functions are input-class when the driver accepts them.
+#[test]
+fn accepted_walk_and_close_reset_idle_on_real_client_driver() {
+    let mut walker = idle_client(ClientRevision::R289);
+    assert!(walk(&mut walker, 6, 6));
+    assert_eq!(walker.shell.idle_cycles, 0);
+
+    let mut closer = idle_client(ClientRevision::R274);
+    assert!(close_modal(&mut closer));
+    assert_eq!(closer.shell.idle_cycles, 0);
+}
+
+/// Near-threshold OPNPC prevents a false IDLE_TIMER; an inactive client
+/// still emits one. Threshold and packet identity stay client-owned.
+#[test]
+fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
+    let snap = idle_npc_snapshot();
+    let mut active = idle_client(ClientRevision::R289);
+    assert!(matches!(
+        Interactions::new(&snap, &mut active)
+            .interact(OpTarget::Npc(&snap.npcs()[0]), ActionSpec::Operation(2),),
+        SendResult::Sent { .. }
+    ));
+    assert_eq!(active.shell.idle_cycles, 0);
+    active.out.pos = 0;
+    active.no_timeout_timer = 0;
+    active.game_loop();
+    assert_eq!(active.shell.idle_cycles, 1);
+    assert!(
+        !game_loop_wrote_idle_timer(&active),
+        "accepted OPNPC must not still trip IDLE_TIMER"
+    );
+
+    let mut idle = idle_client(ClientRevision::R289);
+    idle.out.pos = 0;
+    idle.no_timeout_timer = 0;
+    idle.game_loop();
+    assert_eq!(idle.shell.idle_cycles, 4001);
+    assert!(
+        game_loop_wrote_idle_timer(&idle),
+        "inactive 289 client must still reach IDLE_TIMER"
+    );
+
+    let mut legacy = idle_client(ClientRevision::R274);
+    legacy.out.pos = 0;
+    legacy.no_timeout_timer = 0;
+    legacy.game_loop();
+    assert_eq!(legacy.shell.idle_cycles, 4500);
+    assert!(
+        !game_loop_wrote_idle_timer(&legacy),
+        "274 game_loop must not emit IDLE_TIMER"
+    );
+}
