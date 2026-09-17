@@ -5189,15 +5189,22 @@ impl Play {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot.lock().unwrap();
         let result = if let Some(loadouts) = fixture_loadouts(settings_bag.as_ref()) {
-            slot.start_load_with_loadouts_and_game_data(
-                source,
-                shape,
-                siblings,
-                &loadouts,
-                self.game_data.clone(),
-                Arc::clone(&self.named_banks),
-            )
-            .map_err(script::StartLoadError::Refused)
+            let result = slot
+                .start_load_with_loadouts_and_game_data(
+                    source,
+                    shape,
+                    siblings,
+                    &loadouts,
+                    self.game_data.clone(),
+                    Arc::clone(&self.named_banks),
+                )
+                .map_err(script::StartLoadError::Refused);
+            if result.is_ok() {
+                if let Some(bag) = settings_bag.as_ref() {
+                    slot.post_settings_bag(bag);
+                }
+            }
+            result
         } else {
             slot.start_load_with_settings_and_game_data_typed(
                 source,
