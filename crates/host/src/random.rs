@@ -171,6 +171,15 @@ const FISHING_GEAR: &[&str] = &[
 /// ground and out of the inventory detects. Box/lamp must beat lost-gear
 /// so a trapped hold is not hidden by ground fishing gear.
 pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Option<DetectedRandom> {
+    detect_ignoring_plants(snap, now_ms, cooldown, &[])
+}
+
+fn detect_ignoring_plants(
+    snap: &GameSnapshot,
+    now_ms: u64,
+    cooldown: &CooldownMap,
+    ignored_plants: &[PlantActor],
+) -> Option<DetectedRandom> {
     if let Some((x, z, level)) = snap.tile() {
         if level == 0 {
             if x >> 6 == MIME_X && z >> 6 == MIME_Z {
@@ -196,7 +205,7 @@ pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Optio
     if has_lost_tool(snap) {
         return Some(no_npc_event(RandomKind::LostTool, "lost tool"));
     }
-    detect_adjacent_featureless_plant(snap, now_ms, cooldown)
+    detect_adjacent_featureless_plant(snap, now_ms, cooldown, ignored_plants)
 }
 
 /// A map-square or inventory-held event: ours by position/possession.
@@ -360,6 +369,7 @@ fn detect_adjacent_featureless_plant(
     snap: &GameSnapshot,
     now_ms: u64,
     cooldown: &CooldownMap,
+    ignored_plants: &[PlantActor],
 ) -> Option<DetectedRandom> {
     let (px, pz, _) = snap.tile()?;
     snap.npcs()
@@ -367,6 +377,7 @@ fn detect_adjacent_featureless_plant(
         .find(|npc| {
             !binned(npc.index, now_ms, cooldown)
                 && featureless_pickable_plant(npc)
+                && PlantActor::from_npc(npc).is_some_and(|actor| !ignored_plants.contains(&actor))
                 && cheb((px, pz), (npc.tile.x, npc.tile.z)) <= 1
         })
         .map(|npc| DetectedRandom {
@@ -620,6 +631,8 @@ const WRONG_TALK_COOLDOWN_MS: u64 = 45_000;
 /// Chat markers of a failed Talk-to: the NPC is not the event's owner.
 const WRONG_TALK_MARKERS: &[&str] = &["trying to talk to", "It's not here for you."];
 
+/// Canonical server response proving that this particular plant is foreign.
+const PLANT_REJECTION_MARKER: &str = "It's not here for you.";
 /// Canonical server response proving that the probed plant belongs to us.
 const PLANT_GROWING_MARKER: &str = "The fruit isn't ready to be picked yet";
 /// A featureless plant gets one bounded probe, never a speculative retry.
@@ -706,9 +719,8 @@ impl PlantActor {
     }
 }
 
-/// One explicit ownership-probe machine. `Ignored` is identity-scoped: a
-/// foreign/refused/timed-out actor is never clicked again, while a genuinely
-/// different actor cannot inherit either rejection or authentication.
+/// One explicit ownership-probe machine. Identity-scoped rejected actors are
+/// retained separately so they cannot shadow a different probe candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum PlantProbe {
     #[default]
@@ -723,18 +735,13 @@ enum PlantProbe {
         deadline_ms: u64,
         continues: u32,
     },
-    Ignored {
-        actor: PlantActor,
-    },
 }
 
 impl PlantProbe {
     fn actor(&self) -> Option<&PlantActor> {
         match self {
             Self::Idle => None,
-            Self::AwaitingResponse { actor, .. }
-            | Self::Authenticated { actor, .. }
-            | Self::Ignored { actor } => Some(actor),
+            Self::AwaitingResponse { actor, .. } | Self::Authenticated { actor, .. } => Some(actor),
         }
     }
 }
@@ -815,6 +822,8 @@ pub struct Guardian {
     maze: Option<maze::MazeSolve>,
     /// Strange Plant's bounded server-authenticated ownership probe.
     plant: PlantProbe,
+    /// Exact foreign/refused/timed-out identities still present in the scene.
+    plant_ignored: Vec<PlantActor>,
 }
 
 impl Default for Guardian {
@@ -852,6 +861,7 @@ impl Guardian {
             box_opened: false,
             maze: None,
             plant: PlantProbe::Idle,
+            plant_ignored: Vec::new(),
         }
     }
 
@@ -879,14 +889,15 @@ impl Guardian {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
         let active = snap.ingame() && snap.scene_state() == SCENE_READY;
-        let plant_invalidated = if active {
-            self.revalidate_plant(snap)
+        if active {
+            self.refresh_ignored_plants(snap);
+            self.revalidate_plant(snap);
         } else {
             self.clear_plant();
-            false
-        };
-        let mut ev = detect(snap, now_ms, &self.cooldown);
-        self.sync_plant_event(snap, &mut ev, plant_invalidated);
+            self.plant_ignored.clear();
+        }
+        let mut ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+        self.pin_plant_event(snap, &mut ev);
 
         if fresh && active {
             // Fresh chat only: a stale wrong-talk line must not re-bin a
@@ -906,14 +917,18 @@ impl Guardian {
                 .iter()
                 .take_while(|l| l.sequence > self.chat_seen)
                 .any(|l| l.text.contains(PLANT_GROWING_MARKER));
+            let plant_rejected = snap
+                .chat_lines()
+                .iter()
+                .take_while(|l| l.sequence > self.chat_seen)
+                .any(|l| l.text.contains(PLANT_REJECTION_MARKER));
+            let plant_before_chat = self.plant.clone();
             if self.in_flight && wrong_talk {
                 if let Some(index) = self.in_flight_index {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
                 self.clear_handle();
-            } else if !matches!(self.plant, PlantProbe::Idle | PlantProbe::Ignored { .. })
-                && wrong_talk
-            {
+            } else if !matches!(self.plant, PlantProbe::Idle) && plant_rejected {
                 // Plant rejection is pinned to the complete actor identity;
                 // a reused slot must not inherit this bin.
                 self.ignore_current_plant();
@@ -921,7 +936,7 @@ impl Guardian {
                 self.authenticate_plant(now_ms);
             } else if matches!(self.plant, PlantProbe::Authenticated { .. }) && plant_growing {
                 self.note_plant_growing(now_ms);
-            } else if self.acting && self.acting_kind == RandomKind::Pick && wrong_talk {
+            } else if self.acting && self.acting_kind == RandomKind::Pick && plant_rejected {
                 if let Some(index) = ev.as_ref().and_then(|e| e.npc_index) {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
@@ -932,7 +947,10 @@ impl Guardian {
             if self.in_flight && self.dialog_done(snap) {
                 self.clear_handle();
             }
-            self.sync_plant_event(snap, &mut ev, false);
+            if self.plant != plant_before_chat {
+                ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+            }
+            self.pin_plant_event(snap, &mut ev);
             // Rising-edge knock: ask the running script once per detected
             // event. A vanished event resets the claim to Host (the host
             // owns whatever appears next). No knock supplied → Host.
@@ -976,12 +994,17 @@ impl Guardian {
             && self.claim == RandomClaim::Host
             && !inert_lamp
         {
+            let plant_before_act = self.plant.clone();
+            let ignored_before_act = self.plant_ignored.len();
             self.act(driver, snap, ev.as_ref(), settings, now_ms);
+            if self.plant != plant_before_act || self.plant_ignored.len() != ignored_before_act {
+                ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+            }
         }
         // `step_pick` may have timed out or seen a refused send. Reflect
         // that release in this same status frame instead of publishing a
         // stale authenticated `ours`.
-        self.sync_plant_event(snap, &mut ev, false);
+        self.pin_plant_event(snap, &mut ev);
         self.last_tick = tick;
 
         // `act` may have stalled the redemption just above: a lamp the
@@ -1021,13 +1044,39 @@ impl Guardian {
 
     fn ignore_current_plant(&mut self) {
         if let Some(actor) = self.plant.actor().cloned() {
-            self.plant = PlantProbe::Ignored { actor };
-        } else {
-            self.plant = PlantProbe::Idle;
+            self.ignore_plant(actor);
         }
+        self.plant = PlantProbe::Idle;
         if self.acting_kind == RandomKind::Pick {
             self.acting = false;
         }
+    }
+
+    fn ignore_plant(&mut self, actor: PlantActor) {
+        if let Some(existing) = self
+            .plant_ignored
+            .iter_mut()
+            .find(|existing| existing.slot == actor.slot)
+        {
+            *existing = actor;
+        } else {
+            self.plant_ignored.push(actor);
+        }
+    }
+
+    /// Remove a bin only after its slot is observed empty. If a structurally
+    /// different pickable actor appears in that slot without an observed gap,
+    /// replace the bin so the ambiguous replacement inherits no auth.
+    fn refresh_ignored_plants(&mut self, snap: &GameSnapshot) {
+        self.plant_ignored.retain_mut(|ignored| {
+            let Some(current) =
+                npc_by_index(snap.npcs(), ignored.slot).and_then(PlantActor::from_npc)
+            else {
+                return false;
+            };
+            *ignored = current;
+            true
+        });
     }
 
     fn authenticate_plant(&mut self, now_ms: u64) {
@@ -1051,54 +1100,28 @@ impl Guardian {
     /// Drop authentication as soon as any structural actor field changes.
     /// If a different pickable actor reused the slot, bind an ignore to the
     /// replacement so stale state can never turn into a retarget.
-    fn revalidate_plant(&mut self, snap: &GameSnapshot) -> bool {
+    fn revalidate_plant(&mut self, snap: &GameSnapshot) {
         let Some(expected) = self.plant.actor().cloned() else {
-            return false;
+            return;
         };
         let current = npc_by_index(snap.npcs(), expected.slot).and_then(PlantActor::from_npc);
         if current.as_ref() == Some(&expected) {
-            return false;
-        }
-
-        let was_active = matches!(
-            self.plant,
-            PlantProbe::AwaitingResponse { .. } | PlantProbe::Authenticated { .. }
-        );
-        self.plant = if was_active {
-            current
-                .map(|actor| PlantProbe::Ignored { actor })
-                .unwrap_or(PlantProbe::Idle)
-        } else {
-            PlantProbe::Idle
-        };
-        if self.acting_kind == RandomKind::Pick {
-            self.acting = false;
-        }
-        true
-    }
-
-    /// Keep an in-flight probe pinned to its actor even after the player
-    /// moves away, publish server authentication as `ours`, and hide an
-    /// identity-scoped bin. Other established random kinds still preempt it.
-    fn sync_plant_event(
-        &mut self,
-        snap: &GameSnapshot,
-        ev: &mut Option<DetectedRandom>,
-        suppress_pick: bool,
-    ) {
-        if suppress_pick && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Pick) {
-            if let Some(actor) = ev
-                .as_ref()
-                .and_then(|e| e.npc_index)
-                .and_then(|index| npc_by_index(snap.npcs(), index))
-                .and_then(PlantActor::from_npc)
-            {
-                self.plant = PlantProbe::Ignored { actor };
-            }
-            *ev = None;
             return;
         }
 
+        if let Some(replacement) = current {
+            self.ignore_plant(replacement);
+        }
+        self.plant = PlantProbe::Idle;
+        if self.acting_kind == RandomKind::Pick {
+            self.acting = false;
+        }
+    }
+
+    /// Keep an in-flight probe pinned to its actor even after the player
+    /// moves away and publish server authentication as `ours`. Established
+    /// non-plant random kinds still preempt it.
+    fn pin_plant_event(&mut self, snap: &GameSnapshot, ev: &mut Option<DetectedRandom>) {
         match self.plant.clone() {
             PlantProbe::AwaitingResponse { actor, .. }
             | PlantProbe::Authenticated { actor, .. } => {
@@ -1120,24 +1143,6 @@ impl Guardian {
                         || owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()),
                     npc_index: Some(actor.slot),
                 });
-            }
-            PlantProbe::Ignored { actor } => {
-                let same_pick = ev
-                    .as_ref()
-                    .is_some_and(|e| e.kind == RandomKind::Pick && e.npc_index == Some(actor.slot));
-                let hard_owned = npc_by_index(snap.npcs(), actor.slot).is_some_and(|npc| {
-                    let display_name = snap
-                        .local_player()
-                        .and_then(|lp| lp.player.actor.name.clone());
-                    owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref())
-                });
-                if same_pick && hard_owned {
-                    // Fresh hard ownership evidence is stronger than a prior
-                    // featureless timeout/rejection.
-                    self.plant = PlantProbe::Idle;
-                } else if same_pick {
-                    *ev = None;
-                }
             }
             PlantProbe::Idle => {}
         }
@@ -1411,6 +1416,7 @@ impl Guardian {
         // walk to range. It does not need or inherit probe authentication.
         if owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()) {
             self.plant = PlantProbe::Idle;
+            self.plant_ignored.retain(|ignored| ignored != &actor);
             if distance > 1 {
                 walk(driver, npc.tile.x, npc.tile.z);
                 return;
@@ -1445,7 +1451,8 @@ impl Guardian {
                         };
                     }
                     SendResult::Refused { .. } => {
-                        self.plant = PlantProbe::Ignored { actor };
+                        self.ignore_plant(actor);
+                        self.plant = PlantProbe::Idle;
                         self.acting = false;
                     }
                 }
@@ -1455,7 +1462,8 @@ impl Guardian {
                 deadline_ms,
             } => {
                 if actor != expected {
-                    self.plant = PlantProbe::Ignored { actor };
+                    self.ignore_plant(actor);
+                    self.plant = PlantProbe::Idle;
                     self.acting = false;
                 } else if now_ms >= deadline_ms {
                     self.ignore_current_plant();
@@ -1468,7 +1476,8 @@ impl Guardian {
                 continues,
             } => {
                 if actor != expected {
-                    self.plant = PlantProbe::Ignored { actor };
+                    self.ignore_plant(actor);
+                    self.plant = PlantProbe::Idle;
                     self.acting = false;
                     return;
                 }
@@ -1508,9 +1517,6 @@ impl Guardian {
                     }
                     SendResult::Refused { .. } => self.ignore_current_plant(),
                 }
-            }
-            PlantProbe::Ignored { .. } => {
-                self.acting = false;
             }
         }
     }
@@ -3762,6 +3768,131 @@ mod tests {
     }
 
     #[test]
+    fn ignored_featureless_plant_does_not_shadow_a_second_adjacent_actor() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        plant_npc_with_op(&mut c, 1, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
+            "the first actor receives the first probe"
+        );
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.add_chat(0, "It's not here for you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 1, 0, 0)],
+            "the exact rejected actor is skipped, not the second actor"
+        );
+        assert!(!status.ours);
+        assert!(status.hold);
+
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 2_500, None);
+        assert!(drv.menus.is_empty(), "the second probe is not replayed");
+        assert!(drv.actions.is_empty());
+    }
+
+    #[test]
+    fn disappeared_awaited_actor_does_not_poison_another_adjacent_actor() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        plant_npc_with_op(&mut c, 1, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_eq!(drv.menus[0].2, 0);
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.npc[0] = None;
+        c.npc_ids[0] = 1;
+        c.npc_count = 1;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 1, 0, 0)],
+            "clean disappearance leaves the different actor probeable"
+        );
+        assert!(!status.ours);
+        assert!(status.hold);
+        assert!(drv.walks.is_empty());
+    }
+
+    #[test]
+    fn generic_talk_failure_does_not_reject_awaited_or_authenticated_plant() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        drv.menus.clear();
+        drv.actions.clear();
+
+        c.add_chat(0, "Someone else is trying to talk to you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert!(!status.ours);
+        assert!(status.hold, "the awaited probe remains active");
+        assert!(drv.actions.is_empty());
+
+        c.add_chat(0, "The fruit isn't ready to be picked yet...", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 3_000, None);
+        assert!(status.ours);
+        assert!(status.hold);
+
+        c.add_chat(0, "Someone else is trying to talk to you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 4_000, None);
+        assert!(status.ours);
+        assert!(
+            status.hold,
+            "authenticated ownership survives generic talk failure"
+        );
+        assert!(drv.actions.is_empty());
+
+        c.add_chat(0, "It's not here for you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 5_000, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.ours);
+        assert!(
+            !status.hold,
+            "canonical plant rejection releases immediately"
+        );
+        assert!(drv.actions.is_empty());
+    }
+
+    #[test]
     fn adjacent_owned_growing_plant_authenticates_drains_and_retries_paced() {
         let mut c = new_client();
         ingame_scene(&mut c);
@@ -4024,6 +4155,13 @@ mod tests {
                 drv.walks.is_empty(),
                 "{replacement_op} replacement is not chased"
             );
+
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 21_000, None);
+            assert!(!status.hold);
+            assert!(drv.menus.is_empty(), "replacement remains suppressed");
+            assert!(drv.actions.is_empty());
+            assert!(drv.walks.is_empty());
         }
     }
 
