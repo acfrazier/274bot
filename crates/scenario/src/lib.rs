@@ -9934,7 +9934,17 @@ const VARROCK_TELE_FIRE: i32 = 3;
 const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
 const FIRE_GIANT_BANK_RESTOCK: i32 = 20;
 
+// Keep the seeded food independent of the operator's saved first loadout.
+const CHAOS_DRUID_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Chaos Druid food",
+    carry: &[("Lobster", 12)],
+}];
+
 const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
+    },
     ScriptSettingInject {
         id: "location",
         value: ScriptInjectValue::Str("Edgeville Dungeon"),
@@ -9946,6 +9956,10 @@ const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
 ];
 const CHAOS_DRUID_TOWER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
+    },
+    ScriptSettingInject {
         id: "location",
         value: ScriptInjectValue::Str("Chaos Druid Tower"),
     },
@@ -9955,6 +9969,10 @@ const CHAOS_DRUID_TOWER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const CHAOS_DRUID_YANILLE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
+    },
     ScriptSettingInject {
         id: "location",
         value: ScriptInjectValue::Str("Yanille Dungeon"),
@@ -12143,6 +12161,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
+            fixture_loadouts: (card == "ChaosDruidKiller").then_some(CHAOS_DRUID_FIXTURE_LOADOUTS),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
@@ -13434,6 +13453,7 @@ fn combat_bank_scenario(
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
+            fixture_loadouts: (card == "ChaosDruidKiller").then_some(CHAOS_DRUID_FIXTURE_LOADOUTS),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
