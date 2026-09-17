@@ -2890,6 +2890,21 @@ impl Session {
                                 format!("{name}: scene {}", s.scene_state),
                             );
                         }
+                        if p.welcome_notice != s.welcome_notice {
+                            if let Some(line) = s.welcome_notice.as_deref() {
+                                push_log(&mut log_by, name, format!("{name}: {line}"));
+                            }
+                        }
+                        if p.welcome_failure.is_none() && s.welcome_failure.is_some() {
+                            push_log(
+                                &mut log_by,
+                                name,
+                                format!(
+                                    "{name}: {}",
+                                    s.welcome_failure.as_deref().unwrap_or_default()
+                                ),
+                            );
+                        }
                     }
                 }
             }

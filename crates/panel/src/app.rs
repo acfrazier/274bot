@@ -4411,6 +4411,11 @@ fn status_section(ui: &Ui, session: &mut Session) {
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
     kv_row(ui, "queue", &queue);
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
+    if let Some(failure) = s.welcome_failure.as_deref() {
+        kv_row(ui, "welcome", failure);
+    } else if s.welcome_hold {
+        kv_row(ui, "welcome", "holding");
+    }
     if let Some(random) = random_status_text(&s.random) {
         kv_row(ui, "random", &random);
     }

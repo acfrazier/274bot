@@ -8,6 +8,7 @@ pub mod audio;
 pub mod cache;
 pub mod catalog_core;
 pub mod external_loader;
+pub mod login_readiness;
 pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
@@ -392,6 +393,13 @@ pub struct SlotStatus {
     pub player: String,
     /// `Client.main_modal_id` (open modal interface, -1 when none).
     pub main_modal_id: i32,
+    /// Host login-readiness: script work is held while the native welcome
+    /// modal is open or a bounded dismiss failed.
+    pub welcome_hold: bool,
+    /// Visible bounded dismiss failure; `None` while idle/settled.
+    pub welcome_failure: Option<String>,
+    /// Last welcome phase line for panel/TUI logs.
+    pub welcome_notice: Option<String>,
     /// Queued walk target tile, -1 when idle (mirrored from the slot's
     /// traveller's route dest by the pump's per-uid nav step each
     /// observe).
@@ -757,6 +765,9 @@ impl Default for SlotStatus {
             tile_level: 0,
             player: String::new(),
             main_modal_id: 0,
+            welcome_hold: false,
+            welcome_failure: None,
+            welcome_notice: None,
             walk_x: -1,
             walk_z: -1,
             walk_level: -1,
@@ -5761,6 +5772,9 @@ fn reset_slot_observation(s: &mut SlotStatus) {
     s.scene_state = 0;
     s.runenergy = 0;
     s.main_modal_id = -1;
+    s.welcome_hold = false;
+    s.welcome_failure = None;
+    s.welcome_notice = None;
     s.tile_x = -1;
     s.tile_z = -1;
     s.tile_level = -1;
@@ -6080,6 +6094,8 @@ fn spawn_slot_thread(
                         // gates on its facts; the follow surface reads the
                         // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
+                        let mut session_epoch = 0u64;
+                        let mut welcome = login_readiness::LoginReadiness::default();
                         // The random status `client_frame` published last
                         // frame: copied onto the slot status row, and its
                         // hold freezes script tick and the nav follow.
@@ -6094,6 +6110,7 @@ fn spawn_slot_thread(
                                 nav_snapshot.ingame(),
                             );
                             if session_boundary {
+                                session_epoch = session_epoch.wrapping_add(1);
                                 reset_slot_session_work(name, &slot_scripts, &slot_cheats, &slot_wires, &slot_navs);
                                 last_nav_step = None;
                             }
@@ -6124,7 +6141,22 @@ fn spawn_slot_thread(
                             obs_paired_core.observe_snapshot(name, &nav_snapshot, session_boundary);
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();
-                            let hold = status.hold || !ready || session_boundary;
+                            let welcome_obs = login_readiness::WelcomeObservation {
+                                session_epoch,
+                                tick: *script_tick,
+                                ingame: c.ingame,
+                                scene_state: c.scene_state,
+                                welcome_interface_id: c.welcome_interface_id,
+                                main_modal_id: c.main_modal_id,
+                                allow_close: c.ingame && c.scene_state == 2 && !session_boundary,
+                            };
+                            let welcome_step = welcome.step(&welcome_obs, || {
+                                login_readiness::try_close_welcome(&nav_snapshot, c)
+                            });
+                            if let Some(line) = welcome_step.notice.as_deref() {
+                                eprintln!("[host-play] slot {name}: {line}");
+                            }
+                            let hold = status.hold || !ready || session_boundary || welcome_step.hold;
                             #[cfg(feature = "memory-profile")]
                             memory::client_frame(c, name, hold);
                             slot_frame(c, name, hold);
@@ -6157,6 +6189,11 @@ fn spawn_slot_thread(
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;
                                         s.main_modal_id = nav_snapshot.modals().main;
+                                        s.welcome_hold = welcome_step.hold;
+                                        s.welcome_failure = welcome_step.failure.clone();
+                                        if welcome_step.notice.is_some() {
+                                            s.welcome_notice = welcome_step.notice.clone();
+                                        }
                                         copy_stream_bytes(c, s);
                                         s.chat_head = if ready { c.chat_text[0].clone() } else { String::new() };
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
@@ -17613,6 +17650,67 @@ export default class T extends LoopingBot {
             &world, false, false,
         );
         assert_eq!(*count.lock().unwrap(), 1, "an unheld edge dispatches");
+    }
+
+    #[test]
+    fn welcome_hold_skips_compiled_tick_until_observed_close() {
+        let ScriptWiring {
+            scripts,
+            cheats,
+            count,
+        } = script_wiring();
+        let (navs, world) = empty_nav();
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        let mut welcome = login_readiness::LoginReadiness::default();
+        welcome.on_session_boundary();
+        let open = login_readiness::WelcomeObservation {
+            session_epoch: welcome.session_epoch(),
+            tick: 1,
+            ingame: true,
+            scene_state: 2,
+            welcome_interface_id: 42,
+            main_modal_id: 42,
+            allow_close: true,
+        };
+        let step = welcome.step(&open, || login_readiness::CloseAttempt::Sent);
+        assert!(step.hold);
+        script_observe(
+            &mut c, "alice", true, true, 1, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, step.hold, false,
+        );
+        assert_eq!(
+            *count.lock().unwrap(),
+            0,
+            "welcome hold blocks script work before ack"
+        );
+        let closed = login_readiness::WelcomeObservation {
+            main_modal_id: -1,
+            tick: 2,
+            ..open
+        };
+        let step = welcome.step(&closed, || panic!("no close after ack"));
+        assert!(!step.hold);
+        script_observe(
+            &mut c, "alice", true, true, 2, None, None, None, None, None, &scripts, &cheats, &navs,
+            &world, step.hold, false,
+        );
+        assert_eq!(
+            *count.lock().unwrap(),
+            1,
+            "script work resumes only after observed close"
+        );
     }
 
     #[test]
