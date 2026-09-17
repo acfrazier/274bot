@@ -861,13 +861,13 @@ mod tests {
                 prereqs.iter().any(|p| matches!(
                     p,
                     Proof::ArrivedNear {
-                        x: 3220,
-                        z: 3212,
+                        x: 3253,
+                        z: 3421,
                         level: 0,
                         radius: 8
                     }
                 )),
-                "{name} bank tile"
+                "{name} Varrock East bank tile"
             );
             assert!(
                 !prereqs.iter().any(|p| matches!(

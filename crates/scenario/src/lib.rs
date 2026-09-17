@@ -1949,10 +1949,10 @@ fn bone_burier_scenario() -> Scenario {
     }
 }
 
-/// Lumbridge courtyard south tile used by the v2 writer preset and login gate.
+/// Verified packed Varrock East bank tile used by the v2 writer preset and login gate.
 const BONE_BURIER_V2_BANK: WorldTile = WorldTile {
-    x: 3220,
-    z: 3212,
+    x: 3253,
+    z: 3421,
     level: 0,
 };
 
@@ -2020,7 +2020,7 @@ fn bone_burier_v2_scenario(name: &'static str, file_name: &'static str) -> Scena
                 },
             },
             Step {
-                name: "tele to the Lumbridge bank tile",
+                name: "tele to the verified Varrock East bank tile",
                 kind: StepKind::Perform {
                     send: Box::new(move |c, _| {
                         cheat(
@@ -23156,9 +23156,9 @@ mod tests {
             assert_eq!(
                 s.steps[start - 2].wait.arm,
                 Proof::ArrivedNear {
-                    x: 3220,
-                    z: 3212,
-                    level: 0,
+                    x: BONE_BURIER_V2_BANK.x,
+                    z: BONE_BURIER_V2_BANK.z,
+                    level: BONE_BURIER_V2_BANK.level,
                     radius: 8,
                 }
             );

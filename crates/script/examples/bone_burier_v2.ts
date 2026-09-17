@@ -19,6 +19,11 @@ export const SETTINGS = {
 type Phase = 'finding-bank' | 'opening-bank' | 'loading' | 'burying' | 'stopping';
 type Pending = { kind: 'walk' | 'open' | 'load' | 'close' | 'bury'; sent: number; before: number; seq: number };
 
+/** Non-walk pending ops; bank-loaded wait uses the same bound. */
+const PENDING_TICK_LIMIT = 12;
+/** Matches native WALK_BOUND_MS (60s) at the normal 600 ms game tick, with headroom. */
+const WALK_PENDING_TICK_LIMIT = 120;
+
 let phase: Phase = 'finding-bank';
 let pending: Pending | null = null;
 let waitingForBankSince = 0;
@@ -59,11 +64,14 @@ function fail(api: NativeApi, reason: string): void {
 }
 
 function timedOut(api: NativeApi): boolean {
-    if (pending && api.tick - pending.sent > 12) {
-        fail(api, `stalled while ${pending.kind}; no observed completion`);
-        return true;
+    if (pending) {
+        const limit = pending.kind === 'walk' ? WALK_PENDING_TICK_LIMIT : PENDING_TICK_LIMIT;
+        if (api.tick - pending.sent > limit) {
+            fail(api, `stalled while ${pending.kind}; no observed completion`);
+            return true;
+        }
     }
-    if (!pending && waitingForBankSince && api.tick - waitingForBankSince > 12) {
+    if (!pending && waitingForBankSince && api.tick - waitingForBankSince > PENDING_TICK_LIMIT) {
         fail(api, 'bank contents unavailable after waiting');
         return true;
     }
