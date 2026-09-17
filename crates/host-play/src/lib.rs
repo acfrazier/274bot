@@ -5122,8 +5122,21 @@ impl Play {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        self.script_start_load_typed(name, source, shape, settings_bag, siblings)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Initial load result with operational refusals separate from loader errors.
+    pub fn script_start_load_typed(
+        &self,
+        name: &str,
+        source: String,
+        shape: script::LoadShape,
+        settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+    ) -> Result<(), script::StartLoadError> {
         if !self.slot_active(name) {
-            return Err(format!("no slot: {name}"));
+            return Err(script::StartLoadError::Refused(format!("no slot: {name}")));
         }
         if debug_enabled() {
             eprintln!("[script {name}] start load");
@@ -5131,7 +5144,7 @@ impl Play {
         let result = script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_load_with_settings_and_game_data(
+            .start_load_with_settings_and_game_data_typed(
                 source,
                 shape,
                 settings_bag.as_ref(),

@@ -399,6 +399,36 @@ impl JsLibrary {
         self.failures.insert(failure.identity_key.clone(), failure);
     }
 
+    /// Retain an initial runtime failure against the exact attempted card bytes.
+    /// Refusals leave prior diagnostics untouched; success clears this identity.
+    pub fn record_start_result(
+        &mut self,
+        card: &JsCard,
+        result: Result<(), crate::StartLoadError>,
+    ) -> Result<(), String> {
+        match result {
+            Ok(()) => {
+                self.clear_failure(&card.identity_key());
+                Ok(())
+            }
+            Err(crate::StartLoadError::RuntimeLoad(diagnostic)) => {
+                let mut failure = LoadFailure::capture(
+                    card.source,
+                    &card.path,
+                    &card.name,
+                    &diagnostic,
+                    Some(&card.origin),
+                    Some(card.api_family),
+                );
+                // The typed spawn boundary, not diagnostic text, owns the stage.
+                failure.stage = LoadStage::RuntimeLoad;
+                self.record_failure(failure);
+                Err(diagnostic)
+            }
+            Err(crate::StartLoadError::Refused(diagnostic)) => Err(diagnostic),
+        }
+    }
+
     pub fn clear_failure(&mut self, identity_key: &str) {
         self.failures.remove(identity_key);
     }

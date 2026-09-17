@@ -960,7 +960,7 @@ impl TuiSession {
                         )),
                         Some(_) => match self.js.ensure_js(*source, card_name) {
                             Err(e) => Err(e),
-                            Ok(()) => match self.js.get(*source, card_name) {
+                            Ok(()) => match self.js.get(*source, card_name).cloned() {
                                 Some(card) => {
                                     let bag = self.pending_settings_bag(
                                         *source,
@@ -978,13 +978,16 @@ impl TuiSession {
                                             api_family: Some(card.api_family.as_str().into()),
                                         },
                                     ) {
-                                        Ok(siblings) => play.script_start_load(
-                                            &name,
-                                            card.js.clone(),
-                                            card.shape,
-                                            bag,
-                                            siblings,
-                                        ),
+                                        Ok(siblings) => {
+                                            let result = play.script_start_load_typed(
+                                                &name,
+                                                card.js.clone(),
+                                                card.shape,
+                                                bag,
+                                                siblings,
+                                            );
+                                            self.js.record_start_result(&card, result)
+                                        }
                                         Err(e) => Err(e),
                                     }
                                 }
@@ -2290,6 +2293,102 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             app.world.is_none(),
             "no session pack stays the empty-state title"
         );
+    }
+
+    #[test]
+    fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
+        let iso = IsolatedEnv::enter("tui-initial-load");
+        let mut session = TuiSession::new(dummy_options());
+        let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+        play.attach_arm("alice", SlotArm::new(7, false));
+        play.attach_arm("bob", SlotArm::new(8, false));
+        session.inject_play(play);
+        let mut app = TuiApp::new("initial load proof");
+        app.names = vec!["alice".into(), "bob".into(), "missing".into()];
+        app.focused = Some(0);
+        let path = iso.dir.join("retry.ts");
+        let helper = iso.dir.join("gate.ts");
+        std::fs::write(&helper, "export const fail = true;").unwrap();
+        let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
+        std::fs::write(&path, src).unwrap();
+        let card = session.js.load(&path).unwrap();
+        let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+        session.script_start(&mut app, &sel);
+        let failure = session
+            .js
+            .load_failure(&card.identity_key())
+            .unwrap()
+            .clone();
+        assert_eq!(failure.identity_key, card.identity_key());
+        assert_eq!(failure.path, path);
+        assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
+        assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
+        assert_eq!(
+            failure.fingerprint,
+            script::raw_content_fingerprint(&path, src)
+        );
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(0)
+        );
+
+        let good_path = iso.dir.join("good.ts");
+        std::fs::write(
+            &good_path,
+            "export default class T extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        let good = session.js.load(&good_path).unwrap();
+        assert_eq!(good.api_family, script::ApiFamily::V1);
+        app.focused = Some(1);
+        session.script_start(
+            &mut app,
+            &script::ScriptSel::Loaded(good.source, good_path.to_string_lossy().into_owned()),
+        );
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running
+        );
+        let output = app.error.as_deref().unwrap();
+        assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
+        assert!(output.contains(&path.display().to_string()));
+        session.script_start(&mut app, &sel); // active slot refuses before evaluating
+        assert!(app
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("script already active"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
+        app.focused = Some(2);
+        session.script_start(&mut app, &sel);
+        assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
+
+        std::fs::write(&helper, "export const fail = false;").unwrap();
+        app.focused = Some(0);
+        session.script_start(&mut app, &sel);
+        assert!(session.js.load_failure(&card.identity_key()).is_none());
+        assert_eq!(app.error, None);
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(1)
+        );
+        session.play.as_ref().unwrap().script_stop("alice");
+        session.play.as_ref().unwrap().script_stop("bob");
     }
 
     /// Task 13 fix: the paint-as-chat toggle must not stick across a

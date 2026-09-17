@@ -18,6 +18,26 @@ use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
 use serde::Serialize;
 
+/// Failure at initial loaded-script Start, distinct from an operational refusal.
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartLoadError {
+    Refused(String),
+    RuntimeLoad(String),
+}
+
+#[cfg(feature = "load")]
+impl std::fmt::Display for StartLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(message) | Self::RuntimeLoad(message) => f.write_str(message),
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+impl std::error::Error for StartLoadError {}
+
 /// Lifecycle of the script slot. `paused` covers both operator Pause and
 /// the not-`is_up` gate; `stopping` is the Load-join window (later task).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,13 +428,36 @@ impl SlotScript {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), String> {
+        self.start_load_with_loadouts_and_game_data_typed(
+            source,
+            shape,
+            siblings,
+            loadouts,
+            game_data,
+            named_banks,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    #[cfg(feature = "load")]
+    fn start_load_with_loadouts_and_game_data_typed(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartLoadError> {
         match self.state {
-            RunState::Running | RunState::Paused | RunState::Stopping => {
-                Err("script already active: stop it first".to_string())
-            }
+            RunState::Running | RunState::Paused | RunState::Stopping => Err(
+                StartLoadError::Refused("script already active: stop it first".to_string()),
+            ),
             RunState::Idle | RunState::Error => {
                 if self.compiled.is_some() {
-                    return Err("compiled script active: stop it first".to_string());
+                    return Err(StartLoadError::Refused(
+                        "compiled script active: stop it first".to_string(),
+                    ));
                 }
                 let source: Arc<str> = Arc::from(source);
                 let siblings: Arc<[(String, String)]> = siblings.into();
@@ -426,7 +469,8 @@ impl SlotScript {
                     siblings.iter().cloned().collect(),
                     game_data.clone(),
                     Arc::clone(&named_banks),
-                )?;
+                )
+                .map_err(StartLoadError::RuntimeLoad)?;
                 isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
                 self.load_identity = Some(SlotLoadIdentity {
@@ -836,8 +880,30 @@ impl SlotScript {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), String> {
+        self.start_load_with_settings_and_game_data_typed(
+            source,
+            shape,
+            bag,
+            siblings,
+            game_data,
+            named_banks,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// Typed initial-start boundary; refuses active slots before evaluating source.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_settings_and_game_data_typed(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        bag: Option<&serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    ) -> Result<(), StartLoadError> {
         let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
-        self.start_load_with_loadouts_and_game_data(
+        self.start_load_with_loadouts_and_game_data_typed(
             source,
             shape,
             siblings,

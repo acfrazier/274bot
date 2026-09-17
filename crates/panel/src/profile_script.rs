@@ -337,7 +337,14 @@ impl Session {
                 )?;
                 {
                     let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-                    play.script_start_load(profile, card.js.clone(), card.shape, bag, siblings)?;
+                    let result = play.script_start_load_typed(
+                        profile,
+                        card.js.clone(),
+                        card.shape,
+                        bag,
+                        siblings,
+                    );
+                    self.js.record_start_result(&card, result)?;
                     play.script_attach_identity(profile, card.identity_key());
                 }
                 self.persist_successful_assignment(profile, card.assignment());
@@ -670,13 +677,14 @@ impl Session {
         }
         {
             let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-            play.script_start_load(
+            let result = play.script_start_load_typed(
                 profile,
                 card.js.clone(),
                 card.shape,
                 bag,
                 prepared.siblings.clone(),
-            )?;
+            );
+            self.js.record_start_result(card, result)?;
             play.script_attach_identity(profile, card.identity_key());
         }
         self.persist_successful_assignment(profile, card.assignment());
@@ -1470,6 +1478,77 @@ mod tests {
         assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
         assert!(s.js.named_failure_output().contains("initial-load-proof"));
         s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let helper = write_bot(&dir, "gate.ts", "export const fail = true;");
+        let source = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('retry-load-proof');\nexport function tick(api) {}";
+        let path = write_bot(&dir, "retry.ts", source);
+        let card = s.js.load(&path).unwrap();
+        let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+        assert!(s.script_start_sel("alice", sel.clone()).is_err());
+        let failure = s.js.load_failure(&card.identity_key()).unwrap().clone();
+        assert!(s.profile_assignment("alice").is_none());
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("alice"),
+            Some(0)
+        );
+        assert_eq!(
+            s.script_start_sel("missing", sel.clone()).unwrap_err(),
+            "no slot: missing"
+        );
+        assert_eq!(s.js.load_failure(&card.identity_key()), Some(&failure));
+
+        let other_path = write_bot(
+            &dir,
+            "other.ts",
+            &format!("throw new Error('other-load-proof');\n{BOT_TS}"),
+        );
+        let other = s.js.load(&other_path).unwrap();
+        assert!(s
+            .script_start_sel(
+                "bob",
+                script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned())
+            )
+            .is_err());
+        let other_failure = s.js.load_failure(&other.identity_key()).unwrap().clone();
+        assert_eq!(other_failure.api_family, Some(script::ApiFamily::V1));
+        assert_eq!(other_failure.stage, script::LoadStage::RuntimeLoad);
+
+        // Resolve the changed sibling on explicit Start, without replacing the card
+        // or running a throwaway validation isolate that could clear the diagnostic.
+        fs::write(&helper, "export const fail = false;").unwrap();
+        s.script_start_sel("alice", sel.clone()).unwrap();
+        assert!(s.js.load_failure(&card.identity_key()).is_none());
+        assert_eq!(
+            s.js.load_failure(&other.identity_key()),
+            Some(&other_failure)
+        );
+        let play = s.play.as_ref().unwrap();
+        assert_eq!(play.script_runtime_generation("alice"), Some(1));
+        assert_eq!(
+            play.script_source_identity("alice"),
+            Some(card.identity_key())
+        );
+        assert_eq!(
+            s.script_start_sel(
+                "alice",
+                script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned())
+            )
+            .unwrap_err(),
+            "script already active: stop it first"
+        );
+        assert_eq!(
+            s.js.load_failure(&other.identity_key()),
+            Some(&other_failure)
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_runtime_generation("alice"),
+            Some(1)
+        );
+        s.play.as_ref().unwrap().script_stop("alice");
     }
 
     #[test]

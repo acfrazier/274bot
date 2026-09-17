@@ -78,6 +78,8 @@ pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore,
 };
+#[cfg(feature = "load")]
+pub use slot::StartLoadError;
 pub use slot::{RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript};
 #[cfg(feature = "load")]
 pub use watchdog::{
