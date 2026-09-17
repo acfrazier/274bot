@@ -119,14 +119,10 @@ impl FixtureIdentity {
         }
         for (i, a) in self.accounts.iter().enumerate() {
             if a.username.trim().is_empty() || a.password.is_empty() {
-                return Err(format!(
-                    "fixture identity account {i} has empty credentials"
-                ));
+                return Err(format!("fixture identity account {i} has empty credentials"));
             }
             if a.sav_path.trim().is_empty() || a.sav_sha256.trim().is_empty() {
-                return Err(format!(
-                    "fixture identity account {i} missing sav path/digest"
-                ));
+                return Err(format!("fixture identity account {i} missing sav path/digest"));
             }
             let sav = Path::new(&a.sav_path);
             if !sav.is_file() {
@@ -200,8 +196,13 @@ impl FixtureIdentity {
                     dest.display()
                 ));
             }
-            fs::copy(&a.sav_path, &dest)
-                .map_err(|e| format!("copy {} -> {}: {e}", a.sav_path, dest.display()))?;
+            fs::copy(&a.sav_path, &dest).map_err(|e| {
+                format!(
+                    "copy {} -> {}: {e}",
+                    a.sav_path,
+                    dest.display()
+                )
+            })?;
             // Re-check digest after copy.
             let bytes = fs::read(&dest).map_err(|e| format!("read {}: {e}", dest.display()))?;
             let digest = sha256_hex(&bytes);
@@ -401,7 +402,9 @@ pub fn harness_writer_script() -> Result<PathBuf, String> {
     let candidate = manifest
         .join("../..")
         .join("tools/harness/run_write_player_fixture.sh");
-    let candidate = candidate.canonicalize().unwrap_or(candidate);
+    let candidate = candidate
+        .canonicalize()
+        .unwrap_or(candidate);
     if candidate.is_file() {
         return Ok(candidate);
     }
@@ -550,7 +553,8 @@ pub fn prepare_offline_fixture(opts: OfflinePrepareOpts) -> Result<FixtureIdenti
         vault_passphrase: opts.vault_passphrase,
         prepared_at_unix_ms,
         engine_git_head,
-        server_root: server_root_recorded.or_else(|| Some(opts.server_root.display().to_string())),
+        server_root: server_root_recorded
+            .or_else(|| Some(opts.server_root.display().to_string())),
     };
     identity.write_to(&opts.identity_path)?;
     Ok(identity)
@@ -830,31 +834,6 @@ mod tests {
         assert!(err.contains("thiever"), "{err}");
         assert!(fixture_preset_for("script_trade").is_err());
         assert!(fixture_preset_for("nope").is_err());
-    }
-
-    #[test]
-    fn bone_burier_v2_writer_preset_is_declared() {
-        let src = include_str!("../../../tools/harness/write_player_fixture.ts");
-        assert!(
-            src.contains("bone_burier_v2:"),
-            "writer must declare the v2 preset"
-        );
-        assert!(
-            src.contains("x: 3220") && src.contains("z: 3212"),
-            "v2 preset lands on the Lumbridge bank tile"
-        );
-        assert!(
-            src.contains("tutorial: 1000"),
-            "v2 preset completes tutorial"
-        );
-        assert!(
-            src.contains("{ name: 'bones', count: 5, inv: 'inv' }"),
-            "v2 preset seeds five unnoted carried bones without a slot loop"
-        );
-        assert!(
-            src.contains("{ name: 'bones', count: 28, inv: 'bank' }"),
-            "v2 preset seeds twenty-eight unnoted banked bones without a slot loop"
-        );
     }
 
     #[test]

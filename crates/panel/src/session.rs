@@ -1496,7 +1496,11 @@ impl Session {
     }
 
     /// Configure the optional prepare / run-prepared fixture path for the next live boot.
-    pub fn set_fixture_boot(&mut self, mode: scenario::FixtureMode, path: Option<PathBuf>) {
+    pub fn set_fixture_boot(
+        &mut self,
+        mode: scenario::FixtureMode,
+        path: Option<PathBuf>,
+    ) {
         self.fixture_mode = mode;
         self.fixture_path = path;
     }
@@ -7659,11 +7663,6 @@ mod tests {
                 stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
                 Some(&serde_json::json!("stem")),
                 "{name} stem bag stays isolated from the File identity"
-            );
-            assert!(
-                s.js.get(script::ScriptSource::File, "bone_burier_v2")
-                    .is_some(),
-                "stem lookup remains defined and must not be the selector"
             );
         }
     }

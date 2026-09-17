@@ -216,6 +216,9 @@ struct LiveScript {
     /// A native-core terminal decision has issued its one current capture.
     /// This prevents the write frame from re-arming the same label again.
     native_failure_capture_requested: bool,
+    /// Headed clean-stop recapture has issued its one post-Idle request.
+    /// Later frames must observe Requested → Written without re-enqueueing.
+    clean_stop_capture_requested: bool,
     /// Separate wall-clock ceiling when scenario PASS arrives before the
     /// full shared core qualifies. `None` for every ordinary panel run.
     core_deadline: Option<Instant>,
@@ -227,15 +230,9 @@ struct LiveScript {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SoakCapture {
     NotNeeded,
-    PostPass {
-        label: String,
-        started: Option<Instant>,
-    },
+    PostPass { label: String, started: Option<Instant> },
     WaitingForFinal,
-    Final {
-        label: String,
-        started: Option<Instant>,
-    },
+    Final { label: String, started: Option<Instant> },
     Complete,
 }
 
@@ -532,6 +529,7 @@ impl LiveBoot {
                     soak_until: budget.map(|d| Instant::now() + d),
                     announced_pass: false,
                     native_failure_capture_requested: false,
+                    clean_stop_capture_requested: false,
                     core_deadline,
                     soak_capture: if budget.is_some() {
                         SoakCapture::WaitingForFinal
@@ -1008,10 +1006,7 @@ fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>),
         match arg.as_str() {
             "--prepare-fixture" => {
                 let Some(name) = it.next() else {
-                    return Err((
-                        2,
-                        "panel-play: --prepare-fixture needs a scenario name".into(),
-                    ));
+                    return Err((2, "panel-play: --prepare-fixture needs a scenario name".into()));
                 };
                 if scenario::get(&name).is_none() {
                     return Err((
@@ -1466,7 +1461,13 @@ fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, l
 /// decision, pairing that failure with the current scene instead of the old image.
 /// Re-request the headed terminal capture after Idle so the PNG can show
 /// BoneBurier v2 paint, script Idle, and the clean self-stop reason.
-fn enqueue_fresh_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
+/// Fail closed when the current focused view is not `ingame && scene_state == 2`
+/// so an earlier pre-Idle PNG cannot discharge the recapture.
+fn enqueue_fresh_terminal_shot(
+    session: &Session,
+    shots: &Mutex<ShotState>,
+    label: &str,
+) -> Result<(), String> {
     let current = (|| {
         let actor = session
             .focused_name()
@@ -1480,9 +1481,40 @@ fn enqueue_fresh_terminal_shot(session: &Session, shots: &Mutex<ShotState>, labe
         }
         actor_snapshot_json(&actor, snapshot)
     })();
-    if let Ok(json) = current {
-        shots.lock().unwrap().enqueue(label.to_string(), json);
+    let mut shots = shots.lock().unwrap();
+    match current {
+        Ok(json) => {
+            shots.enqueue(label.to_string(), json);
+            Ok(())
+        }
+        Err(error) => {
+            shots.fail_labels(&[label.to_string()], &error);
+            Err(error)
+        }
     }
+}
+
+/// One-shot post-Idle recapture. Wait for the original labeled shot to
+/// reach Written, then re-arm exactly once from a current scene-2 snapshot
+/// and reset only the capture drain window.
+fn request_clean_stop_capture(
+    live: &mut LiveScript,
+    session: &Session,
+    shots: Option<&Mutex<ShotState>>,
+    terminal_shot: Option<&str>,
+) -> Result<(), String> {
+    if live.clean_stop_capture_requested {
+        return Ok(());
+    }
+    let (Some(shots), Some(label)) = (shots, terminal_shot) else {
+        return Ok(());
+    };
+    if !matches!(shots.lock().unwrap().status(label), ShotStatus::Written) {
+        return Ok(());
+    }
+    live.clean_stop_capture_requested = true;
+    live.drain_started = None;
+    enqueue_fresh_terminal_shot(session, shots, label)
 }
 
 fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
@@ -1692,16 +1724,11 @@ fn soak_capture_tick(
                     live.drain_started = None;
                     Ok(true)
                 }
-                ShotStatus::Failed(error) => {
-                    Err(format!("soak checkpoint {label} failed: {error}"))
-                }
+                ShotStatus::Failed(error) => Err(format!("soak checkpoint {label} failed: {error}")),
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
                     if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
-                        Err(format!(
-                            "soak checkpoint {label} was not written within {}s",
-                            NAV_FULL_SHOT_DRAIN.as_secs()
-                        ))
+                        Err(format!("soak checkpoint {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
                     } else {
                         Ok(true)
                     }
@@ -1709,18 +1736,12 @@ fn soak_capture_tick(
             }
         }
         SoakCapture::WaitingForFinal => {
-            if live
-                .soak_until
-                .is_some_and(|deadline| Instant::now() < deadline)
-            {
+            if live.soak_until.is_some_and(|deadline| Instant::now() < deadline) {
                 return Ok(true);
             }
             let label = format!("{base}{SOAK_FINAL_SUFFIX}");
             enqueue_soak_capture(session, shots, &label);
-            live.soak_capture = SoakCapture::Final {
-                label,
-                started: None,
-            };
+            live.soak_capture = SoakCapture::Final { label, started: None };
             Ok(true)
         }
         SoakCapture::Final { label, started } => {
@@ -1732,16 +1753,11 @@ fn soak_capture_tick(
                     live.soak_capture = SoakCapture::Complete;
                     Ok(false)
                 }
-                ShotStatus::Failed(error) => {
-                    Err(format!("soak final readback {label} failed: {error}"))
-                }
+                ShotStatus::Failed(error) => Err(format!("soak final readback {label} failed: {error}")),
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
                     if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
-                        Err(format!(
-                            "soak final readback {label} was not written within {}s",
-                            NAV_FULL_SHOT_DRAIN.as_secs()
-                        ))
+                        Err(format!("soak final readback {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
                     } else {
                         Ok(true)
                     }
@@ -1968,13 +1984,30 @@ fn live_script_tick(
                         let message = format!(
                             "timed out waiting for script Idle and clean stop reason {needle:?}"
                         );
+                        request_native_failure_capture(live, session, shots, terminal_shot);
+                        match hold_script_terminal_shot(
+                            live,
+                            session,
+                            terminal_shot,
+                            terminal_shot_status,
+                            shots,
+                        ) {
+                            Ok(true) => return None,
+                            Err(error) => eprintln!("[panel] {error}"),
+                            Ok(false) => {}
+                        }
+                        emit_proof(false);
+                        eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
                         live.failed = Some(message.clone());
                         return Some(message);
                     }
                     return None;
                 }
-                if let (Some(shots), Some(label)) = (shots, terminal_shot) {
-                    enqueue_fresh_terminal_shot(session, shots, label);
+                if let Err(error) =
+                    request_clean_stop_capture(live, session, shots, terminal_shot)
+                {
+                    live.failed = Some(error.clone());
+                    return Some(error);
                 }
             }
             if core_watch.as_ref().is_some_and(|watch| watch.configured())
@@ -2015,10 +2048,7 @@ fn live_script_tick(
             }
             if live.soak {
                 if shots.is_none() {
-                    if live
-                        .soak_until
-                        .is_some_and(|deadline| Instant::now() >= deadline)
-                    {
+                    if live.soak_until.is_some_and(|deadline| Instant::now() >= deadline) {
                         live.passed = true;
                     }
                     return None;
@@ -3608,8 +3638,8 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
 }
 
 fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
-    let selected =
-        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected = session.script_sel
+        == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let id = format!("##scard-{}", card.identity_key());
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -5670,7 +5700,8 @@ fn arm_scenario_shots(state: &mut PanelState) {
 /// Offline prepare: mint isolated identity, write server-native `.sav` via
 /// `tools/harness`, write durable fixture identity — no live engine/window.
 fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
-    let sc = scenario::get(scenario).ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let sc = scenario::get(scenario)
+        .ok_or_else(|| format!("unknown scenario {scenario}"))?;
     let profile_count = sc.seed.profiles.len();
     if profile_count == 0 {
         return Err(format!("scenario {scenario} has zero seed profiles"));
@@ -6140,12 +6171,12 @@ mod tests {
         game_window_flags, hold_script_terminal_shot, live_null_tick, live_script_tick,
         live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom, manual_shot_label,
         parse_args, parse_live_args, progress_channel, random_status_text,
-        request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
-        shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
+        request_clean_stop_capture, request_native_failure_capture, runner_config,
+        script_failure_scenario, shifted_imgui_key, shifted_imgui_key_at_location,
+        smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation,
-        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE,
-        SMOKE_SETTLE,
+        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -7481,13 +7512,7 @@ mod tests {
     #[test]
     fn parse_args_run_prepared_requires_script_live() {
         let parsed = parse_args(
-            [
-                "--live",
-                "script_thiever",
-                "--run-prepared",
-                "--fixture-path",
-                "/tmp/t.json",
-            ],
+            ["--live", "script_thiever", "--run-prepared", "--fixture-path", "/tmp/t.json"],
             None,
         )
         .unwrap();
@@ -7498,11 +7523,7 @@ mod tests {
             Some(std::path::Path::new("/tmp/t.json"))
         );
         assert!(parse_args(["--run-prepared"], None).is_err());
-        assert!(parse_args(
-            ["--prepare-fixture", "thiever", "--live", "script_thiever"],
-            None
-        )
-        .is_err());
+        assert!(parse_args(["--prepare-fixture", "thiever", "--live", "script_thiever"], None).is_err());
         assert!(parse_args(["--prepare-fixture", "thiever", "--run-prepared"], None).is_err());
         assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
         let ts = parse_args(["--prepare-fixture", "bone_burier_v2_ts"], None).unwrap();
@@ -7919,6 +7940,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -7932,6 +7954,127 @@ mod tests {
             .expect("clean-stop wait times out");
         assert!(error.contains("clean stop reason"), "{error}");
         assert!(live.failed.is_some());
+    }
+
+    #[test]
+    fn clean_stop_rearms_written_shot_once_and_can_complete() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let client = script_client();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert!(snapshot.ingame() && snapshot.scene_state() == 2);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        let label = "bone-stop";
+        shots.lock().unwrap().mark_written(label);
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+
+        request_clean_stop_capture(&mut live, &session, Some(&shots), Some(label))
+            .expect("scene-2 snapshot can re-arm the original Written shot");
+        assert!(
+            live.clean_stop_capture_requested,
+            "clean-stop capture latches after the original Written shot"
+        );
+        assert!(
+            live.drain_started.is_none(),
+            "re-arm resets only the capture drain window"
+        );
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Requested,
+            "the original Written label must be re-armed exactly once"
+        );
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            Ok(true),
+            "the stale pre-Idle Written status must not complete before the new shot"
+        );
+
+        shots.lock().unwrap().mark_written(label);
+        request_clean_stop_capture(&mut live, &session, Some(&shots), Some(label))
+            .expect("latched clean-stop capture must not re-arm");
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Written,
+            "a later clean-stop tick must not clear Written"
+        );
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Requested,
+                Some(&shots),
+            ),
+            Ok(false),
+            "PASS can complete after the clean-stop capture writes"
+        );
+        assert!(live.failed.is_none());
+    }
+
+    #[test]
+    fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let mut client = script_client();
+        client.scene_state = 1;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots.lock().unwrap().mark_written("bone-stop");
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+        let error = request_clean_stop_capture(&mut live, &session, Some(&shots), Some("bone-stop"))
+            .expect_err("missing scene-2 must fail closed");
+        assert!(error.contains("scene-2"), "{error}");
+        assert!(live.clean_stop_capture_requested);
+        assert!(matches!(
+            shots.lock().unwrap().status("bone-stop"),
+            ShotStatus::Failed(ref failed) if failed.contains("scene-2")
+        ));
+        assert!(shots.lock().unwrap().requests.is_empty());
     }
 
     /// Headed contract: PASS latches `passed` (the caller exits 0),
@@ -7989,6 +8132,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8054,7 +8198,12 @@ mod tests {
         baseline.items.insert("Coins".into(), 1);
         watch.observe("catalogtest", baseline, false);
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
         assert!(!live.passed, "qualified core waits for its current capture");
@@ -8080,7 +8229,12 @@ mod tests {
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
         live.soak_capture = SoakCapture::NotNeeded;
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
@@ -8097,13 +8251,23 @@ mod tests {
         );
         shots.lock().unwrap().mark_written("core-pass-postpass");
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
         assert_eq!(live.soak_capture, SoakCapture::WaitingForFinal);
         live.soak_until = Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
         assert!(matches!(
@@ -8118,7 +8282,12 @@ mod tests {
         );
         shots.lock().unwrap().mark_written("core-pass-soak-final");
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
         assert_eq!(live.soak_capture, SoakCapture::Complete);
@@ -8143,6 +8312,7 @@ mod tests {
             soak_until: Some(Instant::now() + Duration::from_secs(60)),
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8198,6 +8368,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8257,6 +8428,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8326,6 +8498,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8365,6 +8538,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8406,6 +8580,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8545,6 +8720,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: Some(Instant::now() - Duration::from_secs(1)),
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8859,6 +9035,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -9026,6 +9203,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -9080,6 +9258,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };

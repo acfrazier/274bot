@@ -767,11 +767,7 @@ pub(super) fn catalog_unloadable(
 /// A diagnosed foreign-script defect applies only to the exact audited pair.
 /// A changed card or helper is a different version, not a global name ban.
 #[cfg(feature = "load")]
-pub(super) fn catalog_defect_reason(
-    name: &str,
-    origin_sha: &str,
-    path: &Path,
-) -> Option<&'static str> {
+pub(super) fn catalog_defect_reason(name: &str, origin_sha: &str, path: &Path) -> Option<&'static str> {
     if name != "BrimhavenAgility"
         || origin_sha != "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859"
     {
