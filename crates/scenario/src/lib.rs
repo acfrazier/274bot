@@ -2245,9 +2245,24 @@ const THIEVER_INJECT: &[ScriptSettingInject] = &[
         id: "loot",
         value: ScriptInjectValue::Str(""),
     },
+    // The catalog derives its food name from the selected loadout.  Keep this
+    // fixture-owned name stable so the existing fixture loadout can provide
+    // Lobster without reading the operator's script settings.
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Memory food"),
+    },
     ScriptSettingInject {
         id: "banking",
-        value: ScriptInjectValue::Str("None"),
+        value: ScriptInjectValue::Str("Auto"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(22.0),
+    },
+    ScriptSettingInject {
+        id: "bankAtFood",
+        value: ScriptInjectValue::Num(3.0),
     },
 ];
 

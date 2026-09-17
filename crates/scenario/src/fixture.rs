@@ -842,6 +842,23 @@ mod tests {
     }
 
     #[test]
+    fn thiever_uses_food_loadout_and_auto_restock() {
+        let scenario = thiever();
+        let inject = crate::settings_inject_map(scenario.settings.script_settings_inject)
+            .expect("Thiever fixture settings");
+        assert_eq!(
+            inject.get("loadout"),
+            Some(&serde_json::Value::String("Memory food".into()))
+        );
+        assert_eq!(
+            inject.get("banking"),
+            Some(&serde_json::Value::String("Auto".into()))
+        );
+        assert_eq!(inject.get("foodWithdraw"), Some(&serde_json::json!(22.0)));
+        assert_eq!(inject.get("bankAtFood"), Some(&serde_json::json!(3.0)));
+    }
+
+    #[test]
     fn offline_prepare_writer_roundtrip_when_engine_present() {
         let eng = std::env::var("BOT_SERVER_ROOT")
             .unwrap_or_else(|_| "/Users/acfrazier/experiments/Server/engine".into());

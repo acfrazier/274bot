@@ -54,7 +54,12 @@ const PRESETS: Record<string, FixturePreset> = {
             { skill: 'thieving', level: 50 },
             { skill: 'hitpoints', level: 50 },
         ],
-        items: [{ name: 'lobster', count: 10, inv: 'inv' }],
+        items: [
+            { name: 'lobster', count: 10, inv: 'inv' },
+            // Auto food banking needs durable stock after the initial pack is
+            // eaten; the server-native writer persists this in the bank tab.
+            { name: 'lobster', count: 200, inv: 'bank' },
+        ],
     },
 };
 
