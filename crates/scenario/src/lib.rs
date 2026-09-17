@@ -430,6 +430,7 @@ pub fn get(name: &str) -> Option<Scenario> {
             "bone_burier_v2_js",
             "bone_burier_v2.js",
         )),
+        "strange_plant_owned" => Some(strange_plant_owned_scenario()),
         "chicken_killer" => Some(chicken_killer_scenario()),
         "chicken_killer_bank" => Some(chicken_killer_bank_scenario()),
         "thiever" => Some(thiever_scenario()),
@@ -557,6 +558,7 @@ pub fn names() -> Vec<&'static str> {
         "bone_burier",
         "bone_burier_v2_ts",
         "bone_burier_v2_js",
+        "strange_plant_owned",
         "chicken_killer",
         "chicken_killer_bank",
         "thiever",
@@ -2147,6 +2149,59 @@ fn script_live_seed_steps() -> Vec<Step> {
             },
         },
     ]
+}
+
+/// One real server-owned Strange Plant lifecycle. The upstream debugproc
+/// spawns `macro_triffidseed` for the logged-in player; the shared Rust
+/// guardian must probe the otherwise featureless adjacent seed, authenticate
+/// the canonical growing response, retry without click spam, then pick the
+/// ripe fruit. A send or growing message alone is not terminal evidence.
+fn strange_plant_owned_scenario() -> Scenario {
+    let fruit = Proof::Item {
+        name: "Strange fruit",
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "spawn the upstream owned Strange Plant",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| cheat(c, "~macro_event 5")),
+        },
+        wait: Wait {
+            arm: Proof::Chat {
+                needle: "The fruit isn't ready to be picked yet",
+            },
+            budget_ticks: 40,
+        },
+    });
+    steps.push(Step {
+        name: "watch the authenticated plant ripen and yield its fruit",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: fruit,
+            budget_ticks: 180,
+        },
+    });
+    Scenario {
+        name: "strange_plant_owned",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: fruit,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(150),
+            terminal_shot: Some("strange_plant_owned"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// Explicit `speed 600` so a leftover nav `speed 300` is not inherited.
@@ -17680,6 +17735,7 @@ mod tests {
                 "bone_burier",
                 "bone_burier_v2_ts",
                 "bone_burier_v2_js",
+                "strange_plant_owned",
                 "chicken_killer",
                 "chicken_killer_bank",
                 "thiever",
