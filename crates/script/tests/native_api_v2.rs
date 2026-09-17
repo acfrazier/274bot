@@ -1,11 +1,13 @@
 //! JS API v2 core: syntax-aware version routing, NativeApi runtime, and
 //! fail-closed request / snapshot behaviour.
 
+use std::time::{Duration, Instant};
+
 use script::load::{
     parse_declared_api_version, resolve_api_family, ApiFamily, JsLibrary, LoadIsolate, LoadShape,
 };
 use script::shim::InteractReq;
-use script::ScriptSource;
+use script::{ScriptSource, SlotScript, WatchdogAction};
 
 fn temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -32,7 +34,7 @@ fn test_library(dir: &std::path::Path) -> JsLibrary {
     JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
 }
 
-fn post_base(iso: &LoadIsolate, tick: u64) {
+fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
     let mut input = script::isolate_fb::SnapshotInput {
         tick,
         here: None,
@@ -54,7 +56,7 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
         withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
-        hold: false,
+        hold,
         ours: false,
         npcs: &[],
         locs: &[],
@@ -105,6 +107,10 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
     };
     input.tick = tick;
     iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
+}
+
+fn post_base(iso: &LoadIsolate, tick: u64) {
+    post_base_with_hold(iso, tick, false);
 }
 
 #[test]
@@ -294,6 +300,110 @@ export function tick(api) {
 }
 
 #[test]
+fn v2_structured_paint_is_forwarded_and_survives_hold() {
+    let src = r##"
+export const apiVersion = 2;
+export function tick(api) {
+  api.paint.begin({ accent: "#123456" })
+    .title("Native v2")
+    .row("phase", "burying")
+    .end();
+}
+"##;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let paint = iso.paint().expect("forwarded v2 paint");
+    assert_eq!(paint.title.as_deref(), Some("Native v2"));
+    assert_eq!(paint.accent.as_deref(), Some("#123456"));
+    assert_eq!(paint.lines, ["phase | burying"]);
+    assert_eq!(iso.drain_lifecycle(), vec![InteractReq::LoopSettled]);
+
+    post_base_with_hold(&iso, 2, true);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    let held = iso.paint().expect("held frame keeps last v2 paint");
+    assert_eq!(held.title.as_deref(), Some("Native v2"));
+    assert_eq!(held.lines, ["phase | burying"]);
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "held posted ticks are not scheduler progress"
+    );
+    iso.join();
+}
+
+#[test]
+fn v2_sync_tick_emits_scheduler_settlement_without_pending_promise() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
+    assert_eq!(
+        iso.drain_lifecycle(),
+        vec![InteractReq::LoopSettled],
+        "one successful native tick is one scheduler settlement"
+    );
+    iso.join();
+}
+
+#[test]
+fn v2_settlement_feeds_existing_watchdog_scheduler_clock() {
+    let source = r#"
+export const apiVersion = 2;
+export function tick() {}
+"#;
+    let producer = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    producer.on_game_tick(1);
+    let _ = producer.probe("true");
+    let lifecycle = producer.drain_lifecycle();
+    assert_eq!(lifecycle, vec![InteractReq::LoopSettled]);
+
+    let mut slot = SlotScript::new();
+    slot.start_load(source.into(), LoadShape::NativeTick, vec![])
+        .unwrap();
+    let t = Instant::now();
+    assert_eq!(
+        slot.feed_watchdog(t, None, &[], false, true, &[]),
+        WatchdogAction::None
+    );
+    let settlement_at = t + script::watchdog::SCHEDULER_WARN;
+    assert_eq!(
+        slot.feed_watchdog(settlement_at, None, &[], false, true, &lifecycle),
+        WatchdogAction::None
+    );
+    assert_eq!(
+        slot.feed_watchdog(
+            settlement_at + script::watchdog::SCHEDULER_WARN - Duration::from_millis(1),
+            None,
+            &[],
+            false,
+            true,
+            &[],
+        ),
+        WatchdogAction::None
+    );
+    assert_eq!(
+        slot.feed_watchdog(
+            settlement_at + script::watchdog::SCHEDULER_WARN,
+            None,
+            &[],
+            false,
+            true,
+            &[],
+        ),
+        WatchdogAction::WarnHungLoop
+    );
+    slot.stop();
+    producer.join();
+}
+
+#[test]
 fn v2_snapshot_is_read_only_and_next_merge_works() {
     let src = r#"
 export const apiVersion = 2;
@@ -326,7 +436,9 @@ fn v2_async_tick_does_not_reenter() {
 export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
-  await new Promise((resolve) => { globalThis.__rs_release = resolve; });
+  if (globalThis.__rs_n === 1) {
+    await new Promise((resolve) => { globalThis.__rs_release = resolve; });
+  }
   globalThis.__rs_done = (globalThis.__rs_done || 0) + 1;
 }
 "#;
@@ -336,11 +448,81 @@ export async function tick(api) {
     iso.on_game_tick(3);
     assert_eq!(iso.probe("globalThis.__rs_n").unwrap(), 1);
     assert_eq!(iso.probe("globalThis.__rs_done").unwrap(), serde_json::Value::Null);
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "posted ticks and a pending promise are not settlements"
+    );
     let _ = iso.probe("globalThis.__rs_release(); true");
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
     iso.on_game_tick(4);
-    iso.on_game_tick(5);
-    assert_eq!(iso.probe("globalThis.__rs_done").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__rs_done").unwrap(), 2);
     assert_eq!(iso.probe("globalThis.__rs_n").unwrap(), 2);
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
+    let settled = iso.drain_lifecycle();
+    assert_eq!(
+        settled
+            .iter()
+            .filter(|fact| matches!(fact, InteractReq::LoopSettled))
+            .count(),
+        2,
+        "fulfilled native promise and following successful sync tick settle: {settled:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn v2_failed_ticks_do_not_emit_scheduler_settlement() {
+    for source in [
+        r#"
+export const apiVersion = 2;
+export function tick() { throw new Error("sync failure"); }
+"#,
+        r#"
+export const apiVersion = 2;
+export async function tick() { throw new Error("async failure"); }
+"#,
+    ] {
+        let iso =
+            LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+        iso.on_game_tick(1);
+        let _ = iso.probe("true");
+        assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
+        assert!(
+            iso.drain_lifecycle().is_empty(),
+            "failed work is not scheduler progress"
+        );
+        iso.join();
+    }
+}
+
+#[test]
+fn v2_old_generation_promise_settlement_is_not_reowned() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick() {
+  globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
+  if (globalThis.__rs_n === 1) {
+    return new Promise((resolve) => { globalThis.__rs_release = resolve; });
+  }
+  throw new Error("new generation failure");
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
+    assert!(iso.drain_lifecycle().is_empty());
+
+    iso.reset_session_work();
+    let _ = iso.probe("globalThis.__rs_release(); true");
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
+    post_base(&iso, 2);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "old-generation settlement must not be tagged as current progress"
+    );
     iso.join();
 }
 
@@ -396,11 +578,18 @@ export function tick(api) {
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(iso.drain_lifecycle(), vec![InteractReq::LoopSettled]);
     iso.pause();
     iso.on_game_tick(2);
     assert_eq!(iso.probe("globalThis.__rs_n").unwrap(), 1);
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "paused posted ticks are not scheduler progress"
+    );
     iso.resume();
     iso.on_game_tick(3);
     assert_eq!(iso.probe("globalThis.__rs_n").unwrap(), 2);
+    assert_eq!(iso.drain_lifecycle(), vec![InteractReq::LoopSettled]);
     iso.join();
 }

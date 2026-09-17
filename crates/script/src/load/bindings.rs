@@ -984,17 +984,30 @@ const api = {
 globalThis.__rs_api = api;
 globalThis.__rs_api_family = 2;
 globalThis.__rs_v2_tick_pending = false;
+let lifecycleGeneration = 0;
+globalThis.__rs_v2_reset_session = () => { lifecycleGeneration += 1; };
+function recordSettlement(generation) {
+  if (generation !== lifecycleGeneration) return;
+  const h = host();
+  h.interact = h.interact || [];
+  h.interact.push({ op: 'loop-settled' });
+}
 globalThis.__rs_tick = (n) => {
   api.tick = n;
+  const generation = lifecycleGeneration;
   const r = tick(api);
   const pending = !!(r && typeof r.then === 'function');
   globalThis.__rs_v2_tick_pending = pending;
   if (pending) {
-    const clear = () => { globalThis.__rs_v2_tick_pending = false; };
-    r.then(clear, (e) => {
-      clear();
+    Promise.resolve(r).then(() => {
+      globalThis.__rs_v2_tick_pending = false;
+      recordSettlement(generation);
+    }, (e) => {
+      globalThis.__rs_v2_tick_pending = false;
       host().lastError = String((e && e.message) || e);
     });
+  } else {
+    recordSettlement(generation);
   }
   return r;
 };

@@ -1460,7 +1460,9 @@ fn tick_loop(
                     // Paint-only tick: no loop, no pump. Use `__rs_bot`
                     // (global); module-local `inst` is not visible here.
                     let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
-                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                    if !v2_native {
+                        let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                    }
                     let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
                     let _ = runtime.block_on_event_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
@@ -1641,7 +1643,9 @@ fn tick_loop(
                 // onPaint is sync; the async runner may still be parked
                 // in onStart/loop. Invoke it here so the forward always
                 // sees this tick's frame (or the catch/placeholder).
-                let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                if !v2_native {
+                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
+                }
                 match compose_forwarded_paint(&mut runtime) {
                     Ok(frame) => {
                         forward_paint_if_changed(
@@ -1727,6 +1731,11 @@ fn tick_loop(
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();
                 event_producer.reset();
+                if v2_native {
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
+                    );
+                }
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 clear_unconsumed_paint_click(&mut runtime);
             }
