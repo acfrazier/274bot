@@ -4821,6 +4821,25 @@ pub struct ScriptStartHandle {
     named_banks: Arc<api::named_banks::NamedBankFacts>,
 }
 
+/// Fixture-owned loadouts selected by scenario settings. This keeps the
+/// production panel start path independent of operator loadouts while using
+/// the existing explicit-loadout start mechanism.
+fn fixture_loadouts(
+    settings_bag: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<Vec<script::Loadout>> {
+    if settings_bag
+        .and_then(|bag| bag.get("loadout"))
+        .and_then(serde_json::Value::as_str)
+        == Some("Memory food")
+    {
+        Some(vec![
+            script::Loadout::new("Memory food").with_carry("Lobster", 1)
+        ])
+    } else {
+        None
+    }
+}
+
 impl ScriptStartHandle {
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
@@ -4836,17 +4855,33 @@ impl ScriptStartHandle {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let result = script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_load_with_settings_and_game_data(
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = if let Some(loadouts) = fixture_loadouts(settings_bag.as_ref()) {
+            let result = slot.start_load_with_loadouts_and_game_data(
+                source,
+                shape,
+                siblings,
+                &loadouts,
+                self.game_data.clone(),
+                Arc::clone(&self.named_banks),
+            );
+            if result.is_ok() {
+                if let Some(bag) = settings_bag.as_ref() {
+                    slot.post_settings_bag(bag);
+                }
+            }
+            result
+        } else {
+            slot.start_load_with_settings_and_game_data(
                 source,
                 shape,
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
                 Arc::clone(&self.named_banks),
-            );
+            )
+        };
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -5151,17 +5186,28 @@ impl Play {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let result = script_slot_or_insert(&self.scripts, name)
-            .lock()
-            .unwrap()
-            .start_load_with_settings_and_game_data_typed(
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = if let Some(loadouts) = fixture_loadouts(settings_bag.as_ref()) {
+            slot.start_load_with_loadouts_and_game_data(
+                source,
+                shape,
+                siblings,
+                &loadouts,
+                self.game_data.clone(),
+                Arc::clone(&self.named_banks),
+            )
+            .map_err(script::StartLoadError::Refused)
+        } else {
+            slot.start_load_with_settings_and_game_data_typed(
                 source,
                 shape,
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
                 Arc::clone(&self.named_banks),
-            );
+            )
+        };
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
