@@ -7776,7 +7776,7 @@ mod tests {
     /// Headed contract: PASS latches `passed` (the caller exits 0),
     /// FAIL returns the message the caller turns into exit 1.
     #[test]
-    fn live_script_tick_latches_pass_and_reports_fail() {
+    fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         use scenario::{
             Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
             Wait,
@@ -7917,19 +7917,116 @@ mod tests {
         live.announced_pass = false;
         live.soak = true;
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
+        live.soak_capture = SoakCapture::NotNeeded;
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
         assert!(!live.passed, "window stays open after proof PASS");
         assert!(live.announced_pass);
-        live.soak_until = Some(Instant::now() - Duration::from_secs(1));
+        assert!(matches!(
+            live.soak_capture,
+            SoakCapture::PostPass { ref label, .. } if label == "core-pass-postpass"
+        ));
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
+            shots.lock().unwrap().status("core-pass-postpass"),
+            ShotStatus::Requested,
+            "PASS must enqueue a fresh post-pass checkpoint"
+        );
+        shots.lock().unwrap().mark_written("core-pass-postpass");
+        assert_eq!(
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
-        assert!(live.passed, "exit 0 only after BUDGET_S elapses");
+        assert_eq!(live.soak_capture, SoakCapture::WaitingForFinal);
+        live.soak_until = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            None
+        );
+        assert!(matches!(
+            live.soak_capture,
+            SoakCapture::Final { ref label, .. } if label == "core-pass-soak-final"
+        ));
+        assert!(!live.passed, "final readback must precede exit 0");
+        assert_eq!(
+            shots.lock().unwrap().status("core-pass-soak-final"),
+            ShotStatus::Requested,
+            "deadline must enqueue a distinct final readback"
+        );
+        shots.lock().unwrap().mark_written("core-pass-soak-final");
+        assert_eq!(
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            None
+        );
+        assert_eq!(live.soak_capture, SoakCapture::Complete);
+        assert!(live.passed, "exit 0 only after the final readback writes");
+
+        // A failed post-pass readback is a real harness failure, not a
+        // successful soak with missing evidence.
+        s.scenario
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .set_terminal_shot("fail-soak");
+        shots.lock().unwrap().mark_written("fail-soak");
+        let mut failed_soak = LiveScript {
+            name: "script_fail_soak".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: true,
+            soak_until: Some(Instant::now() + Duration::from_secs(60)),
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+        assert_eq!(
+            live_script_tick(
+                &mut failed_soak,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            None
+        );
+        shots.lock().unwrap().fail_labels(
+            &["fail-soak-postpass".to_string()],
+            "synthetic readback failure",
+        );
+        let error = live_script_tick(
+            &mut failed_soak,
+            &mut s,
+            &ShotStatus::Written,
+            Some(&shots),
+        )
+        .expect("failed post-pass readback must fail the soak");
+        assert!(error.contains("soak checkpoint") && error.contains("synthetic"));
+        assert!(failed_soak.failed.is_some());
 
         // FAIL: a never-satisfiable arm within a 1-tick budget.
         let fail_scenario = Scenario {
