@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NavIdentityRow {
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
     pub revision: u16,
     pub cache_id: String,
     pub format: String,
@@ -83,11 +87,40 @@ pub fn fingerprints(root: &Path, files: &[&Path]) -> Result<Vec<InputFingerprint
     Ok(rows)
 }
 
+/// Content-address the conservative baker input closure. Paths are relative
+/// to the content root; VCS metadata is not a baker input. Explicit inputs
+/// are labelled by argument position so provenance is machine-independent.
+pub fn source_digest(root: &Path, files: &[&Path]) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut paths = Vec::new();
+    collect_files(root, &mut paths)?;
+    paths.sort();
+    let mut digest = Sha256::new();
+    digest.update(b"274NAVSOURCE01");
+    for path in paths {
+        let label = path
+            .strip_prefix(root)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy();
+        digest.update((label.len() as u64).to_be_bytes());
+        digest.update(label.as_bytes());
+        digest.update(crate::manifest::hash_file(&path)?.as_bytes());
+    }
+    for (index, path) in files.iter().enumerate() {
+        digest.update((index as u64).to_be_bytes());
+        digest.update(crate::manifest::hash_file(path)?.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
         let path = entry.path();
         let metadata =
             std::fs::metadata(&path).map_err(|e| format!("bake input {}: {e}", path.display()))?;
@@ -315,6 +348,10 @@ pub fn artifact_layout(revision: u16) -> ArtifactLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BakeStamp {
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
     /// Generator identity of the bake, from [`crate::bake::generator_identity`].
     pub generator: String,
     /// Pack format identity (`274V9`); a format bump invalidates.
@@ -531,6 +568,8 @@ mod tests {
 
     fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> BakeStamp {
         BakeStamp {
+            content_id: None,
+            source_sha256: None,
             generator: generator.into(),
             format: format.into(),
             revision: 289,
@@ -637,6 +676,18 @@ mod tests {
     }
 
     #[test]
+    fn content_digest_detects_same_size_replacement() {
+        let root = std::env::temp_dir().join(format!("nav-source-digest-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("map.jm2");
+        std::fs::write(&file, b"one").unwrap();
+        let first = super::source_digest(&root, &[]).unwrap();
+        std::fs::write(&file, b"two").unwrap();
+        assert_ne!(first, super::source_digest(&root, &[]).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn fingerprints_cover_the_tree_and_detect_edits() {
         let root = std::env::temp_dir().join(format!("274bot-bundle-{}", std::process::id()));
         let nested = root.join("maps");
@@ -667,6 +718,8 @@ mod tests {
         let generated = NavIdentityRow {
             revision: 289,
             cache_id: "cache".into(),
+            content_id: None,
+            source_sha256: None,
             format: "274V8".into(),
             nav_sha256: "aa".repeat(32),
             flags_sha256: None,
@@ -682,6 +735,8 @@ mod tests {
         let kept = NavIdentityRow {
             revision: 274,
             cache_id: "other".into(),
+            content_id: None,
+            source_sha256: None,
             format: "274V8".into(),
             nav_sha256: "cc".repeat(32),
             flags_sha256: None,

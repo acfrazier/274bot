@@ -489,6 +489,7 @@ fn prepare_catalog_card(
             kind: card.kind,
             source: card.source,
             shape: None,
+            api_family: Some(card.api_family.as_str().into()),
         },
     )?;
     let sibling_hashes = siblings

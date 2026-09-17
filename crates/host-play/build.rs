@@ -176,6 +176,21 @@ fn main() {
         }
     };
     let cache_id = manifest.identity();
+    println!("cargo:rerun-if-env-changed=BOT_NAV_SNAPSHOT_ROOT");
+    let snapshot_root = std::env::var_os("BOT_NAV_SNAPSHOT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".274bot")
+                .join(if revision == 289 {
+                    "unpack-289"
+                } else {
+                    "unpack"
+                })
+        });
+    let content_id = nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root).unwrap_or_else(|e| fail(&format!("decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot")));
+    let source_sha256 =
+        nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e));
 
     let mut explicit: Vec<PathBuf> = vec![config_jag.clone()];
     explicit.extend(archives.iter().cloned());
@@ -223,12 +238,18 @@ fn main() {
     let staged = read_stamp(&stamp_path);
     let (row, reused) = match staged
         .as_ref()
+        .filter(|stamp| {
+            stamp.content_id.as_deref() == Some(content_id.as_str())
+                && stamp.source_sha256.as_deref() == Some(source_sha256.as_str())
+        })
         .and_then(|stamp| stamp.covers(&expectation).ok())
     {
         Some(()) => (
             NavIdentityRow {
                 revision,
                 cache_id: cache_id.clone(),
+                content_id: staged.as_ref().expect("stamp").content_id.clone(),
+                source_sha256: staged.as_ref().expect("stamp").source_sha256.clone(),
                 format: FORMAT_ID.into(),
                 nav_sha256: staged.as_ref().expect("stamp").nav_sha256.clone(),
                 flags_sha256: Some(staged.as_ref().expect("stamp").flags_sha256.clone()),
@@ -248,6 +269,7 @@ fn main() {
                 manifest_source.as_deref(),
                 &generator,
                 &cache_id,
+                &content_id,
                 &input_fingerprints,
                 &resource_root,
                 &layout,
@@ -263,6 +285,12 @@ fn main() {
         ),
     };
 
+    if source_sha256 != nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e))
+        || content_id != nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root).unwrap_or_else(|e| fail(&e))
+        || manifest != CacheManifest::capture(revision, &cache_dir).unwrap_or_else(|e| fail(&e))
+    {
+        fail("cache/content inputs changed during navigation preparation");
+    }
     let rows = publish(&out_dir, checked_in, vec![row]);
     println!("cargo:rustc-env=BOT_NAV_BUNDLED={revision}");
     println!(
@@ -283,6 +311,7 @@ fn bake_and_stage(
     manifest_source: Option<&Path>,
     generator: &str,
     cache_id: &str,
+    content_id: &str,
     input_fingerprints: &[nav::bundle::InputFingerprint],
     resource_root: &Path,
     layout: &nav::bundle::ArtifactLayout,
@@ -303,9 +332,10 @@ fn bake_and_stage(
     for note in &baked.notes {
         println!("cargo:warning=nav bundle: {note}");
     }
-    let manifest = baked
+    let mut manifest = baked
         .manifest
         .ok_or_else(|| "a bound bake carries its manifest".to_string())?;
+    manifest.content_id = Some(content_id.into());
     let summary = baked.summary;
 
     let pack_path = resource_root.join(&layout.relative_pack);
@@ -344,6 +374,8 @@ fn bake_and_stage(
         format: FORMAT_ID.to_string(),
         revision,
         cache_id: cache_id.to_string(),
+        content_id: manifest.content_id.clone(),
+        source_sha256: manifest.source_sha256.clone(),
         cache_manifest: manifest_source.map(|path| path.to_string_lossy().into_owned()),
         nav_sha256: manifest.nav_sha256.clone(),
         flags_sha256: flags_sha256.clone(),
@@ -380,6 +412,8 @@ fn bake_and_stage(
     Ok(NavIdentityRow {
         revision,
         cache_id: cache_id.to_string(),
+        content_id: manifest.content_id.clone(),
+        source_sha256: manifest.source_sha256.clone(),
         format: FORMAT_ID.to_string(),
         nav_sha256: manifest.nav_sha256,
         flags_sha256: Some(flags_sha256),

@@ -38,8 +38,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1393629,
-      "sha256": "6bee1e16c2949cc41b873143c240eb60196b4d2467a5b322174e75836056f2bf",
+      "bytes": 1393717,
+      "sha256": "45e1851b207213b93cd2a27c6590ebe2fd7ddf01d4fc55a7e1c14428d5d25cbf",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -215,6 +215,7 @@
       ],
       "cache_identity": {
         "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+        "content_id": "0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c",
         "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
         "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
       }
@@ -255,8 +256,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1456125,
-      "sha256": "1a4f8bd9a091c7a9d896bee801388889af6b082088c05984d1e5e8ba2df3dc89",
+      "bytes": 1456213,
+      "sha256": "43bc8e8dff850b98adb1551fd698d06bb7382e5f1b2244c4ab98543a19136061",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -432,6 +433,7 @@
       ],
       "cache_identity": {
         "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+        "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
         "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
         "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
       }

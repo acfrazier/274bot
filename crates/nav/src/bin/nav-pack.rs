@@ -13,7 +13,11 @@
 //! under that content tree, and `$ENGINE_DIR/data/pack/config`.
 //! Revision-bound bakes use explicit inputs:
 //! `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
-//! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]`.
+//! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]
+//! [--snapshot-root SNAPSHOT_ROOT]`.
+//! Runtime-compatible packs require `--snapshot-root`: the parent containing
+//! the complete version-keyed decoded snapshot. Omitting it preserves the
+//! legacy offline packed-identity format, which runtime binding rejects.
 //! This mode verifies every cache archive and the selected config before
 //! baking, then emits `<NAV_PACK>.json` using [`nav::manifest::NavManifest`].
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
@@ -86,6 +90,7 @@ struct BakeInputs {
     config_jag: PathBuf,
     cache_dir: Option<PathBuf>,
     cache_manifest: Option<PathBuf>,
+    snapshot_root: Option<PathBuf>,
     out: PathBuf,
     flags_out: PathBuf,
     reach_out: PathBuf,
@@ -128,6 +133,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             config_jag,
             cache_dir: None,
             cache_manifest: None,
+            snapshot_root: None,
             out,
             flags_out,
             reach_out,
@@ -139,6 +145,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let mut content = None;
     let mut cache_dir = None;
     let mut cache_manifest = None;
+    let mut snapshot_root = None;
     let mut out = None;
     let mut explicit_flags = None;
     let mut it = args.iter();
@@ -170,11 +177,12 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             "--cache-manifest" if cache_manifest.is_none() => {
                 cache_manifest = Some(PathBuf::from(value));
             }
+            "--snapshot-root" if snapshot_root.is_none() => snapshot_root = Some(PathBuf::from(value)),
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--cache-manifest" | "--out" | "--flags-out" => {
+            "--content" | "--cache" | "--cache-manifest" | "--snapshot-root" | "--out" | "--flags-out" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -202,6 +210,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         config_jag,
         cache_dir: Some(cache_dir),
         cache_manifest: Some(cache_manifest),
+        snapshot_root,
         out,
         flags_out,
         reach_out,
@@ -255,7 +264,11 @@ fn bake_world(
     gates: &Path,
     cache: Option<&CacheManifest>,
 ) -> Result<BakedNav, String> {
-    bake::bake_world(&BakeRequest {
+    let decoded = match (inputs.revision, inputs.cache_dir.as_deref(), inputs.snapshot_root.as_deref()) {
+        (Some(revision), Some(cache), Some(root)) => Some(bake::decoded_identity(revision, cache, root)?),
+        _ => None,
+    };
+    let mut baked = bake::bake_world(&BakeRequest {
         revision: inputs.revision,
         maps_dir: &inputs.maps_dir,
         doors_dir: &inputs.doors_dir,
@@ -263,7 +276,16 @@ fn bake_world(
         config_jag: &inputs.config_jag,
         cache,
         require_all_door_configs: false,
-    })
+    })?;
+    if let (Some(revision), Some(cache_dir), Some(root), Some(id)) =
+        (inputs.revision, inputs.cache_dir.as_deref(), inputs.snapshot_root.as_deref(), decoded.as_deref())
+    {
+        if bake::decoded_identity(revision, cache_dir, root)? != id {
+            return Err("cache changed during navigation bake".into());
+        }
+        baked.manifest.as_mut().expect("bound bake").content_id = Some(id.into());
+    }
+    Ok(baked)
 }
 
 fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {

@@ -272,6 +272,8 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
     let manifest = NavManifest {
         revision: 274,
         cache_id: "wrong".into(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: "wrong".into(),
         flags_sha256: None,
         reach_sha256: None,
@@ -588,6 +590,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     let manifest = NavManifest {
         revision: 289,
         cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: format!("{:x}", Sha256::digest(&bytes)),
         flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
         reach_sha256: None,
@@ -761,6 +765,8 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
     let manifest = NavManifest {
         revision,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         nav_sha256: nav::manifest::hash_bytes(bytes),
         flags_sha256: None,
         reach_sha256: None,
@@ -787,6 +793,8 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -858,6 +866,8 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -899,6 +909,8 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
@@ -968,6 +980,8 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
     let mut wrong = NavManifest {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: "00".repeat(32),
         flags_sha256: None,
         reach_sha256: None,
@@ -1074,6 +1088,8 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
     let missing_identity = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -1150,6 +1166,8 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,

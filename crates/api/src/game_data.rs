@@ -16,11 +16,27 @@ static DATA_289: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new
 #[derive(Debug, Deserialize)]
 struct CacheIdentity {
     cache_id: String,
+    /// Decoded (`274DCI01`) identity of the same pinned cache. Absent in
+    /// generated data written before decoded identity existed; runtime
+    /// profiles assert it instead of a packed equivalence list.
+    #[serde(default)]
+    content_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Provenance {
     cache_identity: CacheIdentity,
+    inputs: Vec<SourceInput>,
+    content_inputs: Vec<SourceInput>,
+    decoder_sources: Vec<SourceInput>,
+}
+
+/// Actual generator input retained for local-server compatibility checks.
+#[derive(Debug, Deserialize)]
+pub struct SourceInput {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 /// One selected-cache object row. Aliases come from generated server data;
@@ -306,6 +322,17 @@ impl SelectedGameData {
 
     pub fn cache_id(&self) -> &str {
         &self.provenance.cache_identity.cache_id
+    }
+
+    /// Decoded (`274DCI01`) content id pinned by the generator, when present.
+    pub fn content_id(&self) -> Option<&str> {
+        self.provenance.cache_identity.content_id.as_deref()
+    }
+
+    pub fn source_inputs(&self) -> impl Iterator<Item = (bool, &SourceInput)> {
+        self.provenance.inputs.iter().chain(&self.provenance.decoder_sources)
+            .map(|input| (false, input))
+            .chain(self.provenance.content_inputs.iter().map(|input| (true, input)))
     }
 
     pub fn items(&self) -> &[GameItem] {
@@ -662,32 +689,17 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, S
     }
 }
 
-/// Audited revision-289 cache identities whose fact-relevant inputs match the
-/// generated static (`provenance.cache_identity.cache_id`).
-///
-/// Local and public 289 share identical `config` (and the other non-versionlist
-/// client archives). They differ only in `versionlist` compressed payload CRCs;
-/// decoded snapshot bins for those tables are byte-identical. Generated facts
-/// read server obj/npc packs plus client `config`, not versionlist, so binding
-/// the public known-cache identity is justified. Unknown same-revision caches
-/// are still rejected.
-const EQUIVALENT_CACHE_IDS_289: &[&str] = &[
-    // public-289 known-cache identity (versionlist 6dcb7c4ad1b85372…)
-    "37cdafd200703150d0f66339b7609944e1ea19d64ad729a72d94e3bcdfa89d92",
-];
-
 fn accepts_cache_id(data: &SelectedGameData, cache_id: &str) -> bool {
     if data.cache_id() == cache_id {
         return true;
     }
-    match data.revision() {
-        289 => EQUIVALENT_CACHE_IDS_289.iter().any(|id| *id == cache_id),
-        _ => false,
-    }
+    data.content_id() == Some(cache_id)
 }
 
 /// Load the revision static and require the immutable profile's selected cache
-/// (or an audited fact-equivalent identity for that revision).
+/// identity: either the generator's pinned packed transfer id or the decoded
+/// (`274DCI01`) content id proven in the generated provenance. Other caches
+/// remain honestly metadata-free.
 pub fn for_profile(
     revision: ClientRevision,
     cache_id: &str,

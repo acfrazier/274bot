@@ -277,6 +277,7 @@ pub struct ProfileSelection {
     nav_pack_overridden: bool,
     nav_flags_overridden: bool,
     world_members: WorldMembersFact,
+    supported_server: bool,
 }
 
 impl ProfileOptions {
@@ -469,6 +470,11 @@ impl ProfileOptions {
             nav_pack_overridden,
             nav_flags_overridden,
             world_members,
+            // Endpoint overrides opt out, even if the client cache is equal.
+            // A named local profile assumes the selected engine is that server;
+            // its actual fact inputs are verified at bind below.
+            supported_server: self.host.is_none() && self.port.is_none()
+                && self.asset_host.is_none() && self.http_port.is_none(),
         })
     }
 }
@@ -545,6 +551,9 @@ pub struct ServerProfile {
     client: Arc<ClientSessionProfile>,
     cache: CacheAvailability,
     cache_manifest: CacheManifest,
+    // Keeps owned packs/snapshot alive across every clone and bot.
+    runtime_cache: Option<Arc<client::unpack::PreparedRuntimeCache>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
     nav_origin: NavOrigin,
@@ -675,6 +684,38 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
+        self.bind_inner(observer, table, resource_root, false)
+    }
+
+    /// Negotiate the selected endpoint before freezing a complete owned cache.
+    /// Unlike `bind`, this is the application preparation path and may use the
+    /// selected update server. All bots must share the resulting profile.
+    pub fn bind_runtime(&self) -> Result<Arc<ServerProfile>, String> {
+        self.bind_runtime_with_progress(&ProfileProgressObserver::default())
+    }
+
+    pub fn bind_runtime_with_progress(
+        &self,
+        observer: &ProfileProgressObserver,
+    ) -> Result<Arc<ServerProfile>, String> {
+        self.bind_inner(
+            observer,
+            bundled_nav_identities(),
+            std::env::current_exe()
+                .ok()
+                .map(|exe| install_resource_root(&exe))
+                .as_deref(),
+            true,
+        )
+    }
+
+    fn bind_inner(
+        &self,
+        observer: &ProfileProgressObserver,
+        table: &[BundledNavIdentity],
+        resource_root: Option<&Path>,
+        runtime: bool,
+    ) -> Result<Arc<ServerProfile>, String> {
         // The declared identity is read before any preparation: a manifest for
         // another revision must be rejected without touching the update server
         // for the selected cache directory.
@@ -698,17 +739,62 @@ impl ProfileSelection {
             None => None,
         };
 
-        let prepared = crate::cache::prepare(
-            &self.cache_dir,
-            &self.unpack_dir,
-            self.target(),
-            &self.asset_host,
-            self.asset_port,
-            observer,
-        );
+        let runtime_cache = if runtime {
+            observer.report(ProfileProgress::steps(
+                ProfileProgressStage::PreparingCache,
+                0,
+                1,
+            ));
+            let prepared =
+                client::unpack::prepare_runtime_cache(&client::unpack::RuntimeCacheRequest {
+                    revision: self.revision(),
+                    target: self.target(),
+                    jag_source: &self.cache_dir,
+                    snapshot_root: &self.unpack_dir,
+                    asset_host: &self.asset_host,
+                    asset_port: self.asset_port,
+                    game_host: &self.game_host,
+                    game_port: self.game_port,
+                })?;
+            observer.report(ProfileProgress::steps(
+                ProfileProgressStage::PreparingCache,
+                1,
+                1,
+            ));
+            Some(prepared)
+        } else {
+            None
+        };
+        let cache_dir = runtime_cache
+            .as_ref()
+            .map_or(self.cache_dir.as_path(), |p| p.jag_dir.as_path());
+        let unpack_dir = runtime_cache
+            .as_ref()
+            .map_or(self.unpack_dir.as_path(), |p| p.unpack_root());
+        let availability = if let Some(p) = &runtime_cache {
+            CacheAvailability::Ready {
+                version: p.version.clone(),
+                published: true,
+                source: if p.source == "update-server" {
+                    "update-server"
+                } else {
+                    "local-store"
+                },
+            }
+        } else {
+            crate::cache::prepare(
+                cache_dir,
+                unpack_dir,
+                self.target(),
+                &self.asset_host,
+                self.asset_port,
+                observer,
+            )
+            .availability
+        };
         let actual = CacheManifest::capture_with_progress(
             self.revision().as_i32() as u16,
-            &self.cache_dir,
+            cache_dir,
             |completed, total| {
                 observer.report(ProfileProgress::files(
                     ProfileProgressStage::CheckingGameFiles,
@@ -717,7 +803,25 @@ impl ProfileSelection {
                 ));
             },
         )?;
+        // Runtime manifests attest the selected source revision, not the
+        // endpoint's future packed representation. Negotiation may replace it.
+        if runtime {
+            if let Some(manifest) = &supplied {
+                manifest.verify(self.revision().as_i32() as u16, &self.cache_dir)?;
+            } else {
+                let data = api::game_data::for_revision(self.revision())?;
+                let decoded = runtime_cache
+                    .as_ref()
+                    .expect("runtime preparation")
+                    .identity
+                    .content_id_hex();
+                if data.content_id() != Some(decoded.as_str()) {
+                    return Err("unknown decoded cache content; supply an explicit cache manifest for a custom server (generated metadata may be unavailable)".into());
+                }
+            }
+        }
         let declared = match supplied {
+            _ if runtime => actual.clone(),
             Some(manifest) => manifest,
             None => {
                 let known: Vec<CacheManifest> =
@@ -734,7 +838,14 @@ impl ProfileSelection {
                 self.cache_dir.display()
             ));
         }
-        let cache_id = actual.identity();
+        let cache_id = runtime_cache
+            .as_ref()
+            .map_or_else(|| actual.identity(), |p| p.identity.content_id_hex());
+        if let Some(prepared) = &runtime_cache {
+            if actual.archives != prepared.transfer_sha256 {
+                return Err("runtime transfer changed before profile freeze".into());
+            }
+        }
         let (rsa_modulus, rsa_exponent) = if self.target() == BotTarget::Prod {
             (
                 client::PROD_LOGIN_RSAN.into(),
@@ -765,8 +876,8 @@ impl ProfileSelection {
             JAGS.len() as u64,
         ));
         for (i, name) in JAGS.iter().enumerate() {
-            let bytes = std::fs::read(self.cache_dir.join(name))
-                .map_err(|e| format!("cache {name}: {e}"))?;
+            let bytes =
+                std::fs::read(cache_dir.join(name)).map_err(|e| format!("cache {name}: {e}"))?;
             crcs[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
             observer.report(ProfileProgress::files(
                 ProfileProgressStage::ReadingCacheArchives,
@@ -791,7 +902,40 @@ impl ProfileSelection {
         } else {
             (self.nav_flags.clone(), NavFlagsOrigin::External)
         };
-        let loaded = self.load_nav(&origin, &actual, &nav_pack, observer)?;
+        let loaded = self.load_nav(
+            &origin,
+            &actual,
+            &nav_pack,
+            runtime_cache
+                .as_ref()
+                .map(|p| p.identity.content_id_hex())
+                .as_deref(),
+            observer,
+        )?;
+        if runtime {
+            if let Some(identity) = &loaded.identity {
+                // Public installations need no server source checkout: only a
+                // compiled build/packager row can attest the supported world.
+                // Local worlds instead verify the actual selected baker inputs.
+                if self.target() == BotTarget::Prod {
+                    let trusted = table.iter().any(|row| {
+                        row.revision == identity.revision
+                            && row.content_id == identity.content_id
+                            && row.source_sha256 == identity.source_sha256
+                            && row.nav_sha256 == identity.nav_sha256
+                    });
+                    if !trusted {
+                        return Err("navigation source provenance is not a trusted supported-public build; rebuild/package the resources".into());
+                    }
+                } else {
+                    let config = nav::bake::config_jag_for(self.revision().as_i32() as u16, &self.cache_dir)?;
+                    let source = nav::bundle::source_digest(&self.content_dir, &[&config])?;
+                    if identity.source_sha256.as_deref() != Some(&source) {
+                        return Err("navigation source provenance differs from selected content/config; rebake the resources".into());
+                    }
+                }
+            }
+        }
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
             target: self.target(),
@@ -799,18 +943,31 @@ impl ProfileSelection {
             game_port: self.game_port,
             asset_host: self.asset_host.clone(),
             asset_port: self.asset_port,
-            cache_dir: self.cache_dir.clone(),
-            unpack_dir: self.unpack_dir.clone(),
+            cache_dir: cache_dir.to_path_buf(),
+            unpack_dir: unpack_dir.to_path_buf(),
             rsa_modulus,
             rsa_exponent,
             expected_crc: Some(crcs),
-            content_id: cache_id,
+            content_id: cache_id.clone(),
         })?);
+        let game_data = if self.supported_server {
+            api::game_data::for_optional_profile(self.revision(), &cache_id)?
+                .filter(|data| self.target() == BotTarget::Prod || data.source_inputs().all(|(content, input)| {
+                    let base = if content { &self.content_dir } else { &self.engine_dir };
+                    let path = base.join(&input.path);
+                    std::fs::metadata(&path).is_ok_and(|m| m.len() == input.bytes)
+                        && nav::manifest::hash_file(&path).is_ok_and(|hash| hash == input.sha256)
+                }))
+        } else {
+            None
+        };
         Ok(Arc::new(ServerProfile {
             selection: self.selection,
             client: binding,
-            cache: prepared.availability,
+            cache: availability,
             cache_manifest: actual,
+            runtime_cache,
+            game_data,
             nav_pack,
             nav_flags,
             nav_origin: origin,
@@ -839,7 +996,7 @@ impl ProfileSelection {
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<crate::SharedClientTemplate>, String> {
         crate::SharedClientTemplate::load_with_progress(
-            self.bind_with_progress(observer)?,
+            self.bind_runtime_with_progress(observer)?,
             observer,
         )
     }
@@ -849,6 +1006,7 @@ impl ProfileSelection {
         origin: &NavOrigin,
         cache: &CacheManifest,
         pack_path: &Path,
+        content_id: Option<&str>,
         observer: &ProfileProgressObserver,
     ) -> Result<LoadedNav, String> {
         let revision = self.revision().as_i32() as u16;
@@ -878,7 +1036,13 @@ impl ProfileSelection {
         let identity = match origin {
             NavOrigin::Bundled { identity, .. } => {
                 if i32::from(identity.revision) != self.revision().as_i32()
-                    || identity.cache_id != cache.identity()
+                    || match content_id {
+                        Some(id) => {
+                            identity.content_id.as_deref() != Some(id)
+                                || !identity.source_sha256.as_deref().is_some_and(nav::manifest::is_sha256)
+                        }
+                        None => identity.cache_id != cache.identity(),
+                    }
                 {
                     return Err(
                         "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
@@ -892,6 +1056,8 @@ impl ProfileSelection {
                     flags_sha256: identity.flags_sha256.clone(),
                     reach_sha256: identity.reach_sha256.clone(),
                     canlight_sha256: identity.canlight_sha256.clone(),
+                    content_id: identity.content_id.clone(),
+                    source_sha256: identity.source_sha256.clone(),
                 }
             }
             NavOrigin::External { .. } => {
@@ -905,7 +1071,7 @@ impl ProfileSelection {
                 counters.pack_hashes = 1;
                 let manifest_path = nav_manifest_path(pack_path);
                 if !manifest_path.exists() {
-                    if self.revision() == ClientRevision::R274 {
+                    if self.revision() == ClientRevision::R274 && content_id.is_none() {
                         let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
                         let identity = NavManifest {
                             revision,
@@ -914,6 +1080,8 @@ impl ProfileSelection {
                             flags_sha256: None,
                             reach_sha256: None,
                             canlight_sha256: None,
+                            content_id: None,
+                            source_sha256: None,
                         };
                         return Ok(LoadedNav {
                             availability: NavAvailability::Legacy274,
@@ -933,7 +1101,7 @@ impl ProfileSelection {
                     .map_err(|e| format!("nav manifest {}: {e}", manifest_path.display()))?;
                 let manifest: NavManifest = serde_json::from_slice(&manifest_bytes)
                     .map_err(|e| format!("nav manifest: {e}"))?;
-                manifest.verify_pack(revision, cache, &nav_hash)?;
+                manifest.verify_pack(revision, cache, &nav_hash, content_id)?;
                 manifest
             }
         };
@@ -997,6 +1165,13 @@ impl ServerProfile {
     }
     pub fn cache_id(&self) -> &str {
         self.client.content_id()
+    }
+    /// Facts additionally qualified by the supported server/source boundary.
+    pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.game_data.clone()
+    }
+    pub fn prepared_cache(&self) -> Option<&Arc<client::unpack::PreparedRuntimeCache>> {
+        self.runtime_cache.as_ref()
     }
     /// Prepared-snapshot availability for the selected cache version: cold
     /// (published by this preparation), warm (already complete), or degraded

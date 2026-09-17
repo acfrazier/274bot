@@ -93,6 +93,14 @@ pub struct NavManifest {
     pub reach_sha256: Option<String>,
     #[serde(default)]
     pub canlight_sha256: Option<String>,
+    /// Decoded (`274DCI01`) identity of the cache the pack was baked from.
+    /// Legacy sidecars omit it; `verify_pack` refuses it when the caller
+    /// asserts a decoded id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_id: Option<String>,
+    /// Digest of the actual server content/config consumed by the baker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
 }
 
 impl NavManifest {
@@ -118,6 +126,8 @@ impl NavManifest {
             flags_sha256: flags.map(hash_bytes),
             reach_sha256: reach.map(hash_bytes),
             canlight_sha256: canlight.map(hash_bytes),
+            content_id: None,
+            source_sha256: None,
         })
     }
 
@@ -142,15 +152,20 @@ impl NavManifest {
 
     /// Compare revision, cache identity and pack digest only. Flags stay
     /// optional and are checked later at paint-on against `flags_sha256`.
+    /// `content_id` is the decoded identity the running cache must present:
+    /// when the caller asserts one, a legacy sidecar without it is refused
+    /// (no packed-hash alias) and any differing value fails.
     pub fn verify_pack(
         &self,
         revision: u16,
         cache: &CacheManifest,
         nav_sha256: &str,
+        content_id: Option<&str>,
     ) -> Result<(), String> {
         validate_revision(revision)?;
         if self.revision != revision
-            || self.cache_id != cache.identity()
+            || cache.revision != revision
+            || (content_id.is_none() && self.cache_id != cache.identity())
             || self.nav_sha256 != nav_sha256
         {
             return Err(
@@ -158,8 +173,30 @@ impl NavManifest {
                     .into(),
             );
         }
+        match (content_id, &self.content_id) {
+            (None, _) => {}
+            (Some(_), None) => {
+                return Err(
+                    "navigation/profile mismatch: pack has no decoded content identity provenance"
+                        .into(),
+                )
+            }
+            (Some(wanted), Some(actual)) if wanted == actual => {}
+            (Some(_), Some(_)) => {
+                return Err("navigation/profile mismatch: decoded content identity differs".into())
+            }
+        }
+        if content_id.is_some()
+            && !self.source_sha256.as_deref().is_some_and(is_sha256)
+        {
+            return Err("navigation/profile mismatch: missing or malformed source provenance; rebake the pack".into());
+        }
         Ok(())
     }
+}
+
+pub fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
 pub fn nav_manifest_path(pack: &Path) -> std::path::PathBuf {
@@ -236,7 +273,76 @@ fn validate_revision(revision: u16) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_bytes, hash_bytes_with_progress, hash_file_with_progress, HASH_CHUNK_SIZE};
+    use super::{
+        hash_bytes, hash_bytes_with_progress, hash_file_with_progress, CacheManifest, NavManifest,
+        HASH_CHUNK_SIZE,
+    };
+
+    /// Packed-transfer verification stays legacy-legal for offline binds; the
+    /// decoded content identity is enforced only when the caller asserts one.
+    #[test]
+    fn manifest_content_id_mismatch_rejects_the_pack() {
+        let revision = 289;
+        let bytes = b"nav".to_vec();
+        let cache = CacheManifest {
+            revision,
+            archives: [("versionlist".to_string(), "6dcb".repeat(16))]
+                .into_iter()
+                .collect(),
+        };
+        let mut manifest =
+            NavManifest::capture(revision, &cache, &bytes, None, None, None).unwrap();
+        assert!(
+            manifest.content_id.is_none(),
+            "capture without a decoded identity stays unset"
+        );
+        let nav_hash = super::hash_bytes(&bytes);
+        assert!(manifest
+            .verify(revision, &cache, &bytes, None, None, None)
+            .is_ok());
+        assert!(manifest
+            .verify_pack(revision, &cache, &nav_hash, None)
+            .is_ok());
+        let err = manifest
+            .verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
+            .unwrap_err();
+        assert!(
+            err.contains("decoded content identity"),
+            "runtime verification must refuse a pack with no decoded identity: {err}"
+        );
+        manifest.content_id = Some("cdb2f161".into());
+        let err = manifest.verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
+            .expect_err("decoded identity alone must not certify the baker inputs");
+        assert!(err.contains("source provenance"), "{err}");
+        manifest.source_sha256 = Some("ab".repeat(32));
+        let mut equivalent_transfer = cache.clone();
+        equivalent_transfer
+            .archives
+            .insert("versionlist".into(), "other packed bytes".into());
+        assert!(manifest
+            .verify_pack(revision, &equivalent_transfer, &nav_hash, Some("cdb2f161"))
+            .is_ok());
+        assert!(manifest
+            .verify_pack(revision, &equivalent_transfer, &nav_hash, None)
+            .is_err());
+        assert!(manifest
+            .verify_pack(274, &equivalent_transfer, &nav_hash, Some("cdb2f161"))
+            .is_err());
+        assert!(manifest
+            .verify_pack(
+                revision,
+                &equivalent_transfer,
+                "changed pack",
+                Some("cdb2f161")
+            )
+            .is_err());
+        assert!(manifest
+            .verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
+            .is_ok());
+        assert!(manifest
+            .verify_pack(revision, &cache, &nav_hash, Some("other"))
+            .is_err());
+    }
 
     #[test]
     fn streamed_hash_matches_bytes_at_a_chunk_boundary_without_early_completion() {
