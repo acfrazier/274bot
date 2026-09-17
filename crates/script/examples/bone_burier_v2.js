@@ -119,10 +119,18 @@ export function tick(api) {
   const banks = Array.isArray(snapshot.banks) ? snapshot.banks : [];
   const bank = Array.isArray(snapshot.bank) ? snapshot.bank : [];
   const bankApproaches = Array.isArray(snapshot.bank_approaches) ? snapshot.bank_approaches : [];
-  paint(api, bone, stats);
   const invCount = count(inv, bone);
-  if (timedOut(api) || observePending(api, bone, invCount)) return;
+  if (timedOut(api)) return;
+  if (observePending(api, bone, invCount)) {
+    paint(api, bone, stats);
+    return;
+  }
+  if (pending) {
+    paint(api, bone, stats);
+    return;
+  }
   if (phase === "stopping") return;
+  paint(api, bone, stats);
   if (invCount > 0) {
     waitingForBankSince = 0;
     if (api.snapshot.bank_open) {
