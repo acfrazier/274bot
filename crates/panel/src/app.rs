@@ -219,7 +219,22 @@ struct LiveScript {
     /// Separate wall-clock ceiling when scenario PASS arrives before the
     /// full shared core qualifies. `None` for every ordinary panel run.
     core_deadline: Option<Instant>,
+    /// Bounded post-PASS evidence. Soak runs take one fresh checkpoint after
+    /// the initial proof and one final readback at the budget deadline.
+    soak_capture: SoakCapture,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SoakCapture {
+    NotNeeded,
+    PostPass { label: String, started: Option<Instant> },
+    WaitingForFinal,
+    Final { label: String, started: Option<Instant> },
+    Complete,
+}
+
+const SOAK_POSTPASS_SUFFIX: &str = "-postpass";
+const SOAK_FINAL_SUFFIX: &str = "-soak-final";
 
 #[derive(Debug, PartialEq)]
 enum CoreGate {
@@ -511,6 +526,11 @@ impl LiveBoot {
                     announced_pass: false,
                     native_failure_capture_requested: false,
                     core_deadline,
+                    soak_capture: if budget.is_some() {
+                        SoakCapture::WaitingForFinal
+                    } else {
+                        SoakCapture::NotNeeded
+                    },
                 }));
             }
             LiveBoot::Smoke => {
@@ -1462,6 +1482,57 @@ fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, la
     }
 }
 
+/// Enqueue one fresh bounded soak readback. Pair and external runs retain
+/// their actor ownership rules; ordinary scenarios use the current focused
+/// scene-2 snapshot. No request is made unless the label is still missing.
+fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, label: &str) {
+    if !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing) {
+        return;
+    }
+    if session
+        .paired_core_watch()
+        .is_some_and(|watch| watch.configured())
+    {
+        enqueue_pair_terminal_shots(session, shots, label);
+        return;
+    }
+    if session
+        .external_core_watch()
+        .is_some_and(|watch| watch.configured())
+    {
+        enqueue_external_terminal_shot(session, shots, label);
+        return;
+    }
+    let Some(actor) = session.focused_name() else {
+        return;
+    };
+    let json = {
+        let states = session.nav_states.lock().unwrap();
+        let Some((snapshot, _)) = states.get(&actor) else {
+            return;
+        };
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return;
+        }
+        actor_snapshot_json(&actor, snapshot).ok()
+    };
+    if let Some(json) = json {
+        shots.lock().unwrap().enqueue(label.to_string(), json);
+    }
+}
+
+fn soak_capture_status(session: &Session, shots: &ShotState, label: &str) -> ShotStatus {
+    if session
+        .paired_core_watch()
+        .is_some_and(|watch| watch.configured())
+    {
+        if let Some((a, b)) = pair_terminal_actor_names(session) {
+            return pair_terminal_shot_status(shots, &pair_shot_labels(label, &a, &b));
+        }
+    }
+    shots.status(label)
+}
+
 fn request_native_failure_capture(
     live: &mut LiveScript,
     session: &Session,
@@ -1568,6 +1639,70 @@ fn hold_terminal_shot(
     // landed after `pump_shots` ran, so the write needs another frame.
     live.drain_started.get_or_insert_with(Instant::now);
     Ok(true)
+}
+
+/// Advance the two extra captures required by `BUDGET_S`. The state machine
+/// is driven once per UI frame, with the same bounded drain as terminal shots.
+fn soak_capture_tick(
+    live: &mut LiveScript,
+    session: &Session,
+    shots: &Mutex<ShotState>,
+    terminal_shot: Option<&str>,
+) -> Result<bool, String> {
+    let base = terminal_shot.unwrap_or(&live.name);
+    match &mut live.soak_capture {
+        SoakCapture::PostPass { label, started } => {
+            enqueue_soak_capture(session, shots, label);
+            let status = soak_capture_status(session, &*shots.lock().unwrap(), label);
+            match status {
+                ShotStatus::Written => {
+                    println!("[panel] soak checkpoint {label} written");
+                    live.soak_capture = SoakCapture::WaitingForFinal;
+                    live.drain_started = None;
+                    Ok(true)
+                }
+                ShotStatus::Failed(error) => Err(format!("soak checkpoint {label} failed: {error}")),
+                _ => {
+                    let t0 = started.get_or_insert_with(Instant::now);
+                    if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
+                        Err(format!("soak checkpoint {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
+                    } else {
+                        Ok(true)
+                    }
+                }
+            }
+        }
+        SoakCapture::WaitingForFinal => {
+            if live.soak_until.is_some_and(|deadline| Instant::now() < deadline) {
+                return Ok(true);
+            }
+            let label = format!("{base}{SOAK_FINAL_SUFFIX}");
+            enqueue_soak_capture(session, shots, &label);
+            live.soak_capture = SoakCapture::Final { label, started: None };
+            Ok(true)
+        }
+        SoakCapture::Final { label, started } => {
+            enqueue_soak_capture(session, shots, label);
+            let status = soak_capture_status(session, &*shots.lock().unwrap(), label);
+            match status {
+                ShotStatus::Written => {
+                    println!("[panel] soak final readback {label} written");
+                    live.soak_capture = SoakCapture::Complete;
+                    Ok(false)
+                }
+                ShotStatus::Failed(error) => Err(format!("soak final readback {label} failed: {error}")),
+                _ => {
+                    let t0 = started.get_or_insert_with(Instant::now);
+                    if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
+                        Err(format!("soak final readback {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
+                    } else {
+                        Ok(true)
+                    }
+                }
+            }
+        }
+        SoakCapture::NotNeeded | SoakCapture::Complete => Ok(false),
+    }
 }
 
 fn script_failure_scenario(live_name: &str, evidence: Option<&scenario::Evidence>) -> String {
@@ -1792,14 +1927,42 @@ fn live_script_tick(
                 }
                 Ok(false) => {}
             }
+            let base = terminal_shot.unwrap_or(&live.name);
             if !live.announced_pass {
                 emit_proof(true);
                 println!("PASS: live {} {}", live.name, live_line());
                 live.announced_pass = true;
+                if live.soak {
+                    let label = format!("{base}{SOAK_POSTPASS_SUFFIX}");
+                    if let Some(shots) = shots {
+                        enqueue_soak_capture(session, shots, &label);
+                        live.soak_capture = SoakCapture::PostPass {
+                            label,
+                            started: None,
+                        };
+                        return None;
+                    }
+                }
             }
             if live.soak {
-                if live.soak_until.is_some_and(|t| Instant::now() >= t) {
-                    live.passed = true;
+                if shots.is_none() {
+                    if live.soak_until.is_some_and(|deadline| Instant::now() >= deadline) {
+                        live.passed = true;
+                    }
+                    return None;
+                }
+                match soak_capture_tick(
+                    live,
+                    session,
+                    shots.unwrap(),
+                    terminal_shot,
+                ) {
+                    Ok(true) => return None,
+                    Ok(false) => live.passed = true,
+                    Err(error) => {
+                        live.failed = Some(error.clone());
+                        return Some(error);
+                    }
                 }
                 return None;
             }
@@ -5922,7 +6085,7 @@ mod tests {
         request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
         shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
+        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
         BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
@@ -7666,6 +7829,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
@@ -7807,6 +7971,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         // No terminal shot armed: the FAIL returns immediately.
         let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
@@ -7865,6 +8030,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
@@ -7933,6 +8099,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
@@ -7971,6 +8138,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             super::hold_terminal_shot(
@@ -8011,6 +8179,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
 
         live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
@@ -8149,6 +8318,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: Some(Instant::now() - Duration::from_secs(1)),
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Missing, Some(&shots)),
@@ -8462,6 +8632,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         let error = super::hold_script_terminal_shot(
             &mut live,
@@ -8628,6 +8799,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
@@ -8681,6 +8853,7 @@ mod tests {
             announced_pass: false,
             native_failure_capture_requested: false,
             core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
