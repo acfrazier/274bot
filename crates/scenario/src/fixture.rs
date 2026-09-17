@@ -721,6 +721,11 @@ mod tests {
             !run_prepared_has_setup_cheats(&run),
             "run-prepared must report zero setup cheats"
         );
+        assert_eq!(
+            run.settings.fixture_loadouts.map(|rows| rows[0].name),
+            Some("Memory food"),
+            "run-prepared keeps the harness-owned loadout for catalog Start"
+        );
     }
 
     #[test]
@@ -840,6 +845,7 @@ mod tests {
         );
         let _ = Duration::from_secs(1);
     }
+
 
     #[test]
     fn offline_prepare_writer_roundtrip_when_engine_present() {

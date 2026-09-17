@@ -105,6 +105,17 @@ pub struct ScenarioSettings {
     /// observe before Start. When `None`, [`fixture_prereqs_of`] derives them
     /// from pre-StartScript wait arms (position/stat/item-like only).
     pub fixture_prereqs: Option<&'static [Proof]>,
+    /// Harness-owned loadouts posted at catalog Start instead of reading
+    /// operator `loadouts.json`. Scenario-scoped; not a global name reservation
+    /// on profile Start/reload.
+    pub fixture_loadouts: Option<&'static [FixtureLoadout]>,
+}
+
+/// One explicit loadout a live harness posts at catalog Start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixtureLoadout {
+    pub name: &'static str,
+    pub carry: &'static [(&'static str, u32)],
 }
 
 /// One injected script setting for live gold scenarios.
@@ -264,6 +275,7 @@ impl Default for ScenarioSettings {
             script_settings_inject: None,
             inject_companion_as: None,
             fixture_prereqs: None,
+            fixture_loadouts: None,
         }
     }
 }
@@ -2245,11 +2257,31 @@ const THIEVER_INJECT: &[ScriptSettingInject] = &[
         id: "loot",
         value: ScriptInjectValue::Str(""),
     },
+    // Catalog food name comes from the selected loadout. The matching
+    // fixture loadout is posted only at harness catalog Start.
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Memory food"),
+    },
     ScriptSettingInject {
         id: "banking",
-        value: ScriptInjectValue::Str("None"),
+        value: ScriptInjectValue::Str("Auto"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(22.0),
+    },
+    ScriptSettingInject {
+        id: "bankAtFood",
+        value: ScriptInjectValue::Num(3.0),
     },
 ];
+
+/// Posted at panel harness catalog Start; not a Play/operator name reservation.
+const THIEVER_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Memory food",
+    carry: &[("Lobster", 1)],
+}];
 
 /// Durable prepare / run-prepared gates for Thiever (not script progress).
 const THIEVER_FIXTURE_PREREQS: &[Proof] = &[
@@ -2324,6 +2356,7 @@ fn thiever_scenario() -> Scenario {
             start_script: Some("Thiever"),
             script_settings_inject: Some(THIEVER_INJECT),
             fixture_prereqs: Some(THIEVER_FIXTURE_PREREQS),
+            fixture_loadouts: Some(THIEVER_FIXTURE_LOADOUTS),
             nav: gold_script_nav(),
             terminal_shot: Some("thiever paint"),
             ..Default::default()

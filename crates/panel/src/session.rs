@@ -60,6 +60,8 @@ struct PendingCatalogStart {
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
+    /// Scenario-owned loadouts for harness Start; empty uses operator store.
+    loadouts: Vec<script::Loadout>,
 }
 
 /// Freeze the already-published prepared observation immediately before the
@@ -78,6 +80,45 @@ where
         watch.fail_start(slot, error.clone());
     }
     result
+}
+
+fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+    settings
+        .fixture_loadouts
+        .unwrap_or(&[])
+        .iter()
+        .map(|row| {
+            row.carry
+                .iter()
+                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
+                    loadout.with_carry(item, qty)
+                })
+        })
+        .collect()
+}
+
+fn start_stashed_catalog_card(
+    handle: &host_play::ScriptStartHandle,
+    card: &PendingCatalogStart,
+) -> Result<(), String> {
+    if card.loadouts.is_empty() {
+        handle.start_load(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+        )
+    } else {
+        handle.start_load_with_loadouts(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+            &card.loadouts,
+        )
+    }
 }
 
 /// Owned inputs captured on the UI thread and consumed by the sequential
@@ -164,13 +205,7 @@ fn fire_pending_catalog_start(
             return false;
         }
         for card in pending.iter() {
-            if let Err(error) = h.start_load(
-                &card.slot,
-                card.js.clone(),
-                card.shape,
-                card.bag.clone(),
-                card.siblings.clone(),
-            ) {
+            if let Err(error) = start_stashed_catalog_card(h, card) {
                 pair.fail_start(error);
                 return false;
             }
@@ -180,16 +215,8 @@ fn fire_pending_catalog_start(
     }
     let watch = core_watch.lock().unwrap().clone().unwrap_or_default();
     for card in pending.iter() {
-        if start_catalog_with_core(&watch, &card.slot, || {
-            h.start_load(
-                &card.slot,
-                card.js.clone(),
-                card.shape,
-                card.bag.clone(),
-                card.siblings.clone(),
-            )
-        })
-        .is_err()
+        if start_catalog_with_core(&watch, &card.slot, || start_stashed_catalog_card(h, card))
+            .is_err()
         {
             return false;
         }
@@ -209,6 +236,7 @@ fn stash_pending_starts(
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
+    loadouts: Vec<script::Loadout>,
 ) {
     let mut starts = vec![PendingCatalogStart {
         slot: names[0].clone(),
@@ -216,6 +244,7 @@ fn stash_pending_starts(
         shape,
         bag: bag.clone(),
         siblings: siblings.clone(),
+        loadouts: loadouts.clone(),
     }];
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
@@ -227,6 +256,7 @@ fn stash_pending_starts(
                 shape,
                 bag: Some(companion_bag),
                 siblings,
+                loadouts,
             });
         }
     }
@@ -256,6 +286,7 @@ fn stash_pair_starts(
             shape,
             bag: Some(a_bag),
             siblings: siblings.clone(),
+            loadouts: Vec::new(),
         },
         PendingCatalogStart {
             slot: names[1].clone(),
@@ -263,6 +294,7 @@ fn stash_pair_starts(
             shape,
             bag: Some(b_bag),
             siblings,
+            loadouts: Vec::new(),
         },
     ];
     Ok(())
@@ -2436,6 +2468,7 @@ impl Session {
                         card.shape,
                         bag,
                         siblings,
+                        scenario_fixture_loadouts(&view),
                     );
                 }
             } else {
@@ -2483,6 +2516,7 @@ impl Session {
                         card.shape,
                         bag,
                         siblings,
+                        scenario_fixture_loadouts(&view),
                     );
                 }
             }
@@ -7575,12 +7609,9 @@ mod tests {
         let mut s = Session::new();
         s.live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");
-        let bag = s
-            .pending_script
-            .lock()
-            .unwrap()
-            .first()
-            .expect("catalog start stashed")
+        let pending = s.pending_script.lock().unwrap();
+        let card = pending.first().expect("catalog start stashed");
+        let bag = card
             .bag
             .clone()
             .expect("inject bag is posted even when the card schema is empty");
@@ -7590,7 +7621,15 @@ mod tests {
             "thiever inject must beat the Man fallback"
         );
         assert_eq!(bag.get("loot"), Some(&serde_json::json!("")));
-        assert_eq!(bag.get("banking"), Some(&serde_json::json!("None")));
+        assert_eq!(bag.get("loadout"), Some(&serde_json::json!("Memory food")));
+        assert_eq!(bag.get("banking"), Some(&serde_json::json!("Auto")));
+        assert_eq!(bag.get("foodWithdraw"), Some(&serde_json::json!(22.0)));
+        assert_eq!(bag.get("bankAtFood"), Some(&serde_json::json!(3.0)));
+        assert_eq!(
+            card.loadouts,
+            vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            "harness Start must stash the fixture-owned loadout, not operator loadouts.json"
+        );
     }
 
     #[test]
