@@ -4821,29 +4821,13 @@ pub struct ScriptStartHandle {
     named_banks: Arc<api::named_banks::NamedBankFacts>,
 }
 
-/// Fixture-owned loadouts selected by scenario settings. This keeps the
-/// production panel start path independent of operator loadouts while using
-/// the existing explicit-loadout start mechanism.
-fn fixture_loadouts(
-    settings_bag: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> Option<Vec<script::Loadout>> {
-    if settings_bag
-        .and_then(|bag| bag.get("loadout"))
-        .and_then(serde_json::Value::as_str)
-        == Some("Memory food")
-    {
-        Some(vec![
-            script::Loadout::new("Memory food").with_carry("Lobster", 1)
-        ])
-    } else {
-        None
-    }
-}
-
 impl ScriptStartHandle {
     /// Start a loaded JS bot on `name`'s slot. Same isolate spawn as
     /// [`Play::script_start_load`], without the control-thread wake
-    /// (the slot thread is already pumping).
+    /// (the slot thread is already pumping). Operator loadouts come from
+    /// the default store; harness scenario Start uses
+    /// [`Self::start_load_with_loadouts`] when the scenario owns fixture
+    /// loadouts.
     pub fn start_load(
         &self,
         name: &str,
@@ -4855,33 +4839,54 @@ impl ScriptStartHandle {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
-        let result = if let Some(loadouts) = fixture_loadouts(settings_bag.as_ref()) {
-            let result = slot.start_load_with_loadouts_and_game_data(
-                source,
-                shape,
-                siblings,
-                &loadouts,
-                self.game_data.clone(),
-                Arc::clone(&self.named_banks),
-            );
-            if result.is_ok() {
-                if let Some(bag) = settings_bag.as_ref() {
-                    slot.post_settings_bag(bag);
-                }
-            }
-            result
-        } else {
-            slot.start_load_with_settings_and_game_data(
+        let result = script_slot_or_insert(&self.scripts, name)
+            .lock()
+            .unwrap()
+            .start_load_with_settings_and_game_data(
                 source,
                 shape,
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
                 Arc::clone(&self.named_banks),
-            )
-        };
+            );
+        if let Err(e) = &result {
+            eprintln!("[script {name}] start failed: {e}");
+        }
+        result
+    }
+
+    /// Harness catalog Start with caller-owned loadouts. Uses the existing
+    /// explicit-loadout isolate start, then posts `settings_bag` on success.
+    /// Does not inspect loadout names and does not affect
+    /// [`Play::script_start_load_typed`].
+    pub fn start_load_with_loadouts(
+        &self,
+        name: &str,
+        source: String,
+        shape: script::LoadShape,
+        settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+        loadouts: &[script::Loadout],
+    ) -> Result<(), String> {
+        if debug_enabled() {
+            eprintln!("[script {name}] start load");
+        }
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot.lock().unwrap();
+        let result = slot.start_load_with_loadouts_and_game_data(
+            source,
+            shape,
+            siblings,
+            loadouts,
+            self.game_data.clone(),
+            Arc::clone(&self.named_banks),
+        );
+        if result.is_ok() {
+            if let Some(bag) = settings_bag.as_ref() {
+                slot.post_settings_bag(bag);
+            }
+        }
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -5186,35 +5191,17 @@ impl Play {
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
-        let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
-        let result = if let Some(loadouts) = fixture_loadouts(settings_bag.as_ref()) {
-            let result = slot
-                .start_load_with_loadouts_and_game_data(
-                    source,
-                    shape,
-                    siblings,
-                    &loadouts,
-                    self.game_data.clone(),
-                    Arc::clone(&self.named_banks),
-                )
-                .map_err(script::StartLoadError::Refused);
-            if result.is_ok() {
-                if let Some(bag) = settings_bag.as_ref() {
-                    slot.post_settings_bag(bag);
-                }
-            }
-            result
-        } else {
-            slot.start_load_with_settings_and_game_data_typed(
+        let result = script_slot_or_insert(&self.scripts, name)
+            .lock()
+            .unwrap()
+            .start_load_with_settings_and_game_data_typed(
                 source,
                 shape,
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
                 Arc::clone(&self.named_banks),
-            )
-        };
+            );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -10324,6 +10311,40 @@ export default class T extends LoopingBot {{
             !play.scripts.lock().unwrap().contains_key("ghost"),
             "an unknown uid must never get a SlotScript entry"
         );
+    }
+
+    #[test]
+    fn script_start_handle_explicit_loadouts_starts() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
+        let mut bag = serde_json::Map::new();
+        bag.insert("loadout".into(), serde_json::json!("Memory food"));
+        bag.insert("banking".into(), serde_json::json!("Auto"));
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        play.script_start_handle()
+            .start_load_with_loadouts(
+                "alice",
+                src,
+                script::LoadShape::NativeTick,
+                Some(bag),
+                vec![],
+                &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            )
+            .unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        play.script_stop("alice");
+        assert_eq!(play.script_state("alice"), script::RunState::Idle);
     }
 
     #[test]
