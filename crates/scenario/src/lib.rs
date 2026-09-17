@@ -37,8 +37,9 @@ use serde_json::{Map, Value};
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use fixture::{
     apply_fixture_mode, as_run_prepared, default_fixture_path, default_fixture_sav_dir,
-    fixture_prereqs_of, harness_writer_script, prepare_offline_fixture, run_prepared_has_setup_cheats,
-    FixtureAccount, FixtureIdentity, FixtureMode, OfflinePrepareOpts,
+    fixture_prereqs_of, fixture_preset_for, harness_writer_script, prepare_offline_fixture,
+    run_prepared_has_setup_cheats, FixtureAccount, FixtureIdentity, FixtureMode,
+    OfflinePrepareOpts,
 };
 pub use proof::Proof;
 pub use runner::{RunnerStatus, ScenarioRunner};
@@ -94,6 +95,15 @@ pub struct ScenarioSettings {
     /// (register/Load) and dispatches `script_start_load` on that step.
     /// `None` for host-driven scenarios.
     pub start_script: Option<&'static str>,
+    /// Exact in-tree example file name (`bone_burier_v2.ts` / `.js`). When
+    /// set, live prepare Loads that path as a File card and selects it by
+    /// canonical-path `identity_id()` — never a shared stem. Distinct from
+    /// [`Self::start_script`] catalog / TradeBot fixture names.
+    pub start_file: Option<&'static str>,
+    /// After game-state proofs pass, headed/TUI live waits for this
+    /// existing isolate self-stop receipt reason plus Idle before treating
+    /// the run as complete. Not a game-chat predicate.
+    pub wait_script_stop: Option<&'static str>,
     /// Scenario-only parameter overrides merged last at script Start (never
     /// written to operator `script-settings.json`).
     pub script_settings_inject: Option<&'static [ScriptSettingInject]>,
@@ -272,6 +282,8 @@ impl Default for ScenarioSettings {
             require_mainland_base: false,
             sustains: Vec::new(),
             start_script: None,
+            start_file: None,
+            wait_script_stop: None,
             script_settings_inject: None,
             inject_companion_as: None,
             fixture_prereqs: None,
@@ -410,6 +422,14 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         "bone_burier" => Some(bone_burier_scenario()),
+        "bone_burier_v2_ts" => Some(bone_burier_v2_scenario(
+            "bone_burier_v2_ts",
+            "bone_burier_v2.ts",
+        )),
+        "bone_burier_v2_js" => Some(bone_burier_v2_scenario(
+            "bone_burier_v2_js",
+            "bone_burier_v2.js",
+        )),
         "chicken_killer" => Some(chicken_killer_scenario()),
         "chicken_killer_bank" => Some(chicken_killer_bank_scenario()),
         "thiever" => Some(thiever_scenario()),
@@ -535,6 +555,8 @@ pub fn names() -> Vec<&'static str> {
         "nav_routes",
         "nav_paint_path",
         "bone_burier",
+        "bone_burier_v2_ts",
+        "bone_burier_v2_js",
         "chicken_killer",
         "chicken_killer_bank",
         "thiever",
@@ -1921,6 +1943,176 @@ fn bone_burier_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BoneBurier"),
             terminal_shot: Some("bone_burier terminal"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Lumbridge courtyard south tile used by the v2 writer preset and login gate.
+const BONE_BURIER_V2_BANK: WorldTile = WorldTile {
+    x: 3220,
+    z: 3212,
+    level: 0,
+};
+
+/// Isolate self-stop reason from `crates/script/examples/bone_burier_v2.ts`.
+const BONE_BURIER_V2_STOP_REASON: &str = "confirmed loaded current-generation bank exhaustion";
+
+const BONE_BURIER_V2_PREREQS: &[Proof] = &[
+    Proof::Item {
+        name: "Bones",
+        count: 5,
+    },
+    Proof::SideTabAvailable { index: 3 },
+    Proof::ArrivedNear {
+        x: BONE_BURIER_V2_BANK.x,
+        z: BONE_BURIER_V2_BANK.z,
+        level: BONE_BURIER_V2_BANK.level,
+        radius: 8,
+    },
+];
+
+/// Bury 5 + restock 28 + bury 28 + reopen bank + clean self-stop.
+const BONE_BURIER_V2_DEADLINE: Duration = Duration::from_secs(360);
+const BONE_BURIER_V2_WATCH_TICKS: u32 = 240;
+
+/// Headed File-card BoneBurier v2: one exact in-tree example per scenario id.
+/// v1 [`bone_burier_scenario`] stays the catalog compatibility witness.
+fn bone_burier_v2_scenario(name: &'static str, file_name: &'static str) -> Scenario {
+    let watch = |step_name, arm| Step {
+        name: step_name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            budget_ticks: BONE_BURIER_V2_WATCH_TICKS,
+            arm,
+        },
+    };
+    let later_bank = Proof::BankItemAtMost {
+        name: "Bones",
+        count: 0,
+    };
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: vec![
+            Step {
+                name: "prepare five carried bones and twenty-eight banked bones",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "getvar tutorial");
+                        cheat(c, "give bones 5");
+                        cheat(c, "givebank bones 28");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Chat {
+                        needle: "get tutorial: 1000",
+                    },
+                    budget_ticks: 200,
+                },
+            },
+            Step {
+                name: "tele to the Lumbridge bank tile",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(
+                            c,
+                            &tele_args(
+                                BONE_BURIER_V2_BANK.level,
+                                BONE_BURIER_V2_BANK.x,
+                                BONE_BURIER_V2_BANK.z,
+                            ),
+                        );
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: BONE_BURIER_V2_BANK.x,
+                        z: BONE_BURIER_V2_BANK.z,
+                        level: BONE_BURIER_V2_BANK.level,
+                        radius: 8,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "relog so the inv tab binds",
+                kind: StepKind::Relog,
+                wait: Wait {
+                    arm: Proof::SideTabAvailable { index: 3 },
+                    budget_ticks: 600,
+                },
+            },
+            start_catalog_step(),
+            watch(
+                "watch the first five burials",
+                Proof::StatXpGain { id: 5, min: 22 },
+            ),
+            watch(
+                "watch the carried bones run out",
+                Proof::ItemAtMost {
+                    name: "Bones",
+                    count: 0,
+                },
+            ),
+            watch(
+                "watch the script reach and open its stocked bank",
+                Proof::BankItem {
+                    name: "Bones",
+                    count: 28,
+                },
+            ),
+            watch(
+                "watch the script withdraw a full pack",
+                Proof::Item {
+                    name: "Bones",
+                    count: 28,
+                },
+            ),
+            watch(
+                "watch the bank stock decrease",
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0,
+                },
+            ),
+            watch("watch the script close its bank", Proof::BankClosed),
+            watch(
+                "watch the replenished pack yield further Prayer XP",
+                Proof::FreshStatXpGain { id: 5, min: 1 },
+            ),
+            watch(
+                "watch the replenished pack run out",
+                Proof::ItemAtMost {
+                    name: "Bones",
+                    count: 0,
+                },
+            ),
+            watch(
+                "watch a later loaded current bank still at zero",
+                later_bank,
+            ),
+        ],
+        proof: later_bank,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: BONE_BURIER_V2_DEADLINE,
+            start_script: None,
+            start_file: Some(file_name),
+            wait_script_stop: Some(BONE_BURIER_V2_STOP_REASON),
+            terminal_shot: Some(name),
+            fixture_prereqs: Some(BONE_BURIER_V2_PREREQS),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -17486,6 +17678,8 @@ mod tests {
                 "nav_routes",
                 "nav_paint_path",
                 "bone_burier",
+                "bone_burier_v2_ts",
+                "bone_burier_v2_js",
                 "chicken_killer",
                 "chicken_killer_bank",
                 "thiever",
@@ -22927,6 +23121,132 @@ mod tests {
     }
 
     #[test]
+    fn bone_burier_v2_scenarios_are_exact_file_cards_not_catalog() {
+        for (name, file) in [
+            ("bone_burier_v2_ts", "bone_burier_v2.ts"),
+            ("bone_burier_v2_js", "bone_burier_v2.js"),
+        ] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(s.name, name);
+            assert_eq!(s.settings.start_script, None);
+            assert_eq!(s.settings.start_file, Some(file));
+            assert_eq!(
+                s.settings.wait_script_stop,
+                Some("confirmed loaded current-generation bank exhaustion")
+            );
+            assert_eq!(s.settings.terminal_shot, Some(name));
+            assert_eq!(s.settings.deadline, BONE_BURIER_V2_DEADLINE);
+            assert_eq!(s.settings.fixture_prereqs, Some(BONE_BURIER_V2_PREREQS));
+            assert!(!s
+                .settings
+                .fixture_prereqs
+                .unwrap()
+                .iter()
+                .any(|p| matches!(p, Proof::BankItem { .. } | Proof::BankClosed)));
+            let start = s
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            assert!(matches!(s.steps[start - 1].kind, StepKind::Relog));
+            assert_eq!(
+                s.steps[start - 1].wait.arm,
+                Proof::SideTabAvailable { index: 3 }
+            );
+            assert_eq!(
+                s.steps[start - 2].wait.arm,
+                Proof::ArrivedNear {
+                    x: 3220,
+                    z: 3212,
+                    level: 0,
+                    radius: 8,
+                }
+            );
+            let arms: Vec<_> = s.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect();
+            assert_eq!(
+                arms,
+                vec![
+                    Proof::StatXpGain { id: 5, min: 22 },
+                    Proof::ItemAtMost {
+                        name: "Bones",
+                        count: 0
+                    },
+                    Proof::BankItem {
+                        name: "Bones",
+                        count: 28
+                    },
+                    Proof::Item {
+                        name: "Bones",
+                        count: 28
+                    },
+                    Proof::BankItemAtMost {
+                        name: "Bones",
+                        count: 0
+                    },
+                    Proof::BankClosed,
+                    Proof::FreshStatXpGain { id: 5, min: 1 },
+                    Proof::ItemAtMost {
+                        name: "Bones",
+                        count: 0
+                    },
+                    Proof::BankItemAtMost {
+                        name: "Bones",
+                        count: 0
+                    },
+                ]
+            );
+            let later = arms
+                .iter()
+                .rposition(|arm| {
+                    matches!(
+                        arm,
+                        Proof::BankItemAtMost {
+                            name: "Bones",
+                            count: 0
+                        }
+                    )
+                })
+                .unwrap();
+            let first_zero = arms
+                .iter()
+                .position(|arm| {
+                    matches!(
+                        arm,
+                        Proof::BankItemAtMost {
+                            name: "Bones",
+                            count: 0
+                        }
+                    )
+                })
+                .unwrap();
+            assert!(
+                first_zero < later,
+                "the post-withdraw zero row cannot satisfy the later exhaustion observation"
+            );
+            assert!(matches!(
+                arms[later - 1],
+                Proof::ItemAtMost {
+                    name: "Bones",
+                    count: 0
+                }
+            ));
+            assert!(matches!(
+                arms[later - 2],
+                Proof::FreshStatXpGain { id: 5, min: 1 }
+            ));
+            assert_eq!(s.proof, arms[later]);
+            assert!(names().contains(&name));
+        }
+        let v1 = get("bone_burier").unwrap();
+        assert_eq!(v1.settings.start_script, Some("BoneBurier"));
+        assert_eq!(v1.settings.start_file, None);
+        assert_eq!(v1.settings.wait_script_stop, None);
+    }
+
+    #[test]
     fn script_gold_watch_is_a_short_agentic_budget() {
         for name in [
             "bone_burier",
@@ -23387,6 +23707,8 @@ mod tests {
         );
         assert!(d.sustains.is_empty());
         assert_eq!(d.start_script, None);
+        assert_eq!(d.start_file, None);
+        assert_eq!(d.wait_script_stop, None);
         assert_eq!(d.script_settings_inject, None);
         assert_eq!(d.inject_companion_as, None);
     }

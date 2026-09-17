@@ -363,6 +363,8 @@ pub struct TuiSession {
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
+    live_wait_script_stop: Option<&'static str>,
+    live_stop_wait_started: Option<Instant>,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<script::ScriptSel>,
     /// The out-of-tree JS library: the Browse picker's cards and the
@@ -427,6 +429,8 @@ impl TuiSession {
             live_name: None,
             live_soak_until: None,
             live_announced_pass: false,
+            live_wait_script_stop: None,
+            live_stop_wait_started: None,
             script_sel: None,
             js,
             rs2b0t_filled: false,
@@ -694,6 +698,8 @@ impl TuiSession {
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
+        let start_file = scenario.settings.start_file;
+        let wait_script_stop = scenario.settings.wait_script_stop;
         let settings_inject = scenario.settings.script_settings_inject;
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries = mint_live_entries_for_target(&names, self.target());
@@ -701,6 +707,8 @@ impl TuiSession {
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
+        self.live_wait_script_stop = wait_script_stop;
+        self.live_stop_wait_started = None;
         let world = self.play.as_ref().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         if let Some(budget) = scenario::budget_s_from_env() {
@@ -722,7 +730,48 @@ impl TuiSession {
         // A scenario that names a script card selects the real `$RS2B0T`
         // catalog script on the driven slot (same as the panel): fill the
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
-        if let Some(card_name) = start_script {
+        // Exact example files Load as File cards and select by identity_id.
+        if let Some(file_name) = start_file {
+            let path = script::live_example_path(file_name)
+                .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+            let loaded = self
+                .js
+                .load(&path)
+                .map_err(|e| format!("load {file_name}: {e}"))?;
+            let identity = loaded.identity_id();
+            let card = self
+                .js
+                .get(script::ScriptSource::File, &identity)
+                .cloned()
+                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
+            self.script_sel = Some(script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                identity.clone(),
+            ));
+            let bag = self.pending_settings_bag(
+                script::ScriptSource::File,
+                &identity,
+                &card.settings_schema,
+            );
+            let siblings = script::resolve_sibling_modules(
+                &card.path,
+                &card.origin,
+                self.js.cache(),
+                script::CacheMeta {
+                    kind: card.kind,
+                    source: card.source,
+                    shape: None,
+                    api_family: Some(card.api_family.as_str().into()),
+                },
+            )?;
+            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                slot: names[0].clone(),
+                js: card.js.clone(),
+                shape: card.shape,
+                bag,
+                siblings,
+            });
+        } else if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
             self.js
                 .ensure_js(script::ScriptSource::Catalog, card_name)
@@ -1249,6 +1298,19 @@ impl TuiSession {
         }
     }
 
+    fn script_self_stop_observed(&self, needle: &str) -> bool {
+        let Some(name) = self.names.first() else {
+            return false;
+        };
+        let Some(play) = self.play.as_ref() else {
+            return false;
+        };
+        matches!(play.script_state(name), script::RunState::Idle)
+            && play
+                .script_lifecycle_receipt(name)
+                .is_some_and(|receipt| receipt.reason.contains(needle))
+    }
+
     /// The `--live` terminal state: `Some(exit code)` when the runner
     /// passed (0) or failed (1); `None` while it runs. Proof lines are
     /// returned, not printed, so a headed loop can hold them until after
@@ -1265,6 +1327,27 @@ impl TuiSession {
             );
         }
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
+        if let (Some(scenario::RunnerStatus::Passed), Some(needle)) =
+            (&status, self.live_wait_script_stop)
+        {
+            if !self.script_self_stop_observed(needle) {
+                let started = self.live_stop_wait_started.get_or_insert_with(Instant::now);
+                if started.elapsed() >= Duration::from_secs(45) {
+                    return (
+                        Some(1),
+                        vec![
+                            ProofLine::Stderr(format!(
+                                "FAIL: live {name} timed out waiting for script Idle and clean stop reason {needle:?}"
+                            )),
+                            ProofLine::Stderr(format!(
+                                "FAIL: timed out waiting for script Idle and clean stop reason {needle:?}"
+                            )),
+                        ],
+                    );
+                }
+                return (None, Vec::new());
+            }
+        }
         let evidence = self
             .scenario
             .lock()
@@ -2137,6 +2220,20 @@ ScriptRegistry.register({
     }
 
     #[test]
+    fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
+        let js = live_scenario("script_bone_burier_v2_js").expect("js");
+        let ts = live_scenario("script_bone_burier_v2_ts").expect("ts");
+        let v1 = live_scenario("script_bone_burier").expect("v1");
+        assert_eq!(js.name, "bone_burier_v2_js");
+        assert_eq!(js.settings.start_file, Some("bone_burier_v2.js"));
+        assert_eq!(ts.name, "bone_burier_v2_ts");
+        assert_eq!(ts.settings.start_file, Some("bone_burier_v2.ts"));
+        assert_eq!(v1.settings.start_script, Some("BoneBurier"));
+        assert_eq!(v1.settings.start_file, None);
+        assert!(live_scenario("script_nope").is_err());
+    }
+
+    #[test]
     fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         let iso = IsolatedEnv::enter("tui-bone-live");
         let root = fake_rs2b0t_tree(&iso.dir);
@@ -2171,6 +2268,69 @@ ScriptRegistry.register({
             Some(name.as_str()),
             "preparation stages the selected card for StartScript"
         );
+    }
+
+    #[test]
+    fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
+        let ts = script::live_example_path("bone_burier_v2.ts").expect("ts example");
+        let js = script::live_example_path("bone_burier_v2.js").expect("js example");
+        for (name, path) in [
+            ("bone_burier_v2_ts", ts.as_path()),
+            ("bone_burier_v2_js", js.as_path()),
+        ] {
+            let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
+            let mut session = TuiSession::new(dummy_options());
+            session.suppress_slot_spawn = true;
+            session.js = script::JsLibrary::with_cache(
+                iso.dir.join("js-scripts.json"),
+                iso.dir.join("js-cache"),
+            );
+            session.js.load(&ts).expect("preload ts");
+            session.js.load(&js).expect("preload js");
+            session.script_settings.set_str(
+                script::ScriptSource::File,
+                "bone_burier_v2",
+                "boneName",
+                "stem",
+            );
+            let identity = script::file_identity(path);
+            session.script_settings.set_str(
+                script::ScriptSource::File,
+                &identity,
+                "boneName",
+                "identity",
+            );
+            session
+                .live_prepare_script(scenario::get(name).expect("registered"))
+                .expect("prepare");
+            assert_eq!(
+                session.script_sel,
+                Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::File,
+                    identity.clone()
+                )),
+                "{name} must select the canonical-path identity"
+            );
+            assert_ne!(
+                session.script_sel,
+                Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::File,
+                    "bone_burier_v2".into()
+                ))
+            );
+            let bag = session
+                .pending_script
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|pending| pending.bag.clone())
+                .expect("settings bag");
+            assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
+            assert_eq!(
+                session.live_wait_script_stop,
+                Some("confirmed loaded current-generation bank exhaustion")
+            );
+        }
     }
 
     #[test]

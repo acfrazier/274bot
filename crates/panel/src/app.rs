@@ -227,14 +227,21 @@ struct LiveScript {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SoakCapture {
     NotNeeded,
-    PostPass { label: String, started: Option<Instant> },
+    PostPass {
+        label: String,
+        started: Option<Instant>,
+    },
     WaitingForFinal,
-    Final { label: String, started: Option<Instant> },
+    Final {
+        label: String,
+        started: Option<Instant>,
+    },
     Complete,
 }
 
 const SOAK_POSTPASS_SUFFIX: &str = "-postpass";
 const SOAK_FINAL_SUFFIX: &str = "-soak-final";
+const SCRIPT_STOP_WAIT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, PartialEq)]
 enum CoreGate {
@@ -1001,7 +1008,10 @@ fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>),
         match arg.as_str() {
             "--prepare-fixture" => {
                 let Some(name) = it.next() else {
-                    return Err((2, "panel-play: --prepare-fixture needs a scenario name".into()));
+                    return Err((
+                        2,
+                        "panel-play: --prepare-fixture needs a scenario name".into(),
+                    ));
                 };
                 if scenario::get(&name).is_none() {
                     return Err((
@@ -1454,6 +1464,27 @@ fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, l
 
 /// Re-arm a completed single-actor terminal capture for a later native-core
 /// decision, pairing that failure with the current scene instead of the old image.
+/// Re-request the headed terminal capture after Idle so the PNG can show
+/// BoneBurier v2 paint, script Idle, and the clean self-stop reason.
+fn enqueue_fresh_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
+    let current = (|| {
+        let actor = session
+            .focused_name()
+            .ok_or_else(|| "fresh terminal capture has no focused actor".to_string())?;
+        let states = session.nav_states.lock().unwrap();
+        let (snapshot, _) = states
+            .get(&actor)
+            .ok_or_else(|| "fresh terminal capture has no current snapshot".to_string())?;
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return Err("fresh terminal capture requires a current ingame scene-2 snapshot".into());
+        }
+        actor_snapshot_json(&actor, snapshot)
+    })();
+    if let Ok(json) = current {
+        shots.lock().unwrap().enqueue(label.to_string(), json);
+    }
+}
+
 fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
     let current = (|| {
         let actor = session
@@ -1661,11 +1692,16 @@ fn soak_capture_tick(
                     live.drain_started = None;
                     Ok(true)
                 }
-                ShotStatus::Failed(error) => Err(format!("soak checkpoint {label} failed: {error}")),
+                ShotStatus::Failed(error) => {
+                    Err(format!("soak checkpoint {label} failed: {error}"))
+                }
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
                     if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
-                        Err(format!("soak checkpoint {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
+                        Err(format!(
+                            "soak checkpoint {label} was not written within {}s",
+                            NAV_FULL_SHOT_DRAIN.as_secs()
+                        ))
                     } else {
                         Ok(true)
                     }
@@ -1673,12 +1709,18 @@ fn soak_capture_tick(
             }
         }
         SoakCapture::WaitingForFinal => {
-            if live.soak_until.is_some_and(|deadline| Instant::now() < deadline) {
+            if live
+                .soak_until
+                .is_some_and(|deadline| Instant::now() < deadline)
+            {
                 return Ok(true);
             }
             let label = format!("{base}{SOAK_FINAL_SUFFIX}");
             enqueue_soak_capture(session, shots, &label);
-            live.soak_capture = SoakCapture::Final { label, started: None };
+            live.soak_capture = SoakCapture::Final {
+                label,
+                started: None,
+            };
             Ok(true)
         }
         SoakCapture::Final { label, started } => {
@@ -1690,11 +1732,16 @@ fn soak_capture_tick(
                     live.soak_capture = SoakCapture::Complete;
                     Ok(false)
                 }
-                ShotStatus::Failed(error) => Err(format!("soak final readback {label} failed: {error}")),
+                ShotStatus::Failed(error) => {
+                    Err(format!("soak final readback {label} failed: {error}"))
+                }
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
                     if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
-                        Err(format!("soak final readback {label} was not written within {}s", NAV_FULL_SHOT_DRAIN.as_secs()))
+                        Err(format!(
+                            "soak final readback {label} was not written within {}s",
+                            NAV_FULL_SHOT_DRAIN.as_secs()
+                        ))
                     } else {
                         Ok(true)
                     }
@@ -1900,6 +1947,10 @@ fn live_script_tick(
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
+    let wait_script_stop = {
+        let guard = session.scenario.lock().unwrap();
+        guard.as_ref().and_then(|runner| runner.wait_script_stop())
+    };
     match status {
         Some(scenario::RunnerStatus::Passed) => {
             if matches!(core_gate, CoreGate::Pending)
@@ -1907,6 +1958,24 @@ fn live_script_tick(
                 || matches!(ext_gate, CoreGate::Pending)
             {
                 return None;
+            }
+            if let Some(needle) = wait_script_stop {
+                if !session.script_self_stop_observed(needle) {
+                    let started = session
+                        .live_script_stop_wait_started
+                        .get_or_insert_with(Instant::now);
+                    if started.elapsed() >= SCRIPT_STOP_WAIT {
+                        let message = format!(
+                            "timed out waiting for script Idle and clean stop reason {needle:?}"
+                        );
+                        live.failed = Some(message.clone());
+                        return Some(message);
+                    }
+                    return None;
+                }
+                if let (Some(shots), Some(label)) = (shots, terminal_shot) {
+                    enqueue_fresh_terminal_shot(session, shots, label);
+                }
             }
             if core_watch.as_ref().is_some_and(|watch| watch.configured())
                 && matches!(core_gate, CoreGate::Qualified(_))
@@ -1946,17 +2015,15 @@ fn live_script_tick(
             }
             if live.soak {
                 if shots.is_none() {
-                    if live.soak_until.is_some_and(|deadline| Instant::now() >= deadline) {
+                    if live
+                        .soak_until
+                        .is_some_and(|deadline| Instant::now() >= deadline)
+                    {
                         live.passed = true;
                     }
                     return None;
                 }
-                match soak_capture_tick(
-                    live,
-                    session,
-                    shots.unwrap(),
-                    terminal_shot,
-                ) {
+                match soak_capture_tick(live, session, shots.unwrap(), terminal_shot) {
                     Ok(true) => return None,
                     Ok(false) => live.passed = true,
                     Err(error) => {
@@ -3541,8 +3608,8 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
 }
 
 fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
-    let selected = session.script_sel
-        == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected =
+        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let id = format!("##scard-{}", card.identity_key());
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -5603,21 +5670,12 @@ fn arm_scenario_shots(state: &mut PanelState) {
 /// Offline prepare: mint isolated identity, write server-native `.sav` via
 /// `tools/harness`, write durable fixture identity — no live engine/window.
 fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
-    let sc = scenario::get(scenario)
-        .ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let sc = scenario::get(scenario).ok_or_else(|| format!("unknown scenario {scenario}"))?;
     let profile_count = sc.seed.profiles.len();
     if profile_count == 0 {
         return Err(format!("scenario {scenario} has zero seed profiles"));
     }
-    // Fixture preset id matches scenario name for thiever; fail closed if unknown.
-    let fixture_preset = match scenario {
-        "thiever" => "thiever",
-        other => {
-            return Err(format!(
-                "offline prepare has no server-native preset for {other} yet (known: thiever)"
-            ));
-        }
-    };
+    let fixture_preset = scenario::fixture_preset_for(scenario)?;
     let server_root = args
         .server_root
         .clone()
@@ -6085,8 +6143,9 @@ mod tests {
         request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
         shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation,
+        BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE,
+        SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -7386,6 +7445,18 @@ mod tests {
             parse_live_args(["--live", "script_nav_paint_path"], None),
             Ok(RunMode::Live("script_nav_paint_path".into()))
         );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier_v2_js"], None),
+            Ok(RunMode::Live("script_bone_burier_v2_js".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier_v2_ts"], None),
+            Ok(RunMode::Live("script_bone_burier_v2_ts".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier"], None),
+            Ok(RunMode::Live("script_bone_burier".into()))
+        );
     }
 
     #[test]
@@ -7410,7 +7481,13 @@ mod tests {
     #[test]
     fn parse_args_run_prepared_requires_script_live() {
         let parsed = parse_args(
-            ["--live", "script_thiever", "--run-prepared", "--fixture-path", "/tmp/t.json"],
+            [
+                "--live",
+                "script_thiever",
+                "--run-prepared",
+                "--fixture-path",
+                "/tmp/t.json",
+            ],
             None,
         )
         .unwrap();
@@ -7421,9 +7498,23 @@ mod tests {
             Some(std::path::Path::new("/tmp/t.json"))
         );
         assert!(parse_args(["--run-prepared"], None).is_err());
-        assert!(parse_args(["--prepare-fixture", "thiever", "--live", "script_thiever"], None).is_err());
+        assert!(parse_args(
+            ["--prepare-fixture", "thiever", "--live", "script_thiever"],
+            None
+        )
+        .is_err());
         assert!(parse_args(["--prepare-fixture", "thiever", "--run-prepared"], None).is_err());
         assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
+        let ts = parse_args(["--prepare-fixture", "bone_burier_v2_ts"], None).unwrap();
+        assert_eq!(ts.mode, RunMode::PrepareFixture("bone_burier_v2_ts".into()));
+        let js = parse_args(["--prepare-fixture", "bone_burier_v2_js"], None).unwrap();
+        assert_eq!(js.mode, RunMode::PrepareFixture("bone_burier_v2_js".into()));
+        assert_eq!(
+            scenario::fixture_preset_for("bone_burier_v2_ts").unwrap(),
+            "bone_burier_v2"
+        );
+        assert_eq!(scenario::fixture_preset_for("thiever").unwrap(), "thiever");
+        assert!(scenario::fixture_preset_for("bone_burier").is_err());
     }
 
     #[test]
@@ -7773,6 +7864,76 @@ mod tests {
         c
     }
 
+    #[test]
+    fn live_script_tick_holds_pass_until_clean_script_stop() {
+        use scenario::{
+            Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
+        };
+
+        let mut s = crate::session::Session::new();
+        let pass = Scenario {
+            name: "bone_stop",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 5;
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 5 },
+                    budget_ticks: 5,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 5 },
+            companions: vec![],
+            settings: ScenarioSettings {
+                wait_script_stop: Some("confirmed loaded current-generation bank exhaustion"),
+                ..Default::default()
+            },
+        };
+        let mut runner = ScenarioRunner::new(pass);
+        runner.set_scene_settle(Duration::ZERO);
+        let mut c = script_client();
+        runner.tick(&mut c);
+        c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+        assert_eq!(
+            runner.wait_script_stop(),
+            Some("confirmed loaded current-generation bank exhaustion")
+        );
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
+            None
+        );
+        assert!(!live.passed, "game-state PASS must wait for Idle + reason");
+        s.live_script_stop_wait_started = Some(Instant::now() - Duration::from_secs(60));
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
+            .expect("clean-stop wait times out");
+        assert!(error.contains("clean stop reason"), "{error}");
+        assert!(live.failed.is_some());
+    }
+
     /// Headed contract: PASS latches `passed` (the caller exits 0),
     /// FAIL returns the message the caller turns into exit 1.
     #[test]
@@ -7919,12 +8080,7 @@ mod tests {
         live.soak_until = Some(Instant::now() + Duration::from_secs(60));
         live.soak_capture = SoakCapture::NotNeeded;
         assert_eq!(
-            live_script_tick(
-                &mut live,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
             None,
             "BUDGET_S soak prints PASS but does not latch exit"
         );
@@ -7941,23 +8097,13 @@ mod tests {
         );
         shots.lock().unwrap().mark_written("core-pass-postpass");
         assert_eq!(
-            live_script_tick(
-                &mut live,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
         assert_eq!(live.soak_capture, SoakCapture::WaitingForFinal);
         live.soak_until = Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(
-            live_script_tick(
-                &mut live,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
         assert!(matches!(
@@ -7972,12 +8118,7 @@ mod tests {
         );
         shots.lock().unwrap().mark_written("core-pass-soak-final");
         assert_eq!(
-            live_script_tick(
-                &mut live,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
         assert_eq!(live.soak_capture, SoakCapture::Complete);
@@ -8006,25 +8147,15 @@ mod tests {
             soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
-            live_script_tick(
-                &mut failed_soak,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut failed_soak, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
         shots.lock().unwrap().fail_labels(
             &["fail-soak-postpass".to_string()],
             "synthetic readback failure",
         );
-        let error = live_script_tick(
-            &mut failed_soak,
-            &mut s,
-            &ShotStatus::Written,
-            Some(&shots),
-        )
-        .expect("failed post-pass readback must fail the soak");
+        let error = live_script_tick(&mut failed_soak, &mut s, &ShotStatus::Written, Some(&shots))
+            .expect("failed post-pass readback must fail the soak");
         assert!(error.contains("soak checkpoint") && error.contains("synthetic"));
         assert!(failed_soak.failed.is_some());
 

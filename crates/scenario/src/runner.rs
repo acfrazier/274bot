@@ -198,6 +198,12 @@ impl ScenarioRunner {
         self.terminal_shot
     }
 
+    /// Existing isolate self-stop reason the headed/TUI live path waits for
+    /// after game-state proofs, when the scenario asked for a clean stop.
+    pub fn wait_script_stop(&self) -> Option<&'static str> {
+        self.scenario.settings.wait_script_stop
+    }
+
     /// The shared obj-id → name table for `Item` predicates and the
     /// evidence's inventory names.
     pub fn set_obj_names(&mut self, names: Arc<ObjNames>) {
@@ -954,6 +960,17 @@ mod tests {
             companions: vec![],
             settings: ScenarioSettings::default(),
         }
+    }
+
+    #[test]
+    fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
+        let v1 = ScenarioRunner::new(crate::get("bone_burier").expect("v1"));
+        assert_eq!(v1.wait_script_stop(), None);
+        let v2 = ScenarioRunner::new(crate::get("bone_burier_v2_ts").expect("v2"));
+        assert_eq!(
+            v2.wait_script_stop(),
+            Some("confirmed loaded current-generation bank exhaustion")
+        );
     }
 
     #[test]

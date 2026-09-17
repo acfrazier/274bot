@@ -225,6 +225,33 @@ fn fire_pending_catalog_start(
     true
 }
 
+/// Load one exact in-tree example and return the File card selected by
+/// canonical-path identity. Never looks up the shared stem.
+fn load_live_example_card(
+    js: &mut script::JsLibrary,
+    file_name: &str,
+) -> Result<script::JsCard, String> {
+    let path = script::live_example_path(file_name)
+        .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+    let loaded = js
+        .load(&path)
+        .map_err(|e| format!("load {file_name}: {e}"))?;
+    let identity = loaded.identity_id();
+    js.get(script::ScriptSource::File, &identity)
+        .cloned()
+        .ok_or_else(|| format!("file example {file_name} missing after identity load"))
+}
+
+/// Existing isolate Idle + lifecycle receipt reason. Not a game-chat read.
+pub(crate) fn script_self_stop_observed(
+    state: script::RunState,
+    receipt: Option<&script::ScriptLifecycleReceipt>,
+    needle: &str,
+) -> bool {
+    matches!(state, script::RunState::Idle)
+        && receipt.is_some_and(|receipt| receipt.reason.contains(needle))
+}
+
 /// Stash StartScript isolate(s). Driven slot always. When
 /// `inject_companion_as` is set on a fleet, also Start the same JS on
 /// slot 1 with that key pointing at the driven minted name (P2P Trade).
@@ -1103,6 +1130,8 @@ pub struct Session {
     /// `Client`), the UI frame reads its status/evidence. `None` when no
     /// scenario is live.
     pub scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
+    /// Headed wait for [`scenario::ScenarioSettings::wait_script_stop`].
+    pub(crate) live_script_stop_wait_started: Option<Instant>,
     /// Catalog card `live_prepare_script` stashes; the live pump Starts
     /// it once on [`scenario::StepKind::StartScript`].
     pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
@@ -1379,6 +1408,7 @@ impl Session {
             },
             rs2b0t_filled: false,
             scenario: Arc::new(Mutex::new(None)),
+            live_script_stop_wait_started: None,
             pending_script: Arc::new(Mutex::new(Vec::new())),
             script_start_handle: Arc::new(Mutex::new(None)),
             catalog_core_watch: Arc::new(Mutex::new(None)),
@@ -1466,11 +1496,7 @@ impl Session {
     }
 
     /// Configure the optional prepare / run-prepared fixture path for the next live boot.
-    pub fn set_fixture_boot(
-        &mut self,
-        mode: scenario::FixtureMode,
-        path: Option<PathBuf>,
-    ) {
+    pub fn set_fixture_boot(&mut self, mode: scenario::FixtureMode, path: Option<PathBuf>) {
         self.fixture_mode = mode;
         self.fixture_path = path;
     }
@@ -2417,13 +2443,38 @@ impl Session {
             runner.set_obj_names(play.obj_names());
         }
         *self.scenario.lock().unwrap() = Some(runner);
+        self.live_script_stop_wait_started = None;
         // A scenario that names a script card (`start_script`) selects
         // the script; Start waits for [`scenario::StepKind::StartScript`]
         // after seed. With `inject_companion_as` on a fleet, the same JS
         // Starts on slot 1 too (reciprocal partner). Catalog cards come
         // from `$RS2B0T`; in-tree file fixtures load from
-        // `crates/script/tests/fixtures/`.
-        if let Some(card_name) = view.start_script {
+        // `crates/script/tests/fixtures/`. Exact example files (`start_file`)
+        // Load through normal File provenance and select by identity_id.
+        if let Some(file_name) = view.start_file {
+            let card = load_live_example_card(&mut self.js, file_name)?;
+            let identity = card.identity_id();
+            self.script_sel = Some(script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                identity.clone(),
+            ));
+            let bag = self.pending_settings_bag(
+                script::ScriptSource::File,
+                &identity,
+                &card.settings_schema,
+            );
+            let siblings = self.sibling_modules_for_card(&card)?;
+            stash_pending_starts(
+                &self.pending_script,
+                &names,
+                view.inject_companion_as,
+                card.js.clone(),
+                card.shape,
+                bag,
+                siblings,
+                scenario_fixture_loadouts(&view),
+            );
+        } else if let Some(card_name) = view.start_script {
             if let Some(fixture) = script::live_file_fixture_path(card_name) {
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
@@ -4188,6 +4239,21 @@ impl Session {
             .unwrap_or(script::RunState::Idle)
     }
 
+    /// Whether the focused script is Idle with the named self-stop reason.
+    pub fn script_self_stop_observed(&self, needle: &str) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        let Some(play) = self.play.as_ref() else {
+            return false;
+        };
+        script_self_stop_observed(
+            play.script_state(&name),
+            play.script_lifecycle_receipt(&name).as_ref(),
+            needle,
+        )
+    }
+
     /// The focused slot's script `last_error`; `None` when the slot has no
     /// script error (or nothing is focused).
     pub fn focused_script_last_error(&self) -> Option<String> {
@@ -4423,13 +4489,13 @@ impl Drop for Session {
 mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
-        is_local_engine, live_client_trail, live_or_walk_paint, maybe_send_click,
-        nav_snapshot_for_follow, null_raster_live_entries_for_target, parse_getvar_line,
-        publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime, script_active,
-        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        start_catalog_with_core, stream_capture, stress_live_entries_for_target,
-        temp_live_vault_from, walkto_tele_cmd, ProfilePreparationCompletion, Session, SlotIo,
-        WalkArm,
+        is_local_engine, live_client_trail, live_or_walk_paint, load_live_example_card,
+        maybe_send_click, nav_snapshot_for_follow, null_raster_live_entries_for_target,
+        parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
+        script_active, script_pause_enabled, script_self_stop_observed, script_status_text,
+        script_stop_enabled, seed_on_first_world, start_catalog_with_core, stream_capture,
+        stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+        ProfilePreparationCompletion, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -7532,6 +7598,140 @@ mod tests {
             script::RunState::Running,
             "isolate is not Running yet — Start waits for the StartScript step"
         );
+    }
+
+    #[test]
+    fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
+        let ts = script::live_example_path("bone_burier_v2.ts").expect("ts example");
+        let js = script::live_example_path("bone_burier_v2.js").expect("js example");
+        for (name, file_name, path) in [
+            ("bone_burier_v2_ts", "bone_burier_v2.ts", ts.as_path()),
+            ("bone_burier_v2_js", "bone_burier_v2.js", js.as_path()),
+        ] {
+            let iso = IsolatedEnv::enter(&format!("bone-v2-{name}"));
+            let mut s = Session::new();
+            s.js = script::JsLibrary::with_cache(
+                iso.dir.join("js-scripts.json"),
+                iso.dir.join("js-cache"),
+            );
+            s.js.load(&ts).expect("preload ts");
+            s.js.load(&js).expect("preload js");
+            s.script_settings.set_str(
+                script::ScriptSource::File,
+                "bone_burier_v2",
+                "boneName",
+                "stem",
+            );
+            let identity = script::file_identity(path);
+            s.script_settings.set_str(
+                script::ScriptSource::File,
+                &identity,
+                "boneName",
+                "identity",
+            );
+            let scenario = scenario::get(name).expect("registered");
+            assert_eq!(scenario.settings.start_file, Some(file_name));
+            assert_eq!(scenario.settings.start_script, None);
+            let card = load_live_example_card(&mut s.js, file_name).expect("identity load");
+            assert_eq!(
+                card.identity_id(),
+                identity,
+                "{name} canonical-path identity"
+            );
+            assert_ne!(
+                identity, "bone_burier_v2",
+                "{name} must not use the shared stem"
+            );
+            let bag = s
+                .pending_settings_bag(script::ScriptSource::File, &identity, &card.settings_schema)
+                .expect("settings bag");
+            assert_eq!(
+                bag.get("boneName"),
+                Some(&serde_json::json!("identity")),
+                "{name} settings attach to the selected File identity"
+            );
+            let stem_bag = s.pending_settings_bag(
+                script::ScriptSource::File,
+                "bone_burier_v2",
+                &card.settings_schema,
+            );
+            assert_eq!(
+                stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
+                Some(&serde_json::json!("stem")),
+                "{name} stem bag stays isolated from the File identity"
+            );
+            assert!(
+                s.js.get(script::ScriptSource::File, "bone_burier_v2")
+                    .is_some(),
+                "stem lookup remains defined and must not be the selector"
+            );
+        }
+    }
+
+    #[test]
+    fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
+        let iso = IsolatedEnv::enter("bone-v1-trade");
+        crate::ui_state::save(&crate::ui_state::PanelUiState {
+            last_focus: None,
+            ..Default::default()
+        });
+        let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
+        iso.set_rs2b0t(&root);
+        let mut s = Session::new();
+        s.live_prepare_script(scenario::get("bone_burier").expect("registered"))
+            .expect("v1");
+        assert_eq!(
+            s.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::Catalog,
+                "BoneBurier".into()
+            ))
+        );
+        let mut trade = Session::new();
+        trade.js = script::JsLibrary::with_cache(
+            iso.dir.join("trade-js.json"),
+            iso.dir.join("trade-cache"),
+        );
+        trade
+            .live_prepare_script(scenario::get("script_trade").expect("registered"))
+            .expect("trade");
+        assert_eq!(
+            trade.script_sel,
+            Some(script::ScriptSel::Loaded(
+                script::ScriptSource::File,
+                "trade_bot".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn script_self_stop_requires_idle_and_receipt_reason() {
+        let receipt = script::ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state: script::ScriptTerminalState::Stopped,
+            tick: 9,
+            reason: "confirmed loaded current-generation bank exhaustion".into(),
+        };
+        assert!(script_self_stop_observed(
+            script::RunState::Idle,
+            Some(&receipt),
+            "confirmed loaded current-generation bank exhaustion"
+        ));
+        assert!(!script_self_stop_observed(
+            script::RunState::Running,
+            Some(&receipt),
+            "confirmed loaded current-generation bank exhaustion"
+        ));
+        assert!(!script_self_stop_observed(
+            script::RunState::Idle,
+            Some(&receipt),
+            "stalled while bury"
+        ));
+        assert!(!script_self_stop_observed(
+            script::RunState::Idle,
+            None,
+            "confirmed"
+        ));
     }
 
     #[test]
