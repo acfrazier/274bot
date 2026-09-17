@@ -196,7 +196,7 @@ pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Optio
     if has_lost_tool(snap) {
         return Some(no_npc_event(RandomKind::LostTool, "lost tool"));
     }
-    None
+    detect_adjacent_featureless_plant(snap, now_ms, cooldown)
 }
 
 /// A map-square or inventory-held event: ours by position/possession.
@@ -351,6 +351,36 @@ fn plant_offers_pick(npc: &NpcView) -> bool {
             label.eq_ignore_ascii_case("pick") || label.eq_ignore_ascii_case("take")
         })
     })
+}
+
+/// Last-priority ownership probe candidate. A server-authenticated probe is
+/// safe only for a passive, featureless plant already within interaction
+/// range; all established random candidates (especially held box/lamp) win.
+fn detect_adjacent_featureless_plant(
+    snap: &GameSnapshot,
+    now_ms: u64,
+    cooldown: &CooldownMap,
+) -> Option<DetectedRandom> {
+    let (px, pz, _) = snap.tile()?;
+    snap.npcs()
+        .iter()
+        .find(|npc| {
+            !binned(npc.index, now_ms, cooldown)
+                && featureless_pickable_plant(npc)
+                && cheb((px, pz), (npc.tile.x, npc.tile.z)) <= 1
+        })
+        .map(|npc| DetectedRandom {
+            kind: RandomKind::Pick,
+            name: PICK_NAME.to_string(),
+            ours: false,
+            npc_index: Some(npc.index),
+        })
+}
+
+fn featureless_pickable_plant(npc: &NpcView) -> bool {
+    PlantActor::from_npc(npc).is_some()
+        && npc.target.is_none()
+        && npc.overhead_text.as_deref().is_none()
 }
 
 /// The random's axe/pickaxe handle sits in the inventory, worn, or on
@@ -590,6 +620,17 @@ const WRONG_TALK_COOLDOWN_MS: u64 = 45_000;
 /// Chat markers of a failed Talk-to: the NPC is not the event's owner.
 const WRONG_TALK_MARKERS: &[&str] = &["trying to talk to", "It's not here for you."];
 
+/// Canonical server response proving that the probed plant belongs to us.
+const PLANT_GROWING_MARKER: &str = "The fruit isn't ready to be picked yet";
+/// A featureless plant gets one bounded probe, never a speculative retry.
+const PLANT_PROBE_TIMEOUT_MS: u64 = 5_000;
+/// Authenticated retries are slow enough to avoid click spam.
+const PLANT_RETRY_INTERVAL_MS: u64 = 3_000;
+/// Authentication is temporary and belongs only to this actor instance.
+const PLANT_AUTH_TIMEOUT_MS: u64 = 90_000;
+/// Defensive cap for repeated growing-plant message pages.
+const MAX_PLANT_CONTINUES: u32 = 25;
+
 /// Trapped kinds: the player is stuck and the host must freeze the slot
 /// (maze / mime / strange box). **Not** `lamp`: Genie Talk-to is the
 /// solve; a leftover lamp is inert XP when `lamp_auto` is off.
@@ -628,6 +669,72 @@ impl Default for RandomStatus {
             toggle: false,
             claim: RandomClaim::Host,
             cooldown: false,
+        }
+    }
+}
+
+/// Client-visible identity used to pin a probe to one NPC actor. The client
+/// exposes no owner or spawn generation, so every available structural field
+/// that matters to this interaction is revalidated before each step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlantActor {
+    slot: usize,
+    type_id: Option<usize>,
+    name: String,
+    op_slot: usize,
+    op: String,
+}
+
+impl PlantActor {
+    fn from_npc(npc: &NpcView) -> Option<Self> {
+        let name = npc.name.as_deref()?.trim().to_lowercase();
+        if name != PICK_NAME {
+            return None;
+        }
+        let (op_slot, op) = npc.actions.iter().enumerate().find_map(|(slot, action)| {
+            let op = action.as_deref()?.trim();
+            (op.eq_ignore_ascii_case("pick") || op.eq_ignore_ascii_case("take"))
+                .then(|| (slot, op.to_lowercase()))
+        })?;
+        Some(Self {
+            slot: npc.index,
+            type_id: npc.r#type,
+            name,
+            op_slot,
+            op,
+        })
+    }
+}
+
+/// One explicit ownership-probe machine. `Ignored` is identity-scoped: a
+/// foreign/refused/timed-out actor is never clicked again, while a genuinely
+/// different actor cannot inherit either rejection or authentication.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum PlantProbe {
+    #[default]
+    Idle,
+    AwaitingResponse {
+        actor: PlantActor,
+        deadline_ms: u64,
+    },
+    Authenticated {
+        actor: PlantActor,
+        retry_at_ms: u64,
+        deadline_ms: u64,
+        continues: u32,
+    },
+    Ignored {
+        actor: PlantActor,
+    },
+}
+
+impl PlantProbe {
+    fn actor(&self) -> Option<&PlantActor> {
+        match self {
+            Self::Idle => None,
+            Self::AwaitingResponse { actor, .. }
+            | Self::Authenticated { actor, .. }
+            | Self::Ignored { actor } => Some(actor),
         }
     }
 }
@@ -706,6 +813,8 @@ pub struct Guardian {
     box_opened: bool,
     /// Maze: the active solve state, None while trapped without a route.
     maze: Option<maze::MazeSolve>,
+    /// Strange Plant's bounded server-authenticated ownership probe.
+    plant: PlantProbe,
 }
 
 impl Default for Guardian {
@@ -742,6 +851,7 @@ impl Guardian {
             lamp_stalled: false,
             box_opened: false,
             maze: None,
+            plant: PlantProbe::Idle,
         }
     }
 
@@ -768,8 +878,15 @@ impl Guardian {
     ) -> RandomStatus {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
-        let ev = detect(snap, now_ms, &self.cooldown);
         let active = snap.ingame() && snap.scene_state() == SCENE_READY;
+        let plant_invalidated = if active {
+            self.revalidate_plant(snap)
+        } else {
+            self.clear_plant();
+            false
+        };
+        let mut ev = detect(snap, now_ms, &self.cooldown);
+        self.sync_plant_event(snap, &mut ev, plant_invalidated);
 
         if fresh && active {
             // Fresh chat only: a stale wrong-talk line must not re-bin a
@@ -779,21 +896,32 @@ impl Guardian {
                 .first()
                 .map(|l| l.sequence)
                 .unwrap_or(self.chat_seen);
-            let mut new_lines = snap
+            let wrong_talk = snap
                 .chat_lines()
                 .iter()
-                .take_while(|l| l.sequence > self.chat_seen);
-            if self.in_flight
-                && new_lines.any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)))
-            {
+                .take_while(|l| l.sequence > self.chat_seen)
+                .any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)));
+            let plant_growing = snap
+                .chat_lines()
+                .iter()
+                .take_while(|l| l.sequence > self.chat_seen)
+                .any(|l| l.text.contains(PLANT_GROWING_MARKER));
+            if self.in_flight && wrong_talk {
                 if let Some(index) = self.in_flight_index {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
                 self.clear_handle();
-            } else if self.acting
-                && self.acting_kind == RandomKind::Pick
-                && new_lines.any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)))
+            } else if !matches!(self.plant, PlantProbe::Idle | PlantProbe::Ignored { .. })
+                && wrong_talk
             {
+                // Plant rejection is pinned to the complete actor identity;
+                // a reused slot must not inherit this bin.
+                self.ignore_current_plant();
+            } else if matches!(self.plant, PlantProbe::AwaitingResponse { .. }) && plant_growing {
+                self.authenticate_plant(now_ms);
+            } else if matches!(self.plant, PlantProbe::Authenticated { .. }) && plant_growing {
+                self.note_plant_growing(now_ms);
+            } else if self.acting && self.acting_kind == RandomKind::Pick && wrong_talk {
                 if let Some(index) = ev.as_ref().and_then(|e| e.npc_index) {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
@@ -804,6 +932,7 @@ impl Guardian {
             if self.in_flight && self.dialog_done(snap) {
                 self.clear_handle();
             }
+            self.sync_plant_event(snap, &mut ev, false);
             // Rising-edge knock: ask the running script once per detected
             // event. A vanished event resets the claim to Host (the host
             // owns whatever appears next). No knock supplied → Host.
@@ -849,6 +978,10 @@ impl Guardian {
         {
             self.act(driver, snap, ev.as_ref(), settings, now_ms);
         }
+        // `step_pick` may have timed out or seen a refused send. Reflect
+        // that release in this same status frame instead of publishing a
+        // stale authenticated `ours`.
+        self.sync_plant_event(snap, &mut ev, false);
         self.last_tick = tick;
 
         // `act` may have stalled the redemption just above: a lamp the
@@ -876,6 +1009,137 @@ impl Guardian {
             toggle: settings.random_events,
             claim: self.claim,
             cooldown,
+        }
+    }
+
+    fn clear_plant(&mut self) {
+        self.plant = PlantProbe::Idle;
+        if self.acting_kind == RandomKind::Pick {
+            self.acting = false;
+        }
+    }
+
+    fn ignore_current_plant(&mut self) {
+        if let Some(actor) = self.plant.actor().cloned() {
+            self.plant = PlantProbe::Ignored { actor };
+        } else {
+            self.plant = PlantProbe::Idle;
+        }
+        if self.acting_kind == RandomKind::Pick {
+            self.acting = false;
+        }
+    }
+
+    fn authenticate_plant(&mut self, now_ms: u64) {
+        let PlantProbe::AwaitingResponse { actor, .. } = &self.plant else {
+            return;
+        };
+        self.plant = PlantProbe::Authenticated {
+            actor: actor.clone(),
+            retry_at_ms: now_ms.saturating_add(PLANT_RETRY_INTERVAL_MS),
+            deadline_ms: now_ms.saturating_add(PLANT_AUTH_TIMEOUT_MS),
+            continues: 0,
+        };
+    }
+
+    fn note_plant_growing(&mut self, now_ms: u64) {
+        if let PlantProbe::Authenticated { retry_at_ms, .. } = &mut self.plant {
+            *retry_at_ms = now_ms.saturating_add(PLANT_RETRY_INTERVAL_MS);
+        }
+    }
+
+    /// Drop authentication as soon as any structural actor field changes.
+    /// If a different pickable actor reused the slot, bind an ignore to the
+    /// replacement so stale state can never turn into a retarget.
+    fn revalidate_plant(&mut self, snap: &GameSnapshot) -> bool {
+        let Some(expected) = self.plant.actor().cloned() else {
+            return false;
+        };
+        let current = npc_by_index(snap.npcs(), expected.slot).and_then(PlantActor::from_npc);
+        if current.as_ref() == Some(&expected) {
+            return false;
+        }
+
+        let was_active = matches!(
+            self.plant,
+            PlantProbe::AwaitingResponse { .. } | PlantProbe::Authenticated { .. }
+        );
+        self.plant = if was_active {
+            current
+                .map(|actor| PlantProbe::Ignored { actor })
+                .unwrap_or(PlantProbe::Idle)
+        } else {
+            PlantProbe::Idle
+        };
+        if self.acting_kind == RandomKind::Pick {
+            self.acting = false;
+        }
+        true
+    }
+
+    /// Keep an in-flight probe pinned to its actor even after the player
+    /// moves away, publish server authentication as `ours`, and hide an
+    /// identity-scoped bin. Other established random kinds still preempt it.
+    fn sync_plant_event(
+        &mut self,
+        snap: &GameSnapshot,
+        ev: &mut Option<DetectedRandom>,
+        suppress_pick: bool,
+    ) {
+        if suppress_pick && ev.as_ref().is_some_and(|e| e.kind == RandomKind::Pick) {
+            if let Some(actor) = ev
+                .as_ref()
+                .and_then(|e| e.npc_index)
+                .and_then(|index| npc_by_index(snap.npcs(), index))
+                .and_then(PlantActor::from_npc)
+            {
+                self.plant = PlantProbe::Ignored { actor };
+            }
+            *ev = None;
+            return;
+        }
+
+        match self.plant.clone() {
+            PlantProbe::AwaitingResponse { actor, .. }
+            | PlantProbe::Authenticated { actor, .. } => {
+                if ev.as_ref().is_some_and(|e| e.kind != RandomKind::Pick) {
+                    return;
+                }
+                let Some(npc) = npc_by_index(snap.npcs(), actor.slot) else {
+                    *ev = None;
+                    return;
+                };
+                let display_name = snap
+                    .local_player()
+                    .and_then(|lp| lp.player.actor.name.clone());
+                let authenticated = matches!(self.plant, PlantProbe::Authenticated { .. });
+                *ev = Some(DetectedRandom {
+                    kind: RandomKind::Pick,
+                    name: PICK_NAME.to_string(),
+                    ours: authenticated
+                        || owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()),
+                    npc_index: Some(actor.slot),
+                });
+            }
+            PlantProbe::Ignored { actor } => {
+                let same_pick = ev
+                    .as_ref()
+                    .is_some_and(|e| e.kind == RandomKind::Pick && e.npc_index == Some(actor.slot));
+                let hard_owned = npc_by_index(snap.npcs(), actor.slot).is_some_and(|npc| {
+                    let display_name = snap
+                        .local_player()
+                        .and_then(|lp| lp.player.actor.name.clone());
+                    owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref())
+                });
+                if same_pick && hard_owned {
+                    // Fresh hard ownership evidence is stronger than a prior
+                    // featureless timeout/rejection.
+                    self.plant = PlantProbe::Idle;
+                } else if same_pick {
+                    *ev = None;
+                }
+            }
+            PlantProbe::Idle => {}
         }
     }
 
@@ -1017,7 +1281,7 @@ impl Guardian {
     ) {
         match self.acting_kind {
             RandomKind::Dialog => self.step_dialog(driver, snap, ev, now_ms),
-            RandomKind::Pick => self.step_pick(driver, snap, ev),
+            RandomKind::Pick => self.step_pick(driver, snap, ev, now_ms),
             RandomKind::Evade => self.step_evade(driver, snap, ev),
             RandomKind::Hazard => self.step_hazard(driver, snap),
             RandomKind::Lamp => self.step_lamp(driver, snap, settings),
@@ -1064,6 +1328,7 @@ impl Guardian {
         self.clear_lamp();
         self.box_opened = false;
         self.maze = None;
+        self.plant = PlantProbe::Idle;
     }
 
     /// Talk-to, gated on range: an NPC further than Chebyshev 1 gets a
@@ -1112,11 +1377,16 @@ impl Guardian {
         }
     }
 
-    /// Pick the growing plant, gated on range like Talk-to. The owner is
-    /// re-read here, at the send: only a currently ours, pickable plant
-    /// (see [`owned_pickable_plant`]) is walked to and picked, so a reused
-    /// actor slot or a foreign plant never turns into a chase or a click.
-    fn step_pick<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, ev: &DetectedRandom) {
+    /// Drive either the established hard-owner behavior or the bounded
+    /// adjacent server probe. No featureless actor is walked to; only the
+    /// exact actor authenticated by the growing response may later be chased.
+    fn step_pick<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        ev: &DetectedRandom,
+        now_ms: u64,
+    ) {
         let Some((px, pz, _)) = snap.tile() else {
             return;
         };
@@ -1131,18 +1401,117 @@ impl Guardian {
         let display_name = snap
             .local_player()
             .and_then(|lp| lp.player.actor.name.clone());
-        if !owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()) {
-            self.acting = false;
+        let Some(actor) = PlantActor::from_npc(npc) else {
+            self.clear_plant();
+            return;
+        };
+        let distance = cheb((px, pz), (npc.tile.x, npc.tile.z));
+
+        // Preserve the existing hard evidence path, including its allowed
+        // walk to range. It does not need or inherit probe authentication.
+        if owned_pickable_plant(npc, snap.self_slot(), display_name.as_deref()) {
+            self.plant = PlantProbe::Idle;
+            if distance > 1 {
+                walk(driver, npc.tile.x, npc.tile.z);
+                return;
+            }
+            let mut ix = Interactions::new(snap, driver);
+            if matches!(
+                ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())),
+                SendResult::Refused { .. }
+            ) {
+                self.acting = false;
+            }
             return;
         }
-        if cheb((px, pz), (npc.tile.x, npc.tile.z)) > 1 {
-            walk(driver, npc.tile.x, npc.tile.z);
+
+        if !featureless_pickable_plant(npc) {
+            self.ignore_current_plant();
             return;
         }
-        let mut ix = Interactions::new(snap, driver);
-        match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
-            SendResult::Sent { .. } => {}
-            SendResult::Refused { .. } => self.acting = false,
+
+        match self.plant.clone() {
+            PlantProbe::Idle => {
+                if distance > 1 {
+                    self.acting = false;
+                    return;
+                }
+                let mut ix = Interactions::new(snap, driver);
+                match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
+                    SendResult::Sent { .. } => {
+                        self.plant = PlantProbe::AwaitingResponse {
+                            actor,
+                            deadline_ms: now_ms.saturating_add(PLANT_PROBE_TIMEOUT_MS),
+                        };
+                    }
+                    SendResult::Refused { .. } => {
+                        self.plant = PlantProbe::Ignored { actor };
+                        self.acting = false;
+                    }
+                }
+            }
+            PlantProbe::AwaitingResponse {
+                actor: expected,
+                deadline_ms,
+            } => {
+                if actor != expected {
+                    self.plant = PlantProbe::Ignored { actor };
+                    self.acting = false;
+                } else if now_ms >= deadline_ms {
+                    self.ignore_current_plant();
+                }
+            }
+            PlantProbe::Authenticated {
+                actor: expected,
+                retry_at_ms,
+                deadline_ms,
+                continues,
+            } => {
+                if actor != expected {
+                    self.plant = PlantProbe::Ignored { actor };
+                    self.acting = false;
+                    return;
+                }
+                if now_ms >= deadline_ms || continues >= MAX_PLANT_CONTINUES {
+                    self.ignore_current_plant();
+                    return;
+                }
+                if chat_is_open(snap) {
+                    let mut ix = Interactions::new(snap, driver);
+                    match ix.continue_dialog() {
+                        SendResult::Sent { .. } => {
+                            if let PlantProbe::Authenticated { continues, .. } = &mut self.plant {
+                                *continues += 1;
+                            }
+                        }
+                        SendResult::Refused { .. } => self.ignore_current_plant(),
+                    }
+                    return;
+                }
+                if now_ms < retry_at_ms {
+                    return;
+                }
+                if distance > 1 {
+                    if !walk(driver, npc.tile.x, npc.tile.z) {
+                        self.ignore_current_plant();
+                    } else if let PlantProbe::Authenticated { retry_at_ms, .. } = &mut self.plant {
+                        *retry_at_ms = now_ms.saturating_add(PLANT_RETRY_INTERVAL_MS);
+                    }
+                    return;
+                }
+                let mut ix = Interactions::new(snap, driver);
+                match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())) {
+                    SendResult::Sent { .. } => {
+                        if let PlantProbe::Authenticated { retry_at_ms, .. } = &mut self.plant {
+                            *retry_at_ms = now_ms.saturating_add(PLANT_RETRY_INTERVAL_MS);
+                        }
+                    }
+                    SendResult::Refused { .. } => self.ignore_current_plant(),
+                }
+            }
+            PlantProbe::Ignored { .. } => {
+                self.acting = false;
+            }
         }
     }
 
@@ -3332,7 +3701,7 @@ mod tests {
     fn unknown_strange_plant_is_not_picked_held_or_chased() {
         // A growing seed carries no ownership tell of its own (no facing,
         // no overhead — `macro_event_triffid_spawn` only animates it), so
-        // an unidentified plant must not drive the host.
+        // an out-of-reach unidentified plant must not drive the host.
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
@@ -3351,6 +3720,200 @@ mod tests {
         assert!(!status.hold);
         assert!(drv.menus.is_empty());
         assert!(drv.walks.is_empty(), "no chase without ownership evidence");
+    }
+
+    #[test]
+    fn adjacent_featureless_foreign_plant_is_probed_once_then_binned() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_eq!(status.kind, Some(RandomKind::Pick));
+        assert!(!status.ours, "the probe is not ownership evidence");
+        assert!(status.hold, "one in-flight probe may serialize the slot");
+        assert_eq!(drv.menus, vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)]);
+        assert_eq!(drv.actions, vec![0]);
+        assert!(drv.walks.is_empty());
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.add_chat(0, "It's not here for you.", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.ours);
+        assert!(!status.hold, "foreign response releases immediately");
+        assert!(drv.menus.is_empty());
+        assert!(drv.actions.is_empty());
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 100_000, None);
+        assert_eq!(status.kind, None, "the exact foreign actor stays binned");
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty(), "foreign actor is never re-probed");
+        assert!(drv.actions.is_empty());
+    }
+
+    #[test]
+    fn adjacent_owned_growing_plant_authenticates_drains_and_retries_paced() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_eq!(drv.actions, vec![0], "the first Pick is the probe");
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.add_chat(0, "The fruit isn't ready to be picked yet...", "");
+        open_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert!(status.ours, "the server response authenticates this actor");
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, CHAT_CONTINUE)],
+            "the growing response is drained before another Pick"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        drv.menus.clear();
+        drv.actions.clear();
+        close_chat(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_500, None);
+        assert!(status.ours);
+        assert!(status.hold);
+        assert!(drv.actions.is_empty(), "the retry interval is paced");
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 5_000, None);
+        assert!(status.ours);
+        assert!(status.hold);
+        assert_eq!(
+            drv.menus,
+            vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)],
+            "the authenticated actor is eventually picked again"
+        );
+        assert_eq!(drv.actions, vec![0]);
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.npc[0] = None;
+        c.npc_count = 0;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 10_000, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.ours);
+        assert!(!status.hold, "actor disappearance releases");
+        assert!(drv.actions.is_empty());
+        assert!(drv.walks.is_empty());
+    }
+
+    #[test]
+    fn featureless_ready_owned_plant_completes_on_first_pick_without_replay() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_eq!(drv.actions, vec![0]);
+
+        drv.menus.clear();
+        drv.actions.clear();
+        c.npc[0] = None;
+        c.npc_count = 0;
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold);
+        assert!(drv.actions.is_empty());
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 3_000, None);
+        assert_eq!(status.kind, None);
+        assert!(!status.hold);
+        assert!(drv.actions.is_empty(), "completion is not replayed");
+    }
+
+    #[test]
+    fn featureless_plant_probe_and_authenticated_wait_time_out_cleanly() {
+        fn fixture() -> (Client, Guardian, FakeDriver, ProfileSettings, GameSnapshot) {
+            let mut c = new_client();
+            ingame_scene(&mut c);
+            plant_player(&mut c, "Test", 0, 0);
+            plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+            (
+                c,
+                Guardian::new(),
+                FakeDriver::default(),
+                ProfileSettings::default(),
+                GameSnapshot::new(),
+            )
+        }
+
+        let (mut c, mut g, mut drv, settings, mut snap) = fixture();
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        drv.menus.clear();
+        drv.actions.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(
+            &mut drv,
+            &snap,
+            &settings,
+            1_000 + PLANT_PROBE_TIMEOUT_MS,
+            None,
+        );
+        assert_eq!(status.kind, None);
+        assert!(!status.ours);
+        assert!(!status.hold);
+        assert!(drv.actions.is_empty(), "an unanswered probe is not retried");
+
+        let (mut c, mut g, mut drv, settings, mut snap) = fixture();
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        drv.menus.clear();
+        drv.actions.clear();
+        c.add_chat(0, "The fruit isn't ready to be picked yet...", "");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert!(status.ours);
+        assert!(status.hold);
+
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(
+            &mut drv,
+            &snap,
+            &settings,
+            2_000 + PLANT_AUTH_TIMEOUT_MS,
+            None,
+        );
+        assert_eq!(status.kind, None);
+        assert!(!status.ours, "timeout clears authenticated evidence");
+        assert!(!status.hold);
+        assert!(drv.actions.is_empty());
+        assert!(drv.walks.is_empty());
     }
 
     #[test]
@@ -3387,13 +3950,13 @@ mod tests {
     }
 
     #[test]
-    fn foreign_strange_plant_does_not_starve_a_held_lamp() {
-        // The plant sits earlier in `detect` than the inventory-held lamp:
-        // a foreign plant must not shadow the lamp the host must redeem.
+    fn featureless_strange_plant_does_not_starve_a_held_lamp() {
+        // An unauthenticated adjacent plant must not shadow the lamp the
+        // host must redeem.
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
-        plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Bob!"), "Pick");
+        plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
         plant_inv_lamp(&mut c);
         let mut g = Guardian::new();
         let mut drv = FakeDriver::default();
@@ -3410,6 +3973,58 @@ mod tests {
             vec![(0, MiniMenuAction::OP_HELD1, LAMP_OBJ, 0, 301)],
             "the lamp is rubbed, not the foreign plant picked"
         );
+    }
+
+    #[test]
+    fn authenticated_plant_drops_reused_id_op_and_angry_replacements() {
+        for replacement_op in ["Take", "Attack"] {
+            let mut c = new_client();
+            ingame_scene(&mut c);
+            plant_player(&mut c, "Test", 0, 0);
+            plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+            plant_npc_with_op(&mut c, 1, "Strange plant", -1, None, replacement_op);
+            let replacement_type = c.npc[1].as_ref().expect("replacement").r#type;
+            c.npc[1] = None;
+            c.npc_count = 1;
+
+            let mut g = Guardian::new();
+            let mut drv = FakeDriver::default();
+            let settings = ProfileSettings::default();
+            let mut snap = GameSnapshot::new();
+
+            tick_at(&mut c, &mut snap);
+            g.tick(&mut drv, &snap, &settings, 1_000, None);
+            drv.menus.clear();
+            drv.actions.clear();
+            c.add_chat(0, "The fruit isn't ready to be picked yet...", "");
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+            assert!(status.ours, "fixture reaches authenticated state");
+            assert!(status.hold);
+
+            drv.menus.clear();
+            drv.actions.clear();
+            c.npc[0].as_mut().expect("plant").r#type = replacement_type;
+            c.npc[0].as_mut().expect("plant").entity.x = 3 * 128 + 64;
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 20_000, None);
+            assert!(
+                !status.hold,
+                "{replacement_op} replacement must lose authenticated hold"
+            );
+            assert!(
+                drv.menus.is_empty(),
+                "{replacement_op} replacement gets no action"
+            );
+            assert!(
+                drv.actions.is_empty(),
+                "{replacement_op} replacement gets no action"
+            );
+            assert!(
+                drv.walks.is_empty(),
+                "{replacement_op} replacement is not chased"
+            );
+        }
     }
 
     #[test]
