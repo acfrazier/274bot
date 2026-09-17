@@ -473,6 +473,92 @@ fn built_example_keeps_walk_nearest_bank_pending_past_short_op_bound() {
 }
 
 #[test]
+fn built_example_walk_pending_clears_on_usable_bank_arrival_without_walk_outcome_seq() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let filler = [ItemRowInput::nc(Some("Coins"), 1)];
+    let stands = [bone_stand()];
+    let far_approaches = [BankApproachInput {
+        loc_id: 1,
+        x: 3210,
+        z: 3210,
+        level: 0,
+        can_operate: true,
+        dest_ok: true,
+        dest_x: 3210,
+        dest_z: 3210,
+        dest_level: 0,
+    }];
+    let arrived_approaches = bone_approach();
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &filler;
+    s.banks = &stands;
+    let facts = NativeFactsInput {
+        bank_approaches: Some(&far_approaches),
+        ..Default::default()
+    };
+    post_tick(&iso, s, facts, 1);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::WalkNearestBank]);
+    for tick in 2..=40 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &filler;
+        s.banks = &stands;
+        post_tick(
+            &iso,
+            s,
+            NativeFactsInput {
+                bank_approaches: Some(&far_approaches),
+                ..Default::default()
+            },
+            tick,
+        );
+        assert!(
+            !iso.stopped(),
+            "must stay pending until operable bank facts arrive (tick {tick})"
+        );
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "unchanged walking snapshot must not resend walk (tick {tick})"
+        );
+    }
+    let mut s = base_snapshot();
+    s.tick = 41;
+    s.inv = &filler;
+    s.banks = &stands;
+    post_tick(
+        &iso,
+        s,
+        NativeFactsInput {
+            bank_approaches: Some(&arrived_approaches),
+            ..Default::default()
+        },
+        41,
+    );
+    assert!(!iso.stopped());
+    assert!(iso.drain_interacts().is_empty(), "walk clears same tick");
+    let mut s = base_snapshot();
+    s.tick = 42;
+    s.inv = &filler;
+    s.banks = &stands;
+    post_tick(
+        &iso,
+        s,
+        NativeFactsInput {
+            bank_approaches: Some(&arrived_approaches),
+            ..Default::default()
+        },
+        42,
+    );
+    assert!(
+        format!("{:?}", iso.drain_interacts()).contains("OpenStand"),
+        "usable bank arrival must allow open after walk pending clears"
+    );
+    iso.join();
+}
+
+#[test]
 fn built_example_walk_pending_fails_closed_after_extended_bound() {
     let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();

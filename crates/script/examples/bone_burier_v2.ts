@@ -118,14 +118,25 @@ function observePending(api: NativeApi, bone: string, invCount: number): boolean
         phase = 'finding-bank';
         return true;
     }
-    if (work.kind === 'walk' && api.snapshot.walk_outcome_seq > work.seq) {
-        if (api.snapshot.walk_outcome_failed) {
-            fail(api, 'bank navigation failed');
-        } else {
+    if (work.kind === 'walk') {
+        if (api.snapshot.walk_outcome_seq > work.seq) {
+            if (api.snapshot.walk_outcome_failed) {
+                fail(api, 'bank navigation failed');
+            } else {
+                pending = null;
+                phase = 'finding-bank';
+            }
+            return true;
+        }
+        const banks = Array.isArray(api.snapshot.banks) ? api.snapshot.banks : [];
+        const bankApproaches = Array.isArray(api.snapshot.bank_approaches)
+            ? api.snapshot.bank_approaches
+            : [];
+        if (supportedStand(api, banks, bankApproaches)) {
             pending = null;
             phase = 'finding-bank';
+            return true;
         }
-        return true;
     }
     return false;
 }
