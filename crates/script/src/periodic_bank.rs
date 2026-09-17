@@ -28,6 +28,7 @@ pub enum BankStrategy {
 enum Phase {
     Idle,
     Access,
+    WaitApproach,
     Open,
     WaitReady,
     Deposit,
@@ -36,7 +37,15 @@ enum Phase {
     Return,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ApproachFact {
+    loc_id: i32,
+    tile: Tile,
+    can_operate: bool,
+    dest: Option<Tile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Tile {
     x: i32,
     z: i32,
@@ -63,6 +72,7 @@ pub struct PeriodicBankRuntime {
     return_to: Option<Tile>,
     has_after_deposit: bool,
     open_generation: u64,
+    last_approach_dest: Option<Tile>,
 }
 
 impl PeriodicBankRuntime {
@@ -80,6 +90,7 @@ impl PeriodicBankRuntime {
             return_to: None,
             has_after_deposit: false,
             open_generation: 0,
+            last_approach_dest: None,
         }
     }
 
@@ -123,6 +134,7 @@ impl PeriodicBankRuntime {
         self.dest = None;
         self.return_to = None;
         self.has_after_deposit = false;
+        self.last_approach_dest = None;
     }
 
     pub fn validate(
@@ -166,8 +178,58 @@ impl PeriodicBankRuntime {
         self.return_to = return_to;
         self.has_after_deposit = has_after_deposit;
         self.open_generation = bank_generation;
+        self.last_approach_dest = None;
         self.phase = Phase::Access;
         json!({"kind": "started", "token": self.token})
+    }
+
+    fn live_approach<'a>(&self, obs: &'a Observation, booth: Booth) -> Option<&'a ApproachFact> {
+        obs.approaches.iter().find(|row| {
+            row.loc_id == booth.id
+                && row.tile.x == booth.x
+                && row.tile.z == booth.z
+                && row.tile.level == booth.level
+        })
+    }
+
+    fn access_booth(&self, obs: &Observation) -> Option<Booth> {
+        let booth = obs.nearest_booth?;
+        if let Some(dest) = self.dest {
+            if chebyshev(dest, booth.tile()) > ACCESS_RADIUS {
+                return None;
+            }
+        }
+        Some(booth)
+    }
+
+    fn advance_via_approach(&mut self, obs: &Observation, booth: Booth) -> Option<Value> {
+        match self.live_approach(obs, booth).copied() {
+            None => Some(self.fail_now()),
+            Some(row) if row.can_operate => {
+                self.phase = Phase::Open;
+                None
+            }
+            Some(row) => match row.dest {
+                None => Some(self.fail_now()),
+                Some(dest) if self.last_approach_dest == Some(dest) => {
+                    self.phase = Phase::WaitApproach;
+                    Some(json!({"kind": "wait", "token": self.token, "timeout_ms": BANK_WAIT_MS}))
+                }
+                Some(dest) => {
+                    self.last_approach_dest = Some(dest);
+                    self.phase = Phase::WaitApproach;
+                    Some(json!({
+                        "kind": "walk-near",
+                        "token": self.token,
+                        "x": dest.x,
+                        "z": dest.z,
+                        "level": dest.level,
+                        "radius": 0,
+                        "timeout_ms": WALK_BOUND_MS,
+                    }))
+                }
+            },
+        }
     }
 
     fn next(&mut self, token: u64, obs: &Observation) -> Value {
@@ -189,23 +251,30 @@ impl PeriodicBankRuntime {
                         return self.fail_now();
                     };
                     if let Some(dest) = self.dest {
-                        if chebyshev(here, dest) <= ACCESS_RADIUS {
-                            self.phase = Phase::Open;
-                            continue;
+                        if chebyshev(here, dest) > ACCESS_RADIUS {
+                            return json!({
+                                "kind": "walk-near",
+                                "token": self.token,
+                                "x": dest.x,
+                                "z": dest.z,
+                                "level": dest.level,
+                                "radius": ACCESS_RADIUS,
+                                "timeout_ms": WALK_BOUND_MS,
+                            });
                         }
-                        return json!({
-                            "kind": "walk-near",
-                            "token": self.token,
-                            "x": dest.x,
-                            "z": dest.z,
-                            "level": dest.level,
-                            "radius": ACCESS_RADIUS,
-                            "timeout_ms": WALK_BOUND_MS,
-                        });
+                        let Some(booth) = self.access_booth(obs) else {
+                            return self.fail_now();
+                        };
+                        if let Some(step) = self.advance_via_approach(obs, booth) {
+                            return step;
+                        }
+                        continue;
                     }
                     if let Some(booth) = obs.nearest_booth {
                         if chebyshev(here, booth.tile()) <= ACCESS_RADIUS {
-                            self.phase = Phase::Open;
+                            if let Some(step) = self.advance_via_approach(obs, booth) {
+                                return step;
+                            }
                             continue;
                         }
                     }
@@ -217,6 +286,44 @@ impl PeriodicBankRuntime {
                         });
                     }
                     return self.fail_now();
+                }
+                Phase::WaitApproach => {
+                    if snapshot_ready(obs) {
+                        self.phase = Phase::Deposit;
+                        continue;
+                    }
+                    let Some(booth) = self.access_booth(obs) else {
+                        return self.fail_now();
+                    };
+                    match self.live_approach(obs, booth).copied() {
+                        None => return self.fail_now(),
+                        Some(row) if row.can_operate => {
+                            self.phase = Phase::Open;
+                            continue;
+                        }
+                        Some(row) => match row.dest {
+                            None => return self.fail_now(),
+                            Some(dest) if self.last_approach_dest == Some(dest) => {
+                                return json!({
+                                    "kind": "wait",
+                                    "token": self.token,
+                                    "timeout_ms": BANK_WAIT_MS,
+                                });
+                            }
+                            Some(dest) => {
+                                self.last_approach_dest = Some(dest);
+                                return json!({
+                                    "kind": "walk-near",
+                                    "token": self.token,
+                                    "x": dest.x,
+                                    "z": dest.z,
+                                    "level": dest.level,
+                                    "radius": 0,
+                                    "timeout_ms": WALK_BOUND_MS,
+                                });
+                            }
+                        },
+                    }
                 }
                 Phase::Open => {
                     if snapshot_ready(obs) {
@@ -230,6 +337,14 @@ impl PeriodicBankRuntime {
                         if chebyshev(dest, booth.tile()) > ACCESS_RADIUS {
                             return self.fail_now();
                         }
+                    }
+                    match self.live_approach(obs, booth).map(|row| row.can_operate) {
+                        None => return self.fail_now(),
+                        Some(false) => {
+                            self.phase = Phase::WaitApproach;
+                            continue;
+                        }
+                        Some(true) => {}
                     }
                     self.open_generation = obs.bank_generation;
                     self.phase = Phase::WaitReady;
@@ -353,6 +468,7 @@ struct Observation {
     booth_name: Option<String>,
     booth_action: Option<String>,
     has_booth_stands: bool,
+    approaches: Vec<ApproachFact>,
 }
 
 impl Booth {
@@ -503,7 +619,41 @@ fn read_observation(input: &Value) -> Observation {
             .and_then(Value::as_str)
             .map(str::to_string),
         has_booth_stands: input["has_booth_stands"].as_bool().unwrap_or(false),
+        approaches: read_approaches(input.get("bank_approaches")),
     }
+}
+
+fn read_approaches(value: Option<&Value>) -> Vec<ApproachFact> {
+    let Some(rows) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter_map(|row| {
+            Some(ApproachFact {
+                loc_id: row.get("loc_id")?.as_i64()? as i32,
+                tile: Tile {
+                    x: row.get("x")?.as_i64()? as i32,
+                    z: row.get("z")?.as_i64()? as i32,
+                    level: row.get("level").and_then(Value::as_i64).unwrap_or(0) as i32,
+                },
+                can_operate: row.get("can_operate").and_then(Value::as_bool)?,
+                dest: row
+                    .get("dest_ok")
+                    .and_then(Value::as_bool)
+                    .filter(|ok| *ok)
+                    .and_then(|_| {
+                        Some(Tile {
+                            x: row.get("dest_x")?.as_i64()? as i32,
+                            z: row.get("dest_z")?.as_i64()? as i32,
+                            level: row
+                                .get("dest_level")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0) as i32,
+                        })
+                    }),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -567,6 +717,15 @@ mod tests {
         );
     }
 
+    fn ready_approach(loc_id: i32, x: i32, z: i32, dest: Tile) -> ApproachFact {
+        ApproachFact {
+            loc_id,
+            tile: Tile { x, z, level: 0 },
+            can_operate: true,
+            dest: Some(dest),
+        }
+    }
+
     #[test]
     fn supplied_destination_does_not_fall_back_and_reset_drops_callback_phase() {
         let mut runtime = PeriodicBankRuntime::new();
@@ -597,6 +756,7 @@ mod tests {
                 booth_name: None,
                 booth_action: None,
                 has_booth_stands: true,
+                approaches: Vec::new(),
             },
         );
         assert_eq!(walk["kind"], "walk-near");
@@ -618,6 +778,7 @@ mod tests {
                 booth_name: None,
                 booth_action: None,
                 has_booth_stands: true,
+                approaches: Vec::new(),
             },
         );
         assert_eq!(far["kind"], "fail", "a different loc is missing access");
@@ -639,6 +800,7 @@ mod tests {
                 booth_name: Some("Bank booth".into()),
                 booth_action: Some("Use-quickly".into()),
                 has_booth_stands: true,
+                approaches: vec![ready_approach(2213, dest.x, dest.z, dest)],
             },
         );
         assert_eq!(open["kind"], "open-booth");
@@ -658,5 +820,105 @@ mod tests {
         let out = runtime.begin(None, None, false, true, 0);
         assert_eq!(out["kind"], "fail");
         assert_eq!(out["reason"], "missing access");
+    }
+
+    #[test]
+    fn closed_face_row_walks_producer_dest_radius_zero_before_named_open() {
+        let mut runtime = PeriodicBankRuntime::new();
+        let started = runtime.begin(None, None, false, false, 0);
+        let token = started["token"].as_u64().unwrap();
+        let booth = Booth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+        };
+        let approach_dest = Tile {
+            x: 3011,
+            z: 3355,
+            level: 0,
+        };
+        let walk = runtime.next(
+            token,
+            &Observation {
+                here: Some(Tile {
+                    x: 3010,
+                    z: 3355,
+                    level: 0,
+                }),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(booth),
+                booth_name: Some("Bank booth".into()),
+                booth_action: Some("Use-quickly".into()),
+                has_booth_stands: true,
+                approaches: vec![ApproachFact {
+                    loc_id: 2213,
+                    tile: booth.tile(),
+                    can_operate: false,
+                    dest: Some(approach_dest),
+                }],
+            },
+        );
+        assert_eq!(walk["kind"], "walk-near");
+        assert_eq!(walk["radius"], 0);
+        assert_eq!(walk["x"], approach_dest.x);
+        assert_eq!(walk["z"], approach_dest.z);
+
+        let open = runtime.next(
+            token,
+            &Observation {
+                here: Some(approach_dest),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(booth),
+                booth_name: Some("Bank booth".into()),
+                booth_action: Some("Use-quickly".into()),
+                has_booth_stands: true,
+                approaches: vec![ApproachFact {
+                    loc_id: 2213,
+                    tile: booth.tile(),
+                    can_operate: true,
+                    dest: Some(approach_dest),
+                }],
+            },
+        );
+        assert_eq!(open["kind"], "open-booth");
+        assert_eq!(open["id"], 2213);
+        assert_eq!(open["name"], "Bank booth");
+        assert_eq!(open["action"], "Use-quickly");
+    }
+
+    #[test]
+    fn missing_approach_fact_fails_closed_at_chebyshev_one() {
+        let mut runtime = PeriodicBankRuntime::new();
+        let started = runtime.begin(None, None, false, false, 0);
+        let token = started["token"].as_u64().unwrap();
+        let out = runtime.next(
+            token,
+            &Observation {
+                here: Some(Tile {
+                    x: 3010,
+                    z: 3355,
+                    level: 0,
+                }),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(Booth {
+                    x: 3011,
+                    z: 3354,
+                    level: 0,
+                    id: 2213,
+                }),
+                booth_name: None,
+                booth_action: None,
+                has_booth_stands: true,
+                approaches: Vec::new(),
+            },
+        );
+        assert_eq!(out["kind"], "fail");
     }
 }

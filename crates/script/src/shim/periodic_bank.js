@@ -19,6 +19,24 @@ function call(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_periodic_bank(payload);
 }
 
+function bankApproaches(s) {
+    const rows = s.bank_approaches;
+    if (!Array.isArray(rows)) {
+        return [];
+    }
+    return rows.map((row) => ({
+        loc_id: row.loc_id,
+        x: row.x,
+        z: row.z,
+        level: row.level ?? 0,
+        can_operate: !!row.can_operate,
+        dest_ok: !!row.dest_ok,
+        dest_x: row.dest_x,
+        dest_z: row.dest_z,
+        dest_level: row.dest_level ?? 0,
+    }));
+}
+
 function obs() {
     const s = snap();
     const booth = s.nearest_booth || null;
@@ -31,6 +49,7 @@ function obs() {
         booth_name: booth && booth.name ? String(booth.name) : undefined,
         booth_action: booth && booth.op ? String(booth.op) : undefined,
         has_booth_stands: (s.banks || []).some((stand) => stand && stand.kind === 'booth'),
+        bank_approaches: bankApproaches(s),
     };
 }
 

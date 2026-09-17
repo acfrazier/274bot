@@ -1,11 +1,50 @@
 use script::isolate_fb::{
-    ItemRowInput, NearestBoothInput, ReachViewInput, SnapshotInput, TileInput,
+    encode_snapshot_with_native, BankApproachInput, ItemRowInput, NativeFactsInput,
+    NearestBoothInput, ReachViewInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+}
+
+fn post_snapshot_native(
+    iso: &LoadIsolate,
+    input: &SnapshotInput<'_>,
+    approaches: &[BankApproachInput],
+) {
+    iso.post_snapshot(encode_snapshot_with_native(
+        input,
+        NativeFactsInput {
+            bank_approaches: Some(approaches),
+            ..Default::default()
+        },
+    ));
+}
+
+fn approach_row(
+    loc_id: i32,
+    x: i32,
+    z: i32,
+    can_operate: bool,
+    dest: Option<(i32, i32)>,
+) -> BankApproachInput {
+    BankApproachInput {
+        loc_id,
+        x,
+        z,
+        level: 0,
+        can_operate,
+        dest_ok: dest.is_some(),
+        dest_x: dest.map(|tile| tile.0).unwrap_or(0),
+        dest_z: dest.map(|tile| tile.1).unwrap_or(0),
+        dest_level: 0,
+    }
+}
+
+fn seers_ready_approach() -> BankApproachInput {
+    approach_row(2213, 2725, 3490, true, Some((2724, 3490)))
 }
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -197,7 +236,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
         level: 0,
     });
     snap.nearest_booth = Some(booth);
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
@@ -310,7 +349,7 @@ export default class T extends TaskBot {
         level: 0,
     });
     snap.nearest_booth = Some(seers_booth());
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
     assert_eq!(iso.probe("__shim").unwrap(), "loot");
     assert!(matches!(
@@ -482,7 +521,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
         level: 0,
     });
     snap.nearest_booth = Some(seers_booth());
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
     assert!(matches!(
         iso.drain_interacts().as_slice(),
@@ -529,6 +568,67 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
             .iter()
             .all(|req| !matches!(req, InteractReq::Close)),
         "old close must not land after reset"
+    );
+    iso.join();
+}
+
+#[test]
+fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+    iso.post_settings_bag(&bag);
+
+    let booth = NearestBoothInput {
+        x: 3011,
+        z: 3354,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    };
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 3010,
+        z: 3355,
+        level: 0,
+    });
+    snap.nearest_booth = Some(booth);
+    let approaching = [approach_row(2213, 3011, 3354, false, Some((3011, 3355)))];
+    post_snapshot_native(&iso, &snap, &approaching);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNear {
+            x: 3011,
+            z: 3355,
+            level: 0,
+            radius: 0,
+            allow_teleports: false,
+            request_id: 0,
+        }],
+        "Chebyshev 1 with can_operate false must not OpenBooth across a closed-face row"
+    );
+
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 3011,
+        z: 3355,
+        level: 0,
+    });
+    let ready = [approach_row(2213, 3011, 3354, true, Some((3011, 3355)))];
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            action: Some("Use-quickly".into()),
+        }]
     );
     iso.join();
 }
