@@ -632,3 +632,76 @@ fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
     );
     iso.join();
 }
+
+#[test]
+fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+    iso.post_settings_bag(&bag);
+
+    const GEN: u64 = 12;
+    let booth = NearestBoothInput {
+        x: 3011,
+        z: 3354,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    };
+    let mut snap = base_snapshot();
+    snap.bank_generation = GEN;
+    snap.here = Some(TileInput {
+        x: 3010,
+        z: 3355,
+        level: 0,
+    });
+    snap.nearest_booth = Some(booth);
+    let approaching = [approach_row(2213, 3011, 3354, false, Some((3011, 3355)))];
+    post_snapshot_native(&iso, &snap, &approaching);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNear {
+            x: 3011,
+            z: 3355,
+            level: 0,
+            radius: 0,
+            allow_teleports: false,
+            request_id: 0,
+        }]
+    );
+
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 3011,
+        z: 3355,
+        level: 0,
+    });
+    snap.bank_generation = GEN;
+    let still_blocked = [approach_row(2213, 3011, 3354, false, Some((3011, 3355)))];
+    post_snapshot_native(&iso, &snap, &still_blocked);
+    tick(&iso, 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "must wait on Rust approach readiness, not bank generation"
+    );
+
+    snap.tick = 3;
+    snap.bank_generation = GEN;
+    let ready = [approach_row(2213, 3011, 3354, true, Some((3011, 3355)))];
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            action: Some("Use-quickly".into()),
+        }]
+    );
+    iso.join();
+}

@@ -892,6 +892,91 @@ mod tests {
     }
 
     #[test]
+    fn wait_approach_keeps_waiting_then_opens_when_can_operate_lags() {
+        let mut runtime = PeriodicBankRuntime::new();
+        let started = runtime.begin(None, None, false, false, 0);
+        let token = started["token"].as_u64().unwrap();
+        let booth = Booth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+        };
+        let approach_dest = Tile {
+            x: 3011,
+            z: 3355,
+            level: 0,
+        };
+        let walk = runtime.next(
+            token,
+            &Observation {
+                here: Some(Tile {
+                    x: 3010,
+                    z: 3355,
+                    level: 0,
+                }),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(booth),
+                booth_name: Some("Bank booth".into()),
+                booth_action: Some("Use-quickly".into()),
+                has_booth_stands: true,
+                approaches: vec![ApproachFact {
+                    loc_id: 2213,
+                    tile: booth.tile(),
+                    can_operate: false,
+                    dest: Some(approach_dest),
+                }],
+            },
+        );
+        assert_eq!(walk["kind"], "walk-near");
+
+        let wait = runtime.next(
+            token,
+            &Observation {
+                here: Some(approach_dest),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(booth),
+                booth_name: Some("Bank booth".into()),
+                booth_action: Some("Use-quickly".into()),
+                has_booth_stands: true,
+                approaches: vec![ApproachFact {
+                    loc_id: 2213,
+                    tile: booth.tile(),
+                    can_operate: false,
+                    dest: Some(approach_dest),
+                }],
+            },
+        );
+        assert_eq!(wait["kind"], "wait");
+
+        let open = runtime.next(
+            token,
+            &Observation {
+                here: Some(approach_dest),
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                nearest_booth: Some(booth),
+                booth_name: Some("Bank booth".into()),
+                booth_action: Some("Use-quickly".into()),
+                has_booth_stands: true,
+                approaches: vec![ApproachFact {
+                    loc_id: 2213,
+                    tile: booth.tile(),
+                    can_operate: true,
+                    dest: Some(approach_dest),
+                }],
+            },
+        );
+        assert_eq!(open["kind"], "open-booth");
+        assert_eq!(open["id"], 2213);
+    }
+
+    #[test]
     fn missing_approach_fact_fails_closed_at_chebyshev_one() {
         let mut runtime = PeriodicBankRuntime::new();
         let started = runtime.begin(None, None, false, false, 0);

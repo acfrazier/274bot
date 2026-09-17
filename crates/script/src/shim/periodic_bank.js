@@ -118,24 +118,37 @@ export class PeriodicBank {
             if (aborted()) {
                 return;
             }
-            const step = call({ op: 'next', token, ...obs() });
-            switch (step.kind) {
+            let step = call({ op: 'next', token, ...obs() });
+            stepLoop: for (;;) {
+                if (aborted()) {
+                    return;
+                }
+                switch (step.kind) {
                 case 'aborted':
                     return;
                 case 'wait': {
-                    const baseline = Bank.snapshotGeneration();
-                    const ready = await Execution.delayUntil(
-                        () =>
-                            aborted() ||
-                            (Bank.snapshotReady() && Bank.snapshotGeneration() > baseline),
-                        timeoutMs(step, BANK_WAIT_MS),
-                    );
-                    if (aborted()) return;
-                    if (!ready) {
+                    const ms = timeoutMs(step, BANK_WAIT_MS);
+                    let progressed = false;
+                    const settled = await Execution.delayUntil(() => {
+                        if (aborted()) {
+                            return true;
+                        }
+                        const next = call({ op: 'next', token, ...obs() });
+                        if (next.kind !== 'wait') {
+                            step = next;
+                            progressed = true;
+                            return true;
+                        }
+                        return false;
+                    }, ms);
+                    if (aborted()) {
+                        return;
+                    }
+                    if (!settled || (!progressed && step.kind === 'wait')) {
                         await fail();
                         return;
                     }
-                    break;
+                    continue stepLoop;
                 }
                 case 'walk-near': {
                     const tile = { x: step.x, z: step.z, level: step.level };
@@ -156,7 +169,7 @@ export class PeriodicBank {
                         await fail();
                         return;
                     }
-                    break;
+                    break stepLoop;
                 }
                 case 'walk-nearest-bank': {
                     queue({ op: 'walk-nearest-bank' });
@@ -170,7 +183,7 @@ export class PeriodicBank {
                         await fail();
                         return;
                     }
-                    break;
+                    break stepLoop;
                 }
                 case 'open-booth': {
                     const baseline = Bank.snapshotGeneration();
@@ -195,7 +208,7 @@ export class PeriodicBank {
                         await fail();
                         return;
                     }
-                    break;
+                    break stepLoop;
                 }
                 case 'deposit': {
                     if (typeof this.opts.deposit !== 'function') {
@@ -207,18 +220,18 @@ export class PeriodicBank {
                     await Bank.depositAllMatching(depositMatcher(this.opts.deposit, commonJunk));
                     if (aborted()) return;
                     if (call({ op: 'note_deposit', token }).kind === 'aborted') return;
-                    break;
+                    break stepLoop;
                 }
                 case 'after_deposit': {
                     await this.opts.afterDeposit?.();
                     if (aborted()) return;
                     if (call({ op: 'ack_after_deposit', token }).kind === 'aborted') return;
-                    break;
+                    break stepLoop;
                 }
                 case 'close': {
                     await Bank.close();
                     if (aborted()) return;
-                    break;
+                    break stepLoop;
                 }
                 case 'return': {
                     const tile = { x: step.x, z: step.z, level: step.level };
@@ -239,7 +252,7 @@ export class PeriodicBank {
                         await fail();
                         return;
                     }
-                    break;
+                    break stepLoop;
                 }
                 case 'ok':
                     call({ op: 'ok', token });
@@ -251,6 +264,7 @@ export class PeriodicBank {
                 default:
                     await fail();
                     return;
+                }
             }
         }
     }
