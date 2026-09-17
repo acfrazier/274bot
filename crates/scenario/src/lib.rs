@@ -2162,6 +2162,11 @@ fn strange_plant_owned_scenario() -> Scenario {
         count: 1,
     };
     let mut steps = script_live_seed_steps();
+    // Use the existing inert TradeBot file fixture so run-prepared can retain
+    // the real post-Start macro injection while stripping every setup cheat.
+    // An empty partner makes the fixture passive; the Rust guardian owns the
+    // random lifecycle under test.
+    steps.push(start_catalog_step());
     steps.push(Step {
         name: "spawn the upstream owned Strange Plant",
         kind: StepKind::Perform {
@@ -2197,7 +2202,9 @@ fn strange_plant_owned_scenario() -> Scenario {
             full_rate: true,
             require_mainland_base: true,
             deadline: Duration::from_secs(150),
+            start_script: Some("TradeBot"),
             terminal_shot: Some("strange_plant_owned"),
+            fixture_prereqs: Some(THIEVER_FIXTURE_PREREQS),
             nav: gold_script_nav(),
             ..Default::default()
         },

@@ -416,13 +416,15 @@ pub fn harness_writer_script() -> Result<PathBuf, String> {
 
 /// Offline writer preset id for a registered scenario name.
 /// `thiever` keeps its existing preset. The two v2 File scenarios share
-/// `bone_burier_v2`. Unknown names stay fail-closed.
+/// `bone_burier_v2`. The owned-plant lifecycle reuses the prepared mainland
+/// `thiever` world state; its macro-event injection remains post-Start.
+/// Unknown names stay fail-closed.
 pub fn fixture_preset_for(scenario: &str) -> Result<&'static str, String> {
     match scenario {
-        "thiever" => Ok("thiever"),
+        "thiever" | "strange_plant_owned" => Ok("thiever"),
         "bone_burier_v2_ts" | "bone_burier_v2_js" => Ok("bone_burier_v2"),
         other => Err(format!(
-            "offline prepare has no server-native preset for {other} yet (known: thiever, bone_burier_v2_ts, bone_burier_v2_js)"
+            "offline prepare has no server-native preset for {other} yet (known: thiever, strange_plant_owned, bone_burier_v2_ts, bone_burier_v2_js)"
         )),
     }
 }
@@ -821,6 +823,20 @@ mod tests {
     #[test]
     fn fixture_preset_allowlist_keeps_thiever_and_adds_v2() {
         assert_eq!(fixture_preset_for("thiever").unwrap(), "thiever");
+        assert_eq!(
+            fixture_preset_for("strange_plant_owned").unwrap(),
+            "thiever"
+        );
+        let plant = as_run_prepared(get("strange_plant_owned").unwrap()).unwrap();
+        assert_eq!(plant.settings.start_script, Some("TradeBot"));
+        assert!(!run_prepared_has_setup_cheats(&plant));
+        assert!(
+            plant
+                .steps
+                .iter()
+                .any(|step| step.name == "spawn the upstream owned Strange Plant"),
+            "run-prepared must retain the post-Start macro-event injection"
+        );
         assert_eq!(
             fixture_preset_for("bone_burier_v2_ts").unwrap(),
             "bone_burier_v2"
