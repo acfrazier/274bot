@@ -261,8 +261,7 @@ impl SharedClientTemplate {
         ));
         let (cache, ifaces, ifaces_mut) =
             load_template_checked(profile.client().cache_dir(), observer)?;
-        let game_data =
-            api::game_data::for_optional_profile(profile.revision(), profile.cache_id())?;
+        let game_data = profile.game_data();
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::LoadingGameData,
             4,

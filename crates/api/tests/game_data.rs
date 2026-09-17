@@ -38,20 +38,44 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
 }
 
 #[test]
+fn runtime_decoded_content_id_binds_while_deleted_packed_alias_stays_closed() {
+    let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
+    assert!(
+        for_profile(
+            ClientRevision::R289,
+            "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044"
+        )
+        .is_ok(),
+        "the pinned decoded 289 content id must bind generated facts"
+    );
+    assert_eq!(
+        data_289.content_id(),
+        Some("cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044")
+    );
+    // The deleted packed equivalence id must stay closed: decoded identity,
+    // not a public packed hash allowlist, is the compatibility criterion.
+    assert!(
+        for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
+            .expect("decode")
+            .is_none(),
+        "the packed public alias no longer unlocks facts on its own"
+    );
+}
+
+#[test]
 fn public_289_audited_identity_binds_and_unknown_same_revision_stays_closed() {
     let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
     assert_eq!(data_289.cache_id(), LOCAL_289_CACHE_ID);
     assert_ne!(PUBLIC_289_CACHE_ID, LOCAL_289_CACHE_ID);
 
+    // Decoded identity replaced the packed equivalence list: the runtime
+    // binds generated facts by the pinned decoded content id, and a packed
+    // transfer id alone (local or public) no longer unlocks anything.
     assert!(
         for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
             .expect("decode")
-            .is_some(),
-        "audited public identity must bind 289 facts"
-    );
-    assert!(
-        for_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID).is_ok(),
-        "for_profile accepts audited public identity"
+            .is_none(),
+        "the packed public alias must stay closed after decoded identity replaced it"
     );
     assert!(
         for_optional_profile(ClientRevision::R289, LOCAL_289_CACHE_ID)

@@ -51,6 +51,42 @@ decoder (`decode_grid`) stays for old boolean-walk files.
 | `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree |
 | `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
 | `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
+| `BOT_NAV_SNAPSHOT_ROOT` | `~/.274bot/unpack[-289]` | complete version-keyed decoded snapshot, read-only bake input |
+
+### Decoded-identity migration
+
+Normal profile preparation negotiates the selected `/crc` before freezing an
+owned cache/snapshot shared by all bots using that profile. Transfer CRCs and
+packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
+identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
+application callers use `prepare_template()` or `bind_runtime()`.
+
+New nav manifests, build stamps and compiled bundle rows carry `content_id` and
+`source_sha256`. Source provenance hashes the conservative content-tree closure
+and actual baker config; the build stamp also binds generator source bytes.
+Legacy resources are not relabeled: rebuild the application with the complete
+matching snapshot, or use `nav-pack --revision 274|289 --content CONTENT_DIR
+--cache CACHE_DIR --cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT
+--out NAV_PACK`. The root contains the 16-hex version-keyed snapshot directory.
+Omitting `--snapshot-root` creates an offline-only legacy pack; runtime binding
+rejects it. Missing required decoded records fail rather than claiming Ready.
+
+Local runtime nav verifies the selected content/config against the bake source
+hash. Supported public profiles trust only compiled build/packager identities;
+users of packaged public applications need no engine/content source checkout.
+These identities attest the supported server-world assumption, not arbitrary
+custom server behavior. Generated facts retain engine/content/decoder input
+hashes and use decoded client identity; explicit endpoint overrides do not
+inherit built-in facts. Local supported facts additionally verify their selected
+source inputs. Unknown client content remains unavailable/rejected, never guessed.
+
+The `tools/game-data` generator and verifier are offline `tsx` tools. Build
+`cargo build -p nav --bin cache-content-id` first; set `GAME_DATA_IDENTITY_BIN`
+(or `CARGO_TARGET_DIR`) and `GAME_DATA_274_SNAPSHOTS` /
+`GAME_DATA_289_SNAPSHOTS` when overriding their defaults. The Rust codec verifies
+actual pinned assets before generation. This does not relax e2e exact resume
+provenance. Neither build nor runtime accepts a persistent decoded-identity
+sidecar solely because input sizes match.
 
 Missing canonical inputs fail the build instead of shipping an app without nav,
 and the guard names the input class: besides `maps/`, the door configs,
@@ -92,8 +128,10 @@ records the cache identity, the pack/flags/reach digests, the generator identity
 `paint.rs`/`router.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes; nothing else re-hashes
-the world at build or runtime. The bundled fast path keeps its cheap
+identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
+Build preparation additionally computes source and decoded digests to detect
+same-size replacement; runtime computes decoded identity once per prepared
+profile, not per bot. The bundled fast path keeps its cheap
 revision/cache-identity check, reads + decodes the staged pack once
 (`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
 checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides

@@ -19,3 +19,4 @@ imgui.ini
 /.fix_generate_nl.py
 /.hash_overlay.py
 /tools/game-data/_review_check.mjs
+/.nav-verification/

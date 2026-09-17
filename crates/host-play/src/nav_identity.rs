@@ -128,7 +128,11 @@ pub fn select_nav_origin(
     }
     let mut matched = None;
     for identity in table {
-        if identity.revision == revision && identity.cache_id == cache_id {
+        if identity.revision == revision
+            && (identity.cache_id == cache_id
+                || (identity.content_id.as_deref() == Some(cache_id)
+                    && identity.source_sha256.as_deref().is_some_and(nav::manifest::is_sha256)))
+        {
             if matched.is_some() {
                 return Err(format!(
                     "duplicate bundled navigation identity for revision {revision}"
@@ -235,6 +239,8 @@ mod tests {
         BundledNavIdentity {
             revision: 289,
             cache_id: "cache".into(),
+            content_id: None,
+            source_sha256: None,
             format: nav::pack::FORMAT_ID.into(),
             nav_sha256: "ab".repeat(32),
             flags_sha256: None,
