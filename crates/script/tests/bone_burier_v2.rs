@@ -107,6 +107,113 @@ fn post_tick(iso: &LoadIsolate, snap: SnapshotInput<'_>, facts: NativeFactsInput
     let _ = iso.probe("true");
 }
 
+fn bone_stand() -> BankStandInput<'static> {
+    BankStandInput {
+        name: "Bank booth",
+        x: 3200,
+        z: 3200,
+        level: 0,
+        kind: "booth",
+        op: 1,
+        choose: None,
+    }
+}
+
+fn bone_approach() -> [BankApproachInput; 1] {
+    [BankApproachInput {
+        loc_id: 1,
+        x: 3200,
+        z: 3200,
+        level: 0,
+        can_operate: true,
+        dest_ok: true,
+        dest_x: 3200,
+        dest_z: 3200,
+        dest_level: 0,
+    }]
+}
+
+fn paint_burials(iso: &LoadIsolate) -> u64 {
+    let paint = iso.paint().expect("paint forwarded");
+    paint
+        .lines
+        .iter()
+        .find_map(|line| {
+            let rest = line.strip_prefix("burials | ")?;
+            rest.parse().ok()
+        })
+        .unwrap_or(0)
+}
+
+fn count_bury_requests(iso: &LoadIsolate) -> usize {
+    iso.drain_interacts()
+        .into_iter()
+        .filter(|req| matches!(req, InteractReq::Held { action, .. } if action == "Bury"))
+        .count()
+}
+
+/// One bury at a time: request, unchanged snapshots must not duplicate, then observe loss.
+fn simulate_serial_buries(
+    iso: &LoadIsolate,
+    facts: &NativeFactsInput<'_>,
+    stand: &[BankStandInput],
+    stats: &[StatInput],
+    mut tick: u64,
+    start: i32,
+) -> (u64, usize) {
+    let mut remaining = start;
+    let mut bury_sends = 0;
+    while remaining > 0 {
+        let bones = [ItemRowInput::nc(Some("Bones"), remaining)];
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &bones;
+        s.banks = stand;
+        s.stats = stats;
+        post_tick(iso, s, *facts, tick);
+        bury_sends += count_bury_requests(iso);
+        for stall in 0..3 {
+            tick += 1;
+            let mut s = base_snapshot();
+            s.tick = tick;
+            s.inv = &bones;
+            s.banks = stand;
+            s.stats = stats;
+            post_tick(iso, s, *facts, tick);
+            assert_eq!(
+                count_bury_requests(iso),
+                0,
+                "unchanged inventory must not resend bury (remaining={remaining}, stall={stall})"
+            );
+        }
+        remaining -= 1;
+        tick += 1;
+        if remaining > 0 {
+            let bones = [ItemRowInput::nc(Some("Bones"), remaining)];
+            let mut s = base_snapshot();
+            s.tick = tick;
+            s.inv = &bones;
+            s.banks = stand;
+            s.stats = stats;
+            post_tick(iso, s, *facts, tick);
+            assert_eq!(
+                count_bury_requests(iso),
+                0,
+                "completion tick must not immediately queue the next bury"
+            );
+        } else {
+            let mut s = base_snapshot();
+            s.tick = tick;
+            s.inv = &[];
+            s.banks = stand;
+            s.stats = stats;
+            post_tick(iso, s, *facts, tick);
+            assert_eq!(count_bury_requests(iso), 0);
+        }
+    }
+    (tick, bury_sends)
+}
+
 #[test]
 fn authoritative_typescript_and_built_javascript_load_as_v2() {
     let dir = scratch();
@@ -436,5 +543,273 @@ fn unloaded_or_missing_bank_is_not_exhaustion_and_eventually_stops() {
     assert!(iso.stopped());
     assert!(reason.contains("unavailable") || reason.contains("stalled"));
     assert!(!reason.contains("exhaustion"));
+    iso.join();
+}
+
+#[test]
+fn built_example_does_not_resend_bury_while_inventory_unchanged() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let approach = bone_approach();
+    let stand = [bone_stand()];
+    let facts = NativeFactsInput {
+        bank_approaches: Some(&approach),
+        ..Default::default()
+    };
+    let stats = [StatInput {
+        index: 5,
+        name: "Prayer",
+        xp: 100,
+        base: 1,
+        effective: 1,
+    }];
+    let bones = [ItemRowInput::nc(Some("Bones"), 3)];
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &bones;
+    s.banks = &stand;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, 1);
+    assert_eq!(count_bury_requests(&iso), 1);
+    for tick in 2..=5 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &bones;
+        s.banks = &stand;
+        s.stats = &stats;
+        post_tick(&iso, s, facts, tick);
+        assert_eq!(count_bury_requests(&iso), 0, "tick {tick}");
+    }
+    iso.join();
+}
+
+#[test]
+fn built_example_bury_pending_times_out_from_original_send_tick() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let bones = [ItemRowInput::nc(Some("Bones"), 1)];
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &bones;
+    post_tick(&iso, s, NativeFactsInput::default(), 1);
+    assert_eq!(count_bury_requests(&iso), 1);
+    for tick in 2..=13 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &bones;
+        post_tick(&iso, s, NativeFactsInput::default(), tick);
+        assert!(!iso.stopped(), "still waiting at tick {tick}");
+        assert_eq!(count_bury_requests(&iso), 0);
+    }
+    let mut s = base_snapshot();
+    s.tick = 14;
+    s.inv = &bones;
+    post_tick(&iso, s, NativeFactsInput::default(), 14);
+    assert_eq!(
+        iso.script_stop_receipt().unwrap().reason,
+        "stalled while bury; no observed completion"
+    );
+    iso.join();
+}
+
+#[test]
+fn built_example_delayed_inventory_loss_counts_exactly_once() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let bones = [ItemRowInput::nc(Some("Bones"), 4)];
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &bones;
+    post_tick(&iso, s, NativeFactsInput::default(), 1);
+    assert_eq!(count_bury_requests(&iso), 1);
+    for tick in 2..=4 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &bones;
+        post_tick(&iso, s, NativeFactsInput::default(), tick);
+        assert_eq!(count_bury_requests(&iso), 0);
+    }
+    let two = [ItemRowInput::nc(Some("Bones"), 2)];
+    let mut s = base_snapshot();
+    s.tick = 5;
+    s.inv = &two;
+    post_tick(&iso, s, NativeFactsInput::default(), 5);
+    assert_eq!(count_bury_requests(&iso), 0);
+    assert_eq!(paint_burials(&iso), 2);
+    iso.join();
+}
+
+#[test]
+fn built_example_open_pending_does_not_resend_while_bank_stays_closed() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let approach = bone_approach();
+    let stand = [bone_stand()];
+    let facts = NativeFactsInput {
+        bank_approaches: Some(&approach),
+        ..Default::default()
+    };
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.banks = &stand;
+    post_tick(&iso, s, facts, 1);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("OpenStand"));
+    for tick in 2..=6 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.banks = &stand;
+        post_tick(&iso, s, facts, tick);
+        assert!(iso.drain_interacts().is_empty(), "tick {tick}");
+    }
+    iso.join();
+}
+
+#[test]
+fn built_example_load_pending_does_not_resend_while_inventory_unchanged() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let bank_bones = [ItemRowInput::nc(Some("Bones"), 28)];
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 3;
+    s.bank = &bank_bones;
+    post_tick(&iso, s, NativeFactsInput::default(), 1);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("WithdrawLoad"));
+    for tick in 2..=5 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.bank_open = true;
+        s.bank_loaded = true;
+        s.bank_generation = 3;
+        s.bank = &bank_bones;
+        post_tick(&iso, s, NativeFactsInput::default(), tick);
+        assert!(iso.drain_interacts().is_empty(), "tick {tick}");
+    }
+    iso.join();
+}
+
+#[test]
+fn built_example_observes_thirty_three_burials_in_five_plus_twenty_eight_cycle() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let approach = bone_approach();
+    let stand = [bone_stand()];
+    let facts = NativeFactsInput {
+        bank_approaches: Some(&approach),
+        ..Default::default()
+    };
+    let stats = [StatInput {
+        index: 5,
+        name: "Prayer",
+        xp: 100,
+        base: 1,
+        effective: 1,
+    }];
+    let bank_supply = [ItemRowInput::nc(Some("Bones"), 28)];
+
+    let (mut tick, mut bury_sends) =
+        simulate_serial_buries(&iso, &facts, &stand, &stats, 1, 5);
+    assert_eq!(bury_sends, 5);
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.banks = &stand;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("OpenStand"));
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 7;
+    s.bank = &bank_supply;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 7;
+    s.bank = &bank_supply;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("WithdrawLoad"));
+
+    tick += 1;
+    let loaded = [ItemRowInput::nc(Some("Bones"), 28)];
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.inv = &loaded;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 7;
+    s.bank = &bank_supply;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.inv = &loaded;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 7;
+    s.bank = &bank_supply;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("Close"));
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.inv = &loaded;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert!(iso.drain_interacts().is_empty());
+
+    tick += 1;
+    let (end_tick, bank_bury_sends) =
+        simulate_serial_buries(&iso, &facts, &stand, &stats, tick, 28);
+    tick = end_tick;
+    bury_sends += bank_bury_sends;
+    assert_eq!(bury_sends, 33);
+    assert_eq!(paint_burials(&iso), 33);
+
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.banks = &stand;
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert!(format!("{:?}", iso.drain_interacts()).contains("OpenStand"));
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 8;
+    s.bank = &[];
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    tick += 1;
+    let mut s = base_snapshot();
+    s.tick = tick;
+    s.bank_open = true;
+    s.bank_loaded = true;
+    s.bank_generation = 8;
+    s.bank = &[];
+    s.stats = &stats;
+    post_tick(&iso, s, facts, tick);
+    assert_eq!(
+        iso.script_stop_receipt().unwrap().reason,
+        "confirmed loaded current-generation bank exhaustion"
+    );
     iso.join();
 }
