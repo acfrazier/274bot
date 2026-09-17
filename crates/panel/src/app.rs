@@ -216,6 +216,9 @@ struct LiveScript {
     /// A native-core terminal decision has issued its one current capture.
     /// This prevents the write frame from re-arming the same label again.
     native_failure_capture_requested: bool,
+    /// Headed clean-stop recapture has issued its one post-Idle request.
+    /// Later frames must observe Requested → Written without re-enqueueing.
+    clean_stop_capture_requested: bool,
     /// Separate wall-clock ceiling when scenario PASS arrives before the
     /// full shared core qualifies. `None` for every ordinary panel run.
     core_deadline: Option<Instant>,
@@ -235,6 +238,7 @@ enum SoakCapture {
 
 const SOAK_POSTPASS_SUFFIX: &str = "-postpass";
 const SOAK_FINAL_SUFFIX: &str = "-soak-final";
+const SCRIPT_STOP_WAIT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, PartialEq)]
 enum CoreGate {
@@ -525,6 +529,7 @@ impl LiveBoot {
                     soak_until: budget.map(|d| Instant::now() + d),
                     announced_pass: false,
                     native_failure_capture_requested: false,
+                    clean_stop_capture_requested: false,
                     core_deadline,
                     soak_capture: if budget.is_some() {
                         SoakCapture::WaitingForFinal
@@ -1454,6 +1459,64 @@ fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, l
 
 /// Re-arm a completed single-actor terminal capture for a later native-core
 /// decision, pairing that failure with the current scene instead of the old image.
+/// Re-request the headed terminal capture after Idle so the PNG can show
+/// BoneBurier v2 paint, script Idle, and the clean self-stop reason.
+/// Fail closed when the current focused view is not `ingame && scene_state == 2`
+/// so an earlier pre-Idle PNG cannot discharge the recapture.
+fn enqueue_fresh_terminal_shot(
+    session: &Session,
+    shots: &Mutex<ShotState>,
+    label: &str,
+) -> Result<(), String> {
+    let current = (|| {
+        let actor = session
+            .focused_name()
+            .ok_or_else(|| "fresh terminal capture has no focused actor".to_string())?;
+        let states = session.nav_states.lock().unwrap();
+        let (snapshot, _) = states
+            .get(&actor)
+            .ok_or_else(|| "fresh terminal capture has no current snapshot".to_string())?;
+        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+            return Err("fresh terminal capture requires a current ingame scene-2 snapshot".into());
+        }
+        actor_snapshot_json(&actor, snapshot)
+    })();
+    let mut shots = shots.lock().unwrap();
+    match current {
+        Ok(json) => {
+            shots.enqueue(label.to_string(), json);
+            Ok(())
+        }
+        Err(error) => {
+            shots.fail_labels(&[label.to_string()], &error);
+            Err(error)
+        }
+    }
+}
+
+/// One-shot post-Idle recapture. Wait for the original labeled shot to
+/// reach Written, then re-arm exactly once from a current scene-2 snapshot
+/// and reset only the capture drain window.
+fn request_clean_stop_capture(
+    live: &mut LiveScript,
+    session: &Session,
+    shots: Option<&Mutex<ShotState>>,
+    terminal_shot: Option<&str>,
+) -> Result<(), String> {
+    if live.clean_stop_capture_requested {
+        return Ok(());
+    }
+    let (Some(shots), Some(label)) = (shots, terminal_shot) else {
+        return Ok(());
+    };
+    if !matches!(shots.lock().unwrap().status(label), ShotStatus::Written) {
+        return Ok(());
+    }
+    live.clean_stop_capture_requested = true;
+    live.drain_started = None;
+    enqueue_fresh_terminal_shot(session, shots, label)
+}
+
 fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
     let current = (|| {
         let actor = session
@@ -1900,6 +1963,10 @@ fn live_script_tick(
         live.failed = Some(message.clone());
         return Some(message.clone());
     }
+    let wait_script_stop = {
+        let guard = session.scenario.lock().unwrap();
+        guard.as_ref().and_then(|runner| runner.wait_script_stop())
+    };
     match status {
         Some(scenario::RunnerStatus::Passed) => {
             if matches!(core_gate, CoreGate::Pending)
@@ -1907,6 +1974,41 @@ fn live_script_tick(
                 || matches!(ext_gate, CoreGate::Pending)
             {
                 return None;
+            }
+            if let Some(needle) = wait_script_stop {
+                if !session.script_self_stop_observed(needle) {
+                    let started = session
+                        .live_script_stop_wait_started
+                        .get_or_insert_with(Instant::now);
+                    if started.elapsed() >= SCRIPT_STOP_WAIT {
+                        let message = format!(
+                            "timed out waiting for script Idle and clean stop reason {needle:?}"
+                        );
+                        request_native_failure_capture(live, session, shots, terminal_shot);
+                        match hold_script_terminal_shot(
+                            live,
+                            session,
+                            terminal_shot,
+                            terminal_shot_status,
+                            shots,
+                        ) {
+                            Ok(true) => return None,
+                            Err(error) => eprintln!("[panel] {error}"),
+                            Ok(false) => {}
+                        }
+                        emit_proof(false);
+                        eprintln!("FAIL: live {} {}", live.name, failure_line(&message));
+                        live.failed = Some(message.clone());
+                        return Some(message);
+                    }
+                    return None;
+                }
+                if let Err(error) =
+                    request_clean_stop_capture(live, session, shots, terminal_shot)
+                {
+                    live.failed = Some(error.clone());
+                    return Some(error);
+                }
             }
             if core_watch.as_ref().is_some_and(|watch| watch.configured())
                 && matches!(core_gate, CoreGate::Qualified(_))
@@ -1951,12 +2053,7 @@ fn live_script_tick(
                     }
                     return None;
                 }
-                match soak_capture_tick(
-                    live,
-                    session,
-                    shots.unwrap(),
-                    terminal_shot,
-                ) {
+                match soak_capture_tick(live, session, shots.unwrap(), terminal_shot) {
                     Ok(true) => return None,
                     Ok(false) => live.passed = true,
                     Err(error) => {
@@ -5609,15 +5706,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
     if profile_count == 0 {
         return Err(format!("scenario {scenario} has zero seed profiles"));
     }
-    // Fixture preset id matches scenario name for thiever; fail closed if unknown.
-    let fixture_preset = match scenario {
-        "thiever" => "thiever",
-        other => {
-            return Err(format!(
-                "offline prepare has no server-native preset for {other} yet (known: thiever)"
-            ));
-        }
-    };
+    let fixture_preset = scenario::fixture_preset_for(scenario)?;
     let server_root = args
         .server_root
         .clone()
@@ -6082,8 +6171,9 @@ mod tests {
         game_window_flags, hold_script_terminal_shot, live_null_tick, live_script_tick,
         live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom, manual_shot_label,
         parse_args, parse_live_args, progress_channel, random_status_text,
-        request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
-        shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
+        request_clean_stop_capture, request_native_failure_capture, runner_config,
+        script_failure_scenario, shifted_imgui_key, shifted_imgui_key_at_location,
+        smoke_settled, smoke_should_fire, startup_progress, Boot,
         CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
         ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
         BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
@@ -7386,6 +7476,18 @@ mod tests {
             parse_live_args(["--live", "script_nav_paint_path"], None),
             Ok(RunMode::Live("script_nav_paint_path".into()))
         );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier_v2_js"], None),
+            Ok(RunMode::Live("script_bone_burier_v2_js".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier_v2_ts"], None),
+            Ok(RunMode::Live("script_bone_burier_v2_ts".into()))
+        );
+        assert_eq!(
+            parse_live_args(["--live", "script_bone_burier"], None),
+            Ok(RunMode::Live("script_bone_burier".into()))
+        );
     }
 
     #[test]
@@ -7424,6 +7526,16 @@ mod tests {
         assert!(parse_args(["--prepare-fixture", "thiever", "--live", "script_thiever"], None).is_err());
         assert!(parse_args(["--prepare-fixture", "thiever", "--run-prepared"], None).is_err());
         assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
+        let ts = parse_args(["--prepare-fixture", "bone_burier_v2_ts"], None).unwrap();
+        assert_eq!(ts.mode, RunMode::PrepareFixture("bone_burier_v2_ts".into()));
+        let js = parse_args(["--prepare-fixture", "bone_burier_v2_js"], None).unwrap();
+        assert_eq!(js.mode, RunMode::PrepareFixture("bone_burier_v2_js".into()));
+        assert_eq!(
+            scenario::fixture_preset_for("bone_burier_v2_ts").unwrap(),
+            "bone_burier_v2"
+        );
+        assert_eq!(scenario::fixture_preset_for("thiever").unwrap(), "thiever");
+        assert!(scenario::fixture_preset_for("bone_burier").is_err());
     }
 
     #[test]
@@ -7773,6 +7885,198 @@ mod tests {
         c
     }
 
+    #[test]
+    fn live_script_tick_holds_pass_until_clean_script_stop() {
+        use scenario::{
+            Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
+        };
+
+        let mut s = crate::session::Session::new();
+        let pass = Scenario {
+            name: "bone_stop",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "energy",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        c.runenergy = 5;
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 16, min: 5 },
+                    budget_ticks: 5,
+                },
+            }],
+            proof: Proof::Stat { id: 16, min: 5 },
+            companions: vec![],
+            settings: ScenarioSettings {
+                wait_script_stop: Some("confirmed loaded current-generation bank exhaustion"),
+                ..Default::default()
+            },
+        };
+        let mut runner = ScenarioRunner::new(pass);
+        runner.set_scene_settle(Duration::ZERO);
+        let mut c = script_client();
+        runner.tick(&mut c);
+        c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+        assert_eq!(
+            runner.wait_script_stop(),
+            Some("confirmed loaded current-generation bank exhaustion")
+        );
+        *s.scenario.lock().unwrap() = Some(runner);
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+        assert_eq!(
+            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
+            None
+        );
+        assert!(!live.passed, "game-state PASS must wait for Idle + reason");
+        s.live_script_stop_wait_started = Some(Instant::now() - Duration::from_secs(60));
+        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
+            .expect("clean-stop wait times out");
+        assert!(error.contains("clean stop reason"), "{error}");
+        assert!(live.failed.is_some());
+    }
+
+    #[test]
+    fn clean_stop_rearms_written_shot_once_and_can_complete() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let client = script_client();
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert!(snapshot.ingame() && snapshot.scene_state() == 2);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        let label = "bone-stop";
+        shots.lock().unwrap().mark_written(label);
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+
+        request_clean_stop_capture(&mut live, &session, Some(&shots), Some(label))
+            .expect("scene-2 snapshot can re-arm the original Written shot");
+        assert!(
+            live.clean_stop_capture_requested,
+            "clean-stop capture latches after the original Written shot"
+        );
+        assert!(
+            live.drain_started.is_none(),
+            "re-arm resets only the capture drain window"
+        );
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Requested,
+            "the original Written label must be re-armed exactly once"
+        );
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
+            Ok(true),
+            "the stale pre-Idle Written status must not complete before the new shot"
+        );
+
+        shots.lock().unwrap().mark_written(label);
+        request_clean_stop_capture(&mut live, &session, Some(&shots), Some(label))
+            .expect("latched clean-stop capture must not re-arm");
+        assert_eq!(
+            shots.lock().unwrap().status(label),
+            ShotStatus::Written,
+            "a later clean-stop tick must not clear Written"
+        );
+        assert_eq!(
+            hold_script_terminal_shot(
+                &mut live,
+                &session,
+                Some(label),
+                &ShotStatus::Requested,
+                Some(&shots),
+            ),
+            Ok(false),
+            "PASS can complete after the clean-stop capture writes"
+        );
+        assert!(live.failed.is_none());
+    }
+
+    #[test]
+    fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
+        let session = crate::session::Session::new();
+        session.focus.lock().unwrap().focused = Some("alice".into());
+        let mut client = script_client();
+        client.scene_state = 1;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        snapshot.rebuild(&client);
+        session
+            .nav_states
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+        shots.lock().unwrap().mark_written("bone-stop");
+        let mut live = LiveScript {
+            name: "script_bone_stop".into(),
+            passed: false,
+            failed: None,
+            last_step: None,
+            drain_started: None,
+            soak: false,
+            soak_until: None,
+            announced_pass: false,
+            native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
+            core_deadline: None,
+            soak_capture: SoakCapture::NotNeeded,
+        };
+        let error = request_clean_stop_capture(&mut live, &session, Some(&shots), Some("bone-stop"))
+            .expect_err("missing scene-2 must fail closed");
+        assert!(error.contains("scene-2"), "{error}");
+        assert!(live.clean_stop_capture_requested);
+        assert!(matches!(
+            shots.lock().unwrap().status("bone-stop"),
+            ShotStatus::Failed(ref failed) if failed.contains("scene-2")
+        ));
+        assert!(shots.lock().unwrap().requests.is_empty());
+    }
+
     /// Headed contract: PASS latches `passed` (the caller exits 0),
     /// FAIL returns the message the caller turns into exit 1.
     #[test]
@@ -7828,6 +8132,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -7893,7 +8198,12 @@ mod tests {
         baseline.items.insert("Coins".into(), 1);
         watch.observe("catalogtest", baseline, false);
         assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
+            live_script_tick(
+                &mut live,
+                &mut s,
+                &ShotStatus::Written,
+                Some(&shots),
+            ),
             None
         );
         assert!(!live.passed, "qualified core waits for its current capture");
@@ -8002,29 +8312,20 @@ mod tests {
             soak_until: Some(Instant::now() + Duration::from_secs(60)),
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
         assert_eq!(
-            live_script_tick(
-                &mut failed_soak,
-                &mut s,
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
+            live_script_tick(&mut failed_soak, &mut s, &ShotStatus::Written, Some(&shots),),
             None
         );
         shots.lock().unwrap().fail_labels(
             &["fail-soak-postpass".to_string()],
             "synthetic readback failure",
         );
-        let error = live_script_tick(
-            &mut failed_soak,
-            &mut s,
-            &ShotStatus::Written,
-            Some(&shots),
-        )
-        .expect("failed post-pass readback must fail the soak");
+        let error = live_script_tick(&mut failed_soak, &mut s, &ShotStatus::Written, Some(&shots))
+            .expect("failed post-pass readback must fail the soak");
         assert!(error.contains("soak checkpoint") && error.contains("synthetic"));
         assert!(failed_soak.failed.is_some());
 
@@ -8067,6 +8368,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8126,6 +8428,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8195,6 +8498,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8234,6 +8538,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8275,6 +8580,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8414,6 +8720,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: Some(Instant::now() - Duration::from_secs(1)),
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8728,6 +9035,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8895,6 +9203,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };
@@ -8949,6 +9258,7 @@ mod tests {
             soak_until: None,
             announced_pass: false,
             native_failure_capture_requested: false,
+            clean_stop_capture_requested: false,
             core_deadline: None,
             soak_capture: SoakCapture::NotNeeded,
         };

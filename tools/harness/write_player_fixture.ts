@@ -61,6 +61,18 @@ const PRESETS: Record<string, FixturePreset> = {
             { name: 'lobster', count: 200, inv: 'bank' },
         ],
     },
+    bone_burier_v2: {
+        id: 'bone_burier_v2',
+        x: 3220,
+        z: 3212,
+        level: 0,
+        tutorial: 1000,
+        stats: [],
+        items: [
+            { name: 'bones', count: 5, inv: 'inv' },
+            { name: 'bones', count: 28, inv: 'bank' },
+        ],
+    },
 };
 
 type Args = {
@@ -76,7 +88,7 @@ type Args = {
 function usage(msg?: string): never {
     if (msg) console.error(`error: ${msg}`);
     console.error(
-        'usage: write_player_fixture --username NAME --output PATH.sav [--fixture thiever] [--profile main] [--overwrite] [--receipt PATH.json] [--server-root PATH]'
+        'usage: write_player_fixture --username NAME --output PATH.sav [--fixture thiever|bone_burier_v2] [--profile main] [--overwrite] [--receipt PATH.json] [--server-root PATH]'
     );
     process.exit(2);
 }

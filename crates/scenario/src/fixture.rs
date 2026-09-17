@@ -414,6 +414,19 @@ pub fn harness_writer_script() -> Result<PathBuf, String> {
     ))
 }
 
+/// Offline writer preset id for a registered scenario name.
+/// `thiever` keeps its existing preset. The two v2 File scenarios share
+/// `bone_burier_v2`. Unknown names stay fail-closed.
+pub fn fixture_preset_for(scenario: &str) -> Result<&'static str, String> {
+    match scenario {
+        "thiever" => Ok("thiever"),
+        "bone_burier_v2_ts" | "bone_burier_v2_js" => Ok("bone_burier_v2"),
+        other => Err(format!(
+            "offline prepare has no server-native preset for {other} yet (known: thiever, bone_burier_v2_ts, bone_burier_v2_js)"
+        )),
+    }
+}
+
 /// Options for an offline prepare of one scenario.
 #[derive(Debug, Clone)]
 pub struct OfflinePrepareOpts {
@@ -806,6 +819,72 @@ mod tests {
     }
 
     #[test]
+    fn fixture_preset_allowlist_keeps_thiever_and_adds_v2() {
+        assert_eq!(fixture_preset_for("thiever").unwrap(), "thiever");
+        assert_eq!(
+            fixture_preset_for("bone_burier_v2_ts").unwrap(),
+            "bone_burier_v2"
+        );
+        assert_eq!(
+            fixture_preset_for("bone_burier_v2_js").unwrap(),
+            "bone_burier_v2"
+        );
+        let err = fixture_preset_for("bone_burier").unwrap_err();
+        assert!(err.contains("bone_burier"), "{err}");
+        assert!(err.contains("thiever"), "{err}");
+        assert!(fixture_preset_for("script_trade").is_err());
+        assert!(fixture_preset_for("nope").is_err());
+    }
+
+    #[test]
+    fn bone_burier_v2_fixture_prereqs_exclude_bank_contents() {
+        for name in ["bone_burier_v2_ts", "bone_burier_v2_js"] {
+            let s = get(name).expect(name);
+            let prereqs = fixture_prereqs_of(&s);
+            assert!(
+                prereqs.iter().any(|p| matches!(
+                    p,
+                    Proof::Item {
+                        name: "Bones",
+                        count: 5
+                    }
+                )),
+                "{name} carried bones"
+            );
+            assert!(
+                prereqs
+                    .iter()
+                    .any(|p| matches!(p, Proof::SideTabAvailable { index: 3 })),
+                "{name} side tab"
+            );
+            assert!(
+                prereqs.iter().any(|p| matches!(
+                    p,
+                    Proof::ArrivedNear {
+                        x: 3220,
+                        z: 3212,
+                        level: 0,
+                        radius: 8
+                    }
+                )),
+                "{name} bank tile"
+            );
+            assert!(
+                !prereqs.iter().any(|p| matches!(
+                    p,
+                    Proof::BankItem { .. } | Proof::BankItemAtMost { .. } | Proof::BankClosed
+                )),
+                "{name} must not require a bank row at login"
+            );
+            let run = as_run_prepared(s).expect("run-prepared");
+            assert!(!run.seed.mainland);
+            assert!(!run_prepared_has_setup_cheats(&run));
+            assert!(run.settings.start_file.is_some());
+            assert_eq!(run.settings.start_script, None);
+        }
+    }
+
+    #[test]
     fn thiever_fixture_prereqs_are_explicit() {
         let s = thiever();
         let prereqs = fixture_prereqs_of(&s);
@@ -845,7 +924,6 @@ mod tests {
         );
         let _ = Duration::from_secs(1);
     }
-
 
     #[test]
     fn offline_prepare_writer_roundtrip_when_engine_present() {
@@ -891,6 +969,49 @@ mod tests {
         let players = dir.join("players");
         identity.install_into_players_dir(&players, false).unwrap();
         assert!(players.join("main/offprep01.sav").is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn offline_prepare_bone_burier_v2_when_engine_present() {
+        let eng = std::env::var("BOT_SERVER_ROOT")
+            .unwrap_or_else(|_| "/Users/acfrazier/experiments/Server/engine".into());
+        let eng = PathBuf::from(eng);
+        if !eng.join("data/pack/server/obj.dat").is_file() {
+            eprintln!("skip: no engine pack at {}", eng.display());
+            return;
+        }
+        if harness_writer_script().is_err() {
+            eprintln!("skip: harness writer missing");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-offline-bone-v2-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let identity = prepare_offline_fixture(OfflinePrepareOpts {
+            scenario: "bone_burier_v2_ts".into(),
+            fixture_preset: fixture_preset_for("bone_burier_v2_ts")
+                .expect("v2 preset")
+                .into(),
+            profile: "main".into(),
+            server_root: eng,
+            identity_path: dir.join("bone_burier_v2_ts.json"),
+            sav_dir: dir.join("saves"),
+            usernames: vec!["offbone01".into()],
+            passwords: vec!["offbone-pass".into()],
+            vault_passphrase: "vault-offbone".into(),
+            overwrite: true,
+        })
+        .expect("offline prepare v2");
+        identity.validate_for("bone_burier_v2_ts", 1).unwrap();
+        assert_eq!(identity.fixture, "bone_burier_v2");
+        assert!(identity.accounts[0].sav_bytes > 0);
         let _ = fs::remove_dir_all(&dir);
     }
 

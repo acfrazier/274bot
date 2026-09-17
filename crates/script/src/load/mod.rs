@@ -23,9 +23,9 @@ mod isolate;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,
-    first_unloadable_specifier, is_catalog_dim, is_reserved, live_file_fixture_path,
-    live_file_fixture_stem, parse_declared_api_version, raw_content_fingerprint,
-    resolve_api_family, resolve_sibling_path, scan_import_specifiers,
+    first_unloadable_specifier, is_catalog_dim, is_reserved, live_example_path,
+    live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
+    raw_content_fingerprint, resolve_api_family, resolve_sibling_path, scan_import_specifiers,
     scan_same_folder_js_imports, scan_scripts_sibling_js_imports, sibling_module_url,
     ApiFamily, LoadShape, ScriptSel, VersionDiag, CATALOG_DIM,
 };

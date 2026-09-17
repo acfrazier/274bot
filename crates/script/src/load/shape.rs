@@ -304,6 +304,20 @@ pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Exact in-tree example files loaded as File cards (not catalog, not fixtures).
+/// Lookup is by file name including extension so `.ts` and `.js` stay distinct.
+pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
+    match file_name {
+        "bone_burier_v2.ts" | "bone_burier_v2.js" => {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("examples")
+                .join(file_name);
+            path.is_file().then_some(path)
+        }
+        _ => None,
+    }
+}
+
 /// Scan `source` for same-folder `./Name.js` import specifiers (quoted).
 pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -780,5 +794,37 @@ impl ScriptSel {
             ScriptSel::Compiled(id) => id.0.to_string(),
             ScriptSel::Loaded(_, name) => name.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::{card_identity_id, file_identity};
+
+    #[test]
+    fn live_file_fixture_path_still_only_tradebot() {
+        assert!(live_file_fixture_path("TradeBot").is_some());
+        assert!(live_file_fixture_stem("TradeBot").is_some());
+        assert!(live_file_fixture_path("bone_burier_v2").is_none());
+        assert!(live_file_fixture_stem("bone_burier_v2").is_none());
+        assert!(live_file_fixture_path("BoneBurier").is_none());
+    }
+
+    #[test]
+    fn live_example_paths_are_exact_distinct_files() {
+        let ts = live_example_path("bone_burier_v2.ts").expect("checked-in ts example");
+        let js = live_example_path("bone_burier_v2.js").expect("checked-in js example");
+        assert!(ts.ends_with("bone_burier_v2.ts"), "{}", ts.display());
+        assert!(js.ends_with("bone_burier_v2.js"), "{}", js.display());
+        assert_ne!(ts, js);
+        assert_ne!(file_identity(&ts), file_identity(&js));
+        assert_ne!(
+            card_identity_id(ScriptSource::File, &ts, "bone_burier_v2"),
+            card_identity_id(ScriptSource::File, &js, "bone_burier_v2")
+        );
+        assert!(live_example_path("bone_burier_v2").is_none());
+        assert!(live_example_path("TradeBot").is_none());
+        assert!(live_example_path("bone_burier.ts").is_none());
     }
 }
