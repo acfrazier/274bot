@@ -45,12 +45,27 @@ fn iso8601_utc() -> String {
         .unwrap_or_default()
 }
 
+fn emit_git_rerun_paths() {
+    // A linked worktree has a `.git` pointer file, so fixed `.git/HEAD` and
+    // `.git/index` paths do not exist. Ask Git for the active worktree paths
+    // and also watch the symbolic branch ref whose contents change on commit.
+    for name in ["HEAD", "index"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(path) = git(&["rev-parse", "--git-path", &branch]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
     println!("cargo:rerun-if-env-changed=GIT_DIRTY");
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../.git/index");
+    emit_git_rerun_paths();
 
     let commit = env_nonempty("GIT_COMMIT")
         .or_else(|| env_nonempty("GITHUB_SHA"))
