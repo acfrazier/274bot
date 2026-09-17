@@ -1468,6 +1468,28 @@ fn tick_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
                     );
+                    if v2_native {
+                        let rows: Result<
+                            Vec<crate::shim::MaybeInteractReq>,
+                            rustyscript::Error,
+                        > = runtime.eval("globalThis.__rs2b0t_host.interact || []");
+                        let lifecycle: Vec<crate::shim::InteractReq> = rows
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|row| match row {
+                                crate::shim::MaybeInteractReq::Req(
+                                    req @ crate::shim::InteractReq::LoopSettled,
+                                ) => Some(req),
+                                _ => None,
+                            })
+                            .collect();
+                        if !lifecycle.is_empty() {
+                            let _ = out.send(ThreadMsg::Interact {
+                                bytes: ipc.encode_interact_batch(&lifecycle),
+                                generation,
+                            });
+                        }
+                    }
                     match compose_forwarded_paint(&mut runtime) {
                         Ok(frame) => {
                             forward_paint_if_changed(

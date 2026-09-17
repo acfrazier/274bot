@@ -472,6 +472,57 @@ export async function tick(api) {
 }
 
 #[test]
+fn v2_promise_settled_during_hold_forwards_only_scheduler_progress() {
+    let src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  await new Promise((resolve) => {
+    const host = globalThis.__rs2b0t_host;
+    let tick = host.tick;
+    Object.defineProperty(host, 'tick', {
+      configurable: true,
+      get() { return tick; },
+      set(next) {
+        tick = next;
+        if (next === 2) resolve();
+      },
+    });
+  });
+  api.request({ op: 'held', name: 'Bones', action: 'Bury' });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
+    assert!(iso.drain_lifecycle().is_empty());
+
+    post_base_with_hold(&iso, 2, true);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_lifecycle(),
+        vec![InteractReq::LoopSettled],
+        "fulfilled pending work remains scheduler progress under hold"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "gameplay produced by the held continuation must be dropped"
+    );
+    assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
+
+    post_base_with_hold(&iso, 3, true);
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+    assert!(
+        iso.drain_lifecycle().is_empty(),
+        "later held ticks are not scheduler progress"
+    );
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
 fn v2_failed_ticks_do_not_emit_scheduler_settlement() {
     for source in [
         r#"
