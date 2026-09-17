@@ -58,6 +58,9 @@ fn custom_endpoint_template_does_not_inherit_supported_server_facts() {
             revision: Some(revision.into()),
             engine_dir: Some(home.join(engine)),
             host: Some("127.0.0.1".into()),
+            // Loopback plus a known cache is not enough: the game port must
+            // disagree with that engine's world.json so this stays custom.
+            port: Some(9),
             nav_pack: Some(home.join(".274bot/no-such-test-resource.navpack")),
             ..Default::default()
         };

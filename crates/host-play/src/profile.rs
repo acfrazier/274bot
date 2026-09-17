@@ -440,8 +440,22 @@ impl ProfileOptions {
             }
         };
         let engine_dir = absolute(engine_dir);
-        let world_members =
-            bind_world_members(selection, game_port, &engine_dir, self.world_members);
+        let guarded = parse_guarded_local_world(selection, game_port, &engine_dir);
+        let world_members = world_members_from_guarded(self.world_members, guarded.as_ref());
+        // Default public/local launches stay supported when no endpoint flags
+        // are present. Endpoint flags still opt out unless a local profile's
+        // selected engine world.json agrees with the resolved loopback ports.
+        // Bind then applies the existing cache/content identity and source
+        // hashes; equal cache or --engine presence is not enough.
+        let supported_server = endpoint_flags_absent(self)
+            || matching_local_world_supports_facts(
+                selection,
+                &game_host,
+                &asset_host,
+                asset_port,
+                &world_members,
+                guarded.as_ref(),
+            );
         Ok(ProfileSelection {
             selection,
             game_host,
@@ -470,22 +484,67 @@ impl ProfileOptions {
             nav_pack_overridden,
             nav_flags_overridden,
             world_members,
-            // Endpoint overrides opt out, even if the client cache is equal.
-            // A named local profile assumes the selected engine is that server;
-            // its actual fact inputs are verified at bind below.
-            supported_server: self.host.is_none() && self.port.is_none()
-                && self.asset_host.is_none() && self.http_port.is_none(),
+            supported_server,
         })
     }
 }
 
-/// Guarded local world.json bind. NODE_MEMBERS is not applied. Public
-/// profiles never inherit. Explicit `--world-members` wins.
-fn bind_world_members(
+/// One guarded local `world.json` read. Public selections never match.
+/// Revision, `node.port`, and a real `node.members` bool must agree with the
+/// selected loopback profile. `web.port` is recorded for fact qualification
+/// and is not required for WORLD membership.
+struct GuardedLocalWorld {
+    members: bool,
+    web_port: Option<u64>,
+    path: PathBuf,
+    sha256: String,
+    bytes: u64,
+}
+
+fn parse_guarded_local_world(
     selection: ServerSelection,
     game_port: u16,
     engine_dir: &Path,
+) -> Option<GuardedLocalWorld> {
+    let want_rev = match selection {
+        ServerSelection::Local274 => 274u64,
+        ServerSelection::Local289 => 289u64,
+        ServerSelection::Public289 => return None,
+    };
+    let path = engine_dir.join("data/config/world.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let engine = value.get("engine")?;
+    let node = value.get("node")?;
+    let revision = engine.get("revision").and_then(|v| v.as_u64())?;
+    if revision != want_rev {
+        return None;
+    }
+    let port = node.get("port").and_then(|v| v.as_u64())?;
+    if port != u64::from(game_port) {
+        return None;
+    }
+    let members = node.get("members").and_then(|v| v.as_bool())?;
+    let web_port = value
+        .get("web")
+        .and_then(|web| web.get("port"))
+        .and_then(|v| v.as_u64());
+    let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
+    Some(GuardedLocalWorld {
+        members,
+        web_port,
+        path,
+        sha256,
+        bytes: text.len() as u64,
+    })
+}
+
+/// Guarded local world.json bind. NODE_MEMBERS is not applied. Public
+/// profiles never inherit. Explicit `--world-members` wins and does not
+/// become a fact-trust signal.
+fn world_members_from_guarded(
     explicit: Option<bool>,
+    guarded: Option<&GuardedLocalWorld>,
 ) -> WorldMembersFact {
     if let Some(members) = explicit {
         return WorldMembersFact::Known {
@@ -493,48 +552,45 @@ fn bind_world_members(
             source: WorldMembersSource::ExplicitOverride,
         };
     }
-    let want_rev = match selection {
-        ServerSelection::Local274 => 274u64,
-        ServerSelection::Local289 => 289u64,
-        ServerSelection::Public289 => return WorldMembersFact::Unknown,
-    };
-    let path = engine_dir.join("data/config/world.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Some(world) = guarded else {
         return WorldMembersFact::Unknown;
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return WorldMembersFact::Unknown;
-    };
-    let Some(engine) = value.get("engine") else {
-        return WorldMembersFact::Unknown;
-    };
-    let Some(node) = value.get("node") else {
-        return WorldMembersFact::Unknown;
-    };
-    let Some(revision) = engine.get("revision").and_then(|v| v.as_u64()) else {
-        return WorldMembersFact::Unknown;
-    };
-    if revision != want_rev {
-        return WorldMembersFact::Unknown;
-    }
-    let Some(port) = node.get("port").and_then(|v| v.as_u64()) else {
-        return WorldMembersFact::Unknown;
-    };
-    if port != u64::from(game_port) {
-        return WorldMembersFact::Unknown;
-    }
-    let Some(members) = node.get("members").and_then(|v| v.as_bool()) else {
-        return WorldMembersFact::Unknown;
-    };
-    let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
     WorldMembersFact::Known {
-        members,
+        members: world.members,
         source: WorldMembersSource::LocalWorldJson {
-            path,
-            sha256,
-            bytes: text.len() as u64,
+            path: world.path.clone(),
+            sha256: world.sha256.clone(),
+            bytes: world.bytes,
         },
     }
+}
+
+fn endpoint_flags_absent(options: &ProfileOptions) -> bool {
+    options.host.is_none()
+        && options.port.is_none()
+        && options.asset_host.is_none()
+        && options.http_port.is_none()
+}
+
+fn matching_local_world_supports_facts(
+    selection: ServerSelection,
+    game_host: &str,
+    asset_host: &str,
+    asset_port: u16,
+    world_members: &WorldMembersFact,
+    guarded: Option<&GuardedLocalWorld>,
+) -> bool {
+    selection.target() == BotTarget::Local
+        && crate::is_loopback_host(game_host)
+        && crate::is_loopback_host(asset_host)
+        && matches!(
+            world_members,
+            WorldMembersFact::Known {
+                source: WorldMembersSource::LocalWorldJson { .. },
+                ..
+            }
+        )
+        && guarded.and_then(|world| world.web_port) == Some(u64::from(asset_port))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,6 +698,11 @@ impl ProfileSelection {
     }
     pub fn map_members(&self) -> bool {
         self.world_members.map_members()
+    }
+    /// Bind may attach generated facts only when this is true; identity and
+    /// source hashes still have to match.
+    pub fn supported_server(&self) -> bool {
+        self.supported_server
     }
     pub fn label(&self) -> String {
         format!(
