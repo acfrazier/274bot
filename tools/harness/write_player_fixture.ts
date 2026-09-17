@@ -63,8 +63,9 @@ const PRESETS: Record<string, FixturePreset> = {
     },
     bone_burier_v2: {
         id: 'bone_burier_v2',
-        x: 3220,
-        z: 3212,
+        // Verified packed revision-289 Varrock East bank stand (walkable approach tile).
+        x: 3253,
+        z: 3421,
         level: 0,
         tutorial: 1000,
         stats: [],

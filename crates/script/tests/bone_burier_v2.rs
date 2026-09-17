@@ -8,6 +8,7 @@ use script::isolate_fb::{
     SnapshotInput, StatInput, TileInput,
 };
 use script::load::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use script::shim::InteractReq;
 
 fn example(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -296,6 +297,125 @@ fn built_example_observes_bury_restock_cycle_then_loaded_exhaustion() {
     assert_eq!(
         iso.script_stop_receipt().unwrap().reason,
         "confirmed loaded current-generation bank exhaustion"
+    );
+    assert!(iso.stopped());
+    iso.join();
+}
+
+#[test]
+fn built_example_keeps_walk_nearest_bank_pending_past_short_op_bound() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let filler = [ItemRowInput::nc(Some("Coins"), 1)];
+    let stands = [BankStandInput {
+        name: "Bank booth",
+        x: 3200,
+        z: 3200,
+        level: 0,
+        kind: "booth",
+        op: 1,
+        choose: None,
+    }];
+    let approaches = [BankApproachInput {
+        loc_id: 1,
+        x: 3210,
+        z: 3210,
+        level: 0,
+        can_operate: true,
+        dest_ok: true,
+        dest_x: 3210,
+        dest_z: 3210,
+        dest_level: 0,
+    }];
+    let walk_facts = || NativeFactsInput {
+        bank_approaches: Some(&approaches),
+        ..Default::default()
+    };
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &filler;
+    s.banks = &stands;
+    post_tick(&iso, s, walk_facts(), 1);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::WalkNearestBank]);
+    assert!(!iso.stopped());
+    for tick in 2..=100 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &filler;
+        s.banks = &stands;
+        post_tick(&iso, s, walk_facts(), tick);
+        assert!(
+            !iso.stopped(),
+            "walk-nearest-bank must not hit the 12-tick op bound (failed at tick {tick})"
+        );
+        assert!(iso.drain_interacts().is_empty());
+    }
+    let mut s = base_snapshot();
+    s.tick = 101;
+    s.inv = &filler;
+    s.banks = &stands;
+    let facts = NativeFactsInput {
+        bank_approaches: Some(&approaches),
+        walk_outcome_seq: 1,
+        walk_outcome_failed: false,
+        ..Default::default()
+    };
+    post_tick(&iso, s, facts, 101);
+    assert!(!iso.stopped());
+    iso.join();
+}
+
+#[test]
+fn built_example_walk_pending_fails_closed_after_extended_bound() {
+    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
+    let filler = [ItemRowInput::nc(Some("Coins"), 1)];
+    let stands = [BankStandInput {
+        name: "Bank booth",
+        x: 3200,
+        z: 3200,
+        level: 0,
+        kind: "booth",
+        op: 1,
+        choose: None,
+    }];
+    let approaches = [BankApproachInput {
+        loc_id: 1,
+        x: 3210,
+        z: 3210,
+        level: 0,
+        can_operate: true,
+        dest_ok: true,
+        dest_x: 3210,
+        dest_z: 3210,
+        dest_level: 0,
+    }];
+    let walk_facts = || NativeFactsInput {
+        bank_approaches: Some(&approaches),
+        ..Default::default()
+    };
+    let mut s = base_snapshot();
+    s.tick = 1;
+    s.inv = &filler;
+    s.banks = &stands;
+    post_tick(&iso, s, walk_facts(), 1);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::WalkNearestBank]);
+    for tick in 2..=121 {
+        let mut s = base_snapshot();
+        s.tick = tick;
+        s.inv = &filler;
+        s.banks = &stands;
+        post_tick(&iso, s, walk_facts(), tick);
+        assert!(!iso.stopped(), "expected still walking at tick {tick}");
+    }
+    let mut s = base_snapshot();
+    s.tick = 122;
+    s.inv = &filler;
+    s.banks = &stands;
+    post_tick(&iso, s, walk_facts(), 122);
+    assert_eq!(
+        iso.script_stop_receipt().unwrap().reason,
+        "stalled while walk; no observed completion"
     );
     assert!(iso.stopped());
     iso.join();

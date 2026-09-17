@@ -8,6 +8,8 @@ export const SETTINGS = {
     description: "The unnoted inventory and bank item to bury"
   }
 };
+var PENDING_TICK_LIMIT = 12;
+var WALK_PENDING_TICK_LIMIT = 120;
 var phase = "finding-bank";
 var pending = null;
 var waitingForBankSince = 0;
@@ -37,11 +39,14 @@ function fail(api, reason) {
   api.stop(reason);
 }
 function timedOut(api) {
-  if (pending && api.tick - pending.sent > 12) {
-    fail(api, `stalled while ${pending.kind}; no observed completion`);
-    return true;
+  if (pending) {
+    const limit = pending.kind === "walk" ? WALK_PENDING_TICK_LIMIT : PENDING_TICK_LIMIT;
+    if (api.tick - pending.sent > limit) {
+      fail(api, `stalled while ${pending.kind}; no observed completion`);
+      return true;
+    }
   }
-  if (!pending && waitingForBankSince && api.tick - waitingForBankSince > 12) {
+  if (!pending && waitingForBankSince && api.tick - waitingForBankSince > PENDING_TICK_LIMIT) {
     fail(api, "bank contents unavailable after waiting");
     return true;
   }
