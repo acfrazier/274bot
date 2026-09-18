@@ -365,6 +365,12 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
+    /// Scenario-only native lamp witness. Sends no game action. The runner
+    /// latches one post-entry episode from its existing host hold input plus
+    /// snapshot facts: hold while `lamp_id` is present, `reward_stat` XP
+    /// advance, consumption, a newly observed active continuation, drainage,
+    /// and hold release. This is host observation, not snapshot ownership.
+    ObserveLampRedemption { lamp_id: i32, reward_stat: i32 },
     /// Host starts the catalog isolate (`script_start_load`) once when
     /// the live pump sees this step. No-op on the client. The wait is an
     /// immediate / one-tick arm that does not require XP.
@@ -424,6 +430,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "nav_routes" => Some(nav_routes_scenario()),
         "nav_paint_path" => Some(nav_paint_path_scenario()),
         "bone_burier" => Some(bone_burier_scenario()),
+        "lamp_redemption" => Some(lamp_redemption_scenario()),
         "bone_burier_v2_ts" => Some(bone_burier_v2_scenario(
             "bone_burier_v2_ts",
             "bone_burier_v2.ts",
@@ -582,6 +589,7 @@ pub fn names() -> Vec<&'static str> {
         "nav_routes",
         "nav_paint_path",
         "bone_burier",
+        "lamp_redemption",
         "bone_burier_v2_ts",
         "bone_burier_v2_js",
         "strange_plant_owned",
@@ -1988,6 +1996,101 @@ fn bone_burier_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BoneBurier"),
             terminal_shot: Some("bone_burier terminal"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+const GENIE_LAMP_ID: i32 = 2528;
+const LAMP_STRENGTH_STAT: i32 = 2;
+const PRAYER_STAT: i32 = 5;
+
+/// Real selected-289 lamp redemption while the existing BoneBurier catalog
+/// script remains running. The fixture injects only the authentic lamp item;
+/// the shared guardian owns Rub, skill selection, Confirm and dialogue drain.
+fn lamp_redemption_scenario() -> Scenario {
+    let watch = |name, arm| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    };
+    let fresh_prayer = Proof::FreshStatXpGain {
+        id: PRAYER_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare twenty-seven ordinary bones before Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| cheat(c, "give bones 27")),
+        },
+        wait: Wait {
+            arm: Proof::Item {
+                name: "Bones",
+                count: 27,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(watch(
+        "watch BoneBurier do real work before the lamp",
+        fresh_prayer,
+    ));
+    steps.push(watch(
+        "confirm no pre-injection continuation can seed the lamp episode",
+        Proof::NoActiveContinue,
+    ));
+    steps.push(Step {
+        name: "inject one authentic selected-289 genie lamp after Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| cheat(c, "give macro_genilamp 1")),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: GENIE_LAMP_ID,
+                count: 1,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(Step {
+        name: "observe native lamp reward dialogue drain and hold release",
+        kind: StepKind::ObserveLampRedemption {
+            lamp_id: GENIE_LAMP_ID,
+            reward_stat: LAMP_STRENGTH_STAT,
+        },
+        wait: Wait {
+            arm: Proof::NoActiveContinue,
+            budget_ticks: 60,
+        },
+    });
+    steps.push(watch(
+        "watch fresh BoneBurier Prayer XP after lamp release",
+        fresh_prayer,
+    ));
+
+    Scenario {
+        name: "lamp_redemption",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: fresh_prayer,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("BoneBurier"),
+            terminal_shot: Some("lamp_redemption"),
             nav: gold_script_nav(),
             ..Default::default()
         },

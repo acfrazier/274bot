@@ -67,6 +67,9 @@ pub enum Proof {
     /// Chat modal is closed (`modals.chat == -1`) — DrainDialogs after
     /// `advancestat` waits here once the level-up IF is gone.
     ChatClosed,
+    /// A native continuation is active: the published continue id, chat
+    /// modal root, or an open-root `BUTTON_CONTINUE` is present.
+    ActiveContinue,
     /// No active chat continue: the published continue id is absent, the
     /// chat modal root is closed, and no open-root widget still publishes
     /// `BUTTON_CONTINUE`. Stronger than [`Proof::ChatClosed`] alone when a
@@ -184,6 +187,7 @@ impl Proof {
             Proof::QuestDone { name } => format!("quest_done({name})"),
             Proof::TutorialClosed => "tutorial_closed".to_string(),
             Proof::ChatClosed => "chat_closed".to_string(),
+            Proof::ActiveContinue => "active_continue".to_string(),
             Proof::NoActiveContinue => "no_active_continue".to_string(),
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
@@ -405,16 +409,8 @@ impl Proof {
             }
             Proof::TutorialClosed => snap.modals().tutorial == -1,
             Proof::ChatClosed => snap.modals().chat == -1,
-            Proof::NoActiveContinue => {
-                // BUTTON_CONTINUE == 6 (client::config::if_type::ButtonType).
-                const BUTTON_CONTINUE: i32 = 6;
-                snap.chat_continue_component_id() == -1
-                    && snap.modals().chat == -1
-                    && !snap
-                        .widgets()
-                        .iter()
-                        .any(|w| w.button_type == BUTTON_CONTINUE)
-            }
+            Proof::ActiveContinue => active_continue(snap),
+            Proof::NoActiveContinue => !active_continue(snap),
             Proof::SideTabAvailable { index } => snap
                 .side_tabs()
                 .iter()
@@ -579,6 +575,19 @@ fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
 
 fn fresh_bank(snap: &GameSnapshot) -> bool {
     snap.ingame() && snap.scene_state() == 2 && snap.bank_component_id() >= 0 && snap.bank_loaded()
+}
+
+/// The single native continuation predicate used by both positive and
+/// settled proofs, so they cannot drift into inconsistent inverses.
+fn active_continue(snap: &GameSnapshot) -> bool {
+    // BUTTON_CONTINUE == 6 (client::config::if_type::ButtonType).
+    const BUTTON_CONTINUE: i32 = 6;
+    snap.chat_continue_component_id() != -1
+        || snap.modals().chat != -1
+        || snap
+            .widgets()
+            .iter()
+            .any(|w| w.button_type == BUTTON_CONTINUE)
 }
 
 /// XP for skill `id` from the snapshot stat table (`None` when absent).
@@ -1024,6 +1033,10 @@ mod tests {
             !Proof::NoActiveContinue.check(&s, None),
             "open level-up continue must not pass drain"
         );
+        assert!(
+            Proof::ActiveContinue.check(&s, None),
+            "the positive predicate must observe the same native continue"
+        );
         assert_ne!(
             s.chat_continue_component_id(),
             -1,
@@ -1037,6 +1050,11 @@ mod tests {
             Proof::NoActiveContinue.check(&s, None),
             "settled chat with no continue widgets passes"
         );
+        assert!(
+            !Proof::ActiveContinue.check(&s, None),
+            "active and settled predicates must be exact inverses"
+        );
+        assert_eq!(Proof::ActiveContinue.name(), "active_continue");
     }
 
     #[test]

@@ -40,6 +40,37 @@ enum Phase {
     Done,
 }
 
+/// Facts retained only while one [`StepKind::ObserveLampRedemption`] is
+/// current. Every latch begins after the fixture has observed the injected
+/// item, so pre-injection holds/dialogues cannot satisfy the episode.
+#[derive(Debug, Default)]
+struct LampEpisodeObservation {
+    reward_baseline: Option<i32>,
+    lamp_seen: bool,
+    clear_before_dialogue: bool,
+    hold_seen: bool,
+    reward_seen: bool,
+    consumed_seen: bool,
+    dialogue_seen: bool,
+    dialogue_drained: bool,
+    released: bool,
+}
+
+impl LampEpisodeObservation {
+    fn summary(&self) -> String {
+        format!(
+            "lamp redemption episode [lamp={},hold={},reward={},consumed={},dialogue={},drained={},released={}]",
+            self.lamp_seen,
+            self.hold_seen,
+            self.reward_seen,
+            self.consumed_seen,
+            self.dialogue_seen,
+            self.dialogue_drained,
+            self.released,
+        )
+    }
+}
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -99,6 +130,9 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
+    /// Native host-hold + snapshot facts for the current lamp witness step.
+    /// This is deliberately not part of [`GameSnapshot`].
+    lamp_episode: Option<LampEpisodeObservation>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -172,6 +206,7 @@ impl ScenarioRunner {
             evidence: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
+            lamp_episode: None,
             shot_sink: None,
         }
     }
@@ -380,6 +415,7 @@ impl ScenarioRunner {
         let dirty = self.snapshot.rebuild(client);
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
+            self.lamp_episode = None;
         }
         self.retry_xp_baselines();
         // Scene-settle tracking: the wall-clock instant the scene first
@@ -471,12 +507,15 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            if arm.check_with_xp_context(
-                &self.snapshot,
-                self.obj_names.as_deref(),
-                Some(&self.xp_baselines),
-                self.fresh_xp_baseline,
-            ) {
+            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true);
+            if native_episode_holds
+                && arm.check_with_xp_context(
+                    &self.snapshot,
+                    self.obj_names.as_deref(),
+                    Some(&self.xp_baselines),
+                    self.fresh_xp_baseline,
+                )
+            {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
                 // traveller has not polled yet — the essence-mine entry
@@ -503,11 +542,16 @@ impl ScenarioRunner {
                     self.advance_step();
                 }
             } else if self.ticks_waited >= budget {
+                let missing = self
+                    .lamp_episode
+                    .as_ref()
+                    .map(LampEpisodeObservation::summary)
+                    .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
                     "step {} ({}): {} not seen within {} ticks",
                     self.step + 1,
                     self.current_step().name,
-                    arm.name(),
+                    missing,
                     budget
                 ));
             }
@@ -575,7 +619,92 @@ impl ScenarioRunner {
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
+        self.lamp_episode = match self.current_step().kind {
+            StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
+                reward_baseline: self.stat_xp(reward_stat),
+                clear_before_dialogue: !Proof::ActiveContinue
+                    .check(&self.snapshot, self.obj_names.as_deref()),
+                ..LampEpisodeObservation::default()
+            }),
+            _ => None,
+        };
         self.capture_xp_baseline(self.current_step().wait.arm);
+    }
+
+    /// Update the current lamp episode from the native host hold input and
+    /// this frame's snapshot. Returns `None` for ordinary steps and completion
+    /// for the dedicated observation step.
+    fn observe_lamp_redemption(&mut self, hold: bool) -> Option<bool> {
+        let (lamp_id, reward_stat) = match self.current_step().kind {
+            StepKind::ObserveLampRedemption {
+                lamp_id,
+                reward_stat,
+            } => (lamp_id, reward_stat),
+            _ => return None,
+        };
+        let lamp_here = self
+            .snapshot
+            .inv()
+            .iter()
+            .any(|(id, count)| *id == lamp_id && *count > 0);
+        let reward_xp = self.stat_xp(reward_stat);
+        let active_continue =
+            Proof::ActiveContinue.check(&self.snapshot, self.obj_names.as_deref());
+        let state = self
+            .lamp_episode
+            .get_or_insert_with(LampEpisodeObservation::default);
+
+        if state.reward_baseline.is_none() {
+            state.reward_baseline = reward_xp;
+        }
+        state.lamp_seen |= lamp_here;
+        state.hold_seen |= lamp_here && hold;
+        if !active_continue && !state.dialogue_seen {
+            state.clear_before_dialogue = true;
+        }
+
+        let reward_now = state
+            .reward_baseline
+            .zip(reward_xp)
+            .is_some_and(|(before, now)| now > before);
+        let consumed_now = state.lamp_seen && !lamp_here;
+        let reward_edge = reward_now && !state.reward_seen;
+        let consumed_edge = consumed_now && !state.consumed_seen;
+        state.reward_seen |= reward_now;
+        state.consumed_seen |= consumed_now;
+
+        // The selected-289 confirm script consumes the lamp, advances the
+        // selected stat, and opens mesbox in one server script. Accept either
+        // reward/consumption as the last newly published packet, but never an
+        // already-open or later unrelated continuation.
+        if active_continue
+            && state.clear_before_dialogue
+            && state.reward_seen
+            && state.consumed_seen
+            && (reward_edge || consumed_edge)
+        {
+            state.dialogue_seen = true;
+        }
+        if state.dialogue_seen && !active_continue {
+            state.dialogue_drained = true;
+        }
+        if state.hold_seen
+            && state.reward_seen
+            && state.consumed_seen
+            && state.dialogue_drained
+            && !hold
+        {
+            state.released = true;
+        }
+        Some(state.released)
+    }
+
+    fn stat_xp(&self, id: i32) -> Option<i32> {
+        self.snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.index == id)
+            .map(|stat| stat.xp)
     }
 
     fn capture_xp_baseline(&mut self, proof: Proof) {
@@ -697,7 +826,9 @@ impl ScenarioRunner {
                     }
                 }
             }
-            StepKind::Shot { .. } | StepKind::StartScript => Ok(()),
+            StepKind::Shot { .. }
+            | StepKind::StartScript
+            | StepKind::ObserveLampRedemption { .. } => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
@@ -2330,5 +2461,200 @@ mod tests {
         c.bump_gens(ServerProt::UPDATE_STAT);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    const TEST_LAMP_ID: i32 = 2528;
+    const TEST_STRENGTH_STAT: i32 = 2;
+    const TEST_PRAYER_STAT: i32 = 5;
+
+    fn lamp_episode_scenario(budget_ticks: u32) -> Scenario {
+        let fresh_prayer = Proof::FreshStatXpGain {
+            id: TEST_PRAYER_STAT,
+            min: 1,
+        };
+        Scenario {
+            name: "lamp-episode",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![
+                Step {
+                    name: "observe one authentic lamp redemption episode",
+                    kind: StepKind::ObserveLampRedemption {
+                        lamp_id: TEST_LAMP_ID,
+                        reward_stat: TEST_STRENGTH_STAT,
+                    },
+                    wait: wait(Proof::NoActiveContinue, budget_ticks),
+                },
+                Step {
+                    name: "watch fresh script work after release",
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: wait(fresh_prayer, 4),
+                },
+            ],
+            proof: fresh_prayer,
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        }
+    }
+
+    fn set_continue(c: &mut Client, open: bool) {
+        use client::config::if_type::ButtonType;
+
+        const ROOT: usize = 6206;
+        const CONTINUE: usize = 6210;
+        c.set_iface(
+            ROOT,
+            IfType {
+                id: ROOT as i32,
+                layer_id: ROOT as i32,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![CONTINUE as i32]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            CONTINUE,
+            IfType {
+                id: CONTINUE as i32,
+                layer_id: ROOT as i32,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            CONTINUE,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = if open { ROOT as i32 } else { -1 };
+        c.bump_gens(if open {
+            ServerProt::IF_OPENCHAT
+        } else {
+            ServerProt::IF_CLOSE
+        });
+    }
+
+    #[test]
+    fn lamp_episode_latches_same_frame_reward_then_requires_drain_release_and_fresh_work() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 200;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(12), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, true);
+
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        set_continue(&mut c, true);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "reward, consumption, and active dialogue do not release a held episode"
+        );
+
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "dialogue drain alone does not release a still-held episode"
+        );
+
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "native hold release advances to the post-event work gate"
+        );
+
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "pre-release Prayer XP cannot satisfy the fresh post-release gate"
+        );
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 201;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn lamp_episode_rejects_preexisting_and_later_unrelated_dialogues() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        set_continue(&mut c, true);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(7), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, true);
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, true);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, false);
+
+        for _ in 0..8 {
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick_with_hold(&mut c, false);
+        }
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("preexisting and later unrelated dialogues must fail");
+        };
+        assert!(
+            message.contains("lamp redemption episode"),
+            "the failed native episode must be named: {message}"
+        );
+    }
+
+    #[test]
+    fn lamp_episode_rejects_wrong_hold_and_elapsed_only_progress() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(5), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        set_continue(&mut c, true);
+        runner.tick_with_hold(&mut c, false);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, false);
+
+        for _ in 0..6 {
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick_with_hold(&mut c, false);
+        }
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("wrong native hold and elapsed ticks must fail");
+        };
+        assert!(message.contains("hold=false"), "{message}");
+        assert!(message.contains("dialogue=true"), "{message}");
+        assert!(message.contains("drained=true"), "{message}");
     }
 }

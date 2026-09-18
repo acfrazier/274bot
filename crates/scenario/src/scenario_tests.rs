@@ -1428,6 +1428,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "nav_routes",
             "nav_paint_path",
             "bone_burier",
+            "lamp_redemption",
             "bone_burier_v2_ts",
             "bone_burier_v2_js",
             "strange_plant_owned",
@@ -1555,6 +1556,83 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "flax_runner",
             "duel_arena",
         ]
+    );
+}
+
+#[test]
+fn lamp_redemption_orders_real_script_work_injection_native_episode_and_fresh_resume() {
+    const LAMP_ID: i32 = 2528;
+    const STRENGTH_STAT: i32 = 2;
+    const PRAYER_STAT: i32 = 5;
+
+    let scenario = get("lamp_redemption").expect("lamp redemption is registered");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("BoneBurier Start");
+    assert_eq!(scenario.settings.start_script, Some("BoneBurier"));
+    assert_eq!(
+        scenario.steps[start + 1].wait.arm,
+        Proof::FreshStatXpGain {
+            id: PRAYER_STAT,
+            min: 1
+        },
+        "real BoneBurier work must precede lamp injection"
+    );
+    assert_eq!(
+        scenario.steps[start + 2].wait.arm,
+        Proof::NoActiveContinue,
+        "pre-injection dialogue state must settle before the episode"
+    );
+
+    let injection = &scenario.steps[start + 3];
+    assert_eq!(
+        injection.wait.arm,
+        Proof::ItemId {
+            id: LAMP_ID,
+            count: 1
+        }
+    );
+    let StepKind::Perform { send } = &injection.kind else {
+        panic!("lamp injection must be one server cheat send");
+    };
+    let mut client = native_seed_client();
+    let snapshot = GameSnapshot::new();
+    assert!(send(&mut client, &snapshot));
+    assert!(
+        emitted_has(&client, "give macro_genilamp 1"),
+        "fixture must use the selected-289 obj token, not a display-name alias"
+    );
+
+    assert!(matches!(
+        scenario.steps[start + 4].kind,
+        StepKind::ObserveLampRedemption {
+            lamp_id: LAMP_ID,
+            reward_stat: STRENGTH_STAT,
+        }
+    ));
+    assert_eq!(scenario.steps[start + 4].wait.arm, Proof::NoActiveContinue);
+    assert_eq!(
+        scenario.steps[start + 5].wait.arm,
+        Proof::FreshStatXpGain {
+            id: PRAYER_STAT,
+            min: 1
+        },
+        "the terminal work must use a baseline captured after native release"
+    );
+    assert_eq!(
+        scenario.proof,
+        Proof::FreshStatXpGain {
+            id: PRAYER_STAT,
+            min: 1
+        }
+    );
+    assert!(
+        scenario.steps[start..]
+            .iter()
+            .all(|step| !matches!(step.kind, StepKind::DrainDialogs { .. } | StepKind::Relog)),
+        "the fixture must not drain the reward or restart the script itself"
     );
 }
 
