@@ -217,6 +217,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 0,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,

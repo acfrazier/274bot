@@ -122,6 +122,11 @@ export const reader = proxy('reader', {
     localPlayerName() {
         return optionalText(snap().my_name);
     },
+    combatLevel() {
+        if (snap().ingame !== true) return 0;
+        const level = snap().combat_level;
+        return typeof level === 'number' && Number.isInteger(level) ? level : 0;
+    },
     selfChat() {
         return optionalText(snap().self_chat);
     },

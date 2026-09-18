@@ -193,6 +193,7 @@ const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
 const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
 const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
 const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
+const VT_SNAP_COMBAT_LEVEL: VOffsetT = 190;
 
 /// Logical applet posted as `canvasRect`. Bound to `api::native_input::APPLET_*`.
 pub const SNAPSHOT_CANVAS_W: i32 = api::native_input::APPLET_W;
@@ -619,6 +620,8 @@ pub struct SnapshotInput<'a> {
     pub scene_state: i32,
     /// Local player run weight from `GameSnapshot::local_player`.
     pub weight: i32,
+    /// Local player combat level from `GameSnapshot::local_player`.
+    pub combat_level: i32,
     /// Orbit camera yaw (`CameraView::orbit_yaw`).
     pub camera_yaw: i32,
     /// Orbit camera pitch (`CameraView::orbit_pitch`).
@@ -1379,6 +1382,7 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
+            .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
             .finish();
         Ok(())
     }
@@ -1565,6 +1569,12 @@ impl SnapshotReader<'_> {
     }
     pub fn weight(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None) }.unwrap_or(0)
+    }
+    pub fn has_combat_level(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None).is_some() }
+    }
+    pub fn combat_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None) }.unwrap_or(0)
     }
     pub fn has_camera_yaw(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None).is_some() }
@@ -2273,6 +2283,7 @@ pub struct SnapshotFingerprint {
     pub bank_note_off: i32,
     pub scene_state: i32,
     pub weight: i32,
+    pub combat_level: i32,
     pub camera_yaw: i32,
     pub camera_pitch: i32,
     pub teleports_enabled: bool,
@@ -2472,6 +2483,7 @@ impl SnapshotFingerprint {
             bank_note_off: input.bank_note_off,
             scene_state: input.scene_state,
             weight: input.weight,
+            combat_level: input.combat_level,
             camera_yaw: input.camera_yaw,
             camera_pitch: input.camera_pitch,
             teleports_enabled: input.teleports_enabled,
@@ -2593,6 +2605,7 @@ pub struct DeltaMask {
     pub bank_note_off: bool,
     pub scene_state: bool,
     pub weight: bool,
+    pub combat_level: bool,
     pub camera_yaw: bool,
     pub camera_pitch: bool,
     pub teleports_enabled: bool,
@@ -2675,6 +2688,7 @@ impl DeltaMask {
             bank_note_off: true,
             scene_state: true,
             weight: true,
+            combat_level: true,
             camera_yaw: true,
             camera_pitch: true,
             teleports_enabled: true,
@@ -2767,6 +2781,7 @@ impl DeltaMask {
             bank_note_off: next.bank_note_off != last.bank_note_off,
             scene_state: next.scene_state != last.scene_state,
             weight: next.weight != last.weight,
+            combat_level: next.combat_level != last.combat_level,
             camera_yaw: next.camera_yaw != last.camera_yaw,
             camera_pitch: next.camera_pitch != last.camera_pitch,
             teleports_enabled: next.teleports_enabled != last.teleports_enabled,
@@ -3420,6 +3435,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.weight {
         b.push_slot_always(VT_SNAP_WEIGHT, input.weight);
+    }
+    if mask.combat_level {
+        b.push_slot_always(VT_SNAP_COMBAT_LEVEL, input.combat_level);
     }
     if mask.camera_yaw {
         b.push_slot_always(VT_SNAP_CAMERA_YAW, input.camera_yaw);
@@ -6192,6 +6210,7 @@ pub(crate) mod tests {
             bank_note_off: -1,
             scene_state: 0,
             weight: 0,
+            combat_level: 0,
             camera_yaw: 0,
             camera_pitch: 0,
             teleports_enabled: false,

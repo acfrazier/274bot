@@ -304,6 +304,8 @@ table Snapshot {
   // Logical applet size posted as `__rs2b0t_host.canvasRect`. Origin is 0.
   canvas_width: int;
   canvas_height: int;
+  /// Local player combat level (`GameSnapshot::local_player.player.combat_level`).
+  combat_level: int;
 }
 
 // One shim interact request, tagged by `op`:

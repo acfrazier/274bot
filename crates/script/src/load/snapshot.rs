@@ -258,6 +258,13 @@ pub(super) fn materialize_snapshot(
         let zero = num(&mut scope, 0.0);
         set(&mut scope, obj, "weight", zero)?;
     }
+    if snap.has_combat_level() {
+        let combat_level = num(&mut scope, snap.combat_level() as f64);
+        set(&mut scope, obj, "combat_level", combat_level)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "combat_level", zero)?;
+    }
     if snap.has_camera_yaw() {
         let camera_yaw = num(&mut scope, snap.camera_yaw() as f64);
         set(&mut scope, obj, "camera_yaw", camera_yaw)?;

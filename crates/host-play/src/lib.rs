@@ -3782,6 +3782,10 @@ fn with_script_snapshot_input<R>(
             .and_then(|s| s.local_player())
             .map(|lp| lp.weight)
             .unwrap_or(0),
+        combat_level: snapshot
+            .and_then(|s| s.local_player())
+            .map(|lp| lp.player.combat_level)
+            .unwrap_or(0),
         camera_yaw: snapshot.map(|s| s.camera().orbit_yaw).unwrap_or(0),
         camera_pitch: snapshot.map(|s| s.camera().orbit_pitch).unwrap_or(0),
         teleports_enabled,

@@ -82,6 +82,7 @@ fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
