@@ -2420,6 +2420,10 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if dirty {
             let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 if let Some(view) = state.game_view.as_mut() {
+                    #[cfg(feature = "render-diagnostics")]
+                    client::render::diagnostics::note_capture_identity(&format!(
+                        "name={name} gen={gen}"
+                    ));
                     view.present(gpu, frame);
                 }
                 true
@@ -2431,6 +2435,17 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
         let min = ui.item_rect_min();
+        #[cfg(feature = "render-diagnostics")]
+        {
+            let fb = state
+                .os_window
+                .as_ref()
+                .map(|w| w.scale_factor() as f32)
+                .unwrap_or(1.0);
+            client::render::diagnostics::note_game_image_fb(
+                min[0], min[1], size[0], size[1], fb, fb,
+            );
+        }
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the
         // Image only carries the focused slot's queue card.
@@ -5911,6 +5926,13 @@ fn pump_shots(state: &mut PanelState) -> usize {
             ) {
                 Ok(path) => {
                     println!("[panel] shot {} -> {}", cap.label, path.display());
+                    #[cfg(feature = "render-diagnostics")]
+                    client::render::diagnostics::dump_png_slot(
+                        &cap.rgba,
+                        cap.width as i32,
+                        cap.height as i32,
+                        &cap.label,
+                    );
                     state.shot_state.lock().unwrap().mark_written(&cap.label);
                     written += 1;
                 }
