@@ -9855,6 +9855,9 @@ const RED_SPIDERS_EGGS_ID: i32 = 223;
 const NOTED_RED_SPIDERS_EGGS_ID: i32 = 224;
 const NOTED_EYE_OF_NEWT_ID: i32 = 222;
 const HERBLORE_EGG_FOOD_SEED: i32 = 50;
+/// Canonical `FOOD_DEFAULT_COUNT` / `foodWithdraw` default. Carried at Start
+/// so loot `needsRestock` is false (takeFood && foodCount < 1).
+const HERBLORE_EGG_FOOD_CARRY: i32 = 10;
 const HERBLORE_NEWT_COIN_SEED: i32 = 5000;
 const EGG_FIELD: WorldTile = WorldTile {
     x: 3120,
@@ -9884,6 +9887,16 @@ const BETTY_SHOP: WorldTile = WorldTile {
 };
 const DRAYNOR_BANK: WorldTile = WorldTile {
     x: 3093,
+    z: 3243,
+    level: 0,
+};
+/// Stock-facing walkable adjacent for `DRAYNOR_BANK_BOOTH`. Capture
+/// `2026-09-18T06-11-18` booth 2213@3091,3243 is shape 10 angle 1 force 0
+/// 1×1; collision at 3092,3243 is open (0). Canonical `DRAYNOR_BANK`
+/// 3093,3243 is Chebyshev 2 — `open_booth_at_matching` refuses Unreachable
+/// and does not walk. Keep this seed stand separate from `DRAYNOR_BANK`.
+const DRAYNOR_BANK_APPROACH: WorldTile = WorldTile {
+    x: 3092,
     z: 3243,
     level: 0,
 };
@@ -9927,9 +9940,25 @@ const FLAX_AIO_SPIN_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Bool(true),
     },
 ];
-const HERBLORE_EGGS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
-    id: "secondary",
-    value: ScriptInjectValue::Str("Red spiders' eggs"),
+const HERBLORE_EGGS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "secondary",
+        value: ScriptInjectValue::Str("Red spiders' eggs"),
+    },
+    // scriptFood reads the selected loadout, not a food setting. Blank
+    // loadout uses the operator's first saved carry (headed LIVE: Swordfish).
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Herblore food"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(HERBLORE_EGG_FOOD_CARRY as f64),
+    },
+];
+const HERBLORE_EGGS_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Herblore food",
+    carry: &[("Lobster", HERBLORE_EGG_FOOD_CARRY as u32)],
 }];
 const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "secondary",
@@ -11795,8 +11824,7 @@ fn herblore_open_seed_bank_at(
                         reason:
                             SendReason::SceneUnavailable
                             | SendReason::OffScene
-                            | SendReason::StaleTarget
-                            | SendReason::Unreachable,
+                            | SendReason::StaleTarget,
                         ..
                     } => true,
                     SendResult::Refused { reason, .. } => {
@@ -11855,10 +11883,12 @@ fn herblore_newt_seed_bank_readiness() -> Step {
     )
 }
 
-/// HerbloreSecondaries default Red spiders' eggs. Empty pack at the
-/// Edgeville dungeon field, lobster food banked only via native note seed +
-/// deposit (stock289 has no `givebank`). Ground Take 223, deposit, closed
-/// return, further Take. Eggs are not given.
+/// HerbloreSecondaries default Red spiders' eggs. Banked lobster via native
+/// note seed + deposit (stock289 has no `givebank`). Fixture loadout pins
+/// `scriptFood` to Lobster (no food setting; blank loadout uses the operator
+/// first carry). Carry `FOOD_DEFAULT_COUNT` at the field so loot starts
+/// instead of an empty-pack Edgeville restock. Ground Take 223, deposit,
+/// empty product pack, close, return, further Take. Eggs are not given.
 fn herblore_secondaries_scenario() -> Scenario {
     let field = EGG_FIELD;
     let bank_approach = EDGEVILLE_BANK_APPROACH;
@@ -11988,11 +12018,13 @@ fn herblore_secondaries_scenario() -> Scenario {
     }
     steps.push(bank_fletcher_close_seed_bank());
     // Pack is empty of seed after deposit; clearinv only after bank accepts seed.
+    // Carry canonical food so takeFood loot does not BankTrip before first Take.
     steps.push(Step {
-        name: "tele to the Edgeville dungeon egg field before Start",
+        name: "tele to the Edgeville dungeon egg field with lobster food before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
+                cheat(c, &format!("give lobster {HERBLORE_EGG_FOOD_CARRY}"));
                 cheat(c, &tele_args(field.level, field.x, field.z));
                 true
             }),
@@ -12034,6 +12066,20 @@ fn herblore_secondaries_scenario() -> Scenario {
             Proof::ItemIdAtMost {
                 id: NOTED_LOBSTER_ID,
                 count: 0,
+            },
+        ),
+        (
+            "confirm lobster food carry in pack before Start",
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_CARRY,
+            },
+        ),
+        (
+            "bound the lobster food carry in pack before Start",
+            Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_CARRY,
             },
         ),
     ] {
@@ -12088,6 +12134,7 @@ fn herblore_secondaries_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("HerbloreSecondaries"),
             script_settings_inject: Some(HERBLORE_EGGS_INJECT),
+            fixture_loadouts: Some(HERBLORE_EGGS_FIXTURE_LOADOUTS),
             terminal_shot: Some("herblore_secondaries"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -12100,7 +12147,6 @@ fn herblore_secondaries_scenario() -> Scenario {
 /// Distinct from ground eggs. LIVE still waits on Shop.buy publication.
 fn herblore_secondaries_newt_scenario() -> Scenario {
     let shop = BETTY_SHOP;
-    let bank = DRAYNOR_BANK;
     let newt = Proof::ItemId {
         id: EYE_OF_NEWT_ID,
         count: 1,
@@ -12115,8 +12161,8 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(native_bank_seed(
-        "seed banked coins at Draynor before Start",
-        bank,
+        "seed banked coins at the Draynor booth approach before Start",
+        DRAYNOR_BANK_APPROACH,
         vec![coins],
         "hitpoints",
         10,
@@ -18689,6 +18735,93 @@ mod tests {
         );
     }
 
+    /// Capture 2026-09-18T06-11-18: booth 2213@3091,3243 is not operable from
+    /// canonical DRAYNOR_BANK 3093,3243 (Chebyshev 2). The seed stand must be
+    /// the stock-facing open adjacent, or open_booth_at refuses Unreachable.
+    #[test]
+    fn herblore_newt_approach_operates_draynor_booth_old_stand_does_not() {
+        use api::query::loc_approach;
+        use api::snapshot::{LocLayer, LocView, SceneView};
+
+        let booth = DRAYNOR_BANK_BOOTH;
+        let loc = LocView {
+            typecode: 0,
+            info: 0,
+            id: DRAYNOR_BANK_BOOTH_ID,
+            name: Some("Bank booth".into()),
+            description: None,
+            actions: vec![Some("Use".into()), Some("Use-quickly".into())],
+            tile: booth,
+            distance: 0,
+            layer: LocLayer::Ground,
+            shape: 10,
+            angle: 1,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: true,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        };
+        // Capture scene base 3040,3192; only the booth column and two east
+        // tiles matter. Booth tile 0x100 = WALK_SCENERY; approach and old
+        // stand are open 0.
+        let base_x = 3040;
+        let base_z = 3192;
+        let width = 104;
+        let height = 104;
+        let mut flags = vec![0; (width * height) as usize];
+        let idx = |x: i32, z: i32| ((x - base_x) * height + (z - base_z)) as usize;
+        flags[idx(booth.x, booth.z)] = client::dash3d::CollisionFlag::WALK_SCENERY;
+        let scene = SceneView {
+            available: true,
+            base_x,
+            base_z,
+            level: 0,
+            width,
+            height,
+            collision_flags: flags,
+        };
+        assert_eq!(
+            loc_approach::can_operate_from(&loc, &scene, DRAYNOR_BANK_APPROACH),
+            Some(true),
+            "east-adjacent 3092,3243 must operate the capture booth"
+        );
+        assert_eq!(
+            loc_approach::can_operate_from(&loc, &scene, DRAYNOR_BANK),
+            Some(false),
+            "canonical 3093,3243 is Chebyshev 2 and must not operate"
+        );
+
+        let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+        let start = newt
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("newt starts");
+        let seed = newt.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: DRAYNOR_BANK_APPROACH.x,
+            z: DRAYNOR_BANK_APPROACH.z,
+            level: DRAYNOR_BANK_APPROACH.level,
+            radius: 8,
+        }));
+        assert!(!seed.contains(&Proof::ArrivedNear {
+            x: DRAYNOR_BANK.x,
+            z: DRAYNOR_BANK.z,
+            level: DRAYNOR_BANK.level,
+            radius: 8,
+        }));
+    }
+
     #[test]
     fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
         for (name, product_min) in [
@@ -23816,6 +23949,17 @@ mod tests {
             inject.get("secondary"),
             Some(&Value::String("Red spiders' eggs".into()))
         );
+        assert_eq!(
+            inject.get("loadout"),
+            Some(&Value::String("Scenario Herblore food".into()))
+        );
+        assert_eq!(inject.get("foodWithdraw"), Some(&Value::from(10.0)));
+        let loadouts = eggs
+            .settings
+            .fixture_loadouts
+            .expect("eggs pins scriptFood via fixture loadout");
+        assert_eq!(loadouts[0].name, "Scenario Herblore food");
+        assert_eq!(loadouts[0].carry, &[("Lobster", 10)]);
         let eggs_start = eggs
             .steps
             .iter()
@@ -23853,6 +23997,14 @@ mod tests {
         assert!(eggs_seed.contains(&Proof::BankItemIdAtMost {
             id: NOTED_LOBSTER_ID,
             count: 0,
+        }));
+        assert!(eggs_seed.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: HERBLORE_EGG_FOOD_CARRY,
+        }));
+        assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
+            id: LOBSTER_ID,
+            count: HERBLORE_EGG_FOOD_CARRY,
         }));
         let seed_deposit = eggs.steps[..eggs_start]
             .iter()
@@ -23945,11 +24097,20 @@ mod tests {
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
         assert!(buy_seed.contains(&Proof::ArrivedNear {
-            x: DRAYNOR_BANK.x,
-            z: DRAYNOR_BANK.z,
-            level: DRAYNOR_BANK.level,
+            x: DRAYNOR_BANK_APPROACH.x,
+            z: DRAYNOR_BANK_APPROACH.z,
+            level: DRAYNOR_BANK_APPROACH.level,
             radius: 8,
         }));
+        assert_eq!(
+            DRAYNOR_BANK,
+            WorldTile {
+                x: 3093,
+                z: 3243,
+                level: 0
+            },
+            "canonical Draynor bank tile stays 3093,3243"
+        );
         assert!(buy_seed.contains(&Proof::LocActionNear {
             id: DRAYNOR_BANK_BOOTH_ID,
             x: DRAYNOR_BANK_BOOTH.x,
