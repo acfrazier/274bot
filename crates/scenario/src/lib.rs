@@ -13431,10 +13431,15 @@ fn combat_bank_scenario(
         },
     });
     steps.push(start_catalog_step());
-    steps.push(bank_fletcher_watch(
-        "watch Strength XP from the selected melee style after Start",
-        xp,
-    ));
+    // ChaosDruid's seeded food shortfall deliberately starts with banking.
+    // Its ordered watches and CoreWatch require combat after the return;
+    // waiting for incidental auto-retaliation XP here gates the wrong phase.
+    if name != "chaos_druid_bank" {
+        steps.push(bank_fletcher_watch(
+            "watch Strength XP from the selected melee style after Start",
+            xp,
+        ));
+    }
     for (step_name, arm) in watches {
         steps.push(bank_fletcher_watch(step_name, *arm));
     }
