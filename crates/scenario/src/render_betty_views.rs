@@ -107,35 +107,38 @@ pub fn get(name: &str) -> Option<Scenario> {
 
 fn scenario_for(case: ViewCase) -> Scenario {
     let gate = view_gate(case.station, case.orbit_yaw, RENDER_BETTY_PITCH);
+    let mut steps = crate::script_live_seed_steps();
+    steps.push(Step {
+        name: "diagnostic tele and fixed orbit camera",
+        kind: StepKind::Perform {
+            send: tele_and_orbit_send(case.station, case.orbit_yaw, RENDER_BETTY_PITCH),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: case.station.x,
+                z: case.station.z,
+                level: case.station.level,
+            },
+            budget_ticks: RENDER_CAPTURE_STEP_BUDGET,
+        },
+    });
+    steps.push(Step {
+        // Drain continue/choice chat from late debug replies; tut_com_message
+        // is cleared by the shared tutskip+relog seed above, not close_modal.
+        name: "drain stray chat and settle render view",
+        kind: StepKind::DrainDialogs { choice: 1 },
+        wait: Wait {
+            arm: gate,
+            budget_ticks: 60,
+        },
+    });
     Scenario {
         name: case.scenario_name,
         seed: Seed {
             profiles: vec![("test", "test")],
             mainland: true,
         },
-        steps: vec![Step {
-            name: "diagnostic tele and fixed orbit camera",
-            kind: StepKind::Perform {
-                send: tele_and_orbit_send(case.station, case.orbit_yaw, RENDER_BETTY_PITCH),
-            },
-            wait: Wait {
-                arm: Proof::Arrived {
-                    x: case.station.x,
-                    z: case.station.z,
-                    level: case.station.level,
-                },
-                budget_ticks: RENDER_CAPTURE_STEP_BUDGET,
-            },
-        }, Step {
-            // The mainland getvar reply can arrive after initial preparation.
-            // Keep draining until the unchanged final capture gate holds.
-            name: "drain mainland dialog and settle render view",
-            kind: StepKind::DrainDialogs { choice: 1 },
-            wait: Wait {
-                arm: gate,
-                budget_ticks: 60,
-            },
-        }],
+        steps,
         proof: gate,
         companions: vec![],
         settings: ScenarioSettings {
@@ -198,13 +201,32 @@ mod tests {
             assert_eq!(scenario.name, *name);
             assert_eq!(scenario.seed.profiles, [("test", "test")]);
             assert!(scenario.seed.mainland);
-            assert_eq!(scenario.steps.len(), 2);
+            assert_eq!(
+                scenario.steps.len(),
+                4,
+                "{name} needs tutskip+relog seed before tele and capture gate"
+            );
+            assert!(matches!(
+                scenario.steps[1].kind,
+                StepKind::Relog
+            ));
+            assert!(matches!(
+                scenario.steps[1].wait.arm,
+                Proof::SideTabAvailable { index: 3 }
+            ));
             assert!(
-                matches!(scenario.steps[0].kind, StepKind::Perform { .. }),
-                "{name} must use a single perform+wait step"
+                matches!(scenario.steps[2].kind, StepKind::Perform { .. }),
+                "{name} tele must follow the shared live seed"
             );
             assert!(
-                !matches!(scenario.steps[1].kind, StepKind::Shot { .. }),
+                matches!(scenario.steps[3].kind, StepKind::DrainDialogs { .. }),
+                "{name} drains stray chat before RenderViewReady"
+            );
+            assert!(
+                !scenario
+                    .steps
+                    .iter()
+                    .any(|st| matches!(st.kind, StepKind::Shot { .. })),
                 "{name} must not queue an extra Shot step"
             );
         }
@@ -219,7 +241,7 @@ mod tests {
             "terminal shot label drives PNG+JSON naming"
         );
         assert!(matches!(
-            betty0.steps[1].wait.arm,
+            betty0.steps[3].wait.arm,
             Proof::RenderViewReady {
                 x: 3012,
                 z: 3258,
@@ -228,12 +250,12 @@ mod tests {
                 orbit_pitch: 256,
             }
         ));
-        assert_eq!(betty0.proof.name(), betty0.steps[1].wait.arm.name());
+        assert_eq!(betty0.proof.name(), betty0.steps[3].wait.arm.name());
 
         let west512 = get("render_betty_views_west_bank_yaw512").expect("west bank yaw512");
         assert_eq!(west512.settings.terminal_shot, Some("west_bank_s8_yaw512"));
         assert!(matches!(
-            west512.steps[1].wait.arm,
+            west512.steps[3].wait.arm,
             Proof::RenderViewReady {
                 x: 2945,
                 z: 3368,

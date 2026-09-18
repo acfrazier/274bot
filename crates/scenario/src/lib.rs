@@ -2150,7 +2150,7 @@ fn bone_burier_v2_scenario(name: &'static str, file_name: &'static str) -> Scena
 }
 
 /// Shared live-script seed: stick `tutorial=1000`, relog so side tab 3 binds.
-fn script_live_seed_steps() -> Vec<Step> {
+pub(crate) fn script_live_seed_steps() -> Vec<Step> {
     vec![
         Step {
             name: "stick tutorial skip",
