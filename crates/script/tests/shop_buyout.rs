@@ -1,4 +1,4 @@
-// ShopBuyout host facts + Rust buyout planner over the isolate FlatBuffer query.
+// ShopBuyout host facts + in-isolate Rust buyout helper.
 // Frozen ShopBuyout looks up rec from SHOP_DB and calls buyoutPlan; this
 // fixture uses those same specifiers so an empty catalog fallback cannot pass.
 
@@ -103,7 +103,7 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
 }
 
 #[test]
-fn aubury_selection_ranks_by_base_cost_over_the_shop_wire() {
+fn aubury_selection_ranks_by_base_cost() {
     let src = r#"
 import { SHOP_DB } from '../../data/shopdb.js';
 import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';

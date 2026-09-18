@@ -1,6 +1,6 @@
 import { notImpl } from '../../shim/_kernel.js';
 
-// Marshal-only: convert the frozen call into the typed FlatBuffer query
+// Marshal-only: convert the frozen call into the in-isolate Rust helper
 // (`__rs2b0t_buyout_plan`). Ranking, stock prices and budget stay in Rust.
 export function buyoutPlan(rec, stock, coins, chosen) {
     const fn = globalThis.__rs2b0t_buyout_plan;

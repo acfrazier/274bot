@@ -1,14 +1,11 @@
-//! Same-tick buyout planner query over isolate FlatBuffers.
+//! In-isolate ShopBuyout Rust helper.
 //!
 //! JS marshals primitive args into `__rs2b0t_buyout_plan`. This callback
-//! encodes a `BuyoutPlanRequest`, decodes it, runs the Rust planner, encodes
-//! a `BuyoutPlanResult`, and materializes that buffer into a V8 object. No
-//! `serde_json::Value` payload and no `__rs2b0t_shop` JSON op.
+//! builds a typed local request, runs the Rust planner, and materializes
+//! the typed result into a V8 object. Not a FlatBuffer RPC: no isolate/host
+//! buffer, no extra JSON op, no `__rs2b0t_shop` planner payload.
 
-use crate::isolate_fb::{
-    decode_buyout_plan_request, decode_buyout_plan_result, encode_buyout_plan_request,
-    encode_buyout_plan_result, BuyoutPlanRequest,
-};
+use crate::shop::{BuyoutPlanRequest, BuyoutPlanResult};
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -59,17 +56,13 @@ fn run<'s>(
         stock: stock_objs.into_iter().zip(stock_counts).collect(),
         chosen,
     };
-    let req_bytes = encode_buyout_plan_request(&req);
-    let req = decode_buyout_plan_request(&req_bytes)?;
     let result = crate::shop::run_buyout_plan(&req);
-    let result_bytes = encode_buyout_plan_result(&result);
-    let result = decode_buyout_plan_result(&result_bytes)?;
     materialize_result(scope, &result)
 }
 
 fn materialize_result<'s>(
     scope: &mut v8::HandleScope<'s>,
-    result: &crate::isolate_fb::BuyoutPlanResult,
+    result: &BuyoutPlanResult,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, result.ok);

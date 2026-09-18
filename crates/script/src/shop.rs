@@ -10,9 +10,7 @@
 //! settlement policy stay here. A queued click is not a transfer: a batch is
 //! only counted once the posted container counts moved.
 
-use crate::isolate_fb::{
-    BuyoutPlanItem as PlanItem, BuyoutPlanRequest, BuyoutPlanResult, RowReader, SnapshotReader,
-};
+use crate::isolate_fb::{RowReader, SnapshotReader};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -343,8 +341,9 @@ pub fn configure(data: Option<Arc<api::game_data::SelectedGameData>>) {
     GAME_DATA.with(|slot| *slot.borrow_mut() = data);
 }
 
-/// Open/buy/sell/close stay on the existing JSON shop binding. The new
-/// planner is a typed FlatBuffer query, not an extra shop JSON op.
+/// Open/buy/sell/close stay on the existing JSON shop binding. The planner
+/// is an in-isolate Rust helper (typed request/result, native V8 marshalling),
+/// not an extra shop JSON op and not a FlatBuffer RPC.
 pub fn dispatch(_game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => begin(input),
@@ -353,8 +352,35 @@ pub fn dispatch(_game_data: Option<&api::game_data::SelectedGameData>, input: &V
     }
 }
 
-/// Rust-owned buyout selection/ranking/stock-price/budget over a decoded
-/// FlatBuffer request. JS only marshals.
+/// In-isolate buyout helper request. Built from V8 args; never a host wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuyoutPlanRequest {
+    pub inv: String,
+    pub keeper: String,
+    pub coins: i64,
+    pub stock: Vec<(String, i32)>,
+    pub chosen: Vec<String>,
+}
+
+/// One planned purchase row returned to JS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuyoutPlanItem {
+    pub obj: String,
+    pub name: String,
+    pub units: i32,
+    pub est_cost: i64,
+}
+
+/// In-isolate buyout helper result. Materialized into a V8 object; never a host wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuyoutPlanResult {
+    pub ok: bool,
+    pub reason: String,
+    pub items: Vec<BuyoutPlanItem>,
+}
+
+/// Rust-owned buyout selection/ranking/stock-price/budget. JS only marshals
+/// primitives into this in-isolate helper.
 pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
     GAME_DATA.with(|slot| {
         let data = slot.borrow();
@@ -402,7 +428,7 @@ pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
             reason: String::new(),
             items: items
                 .into_iter()
-                .map(|row| PlanItem {
+                .map(|row| BuyoutPlanItem {
                     obj: row.obj,
                     name: row.name,
                     units: row.units,
