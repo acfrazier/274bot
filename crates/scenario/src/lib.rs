@@ -19,6 +19,7 @@
 pub mod evidence;
 pub mod fixture;
 pub mod proof;
+mod render_betty_views;
 mod runner;
 pub mod shot;
 
@@ -412,6 +413,7 @@ pub fn get(name: &str) -> Option<Scenario> {
     match name {
         "walk" => Some(walk_scenario()),
         "render_smoke" => Some(render_smoke_scenario()),
+        name if render_betty_views::NAMES.contains(&name) => render_betty_views::get(name),
         "nav_full" => Some(nav_full_scenario()),
         "nav_door" => Some(nav_door_scenario()),
         "nav_cart" => Some(nav_cart_scenario()),
@@ -556,6 +558,12 @@ pub fn names() -> Vec<&'static str> {
     vec![
         "walk",
         "render_smoke",
+        "render_betty_views_betty_yaw0",
+        "render_betty_views_betty_yaw512",
+        "render_betty_views_falador_street_yaw0",
+        "render_betty_views_falador_street_yaw512",
+        "render_betty_views_west_bank_yaw0",
+        "render_betty_views_west_bank_yaw512",
         "nav_full",
         "nav_door",
         "nav_cart",
@@ -19963,6 +19971,12 @@ mod tests {
             [
                 "walk",
                 "render_smoke",
+                "render_betty_views_betty_yaw0",
+                "render_betty_views_betty_yaw512",
+                "render_betty_views_falador_street_yaw0",
+                "render_betty_views_falador_street_yaw512",
+                "render_betty_views_west_bank_yaw0",
+                "render_betty_views_west_bank_yaw512",
                 "nav_full",
                 "nav_door",
                 "nav_cart",

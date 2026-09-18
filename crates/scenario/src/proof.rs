@@ -138,6 +138,15 @@ pub enum Proof {
     /// Player is offline (`!ingame`) after a clean IF_BUTTON logout — the
     /// prepare-fixture save receipt arm. Fail-closed while still ingame.
     LoggedOut,
+    /// Headed render diagnostic: ingame scene 2, no modals, on tile, fixed
+    /// orbit yaw/pitch (capture gate — not a visual correctness claim).
+    RenderViewReady {
+        x: i32,
+        z: i32,
+        level: i32,
+        orbit_yaw: i32,
+        orbit_pitch: i32,
+    },
 }
 
 impl Proof {
@@ -218,6 +227,15 @@ impl Proof {
                 format!("loc_id({id})@({x},{z},{level},r{radius})_{rel}_{action}")
             }
             Proof::LoggedOut => "logged_out".to_string(),
+            Proof::RenderViewReady {
+                x,
+                z,
+                level,
+                orbit_yaw,
+                orbit_pitch,
+            } => format!(
+                "render_view_ready({x},{z},{level},yaw={orbit_yaw},pitch={orbit_pitch})"
+            ),
         }
     }
 
@@ -501,8 +519,54 @@ impl Proof {
                 has == *present
             }
             Proof::LoggedOut => !snap.ingame(),
+            Proof::RenderViewReady {
+                x,
+                z,
+                level,
+                orbit_yaw,
+                orbit_pitch,
+            } => render_view_ready(snap, *x, *z, *level, *orbit_yaw, *orbit_pitch),
         }
     }
+}
+
+fn render_view_ready(
+    snap: &GameSnapshot,
+    x: i32,
+    z: i32,
+    level: i32,
+    orbit_yaw: i32,
+    orbit_pitch: i32,
+) -> bool {
+    if !snap.ingame() || snap.scene_state() != 2 {
+        return false;
+    }
+    let m = snap.modals();
+    if m.main != -1 || m.side != -1 || m.chat != -1 || m.tutorial != -1 {
+        return false;
+    }
+    if snap.chat_continue_component_id() != -1 {
+        return false;
+    }
+    let cam = snap.camera();
+    if (cam.orbit_yaw & 0x7ff) != (orbit_yaw & 0x7ff) || cam.orbit_pitch != orbit_pitch {
+        return false;
+    }
+    snap.tile().is_some_and(|(tx, tz, tl)| {
+        arrived(
+            Tile {
+                x: tx,
+                z: tz,
+                level: tl,
+            },
+            Tile {
+                x,
+                z,
+                level,
+            },
+            true,
+        )
+    })
 }
 
 fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
@@ -779,6 +843,54 @@ mod tests {
             Proof::BankItemIdAtMost { id: 849, count: 0 }.name(),
             "fresh_bank_item_id(849)<=0"
         );
+    }
+
+    #[test]
+    fn render_view_ready_requires_scene_tile_modals_and_orbit() {
+        let mut c = seeded();
+        c.scene_state = 2;
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 256;
+        let s = snap(&mut c);
+        assert!(
+            !Proof::RenderViewReady {
+                x: 3012,
+                z: 3258,
+                level: 0,
+                orbit_yaw: 512,
+                orbit_pitch: 256,
+            }
+            .check(&s, None),
+            "seed tile is not Betty"
+        );
+        c.map_build_base_x = 3008;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(4, 58));
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 256;
+        c.main_modal_id = -1;
+        c.side_modal_id = -1;
+        c.chat_modal_id = -1;
+        c.tut_com_id = -1;
+        let s = snap(&mut c);
+        assert!(Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        }
+        .check(&s, None));
+        c.main_modal_id = 1;
+        let s = snap(&mut c);
+        assert!(!Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        }
+        .check(&s, None));
     }
 
     #[test]
