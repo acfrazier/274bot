@@ -8,6 +8,9 @@ version = "0.1.7"
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }
 
+[patch.crates-io]
+dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu-0.15.1" }
+
 # Pix3D is a software 3D painter. Unoptimized debug `cargo run` pins a core
 # and looks like a hung client. Optimize that crate even in dev; bot crates
 # stay unoptimized so TDD rebuilds stay cheap.
