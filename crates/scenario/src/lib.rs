@@ -2267,6 +2267,54 @@ const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// deposit/restock/return/fresh XP inside unchanged 180s deadline.
 /// Global [`SCRIPT_GOLD_DEADLINE`] (180s) and other gold watches stay 150.
 const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
+/// HerbloreSecondaries eggs: first-Take → fresh bank 223, then dungeon return.
+///
+/// **Units:** `budget_ticks` are runner dirty-snapshot increments
+/// (`runner.rs`: `ticks_waited += 1` only when `snapshot.rebuild` is dirty).
+/// Not engine `World.TICKRATE` (600ms) ticks and not wall seconds. Capture
+/// `tick` advances on PLAYER_INFO. live7wnm9z_0: outcome 170 dirties /
+/// 82.065s wall / snapshot `tick` 141 — those figures are not interchangeable.
+///
+/// **Why default 150 dirties / 180s cannot cover this cell:** step 29
+/// `fresh_bank_item_id(223)>=1` exhausted 150 dirties still in the field.
+/// Terminal 3117,9951, inv 6×223 + 6×379, bank closed gen 6, paint
+/// Got 6 / Trips 0 / Food 6, status taking eggs, in combat HP 6/10.
+/// Canonical `needsRestock` is false until packFull or
+/// (`takeFood && foodWant>0 && foodCount<1`). foodWithdraw default 10 is
+/// already pinned; 6 lobster remain. Not a freeze and not a host Take
+/// defect: six named Takes plus four Eat, then a respawn Take on the
+/// first tile.
+///
+/// **Respawn (engine ticks — justification only):** `red_spiders_eggs.obj`
+/// has no `respawnrate` (snape_grass sets 30). `ObjType.respawnrate = 100`
+/// default "1-minute". `OBJ_TAKEITEM` on `EntityLifeCycle.RESPAWN` calls
+/// `World.removeObj(obj, objType.respawnrate)`; `scaleByPlayerCount(100)`
+/// with 1 player is 99 engine ticks. First Take 3117,9951 then the same
+/// tile at FAIL; capture tick 141 matches ~100 engine ticks after first
+/// take. Six distinct in-radius Takes before that respawn. Packed
+/// `o48_155` obj list is not in this checkout; count is the measured 6.
+///
+/// **Arm-to-deposit LB:** remaining 6 lobster, eat at HP≤5 (lobster heal
+/// 12 never fits maxHp 10). Measured 4 eats during the ~60s first-respawn
+/// wait ≈ 12s/eat → ~72s more. Then Edgeville dungeon walk: field
+/// 3120,9952 → ladder 3096,9868 Chebyshev 84 + surface ~25 + booth/deposit
+/// ≈ 80s one-way. Watch already used ~60s. Arm-to-deposit ≈ 60+72+80 =
+/// **~212s wall**. Measured dirty rate on this watch 150/60s ≈ 2.5 dirty/s
+/// → **~530 dirties**. Pad eat-rate sample size and dirty≠engine → **600**.
+/// Return reverse dungeon ~80s × 2.5 ≈ 200 → **240** (same magnitude as
+/// bone_burier / smithing bank-item). First-egg / empty / close / further
+/// stay 150. Global gold 180s / 150 stay for every other script including
+/// newt.
+///
+/// **Deadline:** seed+Start ~25s + deposit-watch wall ~240s + close ~10s +
+/// return ~80s + further ~30s ≈ 385s. Use the existing **420s** pattern.
+/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged. Diagnosis
+/// remains provisional until root LIVE. No product seed, forced post-Start
+/// bank, debug commands, or engine acceleration. Prior 1755 ladder stall
+/// (empty-pack cell) is not baked into these numbers.
+const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
+const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
+const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
 fn drain_advancestat() -> Step {
@@ -12117,7 +12165,26 @@ fn herblore_secondaries_scenario() -> Scenario {
         ),
         ("watch further exact eggs after return", eggs),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        // Deposit arms on first ground egg while food/respawn still run.
+        // Return is the reverse dungeon hop. See HERBLORE_EGG_* constant
+        // docs (dirty increments, not 150×600ms). Other arms keep 150.
+        let budget_ticks = if matches!(arm, Proof::BankItemId { .. }) {
+            HERBLORE_EGG_DEPOSIT_WATCH_TICKS
+        } else if matches!(arm, Proof::ArrivedNear { .. }) {
+            HERBLORE_EGG_RETURN_WATCH_TICKS
+        } else {
+            SCRIPT_GOLD_WATCH_TICKS
+        };
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm,
+                budget_ticks,
+            },
+        });
     }
     Scenario {
         name: "herblore_secondaries",
@@ -12131,7 +12198,7 @@ fn herblore_secondaries_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: HERBLORE_EGG_DEADLINE,
             start_script: Some("HerbloreSecondaries"),
             script_settings_inject: Some(HERBLORE_EGGS_INJECT),
             fixture_loadouts: Some(HERBLORE_EGGS_FIXTURE_LOADOUTS),
@@ -18884,6 +18951,86 @@ mod tests {
     }
 
     #[test]
+    fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
+        let eggs = get("herblore_secondaries").expect("herblore_secondaries");
+        assert_eq!(
+            eggs.settings.deadline, HERBLORE_EGG_DEADLINE,
+            "eggs wall covers food-exhaust + dungeon bank + return; newt keeps 180s"
+        );
+        let deposit = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch script-taken eggs enter a fresh Edgeville bank")
+            .expect("deposit watch");
+        assert_eq!(
+            deposit.wait.budget_ticks, HERBLORE_EGG_DEPOSIT_WATCH_TICKS,
+            "deposit dirty-budget is runner increments sized to 100-tick respawn + remaining food + dungeon, not equated to engine ticks"
+        );
+        assert!(
+            matches!(
+                deposit.wait.arm,
+                Proof::BankItemId {
+                    id: RED_SPIDERS_EGGS_ID,
+                    count: 1
+                }
+            ),
+            "deposit proof stays fresh bank 223 ≥1"
+        );
+        let first = eggs
+            .steps
+            .iter()
+            .find(|step| {
+                step.name == "watch exact red spiders' eggs 223 from the ground after Start"
+            })
+            .expect("first egg");
+        assert_eq!(
+            first.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "first-egg arm keeps the ordinary gold watch"
+        );
+        let empty = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch the pack empty of eggs after deposit")
+            .expect("empty pack");
+        assert_eq!(
+            empty.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "empty-pack arm is not loosened"
+        );
+        let close = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch the script close its egg bank")
+            .expect("close");
+        assert_eq!(
+            close.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "close arm is not loosened"
+        );
+        let ret = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch return to the egg field after banking")
+            .expect("return");
+        assert_eq!(
+            ret.wait.budget_ticks, HERBLORE_EGG_RETURN_WATCH_TICKS,
+            "return dirty-budget covers reverse dungeon only"
+        );
+        let further = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch further exact eggs after return")
+            .expect("further");
+        assert_eq!(
+            further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "further-egg arm is not loosened"
+        );
+        let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+        assert_eq!(
+            newt.settings.deadline, SCRIPT_GOLD_DEADLINE,
+            "newt deadline stays 180s"
+        );
+    }
+
+    #[test]
     fn production_native_seed_proofs_bound_exact_counts_before_start() {
         for (name, note_id, note_count, unnoted_id) in [
             ("smithing_bot", BRONZE_BAR_CERT_ID, 28, BRONZE_BAR_ID),
@@ -23943,7 +24090,7 @@ mod tests {
 
         let eggs = get("herblore_secondaries").expect("herblore_secondaries");
         assert_eq!(eggs.settings.start_script, Some("HerbloreSecondaries"));
-        assert_eq!(eggs.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(eggs.settings.deadline, HERBLORE_EGG_DEADLINE);
         let inject = settings_inject_map(eggs.settings.script_settings_inject).unwrap();
         assert_eq!(
             inject.get("secondary"),
@@ -24078,6 +24225,35 @@ mod tests {
         assert!(bank_egg < further_egg);
         assert!(!eggs_watch.contains(&newt));
         assert_eq!(eggs.proof, egg);
+        let deposit = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch script-taken eggs enter a fresh Edgeville bank")
+            .expect("egg deposit watch");
+        assert_eq!(
+            deposit.wait.budget_ticks, HERBLORE_EGG_DEPOSIT_WATCH_TICKS,
+            "deposit dirty-budget covers food-exhaust + dungeon bank, not 150"
+        );
+        let ret = eggs
+            .steps
+            .iter()
+            .find(|step| step.name == "watch return to the egg field after banking")
+            .expect("egg return watch");
+        assert_eq!(
+            ret.wait.budget_ticks, HERBLORE_EGG_RETURN_WATCH_TICKS,
+            "return dirty-budget covers reverse dungeon, not 150"
+        );
+        let first = eggs
+            .steps
+            .iter()
+            .find(|step| {
+                step.name == "watch exact red spiders' eggs 223 from the ground after Start"
+            })
+            .expect("first egg watch");
+        assert_eq!(
+            first.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "first-egg arm stays 150"
+        );
 
         let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
         assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
@@ -25097,7 +25273,6 @@ mod tests {
             "flax_aio",
             "flax_aio_pick",
             "flax_aio_spin",
-            "herblore_secondaries",
             "herblore_secondaries_newt",
             "chaos_druid",
             "moss_giant",
