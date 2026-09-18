@@ -15000,15 +15000,18 @@ const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
 /// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
 const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
-/// Bob nonstackable bronze axe: axeshop baseline 10 cost 16 → 16gp/unit; pack
-/// fill is the natural bank trigger. perTrip 500 / budget 1500 mirror Lowe.
-const SHOP_BUYOUT_BOB_PER_TRIP_GP: f64 = 500.0;
+/// Bob nonstackable steel axe: axeshop `steel_axe` baseline 3 cost 200.
+/// Frozen ShopBuyout banks when `coins < 100` after a real buy (BuyoutPass.ts).
+/// perTrip 600 withdraw buys all 3 in stock (600gp) → 0 coins, no restock wait.
+/// budget 1500 > perTrip leaves session headroom for resumed buy after deposit.
+const SHOP_BUYOUT_BOB_PER_TRIP_GP: f64 = 600.0;
 const SHOP_BUYOUT_BOB_BUDGET_GP: f64 = 1500.0;
-/// Nurmof nonstackable bronze pickaxe: pickaxeshop baseline 6 cost 1; same
-/// nonstackable pack-fill bank trigger. Long Dwarven Mine ↔ Falador East route.
+/// Nurmof nonstackable iron pickaxe: pickaxeshop baseline 5 cost 140.
+/// perTrip 500 → buyoutPlan buys 3×140=420gp, 80 coins in pack (<100 bank).
+/// Stock 5 at start; no restock wait on first pass. Long mine↔Falador East route.
 const SHOP_BUYOUT_NURMOF_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_NURMOF_BUDGET_GP: f64 = 1500.0;
-/// Magic Guild stackable blood rune: magicguildshop baseline 50 cost 50 members.
+/// Magic Guild stackable blood rune: magicguildshop baseline 1000 cost 50 members.
 /// Stackable coins<100 bank trigger like Aubury; perTrip 500 / budget 1500.
 const SHOP_BUYOUT_MAGIC_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_MAGIC_BUDGET_GP: f64 = 1500.0;
@@ -15149,12 +15152,12 @@ const SHOP_BUYOUT_HICKTON_ITEM: &str = "Bronze arrow";
 const SHOP_BUYOUT_HARRY_ITEM: &str = "Fishing bait";
 const SHOP_BUYOUT_BETTY_ITEM: &str = "Fire rune";
 const SHOP_BUYOUT_GERRANT_ITEM: &str = "Feather";
-const SHOP_BUYOUT_BOB_ITEM: &str = "Bronze axe";
-const SHOP_BUYOUT_NURMOF_ITEM: &str = "Bronze pickaxe";
+const SHOP_BUYOUT_BOB_ITEM: &str = "Steel axe";
+const SHOP_BUYOUT_NURMOF_ITEM: &str = "Iron pickaxe";
 const SHOP_BUYOUT_MAGIC_ITEM: &str = "Blood rune";
 const FISHING_BAIT_ID: i32 = 313;
-const BRONZE_AXE_ID: i32 = 1351;
-const BRONZE_PICKAXE_ID: i32 = 1265;
+const STEEL_AXE_ID: i32 = 1353;
+const IRON_PICKAXE_ID: i32 = 1267;
 
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
 const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -15770,7 +15773,7 @@ fn shop_buyout_gerrant_scenario() -> Scenario {
     )
 }
 
-/// Bob nonstackable ShopBuyout: selected `Bronze axe` (obj 1351) only.
+/// Bob nonstackable ShopBuyout: selected `Steel axe` (obj 1353) only.
 /// Long Lumbridge ↔ Draynor route uses [`SHOP_BUYOUT_BOB_TIMING`].
 fn shop_buyout_bob_scenario() -> Scenario {
     shop_buyout_variant(
@@ -15781,12 +15784,12 @@ fn shop_buyout_bob_scenario() -> Scenario {
         DRAYNOR_BANK_BOOTH,
         DRAYNOR_BANK_BOOTH_ID,
         "Bob",
-        BRONZE_AXE_ID,
+        STEEL_AXE_ID,
         SHOP_BUYOUT_BOB_TIMING,
     )
 }
 
-/// Nurmof nonstackable ShopBuyout: selected `Bronze pickaxe` (obj 1265) only.
+/// Nurmof nonstackable ShopBuyout: selected `Iron pickaxe` (obj 1267) only.
 /// Dwarven Mine ↔ Falador East uses [`SHOP_BUYOUT_NURMOF_TIMING`].
 fn shop_buyout_nurmof_scenario() -> Scenario {
     shop_buyout_variant(
@@ -15797,7 +15800,7 @@ fn shop_buyout_nurmof_scenario() -> Scenario {
         FALADOR_EAST_BOOTH,
         2213,
         "Nurmof",
-        BRONZE_PICKAXE_ID,
+        IRON_PICKAXE_ID,
         SHOP_BUYOUT_NURMOF_TIMING,
     )
 }
@@ -15833,14 +15836,15 @@ fn shop_buyout_magic_scenario() -> Scenario {
                 }),
             },
             wait: Wait {
-                arm: Proof::ItemIdAtMost {
-                    id: COINS_ID,
-                    count: 0,
+                arm: Proof::Stat {
+                    id: MAGIC_STAT,
+                    min: 66,
                 },
                 budget_ticks: 200,
             },
         },
     );
+    scenario.steps.insert(tele_shop + 1, drain_advancestat());
     scenario
 }
 
@@ -27787,7 +27791,7 @@ mod tests {
             ),
             (
                 "shop_buyout_bob",
-                BRONZE_AXE_ID,
+                STEEL_AXE_ID,
                 DRAYNOR_BANK_APPROACH,
                 DRAYNOR_BANK_BOOTH,
                 DRAYNOR_BANK_BOOTH_ID,
@@ -27800,7 +27804,7 @@ mod tests {
             ),
             (
                 "shop_buyout_nurmof",
-                BRONZE_PICKAXE_ID,
+                IRON_PICKAXE_ID,
                 FALADOR_EAST_BANK,
                 FALADOR_EAST_BOOTH,
                 2213,
