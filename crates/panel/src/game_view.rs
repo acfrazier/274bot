@@ -241,12 +241,20 @@ impl GameView {
         let packed = &pixels[..n.min(pixels.len())];
         expand_rgba(packed, rgba);
         #[cfg(feature = "render-diagnostics")]
-        client::render::diagnostics::dump_panel_upload(
-            packed,
-            rgba,
-            APPLET_W as i32,
-            APPLET_H as i32,
-        );
+        if let Some((mut meta, slot, generation)) =
+            client::render::diagnostics::take_ui_taken_roi()
+        {
+            client::render::diagnostics::attach_panel_upload(
+                &mut meta,
+                packed,
+                rgba,
+                APPLET_W as i32,
+                APPLET_H as i32,
+                &slot,
+                generation,
+            );
+            client::render::diagnostics::set_presented_roi(meta);
+        }
         let texture = &self
             .cpu_owner
             .as_ref()

@@ -112,6 +112,14 @@ pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool;
 pub struct FrameBuf {
     inner: Mutex<Option<FrameOutput>>,
     gen: AtomicU64,
+    #[cfg(feature = "render-diagnostics")]
+    roi: Mutex<RoiPair>,
+}
+
+#[cfg(feature = "render-diagnostics")]
+struct RoiPair {
+    stored: Option<client::render::diagnostics::PixelRoiMeta>,
+    taken: Option<client::render::diagnostics::PixelRoiMeta>,
 }
 
 impl FrameBuf {
@@ -119,12 +127,22 @@ impl FrameBuf {
         std::sync::Arc::new(Self {
             inner: Mutex::new(None),
             gen: AtomicU64::new(0),
+            #[cfg(feature = "render-diagnostics")]
+            roi: Mutex::new(RoiPair {
+                stored: None,
+                taken: None,
+            }),
         })
     }
     /// Store the latest frame and bump the generation. The full
     /// [`FrameOutput`] is kept so the panel can bind a
     /// `FrameOutput::Texture` or pack a `PixMap`.
     pub fn store(&self, frame: FrameOutput) {
+        #[cfg(feature = "render-diagnostics")]
+        {
+            self.roi.lock().unwrap().stored =
+                client::render::diagnostics::take_thread_pixel_roi();
+        }
         *self.inner.lock().unwrap() = Some(frame);
         self.gen.fetch_add(1, Ordering::Relaxed);
     }
@@ -133,7 +151,20 @@ impl FrameBuf {
     /// Clone). `None` when nothing was stored since the last take. The
     /// generation is untouched — only [`FrameBuf::store`] bumps it.
     pub fn take(&self) -> Option<FrameOutput> {
-        self.inner.lock().unwrap().take()
+        let frame = self.inner.lock().unwrap().take();
+        #[cfg(feature = "render-diagnostics")]
+        if frame.is_some() {
+            let mut roi = self.roi.lock().unwrap();
+            roi.taken = roi.stored.take();
+        }
+        frame
+    }
+
+    /// Sidecar that belonged to the last successful [`take`]. Ordinary
+    /// builds omit this.
+    #[cfg(feature = "render-diagnostics")]
+    pub fn take_pixel_roi(&self) -> Option<client::render::diagnostics::PixelRoiMeta> {
+        self.roi.lock().unwrap().taken.take()
     }
     /// CPU path: pack the latest `PixMap`'s pixels via `pack_rgb` (765×503,
     /// same shape the panel's texture upload expects). Empty when nothing
@@ -720,6 +751,55 @@ mod tests {
         assert_eq!(buf.generation(), 1);
         buf.store(applet_pixmap(vec![1i32; 765 * 503]));
         assert_eq!(buf.generation(), 2);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn take_keeps_production_roi_after_later_live_stamp() {
+        use client::render::diagnostics::{
+            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+        };
+        let first = PixelRoiMeta::produced(
+            4,
+            PixelRoiCam {
+                cycle: 10,
+                eye_x: 1,
+                eye_y: 0,
+                eye_z: 0,
+                yaw: 0,
+                pitch: 0,
+                origin_x: 0,
+                origin_z: 0,
+                trace_frame: 1,
+            },
+            PackedHist { n: 1, ..PackedHist::EMPTY },
+            PackedHist::EMPTY,
+        );
+        stamp_thread_pixel_roi(first.clone());
+        let buf = FrameBuf::new();
+        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        let later = PixelRoiMeta::produced(
+            9,
+            PixelRoiCam {
+                cycle: 99,
+                eye_x: 8,
+                eye_y: 0,
+                eye_z: 0,
+                yaw: 0,
+                pitch: 0,
+                origin_x: 0,
+                origin_z: 0,
+                trace_frame: 2,
+            },
+            PackedHist::EMPTY,
+            PackedHist::EMPTY,
+        );
+        stamp_thread_pixel_roi(later);
+        assert!(buf.take().is_some());
+        let roi = buf.take_pixel_roi().expect("sidecar from the stored frame");
+        assert_eq!(roi.frame_id, 4);
+        assert_eq!(roi.cam.cycle, 10);
+        assert_ne!(roi.frame_id, 9);
     }
 
     #[test]

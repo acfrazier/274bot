@@ -60,6 +60,9 @@ pub struct ShotCapture {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Copied from the readback job; never the current LIVE camera.
+    #[cfg(feature = "render-diagnostics")]
+    pub pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
 }
 
 /// Observable ownership stage for one labeled capture. Terminal harnesses
@@ -756,6 +759,8 @@ struct ShotReadback {
     buffer: wgpu::Buffer,
     width: u32,
     height: u32,
+    #[cfg(feature = "render-diagnostics")]
+    pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
 }
 
 fn record_readback_outcomes(
@@ -985,6 +990,8 @@ fn readback(
     let height = source.height();
     let bytes_per_row = 4 * width;
     let padded = align_up(bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    #[cfg(feature = "render-diagnostics")]
+    let pixel_roi = client::render::diagnostics::snapshot_shot_bind();
     jobs.iter()
         .map(|(label, snapshot_json)| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1020,6 +1027,8 @@ fn readback(
                 buffer,
                 width,
                 height,
+                #[cfg(feature = "render-diagnostics")]
+                pixel_roi: pixel_roi.clone(),
             }
         })
         .collect()
@@ -1071,6 +1080,8 @@ fn map_readbacks(
                 width: rb.width,
                 height: rb.height,
                 rgba: to_rgba(&rgba, format),
+                #[cfg(feature = "render-diagnostics")]
+                pixel_roi: rb.pixel_roi,
             })
         })
         .collect()
@@ -1599,6 +1610,8 @@ mod tests {
             width: 1,
             height: 1,
             rgba: vec![0, 0, 0, 255],
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
         });
         assert_eq!(shots.status("gnome_chop"), ShotStatus::WritePending);
 
