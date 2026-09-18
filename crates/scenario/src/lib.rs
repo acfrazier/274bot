@@ -535,6 +535,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "shop_buyout_bob" => Some(shop_buyout_bob_scenario()),
         "shop_buyout_nurmof" => Some(shop_buyout_nurmof_scenario()),
         "shop_buyout_magic" => Some(shop_buyout_magic_scenario()),
+        "shop_buyout_lundail" => Some(shop_buyout_lundail_scenario()),
+        "shop_buyout_fernahei" => Some(shop_buyout_fernahei_scenario()),
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
@@ -683,6 +685,8 @@ pub fn names() -> Vec<&'static str> {
         "shop_buyout_bob",
         "shop_buyout_nurmof",
         "shop_buyout_magic",
+        "shop_buyout_lundail",
+        "shop_buyout_fernahei",
         "smithing_bot",
         "smithing_bot_platebody",
         "smithing_bot_nails",
@@ -12722,6 +12726,14 @@ const LOST_CITY_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     journal: "Lost City",
 };
 
+/// Shilo Village (`quest_names_enum` 43, journal row `[zombiequeen]` text
+/// `Shilo Village`): `%zombiequeen >= ^zombiequeen_complete` (15) is the
+/// wooden-gate membership (`quest_zombiequeen.rs2` `[oploc1,_shilo_woodengate]`).
+const SHILO_VILLAGE_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
+    dialog: "Shilo Village",
+    journal: "Shilo Village",
+};
+
 /// The native quest-journal command and the labels of its individual-quest
 /// path: the first dialog's "Select Individual Quest." branch button, the
 /// paginated list's "Next." button and the per-quest "Complete."
@@ -14900,6 +14912,32 @@ const MAGIC_STORE_STAND: WorldTile = WorldTile {
     z: 3090,
     level: 1,
 };
+/// Frozen shopPresets Lundail stand (Mage Arena cellar rune shop).
+const LUNDAIL_STAND: WorldTile = WorldTile {
+    x: 2535,
+    z: 4719,
+    level: 0,
+};
+/// Frozen shopPresets Gundai bankStand (Mage Arena cellar). No booth;
+/// `magearena_banker` publishes Talk-to only (`mage_arena.npc`).
+const GUNDAI_BANK_APPROACH: WorldTile = WorldTile {
+    x: 2533,
+    z: 4714,
+    level: 0,
+};
+/// Frozen shopPresets Fernahei stand (Shilo fishing hut).
+const FERNAHEI_STAND: WorldTile = WorldTile {
+    x: 2870,
+    z: 2971,
+    level: 0,
+};
+/// Frozen shopPresets Shilo bankStand. No booth; `shilobanker` display
+/// name is `Banker` (`banker.npc`).
+const SHILO_BANK_APPROACH: WorldTile = WorldTile {
+    x: 2852,
+    z: 2954,
+    level: 0,
+};
 /// Stock-facing walkable adjacent for Yanille open booth 2213@2614,3092
 /// (map m40_48 local 54,20). Preset bankStand 2613,3092 is Chebyshev 1 west.
 const YANILLE_BANK_APPROACH: WorldTile = WorldTile {
@@ -15017,6 +15055,19 @@ const SHOP_BUYOUT_NURMOF_BUDGET_GP: f64 = 1500.0;
 /// Stackable coins<100 bank trigger like Aubury; perTrip 500 / budget 1500.
 const SHOP_BUYOUT_MAGIC_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_MAGIC_BUDGET_GP: f64 = 1500.0;
+/// Lundail stackable fire rune: magearena_runeshop sell 1000 delta 30, baseline
+/// 200 cost 4. Stock-sensitive unit_price at shelf 200: first units 4gp, rising
+/// with sold count. perTrip 500 → 66 fire runes / 490gp → 10 coins (<100 bank);
+/// 134 remain for resumed purchase. Cosmic baseline 20 stocks out with 124
+/// leftover (restock wait) — not selected. Cellar shop↔Gundai is Chebyshev 5.
+const SHOP_BUYOUT_LUNDAIL_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_LUNDAIL_BUDGET_GP: f64 = 1500.0;
+/// Fernahei stackable feather: shilofishingshop sell 1000 delta 20, baseline
+/// 800 cost 2. perTrip 500 → 125 feathers / 500gp → 0 coins (<100 bank);
+/// 675 remain for resume. Rods baseline 5 stock out with 475 leftover — not
+/// selected. Hut↔teller is Chebyshev 18.
+const SHOP_BUYOUT_FERNAHEI_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_FERNAHEI_BUDGET_GP: f64 = 1500.0;
 /// Betty's frozen Falador West preset requires four travel legs before a
 /// resumed purchase: shop→bank→shop for the initial withdrawal, then
 /// shop→bank→shop for deposit and return. The 150-dirty first-purchase
@@ -15136,6 +15187,18 @@ const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 /// bounds conservatively until a scoped LIVE arm exists.
 const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 
+/// Lundail cellar shop 2535,4719 ↔ Gundai stand 2533,4714 is Chebyshev 5
+/// (estimate, not measured). Four legs stay inside the Mage Arena cellar —
+/// not the wilderness lever/web approach. Ordinary gold 150/180s, same
+/// family as Aemad/Aubury short booth routes.
+const SHOP_BUYOUT_LUNDAIL_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_DEFAULT_TIMING;
+
+/// Fernahei hut 2870,2971 ↔ Shilo teller 2852,2954 is Chebyshev 18
+/// (estimate, not measured), shorter than Aemad's ~42-tile East Ardougne
+/// booth route. Ordinary gold 150/180s. Village wooden gates are not on
+/// this interior shop↔bank geometry.
+const SHOP_BUYOUT_FERNAHEI_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_DEFAULT_TIMING;
+
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
     "Aemad's vials — East Ardougne (Ardougne East bank)";
 const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
@@ -15147,6 +15210,8 @@ const SHOP_BUYOUT_GERRANT_LABEL: &str = "Gerrant's feathers — Port Sarim (Dray
 const SHOP_BUYOUT_BOB_LABEL: &str = "Bob's axes — Lumbridge (Draynor bank)";
 const SHOP_BUYOUT_NURMOF_LABEL: &str = "Nurmof's pickaxes — Dwarven Mine (Falador East bank)";
 const SHOP_BUYOUT_MAGIC_LABEL: &str = "Wizard Guild runes — Yanille (Yanille bank)";
+const SHOP_BUYOUT_LUNDAIL_LABEL: &str = "Mage Arena runes — Lundail (Gundai bank)";
+const SHOP_BUYOUT_FERNAHEI_LABEL: &str = "Fernahei's fishing — Shilo Village (Shilo bank)";
 const SHOP_BUYOUT_AEMAD_ITEM: &str = "Vial of water";
 const SHOP_BUYOUT_AUBURY_ITEM: &str = "Fire rune";
 const SHOP_BUYOUT_LOWE_ITEM: &str = "Bronze arrow";
@@ -15157,6 +15222,8 @@ const SHOP_BUYOUT_GERRANT_ITEM: &str = "Feather";
 const SHOP_BUYOUT_BOB_ITEM: &str = "Steel axe";
 const SHOP_BUYOUT_NURMOF_ITEM: &str = "Iron pickaxe";
 const SHOP_BUYOUT_MAGIC_ITEM: &str = "Blood rune";
+const SHOP_BUYOUT_LUNDAIL_ITEM: &str = "Fire rune";
+const SHOP_BUYOUT_FERNAHEI_ITEM: &str = "Feather";
 const FISHING_BAIT_ID: i32 = 313;
 const STEEL_AXE_ID: i32 = 1353;
 const IRON_PICKAXE_ID: i32 = 1267;
@@ -15388,6 +15455,50 @@ const SHOP_BUYOUT_MAGIC_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "buyItems",
         value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_MAGIC_ITEM]),
+    },
+];
+const SHOP_BUYOUT_LUNDAIL_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_LUNDAIL_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_LUNDAIL_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_LUNDAIL_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_LUNDAIL_ITEM]),
+    },
+];
+const SHOP_BUYOUT_FERNAHEI_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_FERNAHEI_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_FERNAHEI_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_FERNAHEI_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_FERNAHEI_ITEM]),
     },
 ];
 const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
@@ -15850,6 +15961,77 @@ fn shop_buyout_magic_scenario() -> Scenario {
     scenario
 }
 
+/// Lundail stackable ShopBuyout: selected `Fire rune` (obj 554) only.
+/// Coin seed through Gundai Talk-to + exact cellar bank choice. Shop↔bank
+/// stays in the Mage Arena cellar (Chebyshev 5); wilderness lever/webs are
+/// not on the proof cycle.
+fn shop_buyout_lundail_scenario() -> Scenario {
+    shop_buyout_with_bank(
+        "shop_buyout_lundail",
+        SHOP_BUYOUT_LUNDAIL_INJECT,
+        LUNDAIL_STAND,
+        ShopBuyoutBankAccess::Npc {
+            approach: GUNDAI_BANK_APPROACH,
+            banker: "Gundai",
+            action: "Talk-to",
+            choose: "Cool, I'd like to access my bank account please.",
+        },
+        "Lundail",
+        FIRE_RUNE_ID,
+        SHOP_BUYOUT_LUNDAIL_TIMING,
+    )
+}
+
+/// Fernahei stackable ShopBuyout: selected `Feather` (obj 314) only.
+/// Coin seed through the Shilo `Banker` Talk-to + exact teller choice.
+/// Village membership is the native Shilo Village journal acknowledgement
+/// before the coin seed; shop↔bank is interior Chebyshev 18.
+fn shop_buyout_fernahei_scenario() -> Scenario {
+    let mut scenario = shop_buyout_with_bank(
+        "shop_buyout_fernahei",
+        SHOP_BUYOUT_FERNAHEI_INJECT,
+        FERNAHEI_STAND,
+        ShopBuyoutBankAccess::Npc {
+            approach: SHILO_BANK_APPROACH,
+            banker: "Banker",
+            action: "Talk-to",
+            choose: "I'd like to access my bank account, please.",
+        },
+        "Fernahei",
+        FEATHER_ID,
+        SHOP_BUYOUT_FERNAHEI_TIMING,
+    );
+    let coin = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name
+                == "seed stackable coins and stand at the operable shop bank approach before Start"
+        })
+        .expect("shop buyout coin seed");
+    for step in quest_prereq_steps(SHILO_VILLAGE_PREREQ).into_iter().rev() {
+        scenario.steps.insert(coin, step);
+    }
+    scenario
+}
+
+/// Seed-bank identity for [`shop_buyout_with_bank`]. Booth fixtures keep the
+/// exact Use-quickly loc path; NPC fixtures Talk-to a named teller and
+/// press that teller's authentic bank choice. Deposit/close stay shared.
+enum ShopBuyoutBankAccess {
+    Booth {
+        approach: WorldTile,
+        booth: WorldTile,
+        booth_id: i32,
+    },
+    Npc {
+        approach: WorldTile,
+        banker: &'static str,
+        action: &'static str,
+        choose: &'static str,
+    },
+}
+
 fn shop_buyout_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -15861,11 +16043,147 @@ fn shop_buyout_variant(
     product_id: i32,
     timing: ShopBuyoutTiming,
 ) -> Scenario {
+    shop_buyout_with_bank(
+        name,
+        inject,
+        stand,
+        ShopBuyoutBankAccess::Booth {
+            approach: bank_approach,
+            booth,
+            booth_id,
+        },
+        keeper_name,
+        product_id,
+        timing,
+    )
+}
+
+fn shop_buyout_open_npc_bank(
+    name: &'static str,
+    arm: Proof,
+    banker: &'static str,
+    approach: WorldTile,
+    action: &'static str,
+    choose: &'static str,
+) -> Step {
+    let answered = std::sync::Mutex::new(None::<(i32, String)>);
+    Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(move |c, snapshot| {
+                if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
+                    return true;
+                }
+                if snapshot.chat_continue_component_id() != -1 {
+                    let mut ix = Interactions::new(snapshot, c);
+                    return matches!(
+                        ix.continue_dialog(),
+                        SendResult::Sent { .. } | SendResult::Refused { .. }
+                    );
+                }
+                if !snapshot.chat_options().is_empty() {
+                    let identity = (
+                        snapshot.modals().chat,
+                        snapshot
+                            .chat_options()
+                            .iter()
+                            .map(|option| option.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                    let Ok(mut answered) = answered.lock() else {
+                        return false;
+                    };
+                    if answered.as_ref() == Some(&identity) {
+                        return true;
+                    }
+                    let Some(choice) = snapshot
+                        .chat_options()
+                        .iter()
+                        .position(|option| option.text == choose)
+                    else {
+                        return false;
+                    };
+                    let mut ix = Interactions::new(snapshot, c);
+                    return match ix.answer_choice(choice as i32 + 1) {
+                        SendResult::Sent { .. } => {
+                            *answered = Some(identity);
+                            true
+                        }
+                        SendResult::Refused { .. } => true,
+                    };
+                }
+                let Some(npc) = snapshot.npcs().iter().find(|npc| {
+                    npc.name.as_deref() == Some(banker)
+                        && npc.tile.level == approach.level
+                        && (npc.tile.x - approach.x)
+                            .abs()
+                            .max((npc.tile.z - approach.z).abs())
+                            <= 12
+                        && npc.actions.iter().any(|published| {
+                            published
+                                .as_deref()
+                                .is_some_and(|label| label.eq_ignore_ascii_case(action))
+                        })
+                }) else {
+                    return true;
+                };
+                let Some((px, pz, level)) = snapshot.tile() else {
+                    return true;
+                };
+                if level != npc.tile.level
+                    || (px - npc.tile.x).abs().max((pz - npc.tile.z).abs()) > 1
+                {
+                    let mut ix = Interactions::new(snapshot, c);
+                    return matches!(
+                        ix.walk(npc.tile),
+                        SendResult::Sent { .. } | SendResult::Refused { .. }
+                    );
+                }
+                let mut ix = Interactions::new(snapshot, c);
+                match ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.to_string())) {
+                    SendResult::Sent { .. } => true,
+                    SendResult::Refused {
+                        reason:
+                            SendReason::SceneUnavailable
+                            | SendReason::OffScene
+                            | SendReason::StaleTarget,
+                        ..
+                    } => true,
+                    SendResult::Refused { reason, .. } => {
+                        eprintln!(
+                            "[scenario] npc bank {banker} {action} send refused: {reason:?}"
+                        );
+                        false
+                    }
+                }
+            }),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
+fn shop_buyout_with_bank(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    stand: WorldTile,
+    bank: ShopBuyoutBankAccess,
+    keeper_name: &'static str,
+    product_id: i32,
+    timing: ShopBuyoutTiming,
+) -> Scenario {
     let product = Proof::ItemId {
         id: product_id,
         count: 1,
     };
     let coin_seed = SHOP_BUYOUT_COIN_SEED;
+    let bank_approach = match bank {
+        ShopBuyoutBankAccess::Booth { approach, .. }
+        | ShopBuyoutBankAccess::Npc { approach, .. } => approach,
+    };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name: "seed stackable coins and stand at the operable shop bank approach before Start",
@@ -15890,29 +16208,65 @@ fn shop_buyout_variant(
             budget_ticks: 200,
         },
     });
-    steps.push(bank_fletcher_watch(
-        "acknowledge exact shop bank booth identity and Use-quickly action before bank send",
-        Proof::LocActionNear {
-            id: booth_id,
-            x: booth.x,
-            z: booth.z,
-            level: booth.level,
-            radius: 0,
-            action: "Use-quickly",
-            present: true,
-        },
-    ));
-    // Same exact-booth open pattern as Herblore readiness (do not retarget
-    // closed booths via open_nearest). Reuses the generic helper only.
-    steps.push(herblore_open_seed_bank_at(
-        "open the exact named shop bank booth for the coin seed deposit",
-        Proof::BankItemIdAtMost {
-            id: COINS_ID,
-            count: 0,
-        },
-        booth,
-        booth_id,
-    ));
+    match bank {
+        ShopBuyoutBankAccess::Booth {
+            booth,
+            booth_id,
+            ..
+        } => {
+            steps.push(bank_fletcher_watch(
+                "acknowledge exact shop bank booth identity and Use-quickly action before bank send",
+                Proof::LocActionNear {
+                    id: booth_id,
+                    x: booth.x,
+                    z: booth.z,
+                    level: booth.level,
+                    radius: 0,
+                    action: "Use-quickly",
+                    present: true,
+                },
+            ));
+            // Same exact-booth open pattern as Herblore readiness (do not retarget
+            // closed booths via open_nearest). Reuses the generic helper only.
+            steps.push(herblore_open_seed_bank_at(
+                "open the exact named shop bank booth for the coin seed deposit",
+                Proof::BankItemIdAtMost {
+                    id: COINS_ID,
+                    count: 0,
+                },
+                booth,
+                booth_id,
+            ));
+        }
+        ShopBuyoutBankAccess::Npc {
+            banker,
+            action,
+            choose,
+            ..
+        } => {
+            steps.push(bank_fletcher_watch(
+                "acknowledge the exact named shop banker and Talk-to action before bank send",
+                Proof::NpcNameNear {
+                    name: banker,
+                    x: bank_approach.x,
+                    z: bank_approach.z,
+                    level: bank_approach.level,
+                    radius: 12,
+                },
+            ));
+            steps.push(shop_buyout_open_npc_bank(
+                "open the exact named shop banker for the coin seed deposit",
+                Proof::BankItemIdAtMost {
+                    id: COINS_ID,
+                    count: 0,
+                },
+                banker,
+                bank_approach,
+                action,
+                choose,
+            ));
+        }
+    }
     steps.extend(native_bank_deposit(
         "deposit the coin seed through the bank window",
         vec![NativeSeed {
@@ -20307,6 +20661,8 @@ mod tests {
                 "shop_buyout_bob",
                 "shop_buyout_nurmof",
                 "shop_buyout_magic",
+                "shop_buyout_lundail",
+                "shop_buyout_fernahei",
                 "smithing_bot",
                 "smithing_bot_platebody",
                 "smithing_bot_nails",
@@ -28180,6 +28536,8 @@ mod tests {
             "shop_buyout_hickton",
             "shop_buyout_harry",
             "shop_buyout_magic",
+            "shop_buyout_lundail",
+            "shop_buyout_fernahei",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(
@@ -28274,6 +28632,216 @@ mod tests {
             WorldTile {
                 x: 3092,
                 z: 3243,
+                level: 0
+            }
+        );
+    }
+
+    /// Lundail/Fernahei seed through the named teller, not a booth. Shared
+    /// post-Start proof order stays product→bank→empty→close→shop→resume.
+    #[test]
+    fn shop_buyout_npc_teller_variants_seed_through_named_dialog() {
+        for (name, product_id, approach, banker, keeper, stand, item, shop, quest) in [
+            (
+                "shop_buyout_lundail",
+                FIRE_RUNE_ID,
+                GUNDAI_BANK_APPROACH,
+                "Gundai",
+                "Lundail",
+                LUNDAIL_STAND,
+                SHOP_BUYOUT_LUNDAIL_ITEM,
+                SHOP_BUYOUT_LUNDAIL_LABEL,
+                None,
+            ),
+            (
+                "shop_buyout_fernahei",
+                FEATHER_ID,
+                SHILO_BANK_APPROACH,
+                "Banker",
+                "Fernahei",
+                FERNAHEI_STAND,
+                SHOP_BUYOUT_FERNAHEI_ITEM,
+                SHOP_BUYOUT_FERNAHEI_LABEL,
+                Some("Shilo Village"),
+            ),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert_eq!(
+                scenario.proof,
+                Proof::ItemId {
+                    id: product_id,
+                    count: 1
+                }
+            );
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(inject.get("shop"), Some(&Value::String(shop.into())));
+            assert_eq!(
+                inject.get("buyItems"),
+                Some(&Value::Array(vec![Value::String(item.into())]))
+            );
+            assert_eq!(
+                inject.get("budgetGp"),
+                Some(&Value::Number(
+                    serde_json::Number::from_f64(1500.0).unwrap()
+                ))
+            );
+            assert_eq!(
+                inject.get("perTripGp"),
+                Some(&Value::Number(
+                    serde_json::Number::from_f64(500.0).unwrap()
+                ))
+            );
+
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .expect("StartScript");
+            let seed: Vec<_> = scenario.steps[..start]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect();
+            assert!(
+                seed.contains(&Proof::ArrivedNear {
+                    x: approach.x,
+                    z: approach.z,
+                    level: approach.level,
+                    radius: 4,
+                }),
+                "{name}: seed stands on the teller approach"
+            );
+            assert!(
+                seed.contains(&Proof::NpcNameNear {
+                    name: banker,
+                    x: approach.x,
+                    z: approach.z,
+                    level: approach.level,
+                    radius: 12,
+                }),
+                "{name}: seed acknowledges the named teller"
+            );
+            assert!(
+                scenario.steps[..start].iter().any(|step| {
+                    step.name
+                        == "open the exact named shop banker for the coin seed deposit"
+                }),
+                "{name}: NPC teller open is present"
+            );
+            assert!(
+                scenario.steps[..start].iter().all(|step| {
+                    step.name
+                        != "open the exact named shop bank booth for the coin seed deposit"
+                }),
+                "{name}: booth open is not used"
+            );
+            if let Some(journal) = quest {
+                assert!(
+                    seed.contains(&Proof::QuestDone { name: journal }),
+                    "{name}: Shilo Village journal is acknowledged before Start"
+                );
+                let journal_at = scenario
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        matches!(step.wait.arm, Proof::QuestDone { name: row } if row == journal)
+                    })
+                    .expect("quest ack");
+                let coin_at = scenario
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        step.name
+                            == "seed stackable coins and stand at the operable shop bank approach before Start"
+                    })
+                    .expect("coin seed");
+                assert!(
+                    journal_at < coin_at && coin_at < start,
+                    "{name}: quest ack precedes coin seed and Start"
+                );
+            } else {
+                assert!(
+                    !seed.iter().any(|arm| matches!(arm, Proof::QuestDone { .. })),
+                    "{name}: cellar teller does not invent a quest gate"
+                );
+            }
+            assert!(
+                seed.contains(&Proof::NpcNameNear {
+                    name: keeper,
+                    x: stand.x,
+                    z: stand.z,
+                    level: stand.level,
+                    radius: 12,
+                }),
+                "{name}: keeper acknowledged before Start"
+            );
+
+            let watches: Vec<_> = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| (step.name, step.wait.arm))
+                .collect();
+            assert_eq!(
+                watches,
+                [
+                    (
+                        "watch unseeded purchased product in pack after Start",
+                        Proof::ItemId {
+                            id: product_id,
+                            count: 1,
+                        },
+                    ),
+                    (
+                        "watch purchased product enter a fresh bank",
+                        Proof::BankItemId {
+                            id: product_id,
+                            count: 1,
+                        },
+                    ),
+                    (
+                        "watch the pack empty of product after deposit",
+                        Proof::ItemIdAtMost {
+                            id: product_id,
+                            count: 0,
+                        },
+                    ),
+                    (
+                        "watch the buyout bank close after deposit",
+                        Proof::BankClosed,
+                    ),
+                    (
+                        "watch return to the named shop after banking",
+                        Proof::NpcNameNear {
+                            name: keeper,
+                            x: stand.x,
+                            z: stand.z,
+                            level: stand.level,
+                            radius: 12,
+                        },
+                    ),
+                    (
+                        "watch further purchased product after return",
+                        Proof::ItemId {
+                            id: product_id,
+                            count: 1,
+                        },
+                    ),
+                ]
+            );
+        }
+        assert_eq!(
+            GUNDAI_BANK_APPROACH,
+            WorldTile {
+                x: 2533,
+                z: 4714,
+                level: 0
+            }
+        );
+        assert_eq!(
+            SHILO_BANK_APPROACH,
+            WorldTile {
+                x: 2852,
+                z: 2954,
                 level: 0
             }
         );
