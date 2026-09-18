@@ -99,6 +99,8 @@ pub mod cake_stall;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
+mod dialog;
+#[cfg(feature = "load")]
 mod drive_partner_trade;
 #[cfg(feature = "load")]
 mod fire;

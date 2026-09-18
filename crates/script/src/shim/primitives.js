@@ -1,9 +1,84 @@
-import { notImpl } from '../../../../shim/_kernel.js';
-import { Npcs, talkOp } from '../../../npcs/Npcs.js';
-import { ChatDialog } from '../../../ui/dialogue/ChatDialog.js';
+import { notImpl, queue } from '../../../../shim/_kernel.js';
+import { talkOp } from '../../../npcs/Npcs.js';
 import { Traversal } from '../../../walking/Traversal.js';
+import { Execution } from '../../../execution/Execution.js';
 
 export { talkOp };
+
+function callDialog(payload) {
+    const fn =
+        globalThis.rustyscript && globalThis.rustyscript.functions
+            ? globalThis.rustyscript.functions.__rs2b0t_dialog
+            : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('primitives.driveDialog');
+    }
+    return fn(payload);
+}
+
+function emitLog(step, log) {
+    if (typeof step?.log === 'string' && typeof log === 'function') {
+        log(step.log);
+    }
+}
+
+function dispatchVerb(step) {
+    if (step.kind === 'npc') {
+        queue({
+            op: 'npc',
+            name: step.name,
+            action: step.action,
+            ...(typeof step.index === 'number' ? { index: step.index } : {}),
+        });
+        return true;
+    }
+    if (step.kind === 'ops') {
+        for (const op of step.ops || []) queue(op);
+        return true;
+    }
+    return false;
+}
+
+async function run(input, log) {
+    const begin = callDialog({ op: 'begin', ...input });
+    if (!begin) return false;
+    emitLog(begin, log);
+    if (begin.kind === 'notImpl') {
+        throw notImpl('primitives.' + (input.kind || 'driveDialog'), begin.reason);
+    }
+    if (begin.kind === 'aborted') return false;
+    if (begin.kind === 'done') return begin.result === true;
+    const token = begin.token;
+    let current = begin;
+    while (current) {
+        emitLog(current, log);
+        if (current.kind === 'done') return current.result === true;
+        if (current.kind === 'aborted') return false;
+        if (current.kind === 'notImpl') {
+            throw notImpl('primitives.' + (input.kind || 'driveDialog'), current.reason);
+        }
+        if (current.kind === 'npc' || current.kind === 'ops') {
+            dispatchVerb(current);
+        } else if (current.kind !== 'wait') {
+            return false;
+        }
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = callDialog({ op: 'next', token });
+            return next?.kind !== 'wait';
+        }, 0);
+        current = next;
+    }
+    return false;
+}
+
+function preferList(prefer) {
+    return Array.isArray(prefer) ? prefer.map((row) => String(row)) : [];
+}
+
+function optionalGap(gapMs) {
+    return typeof gapMs === 'number' && Number.isFinite(gapMs) && gapMs >= 0 ? gapMs : undefined;
+}
 
 export function pickPreferred(options, prefer) {
     const opts = options || [];
@@ -37,24 +112,31 @@ export async function gotoNpc(stop) {
     throw notImpl('primitives.gotoNpc');
 }
 
-export async function driveDialog(prefer) {
-    const opts = ChatDialog.options ? ChatDialog.options() : [];
-    const hit = pickPreferred(opts, prefer || []);
-    if (hit && ChatDialog.chooseOption) return ChatDialog.chooseOption(hit);
-    throw notImpl('primitives.driveDialog');
+export async function driveDialog(prefer, log, gapMs) {
+    return run(
+        {
+            kind: 'drive',
+            prefer: preferList(prefer),
+            ...(optionalGap(gapMs) !== undefined ? { gapMs: optionalGap(gapMs) } : {}),
+        },
+        log,
+    );
 }
 
-export async function openDialogue(npcName) {
-    const npc = (Npcs.all() || []).find((n) => n && n.name === npcName);
-    if (!npc) return false;
-    const op = talkOp(npc.actions()) || 'Talk-to';
-    return npc.interact(op);
+export async function openDialogue(npcName, log) {
+    return run({ kind: 'open', npc: String(npcName ?? '') }, log);
 }
 
-export async function talkThrough(npcName, prefer, log) {
-    await openDialogue(npcName);
-    if (prefer && prefer.length) await driveDialog(prefer, log);
-    return true;
+export async function talkThrough(npcName, prefer, log, gapMs) {
+    return run(
+        {
+            kind: 'talk',
+            npc: String(npcName ?? ''),
+            prefer: preferList(prefer),
+            ...(optionalGap(gapMs) !== undefined ? { gapMs: optionalGap(gapMs) } : {}),
+        },
+        log,
+    );
 }
 
 export function talkStrict(npcName, prefer, log) {

@@ -1391,6 +1391,7 @@ fn tick_loop(
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);
                         crate::production::on_snapshot(&snap);
+                        crate::dialog::on_snapshot(&snap);
                         crate::fire::on_snapshot(&snap);
                         crate::trade::on_snapshot(&snap);
                         crate::drive_partner_trade::on_snapshot(&snap);
@@ -1406,6 +1407,7 @@ fn tick_loop(
                             crate::teleport::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
                             crate::production::on_hold(host_hold);
+                            crate::dialog::on_hold(host_hold);
                             crate::fire::on_hold(host_hold);
                             crate::trade::on_hold(host_hold);
                             crate::drive_partner_trade::on_hold(host_hold);
@@ -1749,6 +1751,7 @@ fn tick_loop(
                 crate::teleport::on_reset();
                 crate::shop::on_reset();
                 crate::production::on_reset();
+                crate::dialog::on_reset();
                 crate::fire::on_reset();
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();
@@ -1774,6 +1777,7 @@ fn tick_loop(
                 crate::teleport::on_pause();
                 crate::shop::on_pause();
                 crate::production::on_pause();
+                crate::dialog::on_pause();
                 crate::fire::on_pause();
                 crate::trade::on_pause();
                 crate::drive_partner_trade::on_pause();
@@ -1792,6 +1796,7 @@ fn tick_loop(
                 crate::teleport::on_resume();
                 crate::shop::on_resume();
                 crate::production::on_resume();
+                crate::dialog::on_resume();
                 crate::fire::on_resume();
                 crate::trade::on_resume();
                 crate::drive_partner_trade::on_resume();
