@@ -15298,39 +15298,16 @@ fn shop_buyout_variant(
         booth,
         booth_id,
     ));
-    steps.push(Step {
-        name: "deposit the coin seed through the bank window",
-        kind: StepKind::Repeat {
-            send: Box::new(move |c, snapshot| {
-                if (Proof::BankItemId {
-                    id: COINS_ID,
-                    count: coin_seed,
-                })
-                .check(snapshot, None)
-                {
-                    return true;
-                }
-                let mut ix = Interactions::new(snapshot, c);
-                let mut wrote = false;
-                for item in snapshot.bank_side() {
-                    if let Some(op) = bank_deposit_all_op(&item.actions) {
-                        wrote |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                            SendResult::Sent { .. }
-                        );
-                    }
-                }
-                wrote
-            }),
-        },
-        wait: Wait {
-            arm: Proof::BankItemId {
-                id: COINS_ID,
-                count: coin_seed,
-            },
-            budget_ticks: 200,
-        },
-    });
+    steps.extend(native_bank_deposit(
+        "deposit the coin seed through the bank window",
+        vec![NativeSeed {
+            unnoted_id: COINS_ID,
+            debug_alias: "coins",
+            note_alias: None,
+            quantity: coin_seed,
+            note_id: None,
+        }],
+    ));
     for (step_name, arm) in [
         (
             "confirm the named bank holds the exact coin seed",
