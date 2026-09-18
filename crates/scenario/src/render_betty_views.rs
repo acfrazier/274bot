@@ -9,9 +9,7 @@ use api::interact::{cheat, tele_args};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 
-use crate::{
-    Proof, Scenario, ScenarioNav, ScenarioSettings, Seed, Step, StepKind, Wait,
-};
+use crate::{Proof, Scenario, ScenarioNav, ScenarioSettings, Seed, Step, StepKind, Wait};
 
 /// Fixed orbit pitch for every matrix cell (client range 128–383).
 pub const RENDER_BETTY_PITCH: i32 = 256;
@@ -40,16 +38,35 @@ pub const STATION_WEST_BANK: WorldTile = WorldTile {
 const RENDER_CAPTURE_DEADLINE: Duration = Duration::from_secs(300);
 const RENDER_CAPTURE_STEP_BUDGET: u32 = 600;
 
-/// One-shot diagnostic cases (one station and fixed camera per invocation).
-pub const NAMES: &[&str] = &[
-    "render_betty_views_betty_yaw0",
-    "render_betty_views_betty_yaw512",
-    "render_betty_views_falador_street_yaw0",
-    "render_betty_views_falador_street_yaw512",
-    "render_betty_views_west_bank_yaw0",
-    "render_betty_views_west_bank_yaw512",
-    "render_betty_views_dwarven_wall_yaw0",
-];
+/// Test-only-compatible view over the authoritative scenario registry.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub struct RenderNames;
+
+#[cfg(test)]
+pub const NAMES: RenderNames = RenderNames;
+
+#[cfg(test)]
+impl RenderNames {
+    pub fn len(&self) -> usize {
+        crate::catalog::registered_names()
+            .filter(|name| name.starts_with("render_betty_views_"))
+            .count()
+    }
+}
+
+#[cfg(test)]
+impl IntoIterator for RenderNames {
+    type Item = &'static &'static str;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        crate::catalog::registered_name_refs()
+            .filter(|name| name.starts_with("render_betty_views_"))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct ViewCase {
@@ -119,11 +136,39 @@ const CASES: &[ViewCase] = &[
 ];
 
 /// Lookup one matrix cell by its registered scenario name.
+#[cfg(test)]
 pub fn get(name: &str) -> Option<Scenario> {
-    CASES
-        .iter()
-        .find(|case| case.scenario_name == name)
-        .map(|case| scenario_for(*case))
+    name.starts_with("render_betty_views_")
+        .then(|| crate::catalog::get(name))
+        .flatten()
+}
+
+pub(crate) fn betty_yaw0_scenario() -> Scenario {
+    scenario_for(CASES[0])
+}
+
+pub(crate) fn betty_yaw512_scenario() -> Scenario {
+    scenario_for(CASES[1])
+}
+
+pub(crate) fn falador_street_yaw0_scenario() -> Scenario {
+    scenario_for(CASES[2])
+}
+
+pub(crate) fn falador_street_yaw512_scenario() -> Scenario {
+    scenario_for(CASES[3])
+}
+
+pub(crate) fn west_bank_yaw0_scenario() -> Scenario {
+    scenario_for(CASES[4])
+}
+
+pub(crate) fn west_bank_yaw512_scenario() -> Scenario {
+    scenario_for(CASES[5])
+}
+
+pub(crate) fn dwarven_wall_yaw0_scenario() -> Scenario {
+    scenario_for(CASES[6])
 }
 
 fn scenario_for(case: ViewCase) -> Scenario {
@@ -227,10 +272,7 @@ mod tests {
                 4,
                 "{name} needs tutskip+relog seed before tele and capture gate"
             );
-            assert!(matches!(
-                scenario.steps[1].kind,
-                StepKind::Relog
-            ));
+            assert!(matches!(scenario.steps[1].kind, StepKind::Relog));
             assert!(matches!(
                 scenario.steps[1].wait.arm,
                 Proof::SideTabAvailable { index: 3 }

@@ -1,3 +1,6 @@
+use super::scenarios::{
+    combat::*, navigation::*, pair::*, production::*, script_basics::*, shop::*,
+};
 use super::*;
 
 #[test]
