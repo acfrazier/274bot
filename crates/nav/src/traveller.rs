@@ -1017,13 +1017,24 @@ impl FollowRun {
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
+                                    // Already-open trapdoor: this interact is
+                                    // Climb-down. Mark tries so poll_transport
+                                    // does not send it a second time.
+                                    let tries = if edge.open_loc_id.is_some()
+                                        && edge.kind != TransportKind::Door
+                                        && edge_loc_open(snapshot, edge)
+                                    {
+                                        1
+                                    } else {
+                                        0
+                                    };
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,
                                         ticks_waited: 0,
                                         sent_tile: Some(here),
-                                        tries: 0,
+                                        tries,
                                         troll: false,
                                         open_sent_tick: None,
                                         chat_seq: chat_seq(snapshot),
@@ -2367,14 +2378,18 @@ fn scene_standable(snapshot: &GameSnapshot, tile: WorldTile) -> bool {
         })
 }
 
-/// The snapshot loc for a transport edge: the edge's `loc_id` on the
-/// edge's level within 3 tiles of `edge.at` (the m8aq `gap <= 3`),
-/// nearest first.
+/// The snapshot loc for a transport edge: the edge's closed `loc_id` or
+/// `open_loc_id` on the edge's level within 3 tiles of `edge.at` (the m8aq
+/// `gap <= 3`), nearest first. Trapdoors `loc_change` closed→open (1568→
+/// 1570); matching only the closed id leaves Climb-down unarmed.
 fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
     snapshot
         .locs()
         .iter()
-        .filter(|loc| loc.id == edge.loc_id && loc.tile.level == edge.at.level)
+        .filter(|loc| {
+            loc.tile.level == edge.at.level
+                && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
+        })
         .map(|loc| (loc, cheb(loc.tile, edge.at)))
         .filter(|(_, gap)| *gap <= 3)
         .min_by_key(|(_, gap)| *gap)
@@ -2755,17 +2770,7 @@ fn npc_backed(edge: &TransportEdge) -> bool {
 /// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
 /// open 1531 sits a tile off the derived `at`).
 fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
-    snapshot
-        .locs()
-        .iter()
-        .filter(|loc| {
-            loc.tile.level == edge.at.level
-                && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
-        })
-        .map(|loc| (loc, cheb(loc.tile, edge.at)))
-        .filter(|(_, gap)| *gap <= 3)
-        .min_by_key(|(_, gap)| *gap)
-        .map(|(loc, _)| loc)
+    find_transport_loc(snapshot, edge)
 }
 
 /// Whether a transport hop drives the script's chat dialogs itself: an
@@ -2856,7 +2861,9 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::router::{find_on_grid, Leg, Route};
     use crate::tile::Tile;
-    use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
+    use crate::transport::{
+        DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+    };
     use crate::traveller::{
         door_tile, FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
         TravelOutcome, Traveller,
@@ -3829,6 +3836,36 @@ mod tests {
         }
     }
 
+    /// Edgeville trapdoor: closed 1568 / open 1570, dest loc-baked +6400.
+    /// Live `p_telejump(movecoord(coord(), 0, 0, 6400))` lands on the
+    /// adjacent stand, Chebyshev 1 off that dest.
+    fn trapdoor_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Ladder,
+            at: WorldTile {
+                x: 3202,
+                z: 3204,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3202,
+                z: 3204 + CELLAR_SHIFT,
+                level: 0,
+            },
+            loc_id: 1568,
+            option: 1,
+            ticks: 3,
+            dir: None,
+            open_loc_id: Some(1570),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
     /// A cart-style Npc edge: the driver NPC (type `loc_id`) at (3201,
     /// 3201) carries the player to (3300, 3200).
     fn cart_edge() -> TransportEdge {
@@ -4262,6 +4299,122 @@ mod tests {
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
+    }
+
+    /// Closed trapdoor 1568 Open then loc_change to 1570: Climb-down must
+    /// target the open leaf. Landing is the player's tile +6400 (offset 1
+    /// from the loc-baked dest). Host WalkNear close_enough 0 still arrives.
+    #[test]
+    fn follow_trapdoor_open_then_climb_arrives_cellar_offset() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 1568, "Trapdoor", "Open", 2, 4);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = trapdoor_edge();
+        let dest = edge.to;
+        let landing = WorldTile {
+            x: 3202,
+            z: 3203 + CELLAR_SHIFT,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 3.0,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_event: Some(Box::new(|e| {
+                if let TravelEvent::TransportAttempt { actual_id, .. } = e {
+                    attempts.borrow_mut().push(actual_id);
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Open on closed 1568"
+        );
+        assert_eq!(rec.loc_ops, 1, "Open");
+        assert_eq!(*attempts.borrow(), vec![1568]);
+        plant_loc(&mut c, 1570, "Trapdoor", "Climb-down", 2, 4);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Climb-down on open 1570"
+        );
+        assert_eq!(rec.loc_ops, 2, "Open then Climb-down");
+        assert_eq!(*attempts.borrow(), vec![1568, 1570]);
+        plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
+                assert_ne!(at, dest);
+            }
+            other => panic!("expected Arrived at cellar offset, got {other:?}"),
+        }
+        assert_eq!(rec.loc_ops, 2, "no extra interact after climb");
+    }
+
+    /// Already-open leaf 1570 only: first interact is Climb-down, same
+    /// cellar offset-1 arrive under close_enough 0.
+    #[test]
+    fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 1570, "Trapdoor", "Climb-down", 2, 4);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = trapdoor_edge();
+        let dest = edge.to;
+        let landing = WorldTile {
+            x: 3202,
+            z: 3203 + CELLAR_SHIFT,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 3.0,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_event: Some(Box::new(|e| {
+                if let TravelEvent::TransportAttempt { actual_id, .. } = e {
+                    attempts.borrow_mut().push(actual_id);
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Climb-down on already-open 1570"
+        );
+        assert_eq!(rec.loc_ops, 1, "one Climb-down, not Open");
+        assert_eq!(*attempts.borrow(), vec![1570]);
+        plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
+                assert_ne!(at, dest);
+            }
+            other => panic!("expected Arrived at cellar offset, got {other:?}"),
+        }
+        assert_eq!(rec.loc_ops, 1, "already-open must not re-click");
     }
 
     /// Agility forcemove holds the player after they land on `to`. Completing
