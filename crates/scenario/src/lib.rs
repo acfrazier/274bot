@@ -16082,7 +16082,7 @@ fn shop_buyout_open_npc_bank(
                 let Ok(mut state) = state.lock() else {
                     return false;
                 };
-                if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
+                if snapshot.bank_component_id() >= 0 {
                     return true;
                 }
                 let chat_open = snapshot.modals().chat != -1;
@@ -16136,7 +16136,7 @@ fn shop_buyout_open_npc_bank(
                         SendResult::Refused { .. } => true,
                     };
                 }
-                if chat_open || (state.talked && !state.saw_chat) {
+                if chat_open || (state.talked && !state.saw_chat) || state.answered.is_some() {
                     return true;
                 }
                 if state.talked && state.saw_chat {
@@ -29025,6 +29025,201 @@ mod tests {
         assert_eq!(
             client.out.pos, after_continue,
             "do not re-continue the same page"
+        );
+    }
+
+    fn plant_open_unloaded_bank(client: &mut Client) {
+        use api::snapshot::Family;
+        use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+        use client::io::{Packet, ServerProt};
+
+        client.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![0]),
+                link_obj_number: Some(vec![0]),
+                ..Default::default()
+            },
+        );
+        let mut open = Packet::new(vec![2, 88]);
+        client.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+        let mut snapshot = GameSnapshot::new();
+        assert!(snapshot.rebuild_family(client, Family::Bank));
+        assert!(snapshot.bank_component_id() >= 0);
+        assert!(!snapshot.bank_loaded());
+    }
+
+    fn plant_loaded_empty_bank(client: &mut Client) {
+        use client::io::{Packet, ServerProt};
+
+        plant_open_unloaded_bank(client);
+        let mut full = Packet::new(vec![2, 89, 0]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        assert!(snapshot.bank_component_id() >= 0);
+        assert!(snapshot.bank_loaded());
+        assert!(
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            }
+            .check(&snapshot, None),
+            "loaded empty bank must satisfy the opener arm"
+        );
+    }
+
+    fn close_chat_modal(client: &mut Client) {
+        use client::io::ServerProt;
+        client.chat_modal_id = -1;
+        client.resumed_pause_button = false;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
+    /// LIVE livef0d8vo / livezb611z: opener arm passed (bank opened,
+    /// generation 2) then deposit rejected with the first dialog up and
+    /// bank closed. Repeat send runs before arm.check; after the bank
+    /// choice the chat closes while the bank is only opening
+    /// (`component >= 0`, `!loaded`) and the helper reset/Talk-to'd.
+    #[test]
+    fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
+        use client::io::ServerProt;
+
+        let approach = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        let opener = shop_buyout_open_npc_bank(
+            "open the exact named shop banker for the coin seed deposit",
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+            "Gundai",
+            approach,
+            "Talk-to",
+            "Cool, I'd like to access my bank account please.",
+        );
+        let deposit = native_bank_deposit(
+            "deposit the coin seed through the bank window",
+            vec![NativeSeed {
+                unnoted_id: COINS_ID,
+                debug_alias: "coins",
+                note_alias: None,
+                quantity: SHOP_BUYOUT_COIN_SEED,
+                note_id: None,
+            }],
+        )
+        .remove(0);
+        let scenario = Scenario {
+            name: "shop_buyout_npc_open_to_deposit",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![opener, deposit],
+            proof: Proof::BankItemId {
+                id: COINS_ID,
+                count: SHOP_BUYOUT_COIN_SEED,
+            },
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_named_banker(&mut client, "Gundai", 20, 21);
+        for prot in [ServerProt::PLAYER_INFO, ServerProt::NPC_INFO] {
+            client.bump_gens(prot);
+        }
+
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "first poll Talk-to's and stays on the opener"
+        );
+        let after_talk = client.out.pos;
+        assert!(after_talk > 0, "opener must Talk-to once");
+
+        set_chat_dialog(
+            &mut client,
+            &["Cool, I'd like to access my bank account please."],
+        );
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 }
+        );
+        let after_choice = client.out.pos;
+        assert!(
+            after_choice > after_talk,
+            "opener must answer the exact bank-access choice"
+        );
+
+        close_chat_modal(&mut client);
+        plant_open_unloaded_bank(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "partial bank load is not fresh_bank; stay on the opener"
+        );
+        assert_eq!(
+            client.out.pos, after_choice,
+            "must not queue Talk-to after the choice while the bank is only opening"
+        );
+
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side(&mut client, COINS_ID, SHOP_BUYOUT_COIN_SEED);
+        client.bump_gens(ServerProt::UPDATE_INV_FULL);
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "loaded empty bank advances the opener; Repeat send already ran"
+        );
+        assert_eq!(
+            client.out.pos, after_choice,
+            "must not Talk-to on the send-before-arm poll that proves the bank open"
+        );
+
+        runner.tick(&mut client);
+        match runner.status() {
+            RunnerStatus::Failed(message) => panic!(
+                "deposit must stay ready after a stable opener, got {message}"
+            ),
+            RunnerStatus::Running { step, .. } => {
+                assert_eq!(step, 1, "deposit stays armed until coins land in bank")
+            }
+            other => panic!("deposit poll must not finish the run, got {other:?}"),
+        }
+        assert!(
+            client.out.pos > after_choice,
+            "deposit must emit from bank_side, not reject a closed bank"
         );
     }
 }
