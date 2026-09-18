@@ -16058,6 +16058,14 @@ fn shop_buyout_variant(
     )
 }
 
+#[derive(Default)]
+struct ShopBuyoutNpcOpenState {
+    talked: bool,
+    saw_chat: bool,
+    continued: Option<(i32, i32, String)>,
+    answered: Option<(i32, String)>,
+}
+
 fn shop_buyout_open_npc_bank(
     name: &'static str,
     arm: Proof,
@@ -16066,20 +16074,38 @@ fn shop_buyout_open_npc_bank(
     action: &'static str,
     choose: &'static str,
 ) -> Step {
-    let answered = std::sync::Mutex::new(None::<(i32, String)>);
+    let state = std::sync::Mutex::new(ShopBuyoutNpcOpenState::default());
     Step {
         name,
         kind: StepKind::Repeat {
             send: Box::new(move |c, snapshot| {
+                let Ok(mut state) = state.lock() else {
+                    return false;
+                };
                 if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
                     return true;
                 }
+                let chat_open = snapshot.modals().chat != -1;
+                if chat_open {
+                    state.saw_chat = true;
+                }
                 if snapshot.chat_continue_component_id() != -1 {
-                    let mut ix = Interactions::new(snapshot, c);
-                    return matches!(
-                        ix.continue_dialog(),
-                        SendResult::Sent { .. } | SendResult::Refused { .. }
+                    let identity = (
+                        snapshot.modals().chat,
+                        snapshot.chat_continue_component_id(),
+                        snapshot.chat_modal_texts().join("\n"),
                     );
+                    if state.continued.as_ref() == Some(&identity) {
+                        return true;
+                    }
+                    let mut ix = Interactions::new(snapshot, c);
+                    return match ix.continue_dialog() {
+                        SendResult::Sent { .. } => {
+                            state.continued = Some(identity);
+                            true
+                        }
+                        SendResult::Refused { .. } => true,
+                    };
                 }
                 if !snapshot.chat_options().is_empty() {
                     let identity = (
@@ -16091,10 +16117,7 @@ fn shop_buyout_open_npc_bank(
                             .collect::<Vec<_>>()
                             .join("\n"),
                     );
-                    let Ok(mut answered) = answered.lock() else {
-                        return false;
-                    };
-                    if answered.as_ref() == Some(&identity) {
+                    if state.answered.as_ref() == Some(&identity) {
                         return true;
                     }
                     let Some(choice) = snapshot
@@ -16107,11 +16130,17 @@ fn shop_buyout_open_npc_bank(
                     let mut ix = Interactions::new(snapshot, c);
                     return match ix.answer_choice(choice as i32 + 1) {
                         SendResult::Sent { .. } => {
-                            *answered = Some(identity);
+                            state.answered = Some(identity);
                             true
                         }
                         SendResult::Refused { .. } => true,
                     };
+                }
+                if chat_open || (state.talked && !state.saw_chat) {
+                    return true;
+                }
+                if state.talked && state.saw_chat {
+                    *state = ShopBuyoutNpcOpenState::default();
                 }
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
                     npc.name.as_deref() == Some(banker)
@@ -16142,7 +16171,10 @@ fn shop_buyout_open_npc_bank(
                 }
                 let mut ix = Interactions::new(snapshot, c);
                 match ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.to_string())) {
-                    SendResult::Sent { .. } => true,
+                    SendResult::Sent { .. } => {
+                        state.talked = true;
+                        true
+                    }
                     SendResult::Refused {
                         reason:
                             SendReason::SceneUnavailable
@@ -28844,6 +28876,155 @@ mod tests {
                 z: 2954,
                 level: 0
             }
+        );
+    }
+
+    fn plant_named_banker(client: &mut Client, name: &str, local_x: i32, local_z: i32) {
+        use client::client::ClientNpc;
+        use client::config::NpcType;
+        let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        if cache.npcs.is_empty() {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[0].name = name.into();
+        cache.npcs[0].op = vec![Some("Talk-to".into()), None, None, None, None];
+        let mut npc = ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
+        npc.entity.x = local_x * 128;
+        npc.entity.z = local_z * 128;
+        client.npc[1] = Some(Box::new(npc));
+        client.npc_ids[0] = 1;
+        client.npc_count = 1;
+    }
+
+    fn plant_latched_continue_chat(client: &mut Client) {
+        use client::config::if_type::{ButtonType, IfType, IfTypeMut};
+        use client::io::ServerProt;
+        client.set_iface(
+            968,
+            IfType {
+                id: 968,
+                layer_id: 968,
+                children: Some(vec![972]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            972,
+            IfType {
+                id: 972,
+                layer_id: 968,
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            972,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                text: "Click here to continue".into(),
+                ..Default::default()
+            },
+        );
+        client.chat_modal_id = 968;
+        client.resumed_pause_button = true;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+    }
+
+    fn rebuild_npc_chat_snapshot(client: &mut Client) -> GameSnapshot {
+        use client::io::ServerProt;
+        for prot in [ServerProt::PLAYER_INFO, ServerProt::NPC_INFO, ServerProt::IF_OPENCHAT]
+        {
+            client.bump_gens(prot);
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        snapshot
+    }
+
+    /// LIVE livemoj7nw / livevpttcg: Repeat re-Talk-to while the first
+    /// continue page is up (`chat_continue_component_id == -1` because the
+    /// pause latch hid it, chat modal still 968, "I can't reach that!").
+    /// The opener must Talk-to once, then wait/continue/choose — never
+    /// restart the conversation.
+    #[test]
+    fn shop_buyout_npc_opener_does_not_retalk_while_dialog_is_open() {
+        use client::io::ServerProt;
+
+        let approach = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        let step = shop_buyout_open_npc_bank(
+            "open the exact named shop banker for the coin seed deposit",
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+            "Gundai",
+            approach,
+            "Talk-to",
+            "Cool, I'd like to access my bank account please.",
+        );
+        let StepKind::Repeat { send } = &step.kind else {
+            panic!("teller open must Repeat");
+        };
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_named_banker(&mut client, "Gundai", 20, 21);
+        let snapshot = rebuild_npc_chat_snapshot(&mut client);
+        assert!(
+            snapshot.npcs().iter().any(|npc| npc.name.as_deref() == Some("Gundai")),
+            "Gundai must be on the snapshot"
+        );
+
+        assert!(send(&mut client, &snapshot), "first Talk-to must send");
+        let after_talk = client.out.pos;
+        assert!(after_talk > 0, "Talk-to must emit an npc op");
+
+        assert!(
+            send(&mut client, &snapshot),
+            "a second poll before chat lands must wait, not fail"
+        );
+        assert_eq!(
+            client.out.pos, after_talk,
+            "Repeat must not Talk-to again before the chat modal appears"
+        );
+
+        plant_latched_continue_chat(&mut client);
+        let latched = rebuild_npc_chat_snapshot(&mut client);
+        assert_eq!(latched.modals().chat, 968);
+        assert_eq!(
+            latched.chat_continue_component_id(),
+            -1,
+            "LIVE fail shape: continue widget present, pause latch hides the id"
+        );
+        assert!(
+            send(&mut client, &latched),
+            "latched continue must soft-wait"
+        );
+        assert_eq!(
+            client.out.pos, after_talk,
+            "latched continue must not Talk-to or walk the teller"
+        );
+
+        client.resumed_pause_button = false;
+        client.bump_gens(ServerProt::IF_OPENCHAT);
+        let mut live_continue = GameSnapshot::new();
+        live_continue.rebuild(&client);
+        assert_eq!(live_continue.chat_continue_component_id(), 972);
+        assert!(send(&mut client, &live_continue), "visible continue must send");
+        assert!(
+            client.out.pos > after_talk,
+            "visible continue must emit PAUSE_BUTTON, not stall"
+        );
+        let after_continue = client.out.pos;
+        assert!(send(&mut client, &live_continue));
+        assert_eq!(
+            client.out.pos, after_continue,
+            "do not re-continue the same page"
         );
     }
 }
