@@ -531,6 +531,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
         "leather_crafter_green_body" => Some(leather_crafter_green_body_scenario()),
         "leather_crafter_chaps" => Some(leather_crafter_chaps_scenario()),
+        "leather_crafter_thread_shop" => Some(leather_crafter_thread_shop_scenario()),
         "firemaker" => Some(firemaker_scenario()),
         "firemaker_oak" => Some(firemaker_oak_scenario()),
         "climbing_boots" => Some(climbing_boots_scenario()),
@@ -662,6 +663,7 @@ pub fn names() -> Vec<&'static str> {
         "leather_crafter_hard_body",
         "leather_crafter_green_body",
         "leather_crafter_chaps",
+        "leather_crafter_thread_shop",
         "firemaker",
         "firemaker_oak",
         "climbing_boots",
@@ -14301,6 +14303,11 @@ const GREEN_DRAGON_LEATHER_ID: i32 = 1745;
 const GREEN_DRAGON_LEATHER_CERT_ID: i32 = 1746;
 /// Enough banked leather for two 26-slot trips, plus four pieces.
 const LEATHER_CRAFTER_TWO_TRIP_SEED: i32 = 56;
+/// Banked coins for missing-thread `fundThread` (default threadPerTrip 100 ×
+/// THREAD_MAX_PRICE 3 = 300 needed; 1000 leaves headroom).
+const LEATHER_THREAD_SHOP_COIN_SEED: i32 = 1000;
+/// Canonical fundThread withdrawal ceiling: threadPerTrip default 100 × max price 3.
+const LEATHER_THREAD_SHOP_FUND: i32 = 300;
 const LOGS_CERT_ID: i32 = 1512;
 const OAK_LOGS_CERT_ID: i32 = 1522;
 const OAK_LOGS_ID: i32 = 1521;
@@ -15690,6 +15697,327 @@ fn leather_crafter_chaps_scenario() -> Scenario {
         LEATHER_CHAPS_ID,
         LEATHER_GLOVES_ID,
     )
+}
+
+/// Missing-thread purchase + return: level-1 Leather gloves with default
+/// `threadPerTrip` 100. Bank holds needle, coins, and raw soft leather only —
+/// absolutely no thread or crafted product in pack or bank before Start.
+/// Script `fundThread` withdraws up to `threadPerTrip * THREAD_MAX_PRICE`
+/// (100×3), walks nearest Dommik (3322,3194), `Shop.buy(Thread)`, closes,
+/// returns to the remembered Al-Kharid bank stand, restocks leather, crafts.
+///
+/// Post-Start scope is purchase / return / resumed craft — not a second full
+/// product bank cycle. `BankClosed` is the existing bank-modal gate only; there
+/// is no `ShopClosed` proof, so shop-close is not asserted here.
+fn leather_crafter_thread_shop_scenario() -> Scenario {
+    let product = Proof::ItemId {
+        id: LEATHER_GLOVES_ID,
+        count: 1,
+    };
+    let xp = Proof::FreshStatXpGain {
+        id: CRAFTING_STAT,
+        min: 1,
+    };
+    let bank = AL_KHARID_BANK;
+    let returned = Proof::ArrivedNear {
+        x: bank.x,
+        z: bank.z,
+        level: bank.level,
+        radius: 8,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(native_bank_seed(
+        "seed Crafting, banked needle/coins/leather, and tele to Al-Kharid before Start",
+        bank,
+        vec![
+            NativeSeed {
+                unnoted_id: NEEDLE_ID,
+                debug_alias: "needle",
+                note_alias: None,
+                quantity: 1,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: COINS_ID,
+                debug_alias: "coins",
+                note_alias: None,
+                quantity: LEATHER_THREAD_SHOP_COIN_SEED,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: SOFT_LEATHER_ID,
+                debug_alias: "leather",
+                note_alias: Some("cert_leather"),
+                quantity: 28,
+                note_id: Some(LEATHER_CERT_ID),
+            },
+        ],
+        "crafting",
+        1,
+    ));
+    for (step_name, arm) in [
+        (
+            "confirm Crafting before Start",
+            Proof::Stat {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        (
+            "confirm the exact noted leather seed in pack before deposit",
+            Proof::ItemId {
+                id: LEATHER_CERT_ID,
+                count: 28,
+            },
+        ),
+        (
+            "confirm the needle seed in pack before deposit",
+            Proof::ItemId {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm the exact coin seed in pack before deposit",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_COIN_SEED,
+            },
+        ),
+        (
+            "bound the noted leather seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: LEATHER_CERT_ID,
+                count: 28,
+            },
+        ),
+        (
+            "bound the needle seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "bound the coin seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_COIN_SEED,
+            },
+        ),
+        (
+            "confirm zero thread in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded gloves product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: LEATHER_GLOVES_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: HARDLEATHER_BODY_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the leather seed bank",
+        Proof::BankItemIdAtMost {
+            id: SOFT_LEATHER_ID,
+            count: 0,
+        },
+    ));
+    steps.extend(native_bank_deposit(
+        "deposit the native leather seed through the bank window",
+        vec![
+            NativeSeed {
+                unnoted_id: NEEDLE_ID,
+                debug_alias: "needle",
+                note_alias: None,
+                quantity: 1,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: COINS_ID,
+                debug_alias: "coins",
+                note_alias: None,
+                quantity: LEATHER_THREAD_SHOP_COIN_SEED,
+                note_id: None,
+            },
+            NativeSeed {
+                unnoted_id: SOFT_LEATHER_ID,
+                debug_alias: "leather",
+                note_alias: Some("cert_leather"),
+                quantity: 28,
+                note_id: Some(LEATHER_CERT_ID),
+            },
+        ],
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact leather seed bank",
+            Proof::BankItemId {
+                id: SOFT_LEATHER_ID,
+                count: 28,
+            },
+        ),
+        (
+            "acknowledge the needle seed bank",
+            Proof::BankItemId {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge the exact coin seed bank",
+            Proof::BankItemId {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_COIN_SEED,
+            },
+        ),
+        (
+            "confirm noted leather removal",
+            Proof::ItemIdAtMost {
+                id: LEATHER_CERT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm needle removal",
+            Proof::ItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm coin removal",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm zero thread in pack after deposit",
+            Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm zero thread in bank before Start",
+            Proof::BankItemIdAtMost {
+                id: THREAD_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no gloves product in bank before Start",
+            Proof::BankItemIdAtMost {
+                id: LEATHER_GLOVES_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no wrong product in bank before Start",
+            Proof::BankItemIdAtMost {
+                id: HARDLEATHER_BODY_ID,
+                count: 0,
+            },
+        ),
+        (
+            "bound the leather seed bank count",
+            Proof::BankItemIdAtMost {
+                id: SOFT_LEATHER_ID,
+                count: 28,
+            },
+        ),
+        (
+            "bound the needle seed bank count",
+            Proof::BankItemIdAtMost {
+                id: NEEDLE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "bound the coin seed bank count",
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_COIN_SEED,
+            },
+        ),
+        (
+            "confirm no noted leather remains in bank",
+            Proof::BankItemIdAtMost {
+                id: LEATHER_CERT_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch thread acquired from the zero-thread baseline after Start",
+            Proof::ItemId {
+                id: THREAD_ID,
+                count: 1,
+            },
+        ),
+        (
+            // fundThread withdraws at most threadPerTrip*THREAD_MAX_PRICE (300).
+            // After Shop.buy the pack holds strictly less than that withdrawal
+            // while leftover coins remain, matching climbing_boots / shop_buyout
+            // ItemIdAtMost spend arms. Not a ShopClosed proof.
+            "watch coin expenditure after thread purchase",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_FUND - 1,
+            },
+        ),
+        (
+            "watch return near the original Al-Kharid bank after acquisition",
+            returned,
+        ),
+        (
+            "watch the leather bank close after restock",
+            Proof::BankClosed,
+        ),
+        ("watch fresh Crafting XP after purchase return", xp),
+        ("watch exact leather gloves after resumed craft", product),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "leather_crafter_thread_shop",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("LeatherCrafter"),
+            script_settings_inject: Some(LEATHER_CRAFTER_INJECT),
+            terminal_shot: Some("leather_crafter_thread_shop"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 fn leather_crafter_variant(
@@ -17426,6 +17754,7 @@ mod tests {
             certificate_obj(BRONZE_BAR_CERT_ID, BRONZE_BAR_ID),
             unnoted_obj(NEEDLE_ID, true),
             unnoted_obj(THREAD_ID, true),
+            unnoted_obj(COINS_ID, true),
             unnoted_obj(SOFT_LEATHER_ID, false),
             certificate_obj(LEATHER_CERT_ID, SOFT_LEATHER_ID),
             unnoted_obj(HARD_LEATHER_ID, false),
@@ -17633,6 +17962,21 @@ mod tests {
                 ],
             ),
             (
+                "leather_crafter_thread_shop",
+                &[
+                    "give needle 1",
+                    "give coins 1000",
+                    "give cert_leather 28",
+                ],
+                &[
+                    "givebank",
+                    "give thread",
+                    "give leather 28",
+                    "cert_hard_leather",
+                    "cert_dragon_leather",
+                ],
+            ),
+            (
                 "firemaker",
                 &["give tinderbox 1", "give cert_logs 28"],
                 &["givebank", "give logs 28", "logs_cert", "cert_oak_logs"],
@@ -17772,6 +18116,26 @@ mod tests {
         assert!(ok, "chaps must deposit cert_leather");
         assert_eq!(dispatched, LEATHER_CERT_ID);
 
+        let (ok, dispatched) = send_deposit(
+            "leather_crafter_thread_shop",
+            SOFT_LEATHER_ID,
+            28,
+            LEATHER_CERT_ID,
+            28,
+        );
+        assert!(ok, "thread shop must deposit cert_leather");
+        assert_eq!(dispatched, LEATHER_CERT_ID);
+
+        let (ok, dispatched) = send_deposit(
+            "leather_crafter_thread_shop",
+            COINS_ID,
+            LEATHER_THREAD_SHOP_COIN_SEED,
+            COINS_ID,
+            LEATHER_THREAD_SHOP_COIN_SEED,
+        );
+        assert!(ok, "thread shop must deposit stackable coins");
+        assert_eq!(dispatched, COINS_ID);
+
         let (ok, dispatched) = send_deposit("firemaker_oak", OAK_LOGS_ID, 28, OAK_LOGS_CERT_ID, 28);
         assert!(ok, "oak logs must deposit cert_oak_logs");
         assert_eq!(dispatched, OAK_LOGS_CERT_ID);
@@ -17814,6 +18178,12 @@ mod tests {
                 "leather_crafter_chaps",
                 LEATHER_CERT_ID,
                 56,
+                SOFT_LEATHER_ID,
+            ),
+            (
+                "leather_crafter_thread_shop",
+                LEATHER_CERT_ID,
+                28,
                 SOFT_LEATHER_ID,
             ),
             ("firemaker", LOGS_CERT_ID, 28, LOGS_ID),
@@ -17897,6 +18267,130 @@ mod tests {
                     count: 0
                 }),
                 "{name} must prove no noted bank remainder"
+            );
+        }
+    }
+
+    #[test]
+    fn leather_crafter_thread_shop_seeds_zero_thread_and_orders_purchase_return_craft() {
+        let s = get("leather_crafter_thread_shop").expect("thread shop registered");
+        assert_eq!(s.name, "leather_crafter_thread_shop");
+        assert_eq!(s.settings.start_script, Some("LeatherCrafter"));
+        assert_eq!(
+            s.settings.script_settings_inject,
+            Some(LEATHER_CRAFTER_INJECT)
+        );
+        assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(
+            s.proof,
+            Proof::ItemId {
+                id: LEATHER_GLOVES_ID,
+                count: 1
+            }
+        );
+
+        let start = s
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("StartScript");
+        let before: Vec<_> = s.steps[..start].iter().map(|st| st.wait.arm).collect();
+        assert!(
+            before.contains(&Proof::ItemIdAtMost {
+                id: THREAD_ID,
+                count: 0
+            }),
+            "pack zero-thread baseline before Start"
+        );
+        assert!(
+            before.contains(&Proof::BankItemIdAtMost {
+                id: THREAD_ID,
+                count: 0
+            }),
+            "bank zero-thread baseline before Start"
+        );
+        assert!(
+            before.contains(&Proof::BankItemId {
+                id: COINS_ID,
+                count: LEATHER_THREAD_SHOP_COIN_SEED
+            }),
+            "exact banked coin seed"
+        );
+        assert!(
+            before.contains(&Proof::BankItemId {
+                id: NEEDLE_ID,
+                count: 1
+            }),
+            "banked needle"
+        );
+        assert!(
+            before.contains(&Proof::BankItemId {
+                id: SOFT_LEATHER_ID,
+                count: 28
+            }),
+            "banked soft leather"
+        );
+        assert!(
+            before.contains(&Proof::ItemIdAtMost {
+                id: LEATHER_GLOVES_ID,
+                count: 0
+            }),
+            "no seeded gloves product in pack"
+        );
+        assert!(
+            before.contains(&Proof::BankItemIdAtMost {
+                id: LEATHER_GLOVES_ID,
+                count: 0
+            }),
+            "no seeded gloves product in bank"
+        );
+        assert_eq!(s.steps[start - 1].wait.arm, Proof::BankClosed);
+
+        let after: Vec<_> = s.steps[start + 1..].iter().map(|st| st.wait.arm).collect();
+        assert_eq!(
+            after,
+            vec![
+                Proof::ItemId {
+                    id: THREAD_ID,
+                    count: 1
+                },
+                Proof::ItemIdAtMost {
+                    id: COINS_ID,
+                    count: LEATHER_THREAD_SHOP_FUND - 1
+                },
+                Proof::ArrivedNear {
+                    x: AL_KHARID_BANK.x,
+                    z: AL_KHARID_BANK.z,
+                    level: AL_KHARID_BANK.level,
+                    radius: 8,
+                },
+                Proof::BankClosed,
+                Proof::FreshStatXpGain {
+                    id: CRAFTING_STAT,
+                    min: 1
+                },
+                Proof::ItemId {
+                    id: LEATHER_GLOVES_ID,
+                    count: 1
+                },
+            ],
+            "post-Start order: thread, coin spend, bank return, BankClosed, fresh XP, gloves"
+        );
+
+        // Old four leather fixtures stay registered and still seed thread.
+        for name in [
+            "leather_crafter",
+            "leather_crafter_hard_body",
+            "leather_crafter_green_body",
+            "leather_crafter_chaps",
+        ] {
+            assert!(get(name).is_some(), "{name} preserved");
+            let mut client = native_seed_client();
+            let (ok, written) = send_seed(name, &mut client);
+            assert!(ok, "{name} seed still ok: {written}");
+            assert!(
+                written.contains("give thread 100"),
+                "{name} still seeds thread: {written}"
             );
         }
     }
@@ -18103,6 +18597,7 @@ mod tests {
                 "leather_crafter_hard_body",
                 "leather_crafter_green_body",
                 "leather_crafter_chaps",
+                "leather_crafter_thread_shop",
                 "firemaker",
                 "firemaker_oak",
                 "climbing_boots",
