@@ -9836,10 +9836,9 @@ const STEEL_ARROW_ID: i32 = 886;
 const BODY_TALISMAN_ID: i32 = 1446;
 const BLOOD_RUNE_ID: i32 = 565;
 const CHAOS_RUNE_ID: i32 = 562;
-/// The six verifiable Guard drops the AutoFighter bank cell injects and
-/// ArdyFighter already lists in DEFAULT_LOOT (`iron ore, steel arrow, body
-/// talisman, blood/chaos/nature rune`). A clue-only or junk drop is not one
-/// of these; the bank cells start empty of the class.
+/// The six verifiable Guard drops ArdyFighter lists in DEFAULT_LOOT
+/// (`iron ore, steel arrow, body talisman, blood/chaos/nature rune`).
+/// Its bank cell starts empty of this class.
 const GUARD_DROP_IDS: [i32; 6] = [
     IRON_ORE_ID,
     STEEL_ARROW_ID,
@@ -13189,9 +13188,9 @@ fn ardy_fighter_scenario() -> Scenario {
 
 /// `banking=Auto` on AutoFighter: BankRun walks to the nearest bank from the
 /// anchor, deposits everything its keep-list does not hold and restocks food.
-/// `loot` is the six verifiable Guard drops (the card's default gem+clue list
-/// is unreachable: Guards drop no gems and the card keeps clue items), and
-/// `bankAtLootSlots=1` so the first of those drops is what ends the trip.
+/// Custom `loot=Bones` uses the Guard's guaranteed drop with burial disabled.
+/// `bankAtLootSlots=1` ends the trip on that script-looted drop, without
+/// depending on a random secondary drop or seeding deposit-class items.
 const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "food",
@@ -13219,14 +13218,7 @@ const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "loot",
-        value: ScriptInjectValue::StrList(&[
-            "iron ore",
-            "steel arrow",
-            "body talisman",
-            "blood rune",
-            "chaos rune",
-            "nature rune",
-        ]),
+        value: ScriptInjectValue::StrList(&["Bones"]),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -13482,13 +13474,9 @@ fn combat_bank_scenario(
     }
 }
 
-/// `banking=Auto` on the Guard anchor: the injected `loot` list is the six
-/// verifiable Guard drops and `bankAtLootSlots=1` makes the first of them the
-/// trip's loot slot. East Ardougne is the nearest bank, and the BankRun has to
-/// deposit that loot, restock trout to its declared 10, close, walk back to
-/// the anchor and fight again. Nothing in the class is prepared: it can only
-/// enter the pack as a Guard drop, and a run that never loots one deposits
-/// nothing to qualify.
+/// Custom Bones loot with burial disabled exercises AutoFighter's BankRun
+/// after a guaranteed Guard drop. No Bones are seeded: the script must loot
+/// them, deposit at East Ardougne, restock ten Trout, close, return and fight.
 fn auto_fighter_bank_scenario() -> Scenario {
     combat_bank_scenario(
         "auto_fighter_bank",
@@ -13501,7 +13489,7 @@ fn auto_fighter_bank_scenario() -> Scenario {
         "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[],
-        &GUARD_DROP_IDS,
+        &[BONES_ID],
         AUTO_FIGHTER_BANK_INJECT,
         0,
         "trout",
@@ -13510,7 +13498,7 @@ fn auto_fighter_bank_scenario() -> Scenario {
             (
                 "watch a Guard drop enter a fresh Ardougne East bank",
                 Proof::BankItemIdAny {
-                    ids: &GUARD_DROP_IDS,
+                    ids: &[BONES_ID],
                     count: 1,
                 },
             ),
@@ -18471,24 +18459,10 @@ mod tests {
         .unwrap();
         assert_eq!(auto.get("banking"), Some(&Value::String("Auto".into())));
         assert_eq!(auto.get("bankAtLootSlots"), Some(&Value::from(1.0)));
-        // The trip loot is the injected Guard list itself: no deposit-class
-        // item is prepared, so the class can only arrive as a kill drop.
-        assert_eq!(
-            auto.get("loot"),
-            Some(&Value::Array(
-                [
-                    "iron ore",
-                    "steel arrow",
-                    "body talisman",
-                    "blood rune",
-                    "chaos rune",
-                    "nature rune",
-                ]
-                .into_iter()
-                .map(|name| Value::String(name.into()))
-                .collect()
-            ))
-        );
+        // Guaranteed kill loot is still absent before Start; burial is off
+        // so the bank deposit must consume the script-looted Bones.
+        assert_eq!(auto.get("loot"), Some(&serde_json::json!(["Bones"])));
+        assert_eq!(auto.get("buryBones"), Some(&Value::Bool(false)));
         let auto_scenario = get("auto_fighter_bank").unwrap();
         let auto_start = auto_scenario
             .steps
@@ -18497,11 +18471,11 @@ mod tests {
             .unwrap();
         for step in &auto_scenario.steps[..auto_start] {
             assert!(
-                !matches!(step.wait.arm, Proof::ItemId { id, .. } if GUARD_DROP_IDS.contains(&id)),
+                !matches!(step.wait.arm, Proof::ItemId { id, .. } if id == BONES_ID),
                 "auto_fighter_bank must not prepare a deposit-class item before Start"
             );
         }
-        for &id in &GUARD_DROP_IDS {
+        for &id in &[BONES_ID] {
             assert!(
                 auto_scenario.steps[..auto_start].iter().any(|step| {
                     matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
