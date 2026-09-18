@@ -2325,4 +2325,128 @@ mod tests {
             "must not clip through the north fence to the road gate"
         );
     }
+
+    #[test]
+    fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
+        // Live a5z328_0: WalkNear from 3094,3489 to 3120,9952 radius 3 after
+        // the Edgeville bank cycle produced no nav-follow. Stock maps place
+        // trapdoor 1568 at 3097,3468; derive_transports now emits that hop.
+        // GitHub has no pack — skip, do not panic. A pre-rebake pack still
+        // lacks the edge, so the test inserts the derived hop.
+        let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+            return;
+        };
+        let from = WorldTile {
+            x: 3094,
+            z: 3489,
+            level: 0,
+        };
+        let eggs = WorldTile {
+            x: 3120,
+            z: 9952,
+            level: 0,
+        };
+        let trapdoor_at = WorldTile {
+            x: 3097,
+            z: 3468,
+            level: 0,
+        };
+        let ladder_at = WorldTile {
+            x: 3096,
+            z: 9867,
+            level: 0,
+        };
+        let trap_edges: Vec<_> = world
+            .graph
+            .at
+            .get(&trapdoor_at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &world.graph.edges[i])
+            .collect();
+        let ladder_edges: Vec<_> = world
+            .graph
+            .at
+            .get(&ladder_at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &world.graph.edges[i])
+            .collect();
+        assert!(
+            ladder_edges.iter().any(|e| e.loc_id == 1755),
+            "packed graph must keep the dungeon exit ladder 1755 at 3096,9867, got {:?}",
+            ladder_edges
+                .iter()
+                .map(|e| (e.loc_id, e.to, e.kind))
+                .collect::<Vec<_>>()
+        );
+        let opts = FindOptions {
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        };
+        let mut graph = TransportGraph {
+            edges: world.graph.edges.clone(),
+            at: world.graph.at.clone(),
+            teleports: world.graph.teleports.clone(),
+        };
+        if !trap_edges
+            .iter()
+            .any(|e| e.loc_id == 1568 || e.loc_id == 1570)
+        {
+            let dest = WorldTile {
+                x: trapdoor_at.x,
+                z: trapdoor_at.z + crate::transport::CELLAR_SHIFT,
+                level: trapdoor_at.level,
+            };
+            let idx = graph.edges.len();
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Ladder,
+                at: trapdoor_at,
+                to: dest,
+                loc_id: 1568,
+                option: 1,
+                ticks: 3,
+                dir: None,
+                open_loc_id: Some(1570),
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+            });
+            graph.at.entry(trapdoor_at).or_default().push(idx);
+        }
+        let route = find_with(
+            &world.collision,
+            &graph,
+            from,
+            eggs,
+            opts,
+            &WorldState::empty().with_map_members(true),
+        )
+        .unwrap_or_else(|e| panic!("Edgeville bank -> red spider eggs must route: {e:?}"));
+        let used_trap = route.legs.iter().any(|leg| match leg {
+            Leg::Transport { edge } => {
+                (edge.loc_id == 1568 || edge.loc_id == 1570)
+                    && edge.at.x == trapdoor_at.x
+                    && edge.at.z == trapdoor_at.z
+            }
+            _ => false,
+        });
+        assert!(
+            used_trap,
+            "return must use the surface trapdoor, legs={:?}",
+            route
+                .legs
+                .iter()
+                .filter_map(|leg| match leg {
+                    Leg::Transport { edge } => Some((edge.kind, edge.loc_id, edge.at, edge.to)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        );
+    }
 }

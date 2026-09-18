@@ -29,7 +29,7 @@ use crate::essence::{
 };
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
+use crate::transport::{DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
 
 /// The magic side-tab index (the 2004 icon order: combat 0, stats 1,
 /// quests 2, inventory 3, equipment 4, prayer 5, magic 6).
@@ -41,6 +41,11 @@ const MAGIC_TAB: usize = 6;
 /// teleport hop's arrive arm (and a scenario's dest proof) must accept
 /// this radius, independent of the runner's exact `close_enough`.
 const TELEPORT_ARRIVE_RADIUS: i32 = 2;
+/// `movecoord(coord(), 0, 0, ±6400)` cellar hops land on the player's
+/// tile. Taken from an adjacent stand that is Chebyshev 1 off the loc,
+/// so the baked dest (loc ± 6400) is one tile beside the live landing.
+/// Independent of host WalkNear `close_enough` 0 — not a global radius.
+const CELLAR_ARRIVE_RADIUS: i32 = 1;
 /// Gnome glider landing scatter: `p_teleport(map_findsquare($dest, 0, 1,
 /// lineofwalk))` in `gnome_glider.rs2` — chebyshev 1, never the pad
 /// exactly when a loc/NPC occupies it.
@@ -1344,6 +1349,34 @@ impl FollowRun {
                     }
                     self.transport = Some(hop);
                     return Poll::Watching;
+                } else if edge.open_loc_id.is_some()
+                    && edge.kind != TransportKind::Door
+                    && edge_loc_open(snapshot, edge)
+                    && hop.tries == 0
+                {
+                    return match find_transport_target(snapshot, edge) {
+                        Some(target) => {
+                            let mut ix = Interactions::new(snapshot, d);
+                            match interact_transport(snapshot, &mut ix, target, edge, options) {
+                                SendResult::Sent { .. } => {
+                                    hop.tries = 1;
+                                    hop.ticks_waited = 0;
+                                    hop.sent_tile = Some(here);
+                                    self.loc_wait = 0;
+                                    self.transport = Some(hop);
+                                    Poll::Watching
+                                }
+                                SendResult::Refused { reason, .. } => {
+                                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                                    Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                                }
+                            }
+                        }
+                        None => {
+                            self.transport = Some(hop);
+                            Poll::Watching
+                        }
+                    };
                 }
             }
         }
@@ -1375,6 +1408,12 @@ impl FollowRun {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
                             hop.sent_tile = Some(here);
+                            if edge.open_loc_id.is_some()
+                                && edge.kind != TransportKind::Door
+                                && edge_loc_open(snapshot, &edge)
+                            {
+                                hop.tries = 1;
+                            }
                             self.transport = Some(hop);
                             Poll::Watching
                         }
@@ -1570,6 +1609,11 @@ impl FollowRun {
             arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
         } else if edge.kind == TransportKind::Glider {
             arrived(edge.to, GLIDER_ARRIVE_RADIUS)
+        } else if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
+            // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile,
+            // one Chebyshev off the loc-baked dest when the hop is taken
+            // from an adjacent stand. Host WalkNear uses close_enough 0.
+            arrived(edge.to, CELLAR_ARRIVE_RADIUS.max(close_enough))
         } else {
             arrived(edge.to, close_enough)
         };

@@ -165,6 +165,7 @@ pub fn derive_transports(
         &mut graph,
         &mut skipped,
     );
+    trapdoor_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     shortcut_edges(
         content_root,
         &ids,
@@ -244,7 +245,7 @@ const X1: i32 = 3648;
 const Z0: i32 = 1280;
 const Z1: i32 = 10368;
 /// `ladder_cellar`'s +6400/-6400 z shift (m8aq `CELLAR_SHIFT`).
-const CELLAR_SHIFT: i32 = 6400;
+pub(crate) const CELLAR_SHIFT: i32 = 6400;
 /// Standard RS2 skill id (Server `PlayerStat`).
 const SKILL_AGILITY: i32 = 16;
 /// Standard RS2 skill id for Magic (Server `PlayerStat`).
@@ -298,6 +299,11 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("ladder_from_cellar", 2),
     ("ladder_from_cellar_directional", 2),
     ("ladder_cellar_inside_down", 2),
+    // trapdoors.rs2: Open then Climb-down / p_telejump z±6400.
+    ("trapdoor", 2),
+    ("trapdoor_open", 2),
+    ("trapdoor_level1", 2),
+    ("trapdoor_open_level1", 2),
     ("phoenixladder", 2),
     ("grandtree_laddermiddle", 2),
     ("laddertop_norim", 2),
@@ -3152,6 +3158,122 @@ fn ladder_stair_edges(
                     });
                 }
             }
+        }
+    }
+}
+
+/// Closed trapdoor placements (`trapdoors.rs2`) plus already-open leaves.
+/// `oploc1,trapdoor` only `loc_change`s to the open loc; `oploc1,trapdoor_open`
+/// `p_telejump`s `coord() ± 6400`. One edge per closed map placement, dest
+/// baked from the loc tile (live landing is the player's tile).
+fn trapdoor_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let path = content_root
+        .join("scripts")
+        .join("general_use")
+        .join("scripts")
+        .join("trapdoors.rs2");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
+    let mut rules: HashMap<(String, i32), (TransportKind, ScriptRule)> = HashMap::new();
+    parse_script(&text, TransportKind::Ladder, &mut rules);
+    for (closed_name, open_name) in [
+        ("trapdoor", "trapdoor_open"),
+        ("trapdoor_level1", "trapdoor_open_level1"),
+    ] {
+        let Some(&closed_id) = ids.get(closed_name) else {
+            continue;
+        };
+        let open_id = ids.get(open_name).copied();
+        let Some((_, open_rule)) = rules.get(&(open_name.to_string(), 1)) else {
+            continue;
+        };
+        let Some(Outcome::Landing(landing)) = open_rule.fallback.as_ref() else {
+            continue;
+        };
+        let Some(extra) = extra_ticks(closed_name).or_else(|| extra_ticks(open_name)) else {
+            bump(
+                skipped,
+                SKIP_UNPRICED,
+                positions.get(&closed_id).map_or(0, Vec::len),
+            );
+            continue;
+        };
+        let ticks = 1 + extra;
+        let mut seen = HashSet::new();
+        if let Some(placements) = positions.get(&closed_id) {
+            for loc in placements {
+                let at = WorldTile {
+                    x: loc.x,
+                    z: loc.z,
+                    level: loc.level,
+                };
+                let to = landing_tile(landing, loc, &at);
+                if !in_world_box(&to) {
+                    bump(skipped, SKIP_DEST_OUTSIDE, 1);
+                    continue;
+                }
+                seen.insert(at);
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Ladder,
+                    at,
+                    to,
+                    loc_id: closed_id,
+                    option: 1,
+                    ticks,
+                    dir: None,
+                    open_loc_id: open_id,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                });
+            }
+        }
+        let Some(open_id) = open_id else {
+            continue;
+        };
+        let Some(placements) = positions.get(&open_id) else {
+            continue;
+        };
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            if !seen.insert(at) {
+                continue;
+            }
+            let to = landing_tile(landing, loc, &at);
+            if !in_world_box(&to) {
+                bump(skipped, SKIP_DEST_OUTSIDE, 1);
+                continue;
+            }
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Ladder,
+                at,
+                to,
+                loc_id: open_id,
+                option: 1,
+                ticks,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+            });
         }
     }
 }
@@ -6433,6 +6555,65 @@ switch_coord (loc_coord) {
         };
         assert_eq!(graph.at[&ladder_at].len(), 1);
         assert_eq!(graph.edges[graph.at[&ladder_at][0]].to, landing);
+    }
+
+    #[test]
+    fn derive_transports_emits_edgeville_trapdoor() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1568=trapdoor\n1570=trapdoor_open\n");
+        fx.write(
+            "maps/m48_54.jm2",
+            "\
+==== MAP ====
+0 25 12: h1 o6 u50
+0 24 12: h1 o6 u50
+==== LOC ====
+0 25 12: 1568 22 2
+",
+        );
+        fx.write(
+            "scripts/general_use/scripts/trapdoors.rs2",
+            "\
+[oploc1,trapdoor]
+mes(\"The trapdoor opens...\");
+loc_change(trapdoor_open, 500);
+
+[oploc1,trapdoor_open]
+mes(\"You climb down through the trapdoor...\");
+p_telejump(movecoord(coord(), 0, 0, 6400));
+",
+        );
+        let defs = loc_defs(&[(1568, 1, 1), (1570, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let at = WorldTile {
+            x: 3097,
+            z: 3468,
+            level: 0,
+        };
+        let edges: Vec<_> = graph
+            .at
+            .get(&at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &graph.edges[i])
+            .collect();
+        assert_eq!(edges.len(), 1, "got {edges:?}");
+        let e = edges[0];
+        assert_eq!(e.kind, TransportKind::Ladder);
+        assert_eq!(e.loc_id, 1568);
+        assert_eq!(e.open_loc_id, Some(1570));
+        assert_eq!(e.option, 1);
+        assert_eq!(
+            e.to,
+            WorldTile {
+                x: 3097,
+                z: 9868,
+                level: 0
+            }
+        );
+        assert_eq!(e.ticks, 3);
+        assert!(!e.members_req);
     }
 
     #[test]
