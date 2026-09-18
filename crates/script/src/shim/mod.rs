@@ -974,8 +974,8 @@ pub enum InteractReq {
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
-    /// Scene `try_move` packet (`Interactions::walk`). Catalog
-    /// `Traversal.walkTo` — not Traveller.
+    /// Scene `try_move` packet (`Interactions::walk`) used by
+    /// `DirectNavigator` and local client actions, not world `Traversal`.
     #[serde(rename = "walk-to")]
     WalkTo { x: i32, z: i32, level: i32 },
     /// Deposit-all the bank-side item named `name`.
