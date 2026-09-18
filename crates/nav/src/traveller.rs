@@ -1079,8 +1079,10 @@ impl FollowRun {
         let arms = [("arrived", arrived(hop.aim, radius))];
         if crate::debug_enabled() {
             eprintln!(
-                "[nav-walk] here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?}",
-                hop.aim, hop.ticks_waited, hop.sent_tile
+                "[nav-walk] tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?} actor={:?} map_flag={:?}",
+                snapshot.tick(), hop.aim, hop.ticks_waited, hop.sent_tile,
+                snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
+                snapshot.map_flag()
             );
         }
         let mut settle = Settle::new(
@@ -2024,6 +2026,18 @@ fn report_walk(
     aim: WorldTile,
     result: &SendResult<'_>,
 ) {
+    if crate::debug_enabled() {
+        let refusal = match result {
+            SendResult::Sent { .. } => None,
+            SendResult::Refused { reason, .. } => Some(*reason),
+        };
+        eprintln!(
+            "[nav-walk-send] tick={} at={at:?} aim={aim:?} sent={} refusal={refusal:?} actor={:?} map_flag={:?}",
+            snapshot.tick(), refusal.is_none(),
+            snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
+            snapshot.map_flag()
+        );
+    }
     if let Some(cb) = options.on_event.as_mut() {
         let refusal = match result {
             SendResult::Sent { .. } => None,
