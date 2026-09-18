@@ -157,6 +157,7 @@ pub fn derive_transports(
 
     door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
     membergate_edges(content_root, &ids, &mut graph, &mut skipped, collision);
+    magicguild_door_edges(content_root, &ids, &positions, &mut graph, collision);
     ladder_stair_edges(
         content_root,
         &ids,
@@ -4716,6 +4717,173 @@ fn toll_edges(
 // ---------------------------------------------------------------------------
 // The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
 // ---------------------------------------------------------------------------
+
+/// Named Magic Guild doors (`magicguild_door_l` / `_r`). Not inherited
+/// closed gates — `[oploc1,magicguild_door_*]` in `magic_guild.rs2` is a
+/// loc-specific opener, so [`inherited_closed_gates`] refuses them.
+/// `~check_axis_locactive` + `stat(magic) < N` gates only the entering
+/// crossing (`door_open` / the loc's facing); the exit arm is ungated.
+const MAGICGUILD_DOOR_LEFT: &str = "magicguild_door_l";
+const MAGICGUILD_DOOR_RIGHT: &str = "magicguild_door_r";
+const MAGICGUILD_OPEN_LABEL: &str = "open_mageguild_door";
+
+fn magicguild_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    collision: &WorldCollision,
+) {
+    let Some(level) = magicguild_entering_magic_level(content_root) else {
+        return;
+    };
+    let admitted = magicguild_door_open_ids(content_root, ids);
+    if admitted.is_empty() {
+        return;
+    }
+    for (&id, &open) in &admitted {
+        let Some(ps) = positions.get(&id) else {
+            continue;
+        };
+        for p in ps {
+            if p.level != 0 || p.shape != 0 {
+                continue;
+            }
+            let Some(angle_dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            for dir in [angle_dir, opposite(angle_dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: Some(open),
+                    skill_req: if dir == angle_dir {
+                        vec![(SKILL_MAGIC, level)]
+                    } else {
+                        vec![]
+                    },
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                });
+            }
+        }
+    }
+}
+
+/// `stat(magic) < N` on the entering arm of `open_mageguild_door`. Both
+/// loc-specific `[oploc1,magicguild_door_*]` handlers must jump there.
+fn magicguild_entering_magic_level(content_root: &Path) -> Option<i32> {
+    let path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_yanille")
+        .join("scripts")
+        .join("magic_guild.rs2");
+    let text = fs::read_to_string(path).ok()?;
+    if !magicguild_oploc_jumps_to_opener(&text) {
+        return None;
+    }
+    let body = label_body_raw(&text, MAGICGUILD_OPEN_LABEL)?;
+    let flat: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    if !flat.contains("~check_axis_locactive(coord)") {
+        return None;
+    }
+    if !flat.contains("~open_and_close_double_door2($entering,") {
+        return None;
+    }
+    let needle = "if($entering=true&stat(magic)<";
+    let rest = flat.split_once(needle)?.1;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let level: i32 = digits.parse().ok()?;
+    (level > 0).then_some(level)
+}
+
+fn magicguild_oploc_jumps_to_opener(text: &str) -> bool {
+    let mut seen_left = false;
+    let mut seen_right = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        let line = match line.find("//") {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        if let Some(rest) = line.strip_prefix("[oploc1,magicguild_door_l]") {
+            seen_left = magicguild_opener_jump(rest);
+        } else if let Some(rest) = line.strip_prefix("[oploc1,magicguild_door_r]") {
+            seen_right = magicguild_opener_jump(rest);
+        }
+    }
+    seen_left && seen_right
+}
+
+fn magicguild_opener_jump(rest: &str) -> bool {
+    let flat: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
+    flat.starts_with(&format!("@{MAGICGUILD_OPEN_LABEL}(")) && flat.ends_with(");")
+}
+
+fn magicguild_door_open_ids(content_root: &Path, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
+    let path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_yanille")
+        .join("configs")
+        .join("magic_guild")
+        .join("magic_guild.loc");
+    let Ok(text) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    let opens = parse_door_open_ids(&text, ids);
+    let mut out = HashMap::new();
+    for name in [MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT] {
+        let Some(&id) = ids.get(name) else {
+            continue;
+        };
+        if !named_loc_has_open(&text, name) {
+            continue;
+        }
+        let Some(&open) = opens.get(&id) else {
+            continue;
+        };
+        out.insert(id, open);
+    }
+    out
+}
+
+fn named_loc_has_open(text: &str, name: &str) -> bool {
+    let mut in_block = false;
+    let mut open = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(header) = config_header(line) {
+            if in_block {
+                return open;
+            }
+            in_block = header == name;
+            open = false;
+            continue;
+        }
+        if in_block && line == "op1=Open" {
+            open = true;
+        }
+    }
+    in_block && open
+}
 
 /// The Zanaris shed door ticks: OP_BASE 1, the door block's `p_delay(1)`,
 /// and the `player_teleport_normal` cast `p_delay(2)` (the whole Open
@@ -10228,6 +10396,407 @@ category=gate_main_open
             inherited.get(&6031),
             None,
             "a differing loc_N alias permanently conflicts the same open leaf id"
+        );
+    }
+
+    fn write_magicguild_source(fx: &Fixture, script: &str) {
+        fx.write(
+            "pack/loc.pack",
+            "\
+1600=magicguild_door_l
+1601=magicguild_door_r
+1522=loc_1522
+1523=loc_1523
+",
+        );
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+name=Magic guild door
+desc=The doors to the Magic Guild.
+model=castle_doubledoorl
+op1=Open
+raiseobject=no
+category=double_door_open_and_close_left
+param=next_loc_stage,loc_1522
+param=open_sound,null
+
+[magicguild_door_r]
+name=Magic guild door
+desc=The doors to the Magic guild.
+model=castle_doubledoorl
+op1=Open
+mirror=yes
+raiseobject=no
+category=double_door_open_and_close_right
+param=next_loc_stage,loc_1523
+param=open_sound,null
+",
+        );
+        fx.write("scripts/areas/area_yanille/scripts/magic_guild.rs2", script);
+    }
+
+    fn magicguild_opener_script() -> &'static str {
+        "\
+[oploc1,magicguild_door_l] @open_mageguild_door(^left);
+[oploc1,magicguild_door_r] @open_mageguild_door(^right);
+
+[label,open_mageguild_door](int $side)
+def_boolean $entering = ~check_axis_locactive(coord);
+if($entering = true & stat(magic) < 66) {
+    if(npc_find(coord, guild_wizard, 14, 0) = true) {
+        ~chatnpc(\"<p,neutral>You need a magic level of 66.|The magical energy in here is unsafe for those below that level.\");
+    }
+    return;
+}
+~open_and_close_double_door2($entering, $side, door_open);
+"
+    }
+
+    fn write_magicguild_yanille_placements(fx: &Fixture) {
+        fx.write(
+            "maps/m40_48.jm2",
+            "\
+==== MAP ====
+0 23 15: h1 o6 u50
+0 23 16: h1 o6 u50
+0 24 15: h1 o6 u50
+0 24 16: h1 o6 u50
+0 25 15: h1 o6 u50
+0 25 16: h1 o6 u50
+0 36 15: h1 o6 u50
+0 36 16: h1 o6 u50
+0 37 15: h1 o6 u50
+0 37 16: h1 o6 u50
+0 38 15: h1 o6 u50
+0 38 16: h1 o6 u50
+
+==== LOC ====
+0 24 15: 1601 0 2
+0 24 16: 1600 0 2
+0 37 15: 1600 0
+0 37 16: 1601 0
+",
+        );
+    }
+
+    fn magic_state(level: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_MAGIC, level)]),
+            ..crate::world_state::WorldState::empty()
+        }
+    }
+
+    fn derive_from_lostcity_content() -> Option<&'static (TransportGraph, WorldCollision)> {
+        static CELL: std::sync::OnceLock<Option<(TransportGraph, WorldCollision)>> =
+            std::sync::OnceLock::new();
+        CELL.get_or_init(|| {
+            let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+            if !root.join("maps").is_dir() || !root.join("pack").join("loc.pack").is_file() {
+                eprintln!(
+                    "SKIP: lostcity-289 content not found at {} (content-backed tests skipped)",
+                    root.display()
+                );
+                return None;
+            }
+            let defs = real_loc_defs()?;
+            let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+                .expect("lostcity-289 content bakes");
+            let graph = derive_transports(&root, &defs, &wc);
+            Some((graph, wc))
+        })
+        .as_ref()
+    }
+
+    /// Wizard Guild stairs from `stairs.rs2` + `m40_48.jm2` must already be
+    /// packed. If this fails, the Magic shop→bank hole is not door-only.
+    #[test]
+    fn yanille_wizard_guild_stair_pairs_exist() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let down = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1723
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3090,
+                            level: 1,
+                        }
+            })
+            .expect("1723 Climb-down at 2590,3090,1");
+        assert_eq!(
+            down.to,
+            WorldTile {
+                x: 2590,
+                z: 3088,
+                level: 0
+            },
+            "0_40_48_30_16 landing"
+        );
+        let up = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1722
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3089,
+                            level: 0,
+                        }
+            })
+            .expect("1722 Climb-up at 2590,3089,0");
+        assert_eq!(
+            up.to,
+            WorldTile {
+                x: 2590,
+                z: 3092,
+                level: 1
+            },
+            "1_40_48_30_20 landing"
+        );
+    }
+
+    /// Named-override guild doors are not inherited gates. The opener in
+    /// `magic_guild.rs2` admits `Open` hops at the four map tiles, and
+    /// `stat(magic) < 66` applies only on the entering (`check_axis` /
+    /// `door_open`) crossing.
+    #[test]
+    fn derive_transports_emits_magicguild_door_crossings() {
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, magicguild_opener_script());
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert_eq!(
+            door_crossings(&graph, 1600),
+            vec![
+                ((2584, 3088), 'E', (2585, 3088)),
+                ((2584, 3088), 'W', (2583, 3088)),
+                ((2597, 3087), 'E', (2598, 3087)),
+                ((2597, 3087), 'W', (2596, 3087)),
+            ],
+            "1600 at the west and east guild doors"
+        );
+        assert_eq!(
+            door_crossings(&graph, 1601),
+            vec![
+                ((2584, 3087), 'E', (2585, 3087)),
+                ((2584, 3087), 'W', (2583, 3087)),
+                ((2597, 3088), 'E', (2598, 3088)),
+                ((2597, 3088), 'W', (2596, 3088)),
+            ],
+            "1601 paired with 1600"
+        );
+        for e in graph
+            .edges
+            .iter()
+            .filter(|e| matches!(e.loc_id, 1600 | 1601))
+        {
+            assert_eq!(e.kind, TransportKind::Door, "{e:?}");
+            assert_eq!(e.option, 1, "stock Open {e:?}");
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 1600 { 1522 } else { 1523 }),
+                "{e:?}"
+            );
+            assert!(
+                e.item_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.varp_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && !e.members_req,
+                "{e:?}"
+            );
+            let entering = match (e.at.x, e.dir) {
+                (2584, Some(DoorDir::E)) | (2597, Some(DoorDir::W)) => true,
+                (2584, Some(DoorDir::W)) | (2597, Some(DoorDir::E)) => false,
+                other => panic!("unexpected magicguild crossing {other:?}"),
+            };
+            if entering {
+                assert_eq!(e.skill_req, vec![(SKILL_MAGIC, 66)], "enter {e:?}");
+            } else {
+                assert!(e.skill_req.is_empty(), "exit must stay ungated {e:?}");
+            }
+        }
+    }
+
+    /// A missing named opener must not invent skill-gated hops.
+    #[test]
+    fn derive_transports_omits_magicguild_doors_without_named_opener() {
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, "");
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert!(
+            door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty(),
+            "no named override → no magicguild edges"
+        );
+    }
+
+    /// WorldState magic gates entering only. Exiting a sealed corridor is
+    /// free; entering with magic 65 stays NoPath.
+    #[test]
+    fn magicguild_door_eligibility_follows_entering_axis() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, magicguild_opener_script());
+        let mut walk = Vec::new();
+        for x in 2580..=2583 {
+            walk.push((x, 3088));
+        }
+        for x in 2585..=2588 {
+            walk.push((x, 3088));
+        }
+        write_blocked_square(&fx, 40, 48, &walk, "0 24 16: 1600 0 2\n0 24 15: 1601 0 2\n");
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let outside = WorldTile {
+            x: 2583,
+            z: 3088,
+            level: 0,
+        };
+        let inside = WorldTile {
+            x: 2585,
+            z: 3088,
+            level: 0,
+        };
+        let empty = crate::world_state::WorldState::empty();
+        let low = magic_state(65);
+        let ok = magic_state(66);
+        assert!(
+            matches!(
+                find_with(&wc, &graph, outside, inside, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter"
+        );
+        assert!(
+            matches!(
+                find_with(&wc, &graph, outside, inside, FindOptions::default(), &low),
+                Err(RouteError::NoPath)
+            ),
+            "magic 65 cannot enter"
+        );
+        let enter = find_with(&wc, &graph, outside, inside, FindOptions::default(), &ok)
+            .expect("magic 66 enters");
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 1600
+                        && edge.dir == Some(DoorDir::E)
+                        && edge.skill_req == vec![(SKILL_MAGIC, 66)]
+            )),
+            "enter hops 1600 E with the parsed magic gate: {enter:?}"
+        );
+        let exit = find_with(&wc, &graph, inside, outside, FindOptions::default(), &empty)
+            .expect("exit does not need magic");
+        assert!(
+            exit.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 1600
+                        && edge.dir == Some(DoorDir::W)
+                        && edge.skill_req.is_empty()
+            )),
+            "exit hops 1600 W ungated: {exit:?}"
+        );
+    }
+
+    /// Live hole: floor-1 shop → Yanille bank is NoPath until the guild
+    /// doors join. After import, exiting stays eligible without magic;
+    /// entering the shop from the bank requires magic 66.
+    #[test]
+    fn magic_guild_shop_bank_route_uses_derived_doors() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let Some((graph, wc)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let shop = WorldTile {
+            x: 2594,
+            z: 3090,
+            level: 1,
+        };
+        let bank = WorldTile {
+            x: 2613,
+            z: 3092,
+            level: 0,
+        };
+        let doors: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && matches!(e.loc_id, 1600 | 1601))
+            .collect();
+        assert_eq!(
+            doors.len(),
+            8,
+            "four guild door tiles × two crossings, got {doors:?}"
+        );
+        let empty = crate::world_state::WorldState::empty();
+        let low = magic_state(65);
+        let ok = magic_state(66);
+        let leave = find_with(wc, graph, shop, bank, FindOptions::default(), &empty)
+            .unwrap_or_else(|e| panic!("shop → bank must exit without a magic gate ({e:?})"));
+        assert_eq!(leave.dest, bank);
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1723
+            )),
+            "shop → bank climbs down 1723: {leave:?}"
+        );
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601) && edge.skill_req.is_empty()
+            )),
+            "shop → bank exits an ungated guild door: {leave:?}"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter the guild"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &low),
+                Err(RouteError::NoPath)
+            ),
+            "magic 65 cannot enter the guild"
+        );
+        let enter = find_with(wc, graph, bank, shop, FindOptions::default(), &ok)
+            .unwrap_or_else(|e| panic!("bank → shop with magic 66 ({e:?})"));
+        assert_eq!(enter.dest, shop);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601)
+                        && edge.skill_req == vec![(SKILL_MAGIC, 66)]
+            )),
+            "bank → shop enters a magic-gated door: {enter:?}"
+        );
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1722
+            )),
+            "bank → shop climbs 1722: {enter:?}"
         );
     }
 }
