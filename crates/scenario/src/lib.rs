@@ -14981,26 +14981,55 @@ const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420);
 
 /// Gerrant's frozen Draynor preset needs the same four travel legs as other
 /// shop buyouts (initial shop→bank→shop withdrawal, post-buy shop→bank deposit,
-/// bank→shop return, resumed buy). live7zpi0g_0 on host 0a80e7535 completed
-/// first purchase, deposit, empty, close, and 488gp withdraw under the
-/// ordinary 150-dirty arms, then hit the whole-scenario 180s deadline on step
-/// 21 return at 3075,3264 with run energy 6 (315 runner increments, 180.020s;
-/// capture `2026-09-18T11-53-30_shop_buyout_gerrant`).
+/// bank→shop return, resumed buy).
 ///
-/// Chebyshev Gerrant stand 3013,3224 ↔ Draynor approach 3092,3243 is 79
-/// tiles. That yields a 40-tick lower bound at two tiles/tick on a straight
-/// leg; it is not a measured completion time. The fail trace used north-loop
-/// detours (nav hop counts 7–8) and one-tile/tick movement once energy dropped,
-/// so a bank→shop return alone can exceed 79 engine ticks before the keeper
-/// radius-12 arm fires.
+/// **Units:** per-arm `budget_ticks` are runner dirty-snapshot increments
+/// (`SCRIPT_GOLD_WATCH_TICKS` docs); whole-cycle `deadline` is wall seconds.
 ///
-/// Return watch 240 dirty is a bounded trial above the depleted one-tile/tick
-/// leg lower bound plus detour margin; it is not Betty's 280 (Falador West
-/// geometry differs). First-purchase and deposit arms stay 150 — no measured
-/// failure there. Whole-cycle wall 390s: 180s measured through mid-return with
-/// ~62 Chebyshev tiles still to the keeper; ~210s remainder trial estimate
-/// covers depleted return plus resumed buy without copying Betty's 420s envelope
-/// (Betty PASS was 352s/610 increments on a different bank leg).
+/// **Route (geometry, not measured completion):** Chebyshev Gerrant stand
+/// 3013,3224 ↔ Draynor approach 3092,3243 is 79 tiles → 40 engine ticks at
+/// two tiles/tick on a straight leg. Nav traces use north-loop detours (7–8
+/// hops per leg) and one-tile/tick once run energy drops.
+///
+/// **Four legs vs arms:**
+/// - First-purchase watch: shop→bank (leg 1), withdraw/open, bank→shop (leg 2),
+///   Trade + buy until pack holds feather — two travel legs plus banking/shop UI.
+/// - Deposit watch: shop→bank (leg 3) until product in bank — one travel leg.
+/// - Return watch: bank→shop keeper radius (leg 4) — one travel leg, often
+///   depleted energy (same geometry as leg 2/3).
+/// - Empty/close/further-purchase arms stay ordinary 150-dirty gold watches.
+///
+/// **Measured live7zpi0g_0 (180s wall, host 0a80e7535):** first purchase
+/// 160 feathers / 488gp, deposit, empty, close, 488gp withdraw under 150-dirty
+/// deposit arm; whole scenario deadline 180s exceeded on step 21 return at
+/// 3075,3264 run energy 6 (315 runner increments; capture
+/// `2026-09-18T11-53-30_shop_buyout_gerrant`). Establishes mid-return fail and
+/// deposit pass, not a first-purchase upper bound under hitch variance.
+///
+/// **Measured livexjav5j_0 (105.046s, host 0c14892f5):** step 17 first-purchase
+/// watch exhausted 150 dirty at 168 runner increments with 500 coins, no
+/// feather, run energy 20; nav arrived 3015,3222 engine tick 165 then Trade
+/// Gerrant before timeout (capture `2026-09-18T12-19-09_shop_buyout_gerrant`).
+/// Proves 150 insufficient for the two-leg + withdraw + buy arm under scene
+/// reload/hitch variance — not a completed first-purchase duration.
+///
+/// **First-purchase dirty 240:** measured incomplete lower bound 168 dirty
+/// plus trial margin ~40 dirty for post-Trade shop buy chunks (live7zpi0g log
+/// ShopButton spam before pack proof) and ~32 dirty hitch/scene-load pad
+/// (livexjav5j). Not Betty's 320 (Falador West round-trip differs).
+///
+/// **Deposit dirty 150:** live7zpi0g measured pass for leg 3; one depleted
+/// leg is shorter than the first-purchase composite — no widening without a
+/// deposit-arm fail.
+///
+/// **Return dirty 240:** bounded trial above depleted leg-4 lower bound plus
+/// detour margin from live7zpi0g mid-return geometry (~62 Chebyshev tiles
+/// remaining at 180s wall); not Betty's 280.
+///
+/// **Whole-cycle wall 390s:** live7zpi0g 180s through mid-return plus ~210s
+/// trial remainder for depleted return and resumed buy; retained unless LIVE
+/// shows deadline fail with widened first-purchase dirty budget.
+const SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS: u32 = 240;
 const SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS: u32 = 240;
 const SHOP_BUYOUT_GERRANT_DEADLINE: Duration = Duration::from_secs(390);
 
@@ -15028,7 +15057,7 @@ const SHOP_BUYOUT_BETTY_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 };
 
 const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
-    first_purchase_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    first_purchase_ticks: SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
     deposit_ticks: SCRIPT_GOLD_WATCH_TICKS,
     return_ticks: SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS,
     deadline: SHOP_BUYOUT_GERRANT_DEADLINE,
@@ -27900,10 +27929,10 @@ mod tests {
         }
     }
 
-    /// Gerrant Draynor route: measured live7zpi0g_0 fail widens only return
-    /// dirty budget and whole-cycle wall; first purchase/deposit stay gold 150.
+    /// Gerrant Draynor route: live7zpi0g mid-return + livexjav5j first-purchase
+    /// fails bound the four-leg dirty budgets and 390s wall (Betty unchanged).
     #[test]
-    fn shop_buyout_gerrant_timing_measured_mid_return_deadline() {
+    fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
         let gerrant = get("shop_buyout_gerrant").expect("shop_buyout_gerrant");
         assert_eq!(
             gerrant.settings.deadline, SHOP_BUYOUT_GERRANT_DEADLINE,
@@ -27920,15 +27949,29 @@ mod tests {
             watch("watch unseeded purchased product in pack after Start")
                 .wait
                 .budget_ticks,
-            SCRIPT_GOLD_WATCH_TICKS,
-            "first purchase stayed within ordinary 150-dirty arm on live trace"
+            SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
+            "first purchase covers two Draynor legs + withdraw + buy beyond livexjav5j 168-dirty fail"
         );
         assert_eq!(
             watch("watch purchased product enter a fresh bank")
                 .wait
                 .budget_ticks,
             SCRIPT_GOLD_WATCH_TICKS,
-            "deposit arm unchanged — proved before deadline fail"
+            "deposit arm: live7zpi0g measured pass at 150 dirty"
+        );
+        assert_eq!(
+            watch("watch the pack empty of product after deposit")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "empty-pack arm is not loosened"
+        );
+        assert_eq!(
+            watch("watch the buyout bank close after deposit")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "close arm is not loosened"
         );
         assert_eq!(
             watch("watch return to the named shop after banking")
