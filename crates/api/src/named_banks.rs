@@ -81,11 +81,7 @@ mod tests {
     #[test]
     fn published_alias_name_and_tile_unlock() {
         let facts = falador_facts();
-        assert!(bank_unlocked(
-            &facts,
-            "Falador East",
-            t(3013, 3355)
-        ));
+        assert!(bank_unlocked(&facts, "Falador East", t(3013, 3355)));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 // DirectNavigator.walkTo is a thin positional mapping onto the existing
-// the scene-walk/wait. A queued WalkTo is not arrival. Traveller
+// scene-walk/wait. A queued WalkTo is not arrival. Traveller
 // (`walk` / `walk-near`) is a different host op.
 
 use script::isolate_fb::{SnapshotInput, TileInput};
