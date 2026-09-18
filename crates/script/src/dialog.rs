@@ -19,9 +19,11 @@ pub const DIALOG_GAP_MS: u64 = 1_500;
 pub const DIALOGUE_OPEN_MS: u64 = 8_000;
 /// Frozen drive loop bound (`for (let i = 0; i < 120; i++)`).
 pub const DRIVE_STEPS: u32 = 120;
-/// Frozen `delayTicks(1)` after Continue.
+/// Frozen `ChatDialog.continue` / `chooseOption` observed-ack wait.
+pub const PAGE_ACK_MS: u64 = 3_000;
+/// Frozen `delayTicks(1)` after a continue ack.
 pub const CONTINUE_TICKS: u64 = 1;
-/// Frozen `delayTicks(2)` after a choice.
+/// Frozen `delayTicks(2)` after a choice ack.
 pub const CHOICE_TICKS: u64 = 2;
 
 thread_local! {
@@ -89,11 +91,11 @@ impl NativeObservation {
             self.chat_continue = snap.chat_continue();
         }
         if snap.has_chat_options() {
+            // Keep empty texts: the 1-based Answer index is the posted slot.
             self.chat_options = snap
                 .chat_options()
                 .iter()
                 .map(|row| row.text().to_string())
-                .filter(|text| !text.is_empty())
                 .collect();
         }
         if snap.has_bank_open() {
@@ -147,7 +149,9 @@ enum Phase {
     Idle,
     WaitOpen,
     Drive,
+    WaitContinueAck,
     WaitContinueTick,
+    WaitChoiceAck,
     WaitChoiceTicks,
     WaitGap,
 }
@@ -166,6 +170,7 @@ struct DialogRuntime {
     gap_ms: u64,
     steps: u32,
     due_tick: u64,
+    ack_modal_id: i32,
     interrupted: bool,
     deadline: Option<Instant>,
 }
@@ -186,6 +191,7 @@ impl DialogRuntime {
             gap_ms: DIALOG_GAP_MS,
             steps: 0,
             due_tick: 0,
+            ack_modal_id: -1,
             interrupted: false,
             deadline: None,
         }
@@ -233,6 +239,7 @@ impl DialogRuntime {
         self.gap_ms = DIALOG_GAP_MS;
         self.steps = 0;
         self.due_tick = 0;
+        self.ack_modal_id = -1;
         self.interrupted = false;
         self.deadline = None;
     }
@@ -427,6 +434,8 @@ fn next(token: u64) -> Value {
             match rt.phase {
                 Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
                 Phase::WaitOpen => wait_open(&mut rt, &obs),
+                Phase::WaitContinueAck => wait_continue_ack(&mut rt, &obs),
+                Phase::WaitChoiceAck => wait_choice_ack(&mut rt, &obs),
                 Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
                     if obs.tick >= rt.due_tick {
                         rt.phase = Phase::Drive;
@@ -464,6 +473,40 @@ fn wait_open(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     rt.wait()
 }
 
+fn continue_acked(rt: &DialogRuntime, obs: &NativeObservation) -> bool {
+    obs.chat_modal_id != rt.ack_modal_id || !obs.chat_continue
+}
+
+fn choice_acked(rt: &DialogRuntime, obs: &NativeObservation) -> bool {
+    obs.chat_modal_id != rt.ack_modal_id || obs.chat_continue
+}
+
+fn wait_continue_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
+    if continue_acked(rt, obs) {
+        rt.phase = Phase::WaitContinueTick;
+        rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+        rt.deadline = None;
+        return rt.wait();
+    }
+    if rt.bound_reached() {
+        return rt.done(false, "continue-ack-timeout", None);
+    }
+    rt.wait()
+}
+
+fn wait_choice_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
+    if choice_acked(rt, obs) {
+        rt.phase = Phase::WaitChoiceTicks;
+        rt.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
+        rt.deadline = None;
+        return rt.wait();
+    }
+    if rt.bound_reached() {
+        return rt.done(false, "choice-ack-timeout", None);
+    }
+    rt.wait()
+}
+
 fn wait_gap(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     if obs.dialog_ready() {
         rt.phase = Phase::Drive;
@@ -494,17 +537,17 @@ fn drive_step(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     }
     if obs.chat_continue {
         rt.steps += 1;
-        rt.phase = Phase::WaitContinueTick;
-        rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-        rt.deadline = None;
+        rt.ack_modal_id = obs.chat_modal_id;
+        rt.phase = Phase::WaitContinueAck;
+        rt.arm(PAGE_ACK_MS);
         return rt.continue_verb();
     }
     if !obs.options().is_empty() {
         let (option, log) = choose_option(obs.options(), &rt.prefer);
         rt.steps += 1;
-        rt.phase = Phase::WaitChoiceTicks;
-        rt.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
-        rt.deadline = None;
+        rt.ack_modal_id = obs.chat_modal_id;
+        rt.phase = Phase::WaitChoiceAck;
+        rt.arm(PAGE_ACK_MS);
         return rt.answer_verb(option, log);
     }
     // Chat is up but the continue id is hidden (pause latch) and no
@@ -548,11 +591,10 @@ fn talk_target(npcs: &[Npc], wanted: &str) -> Option<TalkTarget> {
 
 fn talk_op(actions: &[String]) -> Option<&str> {
     actions.iter().find_map(|action| {
-        if action.len() >= 4 && action[..4].eq_ignore_ascii_case("talk") {
-            Some(action.as_str())
-        } else {
-            None
-        }
+        action
+            .get(..4)
+            .is_some_and(|head| head.eq_ignore_ascii_case("talk"))
+            .then_some(action.as_str())
     })
 }
 
@@ -636,6 +678,7 @@ mod tests {
         assert_eq!(DIALOG_GAP_MS, 1_500);
         assert_eq!(DIALOGUE_OPEN_MS, 8_000);
         assert_eq!(DRIVE_STEPS, 120);
+        assert_eq!(PAGE_ACK_MS, 3_000);
         assert_eq!(CONTINUE_TICKS, 1);
         assert_eq!(CHOICE_TICKS, 2);
     }
@@ -649,6 +692,12 @@ mod tests {
         assert_eq!(talk_op(&["Talk".into()]), Some("Talk"));
         assert_eq!(talk_op(&["hidden".into(), "Attack".into()]), None);
         assert_eq!(talk_op(&["Bank".into()]), None);
+        assert_eq!(
+            talk_op(&["abcéxxxx".into()]),
+            None,
+            "a mid-character byte index must not panic or match"
+        );
+        assert_eq!(talk_op(&["talké".into()]), Some("talké"));
     }
 
     #[test]
@@ -658,6 +707,15 @@ mod tests {
             "I'd like to access my bank account, please.".into(),
         ];
         assert_eq!(pick_preferred(&opts, &["access my bank".into()]), Some(1));
+        let with_empty = [
+            "".into(),
+            "I'd like to access my bank account, please.".into(),
+        ];
+        assert_eq!(
+            choose_option(&with_empty, &["access my bank".into()]).0,
+            2,
+            "an empty earlier slot keeps the posted 1-based index"
+        );
         let (option, log) = choose_option(&opts, &["no such".into()]);
         assert_eq!(option, 2);
         assert!(log.as_deref().unwrap().contains("taking the last"));
@@ -740,5 +798,28 @@ mod tests {
         let step = drive_step(&mut runtime, &observation);
         assert_eq!(step["kind"], "ops");
         assert_eq!(step["ops"][0]["op"], "continue");
+    }
+
+    #[test]
+    fn same_continue_page_does_not_re_emit_and_ack_timeout_fails() {
+        let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
+        observation.chat_modal_id = 968;
+        observation.chat_continue = true;
+        let mut runtime = DialogRuntime::new();
+        runtime.kind = Kind::Talk;
+        runtime.phase = Phase::Drive;
+        let first = drive_step(&mut runtime, &observation);
+        assert_eq!(first["ops"][0]["op"], "continue");
+        assert_eq!(runtime.phase, Phase::WaitContinueAck);
+        observation.tick = 5;
+        assert_eq!(
+            wait_continue_ack(&mut runtime, &observation)["kind"],
+            "wait"
+        );
+        runtime.deadline = Some(runtime.now() - Duration::from_millis(1));
+        let timed = wait_continue_ack(&mut runtime, &observation);
+        assert_eq!(timed["kind"], "done");
+        assert_eq!(timed["result"], false);
+        assert_eq!(timed["reason"], "continue-ack-timeout");
     }
 }

@@ -217,20 +217,19 @@ fn talk_through_opens_continues_prefers_then_completes_on_partial_bank() {
     snap.chat_modal_id = 4882;
     post(&iso, &snap);
     tick(&iso, 3);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Answer { option: 1 }],
-        "preferred 'access my bank' must answer the posted choice"
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "continue ack (modal change) still waits the frozen extra tick"
     );
 
     snap.tick = 4;
     post(&iso, &snap);
     tick(&iso, 4);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "choice must wait the frozen two ticks before another verb"
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 1 }],
+        "preferred 'access my bank' must answer the posted choice"
     );
-    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
 
     snap.tick = 5;
     snap.chat_open = false;
@@ -240,6 +239,19 @@ fn talk_through_opens_continues_prefers_then_completes_on_partial_bank() {
     snap.bank_loaded = false;
     post(&iso, &snap);
     tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "choice ack still waits the frozen two ticks"
+    );
+
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert!(iso.drain_interacts().is_empty());
+    snap.tick = 7;
+    post(&iso, &snap);
+    tick(&iso, 7);
     assert_eq!(
         iso.probe("__ok").unwrap(),
         Value::Bool(true),
@@ -423,6 +435,211 @@ fn talk_choosing_by_stays_not_impl_and_talk_strict_stays_the_talk_through_alias(
         Value::Bool(false),
         "talkStrict keeps the existing talkThrough alias, including false on a missing NPC"
     );
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn same_continue_page_does_not_duplicate_then_transitions() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    iso.drain_interacts();
+
+    snap.tick = 2;
+    snap.chat_open = true;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+
+    for n in 3..=6u64 {
+        snap.tick = n;
+        post(&iso, &snap);
+        tick(&iso, n);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "same continue page at tick {n} must not re-press"
+        );
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    }
+
+    let choice = [ChatOptionInput {
+        text: "I'd like to access my bank account, please.",
+    }];
+    snap.tick = 7;
+    snap.chat_continue = false;
+    snap.chat_modal_id = 4882;
+    snap.chat_options = &choice;
+    post(&iso, &snap);
+    tick(&iso, 7);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "acked continue still waits one tick"
+    );
+    snap.tick = 8;
+    post(&iso, &snap);
+    tick(&iso, 8);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 1 }]
+    );
+    iso.join();
+}
+
+#[test]
+fn same_options_page_after_answer_does_not_duplicate() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let choice = [ChatOptionInput {
+        text: "I'd like to access my bank account, please.",
+    }];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    snap.chat_open = true;
+    snap.chat_modal_id = 4882;
+    snap.chat_options = &choice;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 1 }]
+    );
+
+    for n in 2..=5u64 {
+        snap.tick = n;
+        post(&iso, &snap);
+        tick(&iso, n);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "same options page at tick {n} must not answer again"
+        );
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    }
+
+    snap.tick = 6;
+    snap.chat_open = false;
+    snap.chat_modal_id = -1;
+    snap.chat_options = &[];
+    snap.bank_open = true;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    snap.tick = 7;
+    post(&iso, &snap);
+    tick(&iso, 7);
+    snap.tick = 8;
+    post(&iso, &snap);
+    tick(&iso, 8);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn continue_ack_timeout_fails_without_repressing() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    iso.drain_interacts();
+
+    snap.tick = 2;
+    snap.chat_open = true;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert!(iso.drain_interacts().is_empty());
+    std::thread::sleep(std::time::Duration::from_millis(3_100));
+    snap.tick = 4;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "ack timeout must not spam continue"
+    );
+    iso.join();
+}
+
+#[test]
+fn empty_earlier_option_keeps_the_posted_answer_index() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let opts = [
+        ChatOptionInput { text: "" },
+        ChatOptionInput {
+            text: "I'd like to access my bank account, please.",
+        },
+    ];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    snap.chat_open = true;
+    snap.chat_modal_id = 4882;
+    snap.chat_options = &opts;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 2 }],
+        "empty first slot must not collapse the preferred answer to 1"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_and_reset_during_continue_ack_drop_stale_actions() {
+    let iso = spawn(TALK);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Gundai", &actions, 7)];
+    let mut snap = base();
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    iso.drain_interacts();
+
+    snap.tick = 2;
+    snap.chat_open = true;
+    snap.chat_modal_id = 968;
+    snap.chat_continue = true;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::ContinueDialog]);
+
+    iso.pause();
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    assert!(iso.drain_interacts().is_empty());
+    iso.resume();
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert!(iso.drain_interacts().is_empty());
+    iso.reset_session_work();
+    snap.tick = 6;
+    snap.chat_modal_id = 4882;
+    snap.chat_continue = false;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    tick(&iso, 7);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
