@@ -26,7 +26,9 @@ if sys.version_info < (3, 11):
 
 import tomllib
 
-PRODUCTION_KINDS = frozenset({"normal", "optional", "target"})
+# Required production kinds. `optional` is not one of these: a required
+# `[target.*.dependencies]` edge must not satisfy an optional-only allow.
+REQUIRED_KINDS = frozenset({"normal", "target"})
 DEP_TABLES = (
     ("dependencies", "normal"),
     ("dev-dependencies", "dev"),
@@ -142,13 +144,14 @@ def iter_dep_tables(manifest: dict):
             table = cfg_tables.get(key)
             if not isinstance(table, dict):
                 continue
-            # Target tables cannot bypass the policy: production target deps
-            # are "target"; target-dev/build keep their test/build kinds.
+            # Required target production deps are "target". optional=true on
+            # that table stays "optional" in classify_kind. target-dev/build
+            # keep their test/build kinds.
             yield ("target" if kind == "normal" else kind), table
 
 
 def classify_kind(table_kind: str, spec: dict) -> str:
-    if table_kind == "normal" and spec.get("optional") is True:
+    if table_kind in REQUIRED_KINDS and spec.get("optional") is True:
         return "optional"
     return table_kind
 
@@ -168,7 +171,9 @@ def resolve_dep_name(
         lookup = workspace_dep_lookup(ws_deps, key)
         if not lookup:
             return None, False
-        for field in ("path", "package", "optional"):
+        # Cargo forbids optional on [workspace.dependencies]. Do not inherit
+        # it. Member tables use { workspace = true, optional = true }.
+        for field in ("path", "package"):
             if field not in merged and field in lookup:
                 merged[field] = lookup[field]
         inherited_path = "path" in lookup and "path" not in spec
@@ -190,9 +195,18 @@ def discover_workspace(root: Path) -> tuple[dict, dict[str, Path], dict[Path, st
     if not manifest_path.is_file():
         raise SystemExit(f"missing workspace manifest: {manifest_path}")
     workspace = load_toml(manifest_path)
-    members = workspace.get("workspace", {}).get("members") or []
+    ws_table = workspace.get("workspace") or {}
+    members = ws_table.get("members") or []
     by_name: dict[str, Path] = {}
     by_path: dict[Path, str] = {}
+    # Cargo also treats a root [package] as a workspace member. Scan it so
+    # an implicit root crate cannot escape the policy. Globs are unsupported
+    # and fail closed below (member path has no Cargo.toml).
+    root_pkg = workspace.get("package")
+    if isinstance(root_pkg, dict) and root_pkg.get("name"):
+        root_name = str(root_pkg["name"])
+        by_name[root_name] = root
+        by_path[root.resolve()] = root_name
     for rel in members:
         crate_dir = (root / str(rel)).resolve()
         crate_manifest = crate_dir / "Cargo.toml"
@@ -237,7 +251,9 @@ def collect_edges(
 def kind_permitted(actual: str, allowed: set[str]) -> bool:
     if actual in allowed:
         return True
-    return actual == "target" and bool(allowed & PRODUCTION_KINDS)
+    # Required target is cfg-gated required production, same as normal.
+    # optional-only must not accept a required target edge.
+    return actual == "target" and "normal" in allowed
 
 
 def check_graph(root: Path, policy: Policy) -> list[str]:
@@ -259,6 +275,15 @@ def check_graph(root: Path, policy: Policy) -> list[str]:
             "policy lists workspace member(s) absent from Cargo.toml: "
             f"{', '.join(missing)}. Update {policy.path} if the crate was removed."
         )
+
+    for key, raw in ws_deps.items():
+        if spec_map(raw).get("optional") is True:
+            errors.append(
+                f"invalid workspace.dependencies.{key}: optional = true. "
+                "Cargo forbids optional on workspace dependencies "
+                "('workspace dependencies cannot be optional'). "
+                "Set optional on the member: { workspace = true, optional = true }."
+            )
 
     edges = collect_edges(by_name, by_path, ws_deps, root)
 
@@ -336,9 +361,31 @@ def _dep_line(name: str, spec: dict) -> str:
     return f"{name} = {{ {', '.join(parts)} }}"
 
 
-def write_workspace(root: Path, members: list[str], ws_deps: dict | None = None) -> None:
+def write_workspace(
+    root: Path,
+    members: list[str],
+    ws_deps: dict | None = None,
+    *,
+    member_globs: list[str] | None = None,
+    root_package: str | None = None,
+) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    lines = ["[workspace]", 'resolver = "2"', f"members = [{', '.join(repr(f'crates/{m}') for m in members)}]", ""]
+    listed = member_globs if member_globs is not None else [f"crates/{m}" for m in members]
+    lines: list[str] = []
+    if root_package:
+        lines.extend(
+            [
+                "[package]",
+                f'name = "{root_package}"',
+                'version = "0.0.0"',
+                'edition = "2021"',
+                "publish = false",
+                "",
+            ]
+        )
+    lines.extend(
+        ["[workspace]", 'resolver = "2"', f"members = [{', '.join(repr(p) for p in listed)}]", ""]
+    )
     if ws_deps:
         lines.append("[workspace.dependencies]")
         for name, spec in ws_deps.items():
@@ -468,10 +515,132 @@ def run_self_test() -> int:
             "disallowed crate edge kind: script -> clientlib is normal",
         )
 
+        # 6. optional-only must reject a required target edge; target+optional
+        #    stays optional and is accepted. Member {workspace=true, optional=true}
+        #    is classified from the member table, not workspace.dependencies.
+        opt_policy_path = base / "policy-optional.toml"
+        write_policy(
+            opt_policy_path,
+            ["host-play", "scenario"],
+            [
+                {
+                    "from": "host-play",
+                    "to": "scenario",
+                    "kinds": ["optional"],
+                    "reason": "feature-gated only",
+                }
+            ],
+        )
+        opt_policy = load_policy(opt_policy_path)
+
+        req_target = base / "optional-vs-required-target"
+        write_workspace(req_target, ["host-play", "scenario"])
+        write_crate(
+            req_target,
+            "host-play",
+            **{"target.'cfg(unix)'.dependencies": {"scenario": {"path": "../scenario"}}},
+        )
+        write_crate(req_target, "scenario")
+        failures += expect_errors(
+            "optional-vs-required-target",
+            check_graph(req_target, opt_policy),
+            "disallowed crate edge kind: host-play -> scenario is target",
+        )
+
+        opt_target = base / "optional-target-ok"
+        write_workspace(opt_target, ["host-play", "scenario"])
+        write_crate(
+            opt_target,
+            "host-play",
+            **{
+                "target.'cfg(unix)'.dependencies": {
+                    "scenario": {"path": "../scenario", "optional": True}
+                }
+            },
+        )
+        write_crate(opt_target, "scenario")
+        failures += expect_clean("optional-target-ok", check_graph(opt_target, opt_policy))
+
+        ws_opt_member = base / "member-workspace-optional"
+        write_workspace(
+            ws_opt_member,
+            ["host-play", "scenario"],
+            ws_deps={"scenario": {"path": "crates/scenario"}},
+        )
+        write_crate(
+            ws_opt_member,
+            "host-play",
+            {"scenario": {"workspace": True, "optional": True}},
+        )
+        write_crate(ws_opt_member, "scenario")
+        failures += expect_clean(
+            "member-workspace-optional", check_graph(ws_opt_member, opt_policy)
+        )
+
+        invalid_ws_opt = base / "invalid-workspace-optional"
+        write_workspace(
+            invalid_ws_opt,
+            ["host-play", "scenario"],
+            ws_deps={"scenario": {"path": "crates/scenario", "optional": True}},
+        )
+        write_crate(invalid_ws_opt, "host-play", {"scenario": {"workspace": True}})
+        write_crate(invalid_ws_opt, "scenario")
+        failures += expect_errors(
+            "invalid-workspace-optional",
+            check_graph(invalid_ws_opt, opt_policy),
+            "invalid workspace.dependencies.scenario",
+        )
+
+        # 7. Path dep on a crate that is not a workspace member still fails.
+        sneak = base / "path-nonmember"
+        write_workspace(sneak, ["vault"])
+        write_crate(sneak, "vault", {"extra": {"path": "../extra"}})
+        extra = sneak / "crates" / "extra"
+        extra.mkdir(parents=True)
+        (extra / "Cargo.toml").write_text(
+            '[package]\nname = "extra"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n',
+            encoding="utf-8",
+        )
+        (extra / "src").mkdir()
+        (extra / "src" / "lib.rs").write_text("pub fn _fixture() {}\n", encoding="utf-8")
+        write_policy(policy := base / "policy-vault.toml", ["vault"], [])
+        failures += expect_errors(
+            "path-nonmember",
+            check_graph(sneak, load_policy(policy)),
+            "not a policy member or external",
+        )
+
+        # 8. Implicit root [package] cannot escape membership. Globs fail closed.
+        implicit = base / "implicit-root"
+        write_workspace(implicit, ["vault"], root_package="rootpkg")
+        write_crate(implicit, "vault")
+        write_policy(policy := base / "policy-implicit.toml", ["vault"], [])
+        failures += expect_errors(
+            "implicit-root",
+            check_graph(implicit, load_policy(policy)),
+            "unknown workspace member",
+        )
+
+        globbed = base / "member-glob"
+        write_workspace(globbed, ["vault"], member_globs=["crates/*"])
+        write_crate(globbed, "vault")
+        write_policy(policy := base / "policy-glob.toml", ["vault"], [])
+        try:
+            check_graph(globbed, load_policy(policy))
+            failures.append("self-test member-glob: expected SystemExit on glob members")
+        except SystemExit as exc:
+            if "crates/*" not in str(exc):
+                failures.append(f"self-test member-glob: unexpected SystemExit: {exc}")
+
     if failures:
         sys.stderr.write("\n".join(failures) + "\n")
         return 1
-    print("architecture self-test: rejected disallowed/alias/target/unknown/dev-bypass; accepted permitted dev-only")
+    print(
+        "architecture self-test: rejected disallowed/alias/target/unknown/dev-bypass/"
+        "required-target-vs-optional/invalid-workspace-optional/path-nonmember/"
+        "implicit-root/glob; accepted permitted dev-only, target-optional, "
+        "and member workspace+optional"
+    )
     return 0
 
 

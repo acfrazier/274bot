@@ -24,6 +24,12 @@ workspace and member `Cargo.toml` files, including `[dependencies]`,
 `optional`, `workspace = true` aliases, `path`, and `package` renames. It
 does not parse `.rs` with regex and does not compile.
 
+Membership is the explicit `workspace.members` path list plus a root
+`[package]` when present (Cargo's implicit root member). Globs, `exclude`,
+and other unsupported workspace shapes fail closed. A path dependency on a
+crate that is not a listed member still appears in the scan and must be a
+policy member or external.
+
 GitHub Actions runs the same two commands in the `architecture` job. That job
 does **not** replace `fmt`, `clippy`, or `test`. Those gates stay as they are.
 
@@ -89,7 +95,12 @@ claim that `e2e` owns those crates' production behavior.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
   through `host-play`.
 - **`host-play` → `scenario`** is optional (feature-gated harness), not a
-  default required edge.
+  default required edge. A required `[target.*.dependencies]` edge does
+  **not** satisfy an optional-only allow. `optional = true` on a target
+  table stays optional. `{ workspace = true, optional = true }` is read
+  from the **member** table. `[workspace.dependencies]` cannot set
+  `optional` (Cargo: "workspace dependencies cannot be optional"); that
+  form is rejected rather than inherited.
 - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
   (bake/stage nav identity). Both kinds are listed.
 

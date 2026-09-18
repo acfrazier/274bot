@@ -108,8 +108,11 @@ Crate edges are an explicit allowlist
 ([`tools/architecture/policy.toml`](tools/architecture/policy.toml),
 [docs/architecture.md](docs/architecture.md)). New reverse or convenience
 dependencies, workspace aliases, target tables, and unknown workspace
-members fail closed. Lifecycle, FlatBuffer isolate/host wire, last-FBO,
-and JS-shim policy are review requirements, not this checker.
+members fail closed. Optional-only allows do not accept a required target
+dependency. Membership is the explicit `workspace.members` paths plus a
+root `[package]` if present; globs are unsupported and fail closed.
+Lifecycle, FlatBuffer isolate/host wire, last-FBO, and JS-shim policy are
+review requirements, not this checker.
 
 GitHub Actions runs the same two manifests after installing ALSA + X11
 headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
