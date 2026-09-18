@@ -138,6 +138,8 @@ fn plant_production_objs(client: &mut Client) {
         certificate_obj(BRONZE_BAR_CERT_ID, BRONZE_BAR_ID),
         unnoted_obj(STEEL_BAR_ID, false),
         certificate_obj(STEEL_BAR_CERT_ID, STEEL_BAR_ID),
+        unnoted_obj(MITHRIL_BAR_ID, false),
+        certificate_obj(MITHRIL_BAR_CERT_ID, MITHRIL_BAR_ID),
         unnoted_obj(NEEDLE_ID, true),
         unnoted_obj(THREAD_ID, true),
         unnoted_obj(COINS_ID, true),
@@ -306,6 +308,16 @@ fn production_native_seeds_give_verified_certificates_through_real_send() {
             &[
                 "givebank",
                 "give steel_bar 28",
+                "cert_bronze_bar",
+                "bronze_bar",
+            ],
+        ),
+        (
+            "smithing_bot_mithril",
+            &["give hammer 1", "give cert_mithril_bar 28"],
+            &[
+                "givebank",
+                "give mithril_bar 28",
                 "cert_bronze_bar",
                 "bronze_bar",
             ],
@@ -582,6 +594,16 @@ fn production_native_deposit_dispatches_certificate_rows_by_inv_id() {
     assert_eq!(dispatched, STEEL_BAR_CERT_ID);
 
     let (ok, dispatched) = send_deposit(
+        "smithing_bot_mithril",
+        MITHRIL_BAR_ID,
+        28,
+        MITHRIL_BAR_CERT_ID,
+        28,
+    );
+    assert!(ok, "mithril must deposit the mithril bar certificate stack");
+    assert_eq!(dispatched, MITHRIL_BAR_CERT_ID);
+
+    let (ok, dispatched) = send_deposit(
         "herblore_secondaries",
         LOBSTER_ID,
         HERBLORE_EGG_FOOD_SEED,
@@ -848,6 +870,7 @@ fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
         ("smithing_bot", 1),
         ("smithing_bot_platebody", 1),
         ("smithing_bot_nails", STEEL_NAILS_OUTPUT),
+        ("smithing_bot_mithril", 1),
     ] {
         let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
         assert_eq!(
@@ -991,6 +1014,12 @@ fn production_native_seed_proofs_bound_exact_counts_before_start() {
             BRONZE_BAR_ID,
         ),
         ("smithing_bot_nails", STEEL_BAR_CERT_ID, 28, STEEL_BAR_ID),
+        (
+            "smithing_bot_mithril",
+            MITHRIL_BAR_CERT_ID,
+            28,
+            MITHRIL_BAR_ID,
+        ),
         ("leather_crafter", LEATHER_CERT_ID, 28, SOFT_LEATHER_ID),
         (
             "leather_crafter_hard_body",
@@ -1438,6 +1467,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "superheater_steel",
             "superheater_fire_battlestaff",
             "superheater_silver_low_natures",
+            "superheater_mithril",
             "vial_filler",
             "vial_filler_east",
             "potion_maker",
@@ -1509,6 +1539,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "smithing_bot",
             "smithing_bot_platebody",
             "smithing_bot_nails",
+            "smithing_bot_mithril",
             "leather_crafter",
             "leather_crafter_hard_body",
             "leather_crafter_green_body",
@@ -4010,11 +4041,64 @@ fn superheater_cases_register_exact_ids_and_bank_cycles() {
         }
     );
 
+    let mithril = get("superheater_mithril").expect("superheater_mithril");
+    let inject = settings_inject_map(mithril.settings.script_settings_inject).unwrap();
+    assert_eq!(inject.get("bar"), Some(&Value::String("Mithril".into())));
+    let mithril_start = mithril
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let mithril_seed = mithril.steps[..mithril_start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(mithril_seed.contains(&Proof::Stat {
+        id: SMITHING_STAT,
+        min: MITHRIL_SMITHING,
+    }));
+    assert!(mithril_seed.contains(&Proof::BankItemId {
+        id: MITHRIL_ORE_ID,
+        count: SUPERHEATER_ORE_SEED,
+    }));
+    assert!(mithril_seed.contains(&Proof::BankItemId {
+        id: COAL_ID,
+        count: SUPERHEATER_COAL_SEED,
+    }));
+    let mithril_watch = mithril.steps[mithril_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(mithril_watch.contains(&Proof::ItemId {
+        id: MITHRIL_BAR_ID,
+        count: 1,
+    }));
+    assert!(mithril_watch.contains(&Proof::ItemId {
+        id: MITHRIL_ORE_ID,
+        count: 1,
+    }));
+    assert!(mithril_watch.contains(&Proof::ItemId {
+        id: COAL_ID,
+        count: 4,
+    }));
+    assert!(mithril_watch.contains(&Proof::ItemIdAtMost {
+        id: IRON_BAR_ID,
+        count: 0,
+    }));
+    assert_eq!(
+        mithril.proof,
+        Proof::StatXpGain {
+            id: SMITHING_STAT,
+            min: 2
+        }
+    );
+
     for name in [
         "superheater",
         "superheater_steel",
         "superheater_fire_battlestaff",
         "superheater_silver_low_natures",
+        "superheater_mithril",
     ] {
         assert!(names().contains(&name));
     }

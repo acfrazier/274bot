@@ -469,6 +469,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "superheater_steel" => Some(superheater_steel_scenario()),
         "superheater_fire_battlestaff" => Some(superheater_fire_battlestaff_scenario()),
         "superheater_silver_low_natures" => Some(superheater_silver_low_natures_scenario()),
+        "superheater_mithril" => Some(superheater_mithril_scenario()),
         "vial_filler" => Some(vial_filler_scenario()),
         "vial_filler_east" => Some(vial_filler_east_scenario()),
         "potion_maker" => Some(potion_maker_scenario()),
@@ -540,6 +541,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
+        "smithing_bot_mithril" => Some(smithing_bot_mithril_scenario()),
         "leather_crafter" => Some(leather_crafter_scenario()),
         "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
         "leather_crafter_green_body" => Some(leather_crafter_green_body_scenario()),
@@ -619,6 +621,7 @@ pub fn names() -> Vec<&'static str> {
         "superheater_steel",
         "superheater_fire_battlestaff",
         "superheater_silver_low_natures",
+        "superheater_mithril",
         "vial_filler",
         "vial_filler_east",
         "potion_maker",
@@ -690,6 +693,7 @@ pub fn names() -> Vec<&'static str> {
         "smithing_bot",
         "smithing_bot_platebody",
         "smithing_bot_nails",
+        "smithing_bot_mithril",
         "leather_crafter",
         "leather_crafter_hard_body",
         "leather_crafter_green_body",
@@ -6626,6 +6630,11 @@ const BRONZE_SMITHING: i32 = 1;
 /// SuperheaterLogic Silver recipe level.
 const SILVER_SMITHING: i32 = 20;
 const STEEL_SMITHING: i32 = 30;
+/// SuperheaterLogic Mithril recipe level; 4 Coal per bar (5 bars / 27-slot trip).
+const MITHRIL_SMITHING: i32 = 50;
+/// Selected 289 `obj.pack`: mithril_ore=447, mithril_bar=2359.
+const MITHRIL_ORE_ID: i32 = 447;
+const MITHRIL_BAR_ID: i32 = 2359;
 const SUPERHEATER_NATURES_SEED: i32 = 200;
 const SUPERHEATER_ORE_SEED: i32 = 100;
 const SUPERHEATER_COAL_SEED: i32 = 200;
@@ -6659,6 +6668,11 @@ const SUPERHEATER_SILVER_LOW_NATURES_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const SUPERHEATER_MITHRIL_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Mithril"),
+}];
+
 #[derive(Clone, Copy)]
 enum SuperheaterStaff {
     Fire,
@@ -6671,6 +6685,8 @@ enum SuperheaterRecipe {
     Steel,
     /// Single-ore 27-slot trip + minimum natures (28).
     Silver,
+    /// Mithril ore + 4 Coal per bar (5 + 20 ores per trip).
+    Mithril,
 }
 
 fn superheater_scenario() -> Scenario {
@@ -6705,6 +6721,15 @@ fn superheater_silver_low_natures_scenario() -> Scenario {
         "superheater_silver_low_natures",
         SUPERHEATER_SILVER_LOW_NATURES_INJECT,
         SuperheaterRecipe::Silver,
+        SuperheaterStaff::Fire,
+    )
+}
+
+fn superheater_mithril_scenario() -> Scenario {
+    superheater_variant(
+        "superheater_mithril",
+        SUPERHEATER_MITHRIL_INJECT,
+        SuperheaterRecipe::Mithril,
         SuperheaterStaff::Fire,
     )
 }
@@ -6785,8 +6810,17 @@ fn superheater_variant(
             STAFF_OF_FIRE_ID,
             "staff_of_fire",
         ),
+        (SuperheaterRecipe::Mithril, SuperheaterStaff::Fire) => (
+            MITHRIL_BAR_ID,
+            MITHRIL_ORE_ID,
+            Some(COAL_ID),
+            MITHRIL_SMITHING,
+            STAFF_OF_FIRE_ID,
+            "staff_of_fire",
+        ),
         (SuperheaterRecipe::Steel, SuperheaterStaff::FireBattlestaff)
-        | (SuperheaterRecipe::Silver, SuperheaterStaff::FireBattlestaff) => {
+        | (SuperheaterRecipe::Silver, SuperheaterStaff::FireBattlestaff)
+        | (SuperheaterRecipe::Mithril, SuperheaterStaff::FireBattlestaff) => {
             unreachable!("recipe split is independent of the staff split")
         }
     };
@@ -6820,6 +6854,10 @@ fn superheater_variant(
                     }
                     SuperheaterRecipe::Silver => {
                         cheat(c, &format!("givebank silver_ore {SUPERHEATER_ORE_SEED}"));
+                    }
+                    SuperheaterRecipe::Mithril => {
+                        cheat(c, &format!("givebank mithril_ore {SUPERHEATER_ORE_SEED}"));
+                        cheat(c, &format!("givebank coal {SUPERHEATER_COAL_SEED}"));
                     }
                 }
                 cheat(c, &tele_args(bank.level, bank.x, bank.z));
@@ -6944,6 +6982,22 @@ fn superheater_variant(
                 },
             ));
         }
+        SuperheaterRecipe::Mithril => {
+            before_start.push((
+                "confirm no seeded bronze bars in pack before Start",
+                Proof::ItemIdAtMost {
+                    id: BRONZE_BAR_ID,
+                    count: 0,
+                },
+            ));
+            before_start.push((
+                "confirm no seeded steel bars in pack before Start",
+                Proof::ItemIdAtMost {
+                    id: STEEL_BAR_ID,
+                    count: 0,
+                },
+            ));
+        }
     }
     for (step_name, arm) in before_start {
         steps.push(bank_fletcher_watch(step_name, arm));
@@ -6976,7 +7030,7 @@ fn superheater_variant(
                 id: secondary_id,
                 count: match recipe {
                     SuperheaterRecipe::Bronze => SUPERHEATER_ORE_SEED,
-                    SuperheaterRecipe::Steel => SUPERHEATER_COAL_SEED,
+                    SuperheaterRecipe::Steel | SuperheaterRecipe::Mithril => SUPERHEATER_COAL_SEED,
                     SuperheaterRecipe::Silver => unreachable!("silver has no secondary ore"),
                 },
             },
@@ -7070,6 +7124,7 @@ fn superheater_variant(
                     count: match recipe {
                         SuperheaterRecipe::Bronze => 1,
                         SuperheaterRecipe::Steel => 2,
+                        SuperheaterRecipe::Mithril => 4,
                         SuperheaterRecipe::Silver => unreachable!("silver has no secondary ore"),
                     },
                 },
@@ -14677,7 +14732,11 @@ const HAMMER_ID: i32 = 2347;
 const BRONZE_BAR_CERT_ID: i32 = 2350;
 /// Selected 289 `obj.pack`: `cert_steel_bar` = 2354 (unnoted steel bar 2353).
 const STEEL_BAR_CERT_ID: i32 = 2354;
+/// Selected 289 `obj.pack`: mithril_bar=2359, cert_mithril_bar=2360.
+const MITHRIL_BAR_CERT_ID: i32 = 2360;
 const BRONZE_DAGGER_ID: i32 = 1205;
+/// Mithril dagger product id (stock smithing dbrow lvl 50).
+const MITHRIL_DAGGER_ID: i32 = 1209;
 const BRONZE_PLATEBODY_ID: i32 = 1117;
 /// Selected 289 nails (steel-only anvil product, stackable, out 2/bar).
 const STEEL_NAILS_ID: i32 = 1539;
@@ -15536,6 +15595,16 @@ const SMITHING_BOT_NAILS_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "product",
         value: ScriptInjectValue::Str("Nails"),
+    },
+];
+const SMITHING_BOT_MITHRIL_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "bar",
+        value: ScriptInjectValue::Str("Mithril"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Dagger"),
     },
 ];
 const LEATHER_CRAFTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -16944,6 +17013,23 @@ fn smithing_bot_nails_scenario() -> Scenario {
         "cert_steel_bar",
         28,
         STEEL_NAILS_OUTPUT,
+    )
+}
+
+/// Mithril Dagger: 1-bar F2P product on a higher metal tier (lvl 50 / id 1209).
+fn smithing_bot_mithril_scenario() -> Scenario {
+    smithing_bot_variant(
+        "smithing_bot_mithril",
+        SMITHING_BOT_MITHRIL_INJECT,
+        MITHRIL_SMITHING,
+        MITHRIL_DAGGER_ID,
+        BRONZE_DAGGER_ID,
+        MITHRIL_BAR_ID,
+        MITHRIL_BAR_CERT_ID,
+        "mithril_bar",
+        "cert_mithril_bar",
+        28,
+        1,
     )
 }
 
