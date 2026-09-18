@@ -529,6 +529,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "leather_crafter" => Some(leather_crafter_scenario()),
         "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
+        "leather_crafter_green_body" => Some(leather_crafter_green_body_scenario()),
+        "leather_crafter_chaps" => Some(leather_crafter_chaps_scenario()),
         "firemaker" => Some(firemaker_scenario()),
         "firemaker_oak" => Some(firemaker_oak_scenario()),
         "climbing_boots" => Some(climbing_boots_scenario()),
@@ -658,6 +660,8 @@ pub fn names() -> Vec<&'static str> {
         "smithing_bot_platebody",
         "leather_crafter",
         "leather_crafter_hard_body",
+        "leather_crafter_green_body",
+        "leather_crafter_chaps",
         "firemaker",
         "firemaker_oak",
         "climbing_boots",
@@ -14286,9 +14290,17 @@ const BRONZE_PLATEBODY_ID: i32 = 1117;
 const NEEDLE_ID: i32 = 1733;
 const THREAD_ID: i32 = 1734;
 const LEATHER_GLOVES_ID: i32 = 1059;
+const LEATHER_CHAPS_ID: i32 = 1095;
 const HARDLEATHER_BODY_ID: i32 = 1131;
+const DRAGONHIDE_BODY_ID: i32 = 1135;
+const DRAGONHIDE_CHAPS_ID: i32 = 1099;
 const LEATHER_CERT_ID: i32 = 1742;
 const HARD_LEATHER_CERT_ID: i32 = 1744;
+/// Green dragon leather (selected289 `dragon_leather` / alias `dragon_leather`).
+const GREEN_DRAGON_LEATHER_ID: i32 = 1745;
+const GREEN_DRAGON_LEATHER_CERT_ID: i32 = 1746;
+/// Two full needle+thread trips of banked leather (26 free slots × 2).
+const LEATHER_CRAFTER_TWO_TRIP_SEED: i32 = 56;
 const LOGS_CERT_ID: i32 = 1512;
 const OAK_LOGS_CERT_ID: i32 = 1522;
 const OAK_LOGS_ID: i32 = 1521;
@@ -14528,6 +14540,10 @@ const LEATHER_CRAFTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
 const LEATHER_CRAFTER_HARD_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "leatherType",
     value: ScriptInjectValue::Str("Hard leather"),
+}];
+const LEATHER_CRAFTER_GREEN_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "leatherType",
+    value: ScriptInjectValue::Str("Green dragon leather"),
 }];
 const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -15619,7 +15635,10 @@ fn leather_crafter_scenario() -> Scenario {
         LEATHER_CRAFTER_INJECT,
         1,
         "leather",
+        "cert_leather",
         SOFT_LEATHER_ID,
+        LEATHER_CERT_ID,
+        28,
         LEATHER_GLOVES_ID,
         HARDLEATHER_BODY_ID,
     )
@@ -15631,8 +15650,44 @@ fn leather_crafter_hard_body_scenario() -> Scenario {
         LEATHER_CRAFTER_HARD_INJECT,
         28,
         "hard_leather",
+        "cert_hard_leather",
         HARD_LEATHER_ID,
+        HARD_LEATHER_CERT_ID,
+        28,
         HARDLEATHER_BODY_ID,
+        LEATHER_GLOVES_ID,
+    )
+}
+
+/// Green body at Crafting 63: multi3 make-X / chat count-dialog branch.
+/// 3 leather per body; needle+thread leave 26 slots so a trip may leave 2 leather.
+fn leather_crafter_green_body_scenario() -> Scenario {
+    leather_crafter_variant(
+        "leather_crafter_green_body",
+        LEATHER_CRAFTER_GREEN_INJECT,
+        63,
+        "dragon_leather",
+        "cert_dragon_leather",
+        GREEN_DRAGON_LEATHER_ID,
+        GREEN_DRAGON_LEATHER_CERT_ID,
+        LEATHER_CRAFTER_TWO_TRIP_SEED,
+        DRAGONHIDE_BODY_ID,
+        DRAGONHIDE_CHAPS_ID,
+    )
+}
+
+/// Soft leather chaps at Crafting 18: leather_crafting interface single-item buttons.
+fn leather_crafter_chaps_scenario() -> Scenario {
+    leather_crafter_variant(
+        "leather_crafter_chaps",
+        LEATHER_CRAFTER_INJECT,
+        18,
+        "leather",
+        "cert_leather",
+        SOFT_LEATHER_ID,
+        LEATHER_CERT_ID,
+        LEATHER_CRAFTER_TWO_TRIP_SEED,
+        LEATHER_CHAPS_ID,
         LEATHER_GLOVES_ID,
     )
 }
@@ -15642,7 +15697,10 @@ fn leather_crafter_variant(
     inject: &'static [ScriptSettingInject],
     crafting: i32,
     leather_alias: &'static str,
+    leather_note_alias: &'static str,
     leather_id: i32,
+    leather_note: i32,
+    leather_qty: i32,
     product_id: i32,
     wrong_id: i32,
 ) -> Scenario {
@@ -15660,11 +15718,6 @@ fn leather_crafter_variant(
     };
     let bank = AL_KHARID_BANK;
     let mut steps = script_live_seed_steps();
-    let leather_note = if leather_alias == "leather" {
-        LEATHER_CERT_ID
-    } else {
-        HARD_LEATHER_CERT_ID
-    };
     steps.push(native_bank_seed(
         "seed Crafting, banked needle/thread/leather, and tele to Al-Kharid before Start",
         bank,
@@ -15686,12 +15739,8 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
-                note_alias: Some(if leather_alias == "leather" {
-                    "cert_leather"
-                } else {
-                    "cert_hard_leather"
-                }),
-                quantity: 28,
+                note_alias: Some(leather_note_alias),
+                quantity: leather_qty,
                 note_id: Some(leather_note),
             },
         ],
@@ -15710,7 +15759,7 @@ fn leather_crafter_variant(
             "confirm the exact noted leather seed in pack before deposit",
             Proof::ItemId {
                 id: leather_note,
-                count: 28,
+                count: leather_qty,
             },
         ),
         (
@@ -15731,7 +15780,7 @@ fn leather_crafter_variant(
             "bound the noted leather seed count in pack before deposit",
             Proof::ItemIdAtMost {
                 id: leather_note,
-                count: 28,
+                count: leather_qty,
             },
         ),
         (
@@ -15792,12 +15841,8 @@ fn leather_crafter_variant(
             NativeSeed {
                 unnoted_id: leather_id,
                 debug_alias: leather_alias,
-                note_alias: Some(if leather_alias == "leather" {
-                    "cert_leather"
-                } else {
-                    "cert_hard_leather"
-                }),
-                quantity: 28,
+                note_alias: Some(leather_note_alias),
+                quantity: leather_qty,
                 note_id: Some(leather_note),
             },
         ],
@@ -15807,7 +15852,7 @@ fn leather_crafter_variant(
             "acknowledge the exact leather seed bank",
             Proof::BankItemId {
                 id: leather_id,
-                count: 28,
+                count: leather_qty,
             },
         ),
         (
@@ -15849,7 +15894,7 @@ fn leather_crafter_variant(
             "bound the leather seed bank count",
             Proof::BankItemIdAtMost {
                 id: leather_id,
-                count: 28,
+                count: leather_qty,
             },
         ),
         (
@@ -17385,6 +17430,8 @@ mod tests {
             certificate_obj(LEATHER_CERT_ID, SOFT_LEATHER_ID),
             unnoted_obj(HARD_LEATHER_ID, false),
             certificate_obj(HARD_LEATHER_CERT_ID, HARD_LEATHER_ID),
+            unnoted_obj(GREEN_DRAGON_LEATHER_ID, false),
+            certificate_obj(GREEN_DRAGON_LEATHER_CERT_ID, GREEN_DRAGON_LEATHER_ID),
             unnoted_obj(TINDERBOX_ID, false),
             unnoted_obj(LOGS_ID, false),
             certificate_obj(LOGS_CERT_ID, LOGS_ID),
@@ -17543,6 +17590,7 @@ mod tests {
                     "give leather 28",
                     "leather_cert",
                     "cert_hard_leather",
+                    "cert_dragon_leather",
                 ],
             ),
             (
@@ -17552,7 +17600,37 @@ mod tests {
                     "give thread 100",
                     "give cert_hard_leather 28",
                 ],
-                &["givebank", "give hard_leather 28", "give cert_leather 28"],
+                &[
+                    "givebank",
+                    "give hard_leather 28",
+                    "give cert_leather 28",
+                    "cert_dragon_leather",
+                ],
+            ),
+            (
+                "leather_crafter_green_body",
+                &[
+                    "give needle 1",
+                    "give thread 100",
+                    "give cert_dragon_leather 56",
+                ],
+                &[
+                    "givebank",
+                    "give dragon_leather 56",
+                    "give cert_leather 28",
+                    "cert_hard_leather",
+                ],
+            ),
+            (
+                "leather_crafter_chaps",
+                &["give needle 1", "give thread 100", "give cert_leather 56"],
+                &[
+                    "givebank",
+                    "give leather 56",
+                    "give cert_leather 28",
+                    "cert_hard_leather",
+                    "cert_dragon_leather",
+                ],
             ),
             (
                 "firemaker",
@@ -17667,6 +17745,33 @@ mod tests {
             "soft leather certificates must not seed the hard variant"
         );
 
+        let (ok, dispatched) = send_deposit(
+            "leather_crafter_green_body",
+            GREEN_DRAGON_LEATHER_ID,
+            56,
+            GREEN_DRAGON_LEATHER_CERT_ID,
+            56,
+        );
+        assert!(ok, "green dragon leather must deposit cert_dragon_leather");
+        assert_eq!(dispatched, GREEN_DRAGON_LEATHER_CERT_ID);
+
+        let (ok, _) = send_deposit(
+            "leather_crafter_green_body",
+            GREEN_DRAGON_LEATHER_ID,
+            56,
+            LEATHER_CERT_ID,
+            56,
+        );
+        assert!(
+            !ok,
+            "soft leather certificates must not seed the green dragon variant"
+        );
+
+        let (ok, dispatched) =
+            send_deposit("leather_crafter_chaps", SOFT_LEATHER_ID, 56, LEATHER_CERT_ID, 56);
+        assert!(ok, "chaps must deposit cert_leather");
+        assert_eq!(dispatched, LEATHER_CERT_ID);
+
         let (ok, dispatched) = send_deposit("firemaker_oak", OAK_LOGS_ID, 28, OAK_LOGS_CERT_ID, 28);
         assert!(ok, "oak logs must deposit cert_oak_logs");
         assert_eq!(dispatched, OAK_LOGS_CERT_ID);
@@ -17698,6 +17803,18 @@ mod tests {
                 HARD_LEATHER_CERT_ID,
                 28,
                 HARD_LEATHER_ID,
+            ),
+            (
+                "leather_crafter_green_body",
+                GREEN_DRAGON_LEATHER_CERT_ID,
+                56,
+                GREEN_DRAGON_LEATHER_ID,
+            ),
+            (
+                "leather_crafter_chaps",
+                LEATHER_CERT_ID,
+                56,
+                SOFT_LEATHER_ID,
             ),
             ("firemaker", LOGS_CERT_ID, 28, LOGS_ID),
             ("firemaker_oak", OAK_LOGS_CERT_ID, 28, OAK_LOGS_ID),
@@ -17984,6 +18101,8 @@ mod tests {
                 "smithing_bot_platebody",
                 "leather_crafter",
                 "leather_crafter_hard_body",
+                "leather_crafter_green_body",
+                "leather_crafter_chaps",
                 "firemaker",
                 "firemaker_oak",
                 "climbing_boots",
