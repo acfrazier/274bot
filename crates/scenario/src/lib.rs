@@ -14955,6 +14955,84 @@ const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
 /// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
 const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
+/// Betty ShopBuyout long Falador West bank travel budgets (Betty-only).
+///
+/// **Units:** `budget_ticks` are runner dirty-snapshot increments
+/// (`runner.rs`: `ticks_waited += 1` only when `snapshot.rebuild` is dirty).
+/// Not engine `World.TICKRATE` (600ms) ticks and not wall seconds. Capture
+/// `tick` advances on PLAYER_INFO; dirty counts and wall time are not
+/// interchangeable proofs.
+///
+/// **Geometry (frozen shopPresets; West preserved):** Betty stand
+/// `3012,3258`; bankStand `2946,3369`; open booth `2213@2946,3367` with
+/// approach `2946,3368`. Chebyshev shop↔bankStand =
+/// max(|3012−2946|,|3258−3369|) = max(66,111) = **111**. User noted
+/// Falador East is closer; root verified the preset chooses West and the
+/// operator has not requested changing frozen bankStand/walkResilient.
+///
+/// **Four travel legs** before a resumed purchase can complete:
+/// 1. initial shop→bank withdraw, 2. bank→shop first buy, 3. post-purchase
+/// shop→bank deposit, 4. bank→shop return. Energy depletes across legs.
+///
+/// **Measured lower bound (livedkotdp_0 FAIL, capture
+/// `2026-09-18T11-26-16_shop_buyout_betty`, panel log
+/// `shop-sarim-variants-betty-panel.log`):**
+/// - Leg 1: nav tick 26 at `3012,3258` → Arrived `2945,3368` tick 118 +
+///   OpenBooth/withdraw by ~128 ≈ **102 engine ticks** (running).
+/// - Leg 2 partial: leave tick 128 → FAIL tick 156 at `2995,3366` still
+///   moving (mapflag 81,31), energy 26, inv 500 coins / no runes. 28 ticks
+///   of progress; remaining Chebyshev to Betty max(17,108)=**108** at walk
+///   ≈ ≥108 more → leg 2 LB **≥136** engine ticks. Nav 145–156 moved
+///   `2973,3380→2995,3366` with accepted walk-send — progressive, not stall.
+/// - First-purchase arm exhausted **150 dirties** mid-leg 2 (outcome
+///   167 runner increments / 98.325s wall / exit 1). 150 is demonstrably
+///   insufficient even while progressing.
+/// - Legs 3–4 never reached on this run. Source symmetry: same 111
+///   Chebyshev; energy already 26 so walk-dominant like leg 2 incomplete.
+///
+/// **Budgets (dirty, not equated raw to engine ticks):**
+/// - First purchase (legs 1+2 + open/buy): engine LB ≈ 102+136+20 = **258**;
+///   150 already failed → pad dirty≠engine / interaction → **320**.
+/// - Deposit (leg 3 + booth/deposit) and return (leg 4): one-way walk-
+///   dominant ≥~100–140 → **280** each.
+/// - Empty / close / further stay ordinary **150** (local bank UI / at-shop
+///   buy after return).
+///
+/// **Deadline:** seed ~15–25s + first-purchase wall at measured step-17
+/// rate ~150 dirties / ≈90s ≈ 1.67 dirty/s → 320 ≈ 190s; deposit+return
+/// when each completes near LB ≈ 2×(120/1.67)≈145s + further ~30s →
+/// **~365s** sequential. Use existing **420s** pattern
+/// ([`HERBLORE_EGG_DEADLINE`]). Global [`SCRIPT_GOLD_DEADLINE`] 180s and
+/// watch 150 stay for every other ShopBuyout including Gerrant (not yet
+/// failed). Script `walkTo` / call timeouts and short presets unchanged.
+const SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS: u32 = 320;
+const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
+const SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS: u32 = 280;
+const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420);
+
+/// Per-case observation budgets for [`shop_buyout_variant`]. Default matches
+/// ordinary gold watches; Betty widens only the long bank-travel arms.
+struct ShopBuyoutTiming {
+    first_purchase_ticks: u32,
+    deposit_ticks: u32,
+    return_ticks: u32,
+    deadline: Duration,
+}
+
+const SHOP_BUYOUT_DEFAULT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
+    first_purchase_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    deposit_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    return_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    deadline: SCRIPT_GOLD_DEADLINE,
+};
+
+const SHOP_BUYOUT_BETTY_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
+    first_purchase_ticks: SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS,
+    deposit_ticks: SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS,
+    return_ticks: SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS,
+    deadline: SHOP_BUYOUT_BETTY_DEADLINE,
+};
+
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
     "Aemad's vials — East Ardougne (Ardougne East bank)";
 const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
@@ -15417,6 +15495,7 @@ fn shop_buyout_scenario() -> Scenario {
         AEMAD_BANK_BOOTH_ID,
         "Aemad",
         VIAL_OF_WATER_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
@@ -15433,6 +15512,7 @@ fn shop_buyout_aubury_scenario() -> Scenario {
         VARROCK_EAST_BANK_BOOTH_ID,
         "Aubury",
         FIRE_RUNE_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
@@ -15448,6 +15528,7 @@ fn shop_buyout_lowe_scenario() -> Scenario {
         VARROCK_EAST_BANK_BOOTH_ID,
         "Lowe",
         BRONZE_ARROW_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
@@ -15463,6 +15544,7 @@ fn shop_buyout_hickton_scenario() -> Scenario {
         CATHERBY_BANK_BOOTH_ID,
         "Hickton",
         BRONZE_ARROW_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
@@ -15478,12 +15560,14 @@ fn shop_buyout_harry_scenario() -> Scenario {
         CATHERBY_BANK_BOOTH_ID,
         "Harry",
         FISHING_BAIT_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
 /// Betty stackable ShopBuyout: selected `Fire rune` (obj 554) only. Falador
 /// West open booth 2213@2946,3367 with approach 2946,3368 (preset bankStand
 /// 2946,3369 is Chebyshev 2). coins<100 after real buy drives bank.
+/// Long Port Sarim↔Falador West travel uses [`SHOP_BUYOUT_BETTY_TIMING`].
 fn shop_buyout_betty_scenario() -> Scenario {
     shop_buyout_variant(
         "shop_buyout_betty",
@@ -15494,6 +15578,7 @@ fn shop_buyout_betty_scenario() -> Scenario {
         FALADOR_WEST_BANK_BOOTH_ID,
         "Betty",
         FIRE_RUNE_ID,
+        SHOP_BUYOUT_BETTY_TIMING,
     )
 }
 
@@ -15509,6 +15594,7 @@ fn shop_buyout_gerrant_scenario() -> Scenario {
         DRAYNOR_BANK_BOOTH_ID,
         "Gerrant",
         FEATHER_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
     )
 }
 
@@ -15521,6 +15607,7 @@ fn shop_buyout_variant(
     booth_id: i32,
     keeper_name: &'static str,
     product_id: i32,
+    timing: ShopBuyoutTiming,
 ) -> Scenario {
     let product = Proof::ItemId {
         id: product_id,
@@ -15662,6 +15749,9 @@ fn shop_buyout_variant(
     steps.push(start_catalog_step());
     // Contract: unseeded product → fresh bank product → empty pack →
     // BankClosed → return named shop → new product. Coins secondary only.
+    // Travel-leg dirty budgets come from `timing` (Betty long West route);
+    // empty/close/further stay ordinary gold watches. See
+    // SHOP_BUYOUT_BETTY_* constant docs (dirty increments, not 150×600ms).
     for (step_name, arm) in [
         (
             "watch unseeded purchased product in pack after Start",
@@ -15700,7 +15790,24 @@ fn shop_buyout_variant(
             product,
         ),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        let budget_ticks = match step_name {
+            "watch unseeded purchased product in pack after Start" => {
+                timing.first_purchase_ticks
+            }
+            "watch purchased product enter a fresh bank" => timing.deposit_ticks,
+            "watch return to the named shop after banking" => timing.return_ticks,
+            _ => SCRIPT_GOLD_WATCH_TICKS,
+        };
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm,
+                budget_ticks,
+            },
+        });
     }
     Scenario {
         name,
@@ -15714,7 +15821,7 @@ fn shop_buyout_variant(
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: timing.deadline,
             start_script: Some("ShopBuyout"),
             script_settings_inject: Some(inject),
             terminal_shot: Some(name),
@@ -27426,7 +27533,15 @@ mod tests {
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
-            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            let expected_deadline = if name == "shop_buyout_betty" {
+                SHOP_BUYOUT_BETTY_DEADLINE
+            } else {
+                SCRIPT_GOLD_DEADLINE
+            };
+            assert_eq!(
+                scenario.settings.deadline, expected_deadline,
+                "{name}: deadline is Betty long-route 420s or ordinary gold 180s"
+            );
             assert_eq!(
                 scenario.proof,
                 Proof::ItemId {
@@ -27675,5 +27790,113 @@ mod tests {
                 level: 0
             }
         );
+    }
+
+    /// Betty-only long Falador West travel budgets: first purchase covers
+    /// initial withdraw round-trip, deposit/return cover post-buy legs;
+    /// empty/close/further and all other presets stay ordinary 150/180s.
+    /// Predicates and proof order are unchanged (see chain test).
+    #[test]
+    fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
+        let betty = get("shop_buyout_betty").expect("shop_buyout_betty");
+        assert_eq!(
+            betty.settings.deadline, SHOP_BUYOUT_BETTY_DEADLINE,
+            "Betty wall covers four Port Sarim↔Falador West legs"
+        );
+        let watch = |name: &str| {
+            betty
+                .steps
+                .iter()
+                .find(|step| step.name == name)
+                .unwrap_or_else(|| panic!("betty has {name}"))
+        };
+        assert_eq!(
+            watch("watch unseeded purchased product in pack after Start")
+                .wait
+                .budget_ticks,
+            SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS,
+            "first purchase dirty-budget covers measured shop→bank→shop LB (>150 mid-return)"
+        );
+        assert_eq!(
+            watch("watch purchased product enter a fresh bank")
+                .wait
+                .budget_ticks,
+            SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS,
+            "deposit dirty-budget covers post-buy shop→bank leg"
+        );
+        assert_eq!(
+            watch("watch the pack empty of product after deposit")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "empty-pack arm is not loosened"
+        );
+        assert_eq!(
+            watch("watch the buyout bank close after deposit")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "close arm is not loosened"
+        );
+        assert_eq!(
+            watch("watch return to the named shop after banking")
+                .wait
+                .budget_ticks,
+            SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS,
+            "return dirty-budget covers bank→shop leg only"
+        );
+        assert_eq!(
+            watch("watch further purchased product after return")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "further-purchase arm is not loosened"
+        );
+        // West bank geometry preserved (not East shortcut).
+        assert_eq!(
+            FALADOR_WEST_BANK_APPROACH,
+            WorldTile {
+                x: 2946,
+                z: 3368,
+                level: 0
+            }
+        );
+        assert_eq!(
+            BETTY_STAND,
+            WorldTile {
+                x: 3012,
+                z: 3258,
+                level: 0
+            }
+        );
+
+        for name in [
+            "shop_buyout",
+            "shop_buyout_aubury",
+            "shop_buyout_lowe",
+            "shop_buyout_hickton",
+            "shop_buyout_harry",
+            "shop_buyout_gerrant",
+        ] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(
+                s.settings.deadline, SCRIPT_GOLD_DEADLINE,
+                "{name}: non-Betty deadline stays 180s"
+            );
+            for step in s.steps.iter().filter(|step| {
+                step.name.starts_with("watch unseeded purchased")
+                    || step.name.starts_with("watch purchased product enter")
+                    || step.name.starts_with("watch return to the named shop")
+                    || step.name.starts_with("watch further purchased")
+                    || step.name.starts_with("watch the pack empty")
+                    || step.name.starts_with("watch the buyout bank close")
+            }) {
+                assert_eq!(
+                    step.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+                    "{name}: {} stays ordinary gold watch",
+                    step.name
+                );
+            }
+        }
     }
 }
