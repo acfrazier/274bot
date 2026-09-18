@@ -17,6 +17,8 @@ mod library;
 #[cfg(feature = "load")]
 mod bindings;
 #[cfg(feature = "load")]
+mod buyout_plan;
+#[cfg(feature = "load")]
 mod snapshot;
 #[cfg(feature = "load")]
 mod isolate;

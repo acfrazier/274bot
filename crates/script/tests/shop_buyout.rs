@@ -1,4 +1,4 @@
-// ShopBuyout host facts + Rust buyout planner over the existing shop wire.
+// ShopBuyout host facts + Rust buyout planner over the isolate FlatBuffer query.
 // Frozen ShopBuyout looks up rec from SHOP_DB and calls buyoutPlan; this
 // fixture uses those same specifiers so an empty catalog fallback cannot pass.
 
@@ -34,7 +34,7 @@ export default class T extends LoopingBot {
                     rec,
                     { vial_water: 500, bronze_arrow: 500, iron_axe: 2, papyrus: 50 },
                     200,
-                    new Set(['Vial of water']),
+                    new Set(['vial of water']),
                 )
                 : null;
         } catch (e) {
@@ -54,6 +54,13 @@ export default class T extends LoopingBot {
             err,
             unsupported,
             posted: Object.keys(SHOP_DB).sort(),
+            shopJsonUnknown: (function() {
+                const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+                    ? globalThis.rustyscript.functions.__rs2b0t_shop
+                    : undefined;
+                if (typeof fn !== 'function') return 'missing';
+                return fn({ op: 'buyout-plan', rec: rec, stock: {}, coins: 200, chosen: [] });
+            })(),
         };
     }
 }
@@ -87,6 +94,11 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
         unsupported.contains("not impl"),
         "unsupported shop must fail closed, got {unsupported:?}"
     );
+    let shop_json = &probe["shopJsonUnknown"];
+    assert_eq!(
+        shop_json["kind"], "notImpl",
+        "buyout-plan must not ride the JSON shop binding, got {shop_json}"
+    );
     iso.join();
 }
 
@@ -102,7 +114,7 @@ export default class T extends LoopingBot {
             rec,
             { firerune: 5, waterrune: 5, deathrune: 2, chaosrune: 2 },
             10_000,
-            new Set(['fire rune', 'Water rune', 'Death rune', 'Chaos rune']),
+            new Set(['fire rune', 'water rune', 'death rune', 'chaos rune']),
         );
     }
 }

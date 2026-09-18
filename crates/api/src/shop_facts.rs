@@ -134,9 +134,7 @@ pub fn buyout_plan(
         .items
         .iter()
         .filter(|item| {
-            chosen
-                .iter()
-                .any(|name| item.name.eq_ignore_ascii_case(name.trim()))
+            chosen.contains(&item.name.to_lowercase())
                 && stock.get(&item.obj).copied().unwrap_or(0) > 0
         })
         .collect();
@@ -448,7 +446,7 @@ mod tests {
             ("iron_axe", 2),
             ("papyrus", 50),
         ]);
-        let plan = buyout_plan(&rec, &stock, 200, &names(&["VIAL OF WATER"]));
+        let plan = buyout_plan(&rec, &stock, 200, &names(&["vial of water"]));
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].obj, "vial_water");
         assert_eq!(plan[0].name, "Vial of water");
@@ -479,6 +477,24 @@ mod tests {
     }
 
     #[test]
+    fn chosen_match_is_lowercase_item_name_without_trim() {
+        let rec = aemad(ClientRevision::R289);
+        let stock = stock_map(&[("vial_water", 500)]);
+        assert!(
+            buyout_plan(&rec, &stock, 200, &names(&["VIAL OF WATER"])).is_empty(),
+            "frozen chosen.has(item.name.toLowerCase()) does not casefold chosen"
+        );
+        assert!(
+            buyout_plan(&rec, &stock, 200, &names(&[" vial of water"])).is_empty(),
+            "frozen chosen.has does not trim"
+        );
+        assert_eq!(
+            buyout_plan(&rec, &stock, 200, &names(&["vial of water"])).len(),
+            1
+        );
+    }
+
+    #[test]
     fn descending_base_cost_keeps_stable_order_on_ties() {
         let rec = aubury(ClientRevision::R289);
         let stock = stock_map(&[
@@ -493,11 +509,11 @@ mod tests {
             &stock,
             10_000,
             &names(&[
-                "Fire rune",
-                "Water rune",
-                "Air rune",
-                "Death rune",
-                "Chaos rune",
+                "fire rune",
+                "water rune",
+                "air rune",
+                "death rune",
+                "chaos rune",
             ]),
         );
         let objs: Vec<_> = plan.iter().map(|row| row.obj.as_str()).collect();

@@ -39,6 +39,9 @@ const MAX_GRADIENT_STOPS: usize = crate::canvas::MAX_GRADIENT_STOPS;
 const MAX_CLIP_PATHS: usize = crate::canvas::MAX_CLIP_PATHS;
 const MAX_LINE_WIDTH: f32 = crate::canvas::MAX_LINE_WIDTH;
 const MAX_SHADOW_BLUR: f32 = crate::canvas::MAX_SHADOW_BLUR;
+const MAX_BUYOUT_STOCK: usize = 256;
+const MAX_BUYOUT_CHOSEN: usize = 256;
+const MAX_BUYOUT_ITEMS: usize = 256;
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -372,6 +375,28 @@ const VT_GSTOP_OFFSET: VOffsetT = 4;
 const VT_GSTOP_COLOR: VOffsetT = 6;
 
 const VT_CLIP_SEGS: VOffsetT = 4;
+
+// BuyoutStock: { obj, count }
+const VT_BUYOUT_STOCK_OBJ: VOffsetT = 4;
+const VT_BUYOUT_STOCK_COUNT: VOffsetT = 6;
+
+// BuyoutPlanRequest: { inv, keeper, coins, stock, chosen }
+const VT_BUYOUT_REQ_INV: VOffsetT = 4;
+const VT_BUYOUT_REQ_KEEPER: VOffsetT = 6;
+const VT_BUYOUT_REQ_COINS: VOffsetT = 8;
+const VT_BUYOUT_REQ_STOCK: VOffsetT = 10;
+const VT_BUYOUT_REQ_CHOSEN: VOffsetT = 12;
+
+// BuyoutPlanItem: { obj, name, units, est_cost }
+const VT_BUYOUT_ITEM_OBJ: VOffsetT = 4;
+const VT_BUYOUT_ITEM_NAME: VOffsetT = 6;
+const VT_BUYOUT_ITEM_UNITS: VOffsetT = 8;
+const VT_BUYOUT_ITEM_EST_COST: VOffsetT = 10;
+
+// BuyoutPlanResult: { ok, reason, items }
+const VT_BUYOUT_RES_OK: VOffsetT = 4;
+const VT_BUYOUT_RES_REASON: VOffsetT = 6;
+const VT_BUYOUT_RES_ITEMS: VOffsetT = 8;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -6134,6 +6159,311 @@ fn interact_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+/// Owned buyout-plan request after decode (or before encode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuyoutPlanRequest {
+    pub inv: String,
+    pub keeper: String,
+    pub coins: i64,
+    pub stock: Vec<(String, i32)>,
+    pub chosen: Vec<String>,
+}
+
+/// One planned purchase row on the FlatBuffer result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuyoutPlanItem {
+    pub obj: String,
+    pub name: String,
+    pub units: i32,
+    pub est_cost: i64,
+}
+
+/// Owned buyout-plan result after decode (or before encode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuyoutPlanResult {
+    pub ok: bool,
+    pub reason: String,
+    pub items: Vec<BuyoutPlanItem>,
+}
+
+struct BuyoutStockReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for BuyoutStockReader<'a> {
+    type Inner = BuyoutStockReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for BuyoutStockReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("obj", VT_BUYOUT_STOCK_OBJ, false)?
+            .visit_field::<i32>("count", VT_BUYOUT_STOCK_COUNT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl BuyoutStockReader<'_> {
+    fn obj(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_STOCK_OBJ, None)
+        }
+        .unwrap_or("")
+    }
+    fn count(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BUYOUT_STOCK_COUNT, None) }.unwrap_or(0)
+    }
+}
+
+struct BuyoutPlanItemReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for BuyoutPlanItemReader<'a> {
+    type Inner = BuyoutPlanItemReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for BuyoutPlanItemReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("obj", VT_BUYOUT_ITEM_OBJ, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_BUYOUT_ITEM_NAME, false)?
+            .visit_field::<i32>("units", VT_BUYOUT_ITEM_UNITS, false)?
+            .visit_field::<i64>("est_cost", VT_BUYOUT_ITEM_EST_COST, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl BuyoutPlanItemReader<'_> {
+    fn obj(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_ITEM_OBJ, None)
+        }
+        .unwrap_or("")
+    }
+    fn name(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_ITEM_NAME, None)
+        }
+        .unwrap_or("")
+    }
+    fn units(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_BUYOUT_ITEM_UNITS, None) }.unwrap_or(0)
+    }
+    fn est_cost(&self) -> i64 {
+        unsafe { self.tab.get::<i64>(VT_BUYOUT_ITEM_EST_COST, None) }.unwrap_or(0)
+    }
+}
+
+struct BuyoutPlanRequestReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for BuyoutPlanRequestReader<'a> {
+    type Inner = BuyoutPlanRequestReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for BuyoutPlanRequestReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("inv", VT_BUYOUT_REQ_INV, false)?
+            .visit_field::<ForwardsUOffset<&str>>("keeper", VT_BUYOUT_REQ_KEEPER, false)?
+            .visit_field::<i64>("coins", VT_BUYOUT_REQ_COINS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BuyoutStockReader>>>>(
+                "stock",
+                VT_BUYOUT_REQ_STOCK,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "chosen",
+                VT_BUYOUT_REQ_CHOSEN,
+                false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+struct BuyoutPlanResultReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for BuyoutPlanResultReader<'a> {
+    type Inner = BuyoutPlanResultReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for BuyoutPlanResultReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<bool>("ok", VT_BUYOUT_RES_OK, false)?
+            .visit_field::<ForwardsUOffset<&str>>("reason", VT_BUYOUT_RES_REASON, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<BuyoutPlanItemReader>>>>(
+                "items",
+                VT_BUYOUT_RES_ITEMS,
+                false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+fn encode_buyout_plan_request_into(b: &mut FlatBufferBuilder<'_>, req: &BuyoutPlanRequest) {
+    let inv = b.create_string(&req.inv);
+    let keeper = b.create_string(&req.keeper);
+    let stock_offs: Vec<_> = req
+        .stock
+        .iter()
+        .map(|(obj, count)| {
+            let obj_off = b.create_string(obj);
+            let tab = b.start_table();
+            b.push_slot_always(VT_BUYOUT_STOCK_OBJ, obj_off);
+            b.push_slot_always(VT_BUYOUT_STOCK_COUNT, *count);
+            WIPOffset::<BuyoutStockReader>::new(b.end_table(tab).value())
+        })
+        .collect();
+    let stock_off = b.create_vector(&stock_offs);
+    let chosen_offs: Vec<_> = req.chosen.iter().map(|s| b.create_string(s)).collect();
+    let chosen_off = b.create_vector(&chosen_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_BUYOUT_REQ_INV, inv);
+    b.push_slot_always(VT_BUYOUT_REQ_KEEPER, keeper);
+    b.push_slot_always(VT_BUYOUT_REQ_COINS, req.coins);
+    b.push_slot_always(VT_BUYOUT_REQ_STOCK, stock_off);
+    b.push_slot_always(VT_BUYOUT_REQ_CHOSEN, chosen_off);
+    let root = b.end_table(tab);
+    b.finish(root, None);
+}
+
+fn encode_buyout_plan_result_into(b: &mut FlatBufferBuilder<'_>, result: &BuyoutPlanResult) {
+    let reason = b.create_string(&result.reason);
+    let item_offs: Vec<_> = result
+        .items
+        .iter()
+        .map(|item| {
+            let obj = b.create_string(&item.obj);
+            let name = b.create_string(&item.name);
+            let tab = b.start_table();
+            b.push_slot_always(VT_BUYOUT_ITEM_OBJ, obj);
+            b.push_slot_always(VT_BUYOUT_ITEM_NAME, name);
+            b.push_slot_always(VT_BUYOUT_ITEM_UNITS, item.units);
+            b.push_slot_always(VT_BUYOUT_ITEM_EST_COST, item.est_cost);
+            WIPOffset::<BuyoutPlanItemReader>::new(b.end_table(tab).value())
+        })
+        .collect();
+    let items_off = b.create_vector(&item_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_BUYOUT_RES_OK, result.ok);
+    b.push_slot_always(VT_BUYOUT_RES_REASON, reason);
+    b.push_slot_always(VT_BUYOUT_RES_ITEMS, items_off);
+    let root = b.end_table(tab);
+    b.finish(root, None);
+}
+
+/// Encode a same-tick buyout-plan request as a root FlatBuffer.
+pub fn encode_buyout_plan_request(req: &BuyoutPlanRequest) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    encode_buyout_plan_request_into(&mut b, req);
+    b.finished_data().to_vec()
+}
+
+/// Decode and verify a root `BuyoutPlanRequest` buffer.
+pub fn decode_buyout_plan_request(buf: &[u8]) -> Result<BuyoutPlanRequest, String> {
+    let req = verified_root::<BuyoutPlanRequestReader>(buf)?;
+    let stock = rows_capped::<BuyoutStockReader>(&req.tab, VT_BUYOUT_REQ_STOCK, MAX_BUYOUT_STOCK)?;
+    let chosen = match unsafe {
+        req.tab
+            .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_BUYOUT_REQ_CHOSEN, None)
+    } {
+        Some(v) => {
+            if v.len() > MAX_BUYOUT_CHOSEN {
+                return Err(format!(
+                    "vector length {} exceeds cap {MAX_BUYOUT_CHOSEN}",
+                    v.len()
+                ));
+            }
+            v.iter().map(str::to_string).collect()
+        }
+        None => Vec::new(),
+    };
+    Ok(BuyoutPlanRequest {
+        inv: unsafe {
+            req.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_REQ_INV, None)
+        }
+        .unwrap_or("")
+        .to_string(),
+        keeper: unsafe {
+            req.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_REQ_KEEPER, None)
+        }
+        .unwrap_or("")
+        .to_string(),
+        coins: unsafe { req.tab.get::<i64>(VT_BUYOUT_REQ_COINS, None) }.unwrap_or(0),
+        stock: stock
+            .into_iter()
+            .map(|row| (row.obj().to_string(), row.count()))
+            .collect(),
+        chosen,
+    })
+}
+
+/// Encode a same-tick buyout-plan result as a root FlatBuffer.
+pub fn encode_buyout_plan_result(result: &BuyoutPlanResult) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    encode_buyout_plan_result_into(&mut b, result);
+    b.finished_data().to_vec()
+}
+
+/// Decode and verify a root `BuyoutPlanResult` buffer.
+pub fn decode_buyout_plan_result(buf: &[u8]) -> Result<BuyoutPlanResult, String> {
+    let res = verified_root::<BuyoutPlanResultReader>(buf)?;
+    let items =
+        rows_capped::<BuyoutPlanItemReader>(&res.tab, VT_BUYOUT_RES_ITEMS, MAX_BUYOUT_ITEMS)?;
+    Ok(BuyoutPlanResult {
+        ok: unsafe { res.tab.get::<bool>(VT_BUYOUT_RES_OK, None) }.unwrap_or(false),
+        reason: unsafe {
+            res.tab
+                .get::<ForwardsUOffset<&str>>(VT_BUYOUT_RES_REASON, None)
+        }
+        .unwrap_or("")
+        .to_string(),
+        items: items
+            .into_iter()
+            .map(|row| BuyoutPlanItem {
+                obj: row.obj().to_string(),
+                name: row.name().to_string(),
+                units: row.units(),
+                est_cost: row.est_cost(),
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -6821,5 +7151,35 @@ pub(crate) mod tests {
         let view = decode_snapshot(&cleared).expect("cleared");
         assert!(view.has_reach());
         assert!(view.reach().expect("cleared").canlight().is_empty());
+    }
+
+    #[test]
+    fn encode_decode_buyout_plan_request_and_result_round_trip() {
+        let req = BuyoutPlanRequest {
+            inv: "adventurershop".into(),
+            keeper: "Aemad".into(),
+            coins: 200,
+            stock: vec![("vial_water".into(), 500), ("bronze_arrow".into(), 0)],
+            chosen: vec!["vial of water".into()],
+        };
+        let bytes = encode_buyout_plan_request(&req);
+        let got = decode_buyout_plan_request(&bytes).expect("request decodes");
+        assert_eq!(got, req);
+
+        let result = BuyoutPlanResult {
+            ok: true,
+            reason: String::new(),
+            items: vec![BuyoutPlanItem {
+                obj: "vial_water".into(),
+                name: "Vial of water".into(),
+                units: 2,
+                est_cost: 4,
+            }],
+        };
+        let bytes = encode_buyout_plan_result(&result);
+        let got = decode_buyout_plan_result(&bytes).expect("result decodes");
+        assert_eq!(got, result);
+        assert!(decode_buyout_plan_request(b"not a request").is_err());
+        assert!(decode_buyout_plan_result(b"not a result").is_err());
     }
 }

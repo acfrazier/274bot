@@ -421,4 +421,33 @@ table Paint {
   canvas: [CanvasOp];
 }
 
+// Same-tick ShopBuyout planner query. Encoded/decoded as independent
+// roots on the isolate thread (like Paint / InteractBatch), never a
+// JSON rustyscript payload. Old buffers have none of these tables.
+table BuyoutStock {
+  obj: string;
+  count: int;
+}
+
+table BuyoutPlanRequest {
+  inv: string;
+  keeper: string;
+  coins: long;
+  stock: [BuyoutStock];
+  chosen: [string];
+}
+
+table BuyoutPlanItem {
+  obj: string;
+  name: string;
+  units: int;
+  est_cost: long;
+}
+
+table BuyoutPlanResult {
+  ok: bool;
+  reason: string;
+  items: [BuyoutPlanItem];
+}
+
 root_type Snapshot;

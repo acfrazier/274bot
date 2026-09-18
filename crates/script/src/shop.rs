@@ -10,9 +10,13 @@
 //! settlement policy stay here. A queued click is not a transfer: a batch is
 //! only counted once the posted container counts moved.
 
-use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::isolate_fb::{
+    BuyoutPlanItem as PlanItem, BuyoutPlanRequest, BuyoutPlanResult, RowReader, SnapshotReader,
+};
 use serde_json::{json, Value};
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Frozen `Shop.open`: wait for `isOpen` this long per attempt.
@@ -30,6 +34,8 @@ thread_local! {
     static RUNTIME: RefCell<ShopRuntime> = const { RefCell::new(ShopRuntime::new()) };
     static NATIVE_OBSERVATION: RefCell<NativeObservation> =
         const { RefCell::new(NativeObservation::new()) };
+    static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
+        const { RefCell::new(None) };
 }
 
 /// One posted container row (stock, shop player pack or backpack).
@@ -333,68 +339,78 @@ pub fn on_reset() {
     NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
-pub fn dispatch(game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
+pub fn configure(data: Option<Arc<api::game_data::SelectedGameData>>) {
+    GAME_DATA.with(|slot| *slot.borrow_mut() = data);
+}
+
+/// Open/buy/sell/close stay on the existing JSON shop binding. The new
+/// planner is a typed FlatBuffer query, not an extra shop JSON op.
+pub fn dispatch(_game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => begin(input),
         "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        "buyout-plan" => buyout_plan(game_data, input),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
     }
 }
 
-fn json_i64(value: Option<&Value>) -> i64 {
-    value
-        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
-        .unwrap_or(0)
-}
-
-fn json_i32(value: &Value) -> i32 {
-    json_i64(Some(value)).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
-}
-
-/// Rust-owned buyout selection/ranking/stock-price/budget. JS only marshals.
-fn buyout_plan(game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
-    let Some(data) = game_data else {
-        return json!({ "kind": "notImpl", "reason": "missing shop facts" });
-    };
-    let rec = input.get("rec").unwrap_or(&Value::Null);
-    let shop = if let Some(inv) = rec.get("inv").and_then(Value::as_str) {
-        match api::shop_facts::shop_by_inv(data, inv) {
-            Some(shop) => shop,
-            None => {
-                return json!({ "kind": "notImpl", "reason": format!("unsupported shop {inv}") })
+/// Rust-owned buyout selection/ranking/stock-price/budget over a decoded
+/// FlatBuffer request. JS only marshals.
+pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
+    GAME_DATA.with(|slot| {
+        let data = slot.borrow();
+        let Some(data) = data.as_deref() else {
+            return BuyoutPlanResult {
+                ok: false,
+                reason: "missing shop facts".into(),
+                items: Vec::new(),
+            };
+        };
+        let shop = if !req.inv.is_empty() {
+            match api::shop_facts::shop_by_inv(data, &req.inv) {
+                Some(shop) => shop,
+                None => {
+                    return BuyoutPlanResult {
+                        ok: false,
+                        reason: format!("unsupported shop {}", req.inv),
+                        items: Vec::new(),
+                    }
+                }
             }
-        }
-    } else if let Some(keepers) = rec.get("keepers").and_then(Value::as_array) {
-        let found = keepers.iter().find_map(|keeper| {
-            keeper
-                .as_str()
-                .and_then(|name| api::shop_facts::shop_by_keeper(data, name))
-        });
-        match found {
-            Some(shop) => shop,
-            None => return json!({ "kind": "notImpl", "reason": "unknown shopkeeper" }),
-        }
-    } else {
-        return json!({ "kind": "notImpl", "reason": "missing shop identity" });
-    };
-    let mut stock = std::collections::HashMap::new();
-    if let Some(map) = input.get("stock").and_then(Value::as_object) {
-        for (obj, count) in map {
-            stock.insert(obj.clone(), json_i32(count));
-        }
-    }
-    let mut chosen = std::collections::HashSet::new();
-    if let Some(names) = input.get("chosen").and_then(Value::as_array) {
-        for name in names {
-            if let Some(name) = name.as_str() {
-                chosen.insert(name.to_string());
+        } else if !req.keeper.is_empty() {
+            match api::shop_facts::shop_by_keeper(data, &req.keeper) {
+                Some(shop) => shop,
+                None => {
+                    return BuyoutPlanResult {
+                        ok: false,
+                        reason: "unknown shopkeeper".into(),
+                        items: Vec::new(),
+                    }
+                }
             }
+        } else {
+            return BuyoutPlanResult {
+                ok: false,
+                reason: "missing shop identity".into(),
+                items: Vec::new(),
+            };
+        };
+        let stock: HashMap<String, i32> = req.stock.iter().cloned().collect();
+        let chosen: HashSet<String> = req.chosen.iter().cloned().collect();
+        let items = api::shop_facts::buyout_plan(&shop, &stock, req.coins, &chosen);
+        BuyoutPlanResult {
+            ok: true,
+            reason: String::new(),
+            items: items
+                .into_iter()
+                .map(|row| PlanItem {
+                    obj: row.obj,
+                    name: row.name,
+                    units: row.units,
+                    est_cost: row.est_cost,
+                })
+                .collect(),
         }
-    }
-    let coins = json_i64(input.get("coins"));
-    let items = api::shop_facts::buyout_plan(&shop, &stock, coins, &chosen);
-    json!({ "kind": "plan", "items": items })
+    })
 }
 
 /// The compact view one decision is made from.

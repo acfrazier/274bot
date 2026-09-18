@@ -342,6 +342,7 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register spell button: {e}"))?;
     crate::autocast::configure(game_data.as_deref());
+    crate::shop::configure(game_data.clone());
     let selected_autocast = game_data.clone();
     runtime
         .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
@@ -804,6 +805,7 @@ pub(super) fn wire_runtime(
     runtime
         .eval::<()>(crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
+    super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
