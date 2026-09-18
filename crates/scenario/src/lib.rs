@@ -15000,14 +15000,15 @@ const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
 /// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
 const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
-/// Bob nonstackable steel axe: axeshop `steel_axe` baseline 3 cost 200.
+/// Bob nonstackable steel axe: axeshop sell 1000 delta 20, baseline 3 cost 200.
 /// Frozen ShopBuyout banks when `coins < 100` after a real buy (BuyoutPass.ts).
-/// perTrip 600 withdraw buys all 3 in stock (600gp) → 0 coins, no restock wait.
-/// budget 1500 > perTrip leaves session headroom for resumed buy after deposit.
-const SHOP_BUYOUT_BOB_PER_TRIP_GP: f64 = 600.0;
+/// Stock-sensitive unit_price at full shelf: stock3→200, stock2→204 (208 unaffordable on 3rd).
+/// perTrip 500 → buyoutPlan 200+204=404 spent → 96 coins (<100 bank); 1 steel axe
+/// remains on shelf for resumed purchase after deposit. Flat 3×200 ignores haggle.
+const SHOP_BUYOUT_BOB_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_BOB_BUDGET_GP: f64 = 1500.0;
-/// Nurmof nonstackable iron pickaxe: pickaxeshop baseline 5 cost 140.
-/// perTrip 500 → buyoutPlan buys 3×140=420gp, 80 coins in pack (<100 bank).
+/// Nurmof nonstackable iron pickaxe: pickaxeshop sell 1000 delta 20, baseline 5 cost 140.
+/// perTrip 500 → stock-sensitive 140+142+145=427 spent → 73 coins (<100 bank).
 /// Stock 5 at start; no restock wait on first pass. Long mine↔Falador East route.
 const SHOP_BUYOUT_NURMOF_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_NURMOF_BUDGET_GP: f64 = 1500.0;
