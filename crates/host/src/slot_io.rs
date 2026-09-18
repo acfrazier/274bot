@@ -110,40 +110,45 @@ pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool;
 /// [`FrameBuf::snapshot`] stays for the CPU packing path and the tests.
 /// Replaces the old packed-pixels byte buffer.
 pub struct FrameBuf {
-    inner: Mutex<Option<FrameOutput>>,
+    inner: Mutex<Mailbox>,
     gen: AtomicU64,
-    #[cfg(feature = "render-diagnostics")]
-    roi: Mutex<RoiPair>,
 }
 
-#[cfg(feature = "render-diagnostics")]
-struct RoiPair {
-    stored: Option<client::render::diagnostics::PixelRoiMeta>,
-    taken: Option<client::render::diagnostics::PixelRoiMeta>,
+/// One lock owns the latest frame and, under `render-diagnostics`, the
+/// sidecar that belongs to it. Store and take share this critical section
+/// so a later store cannot attach a new ROI to an earlier take.
+struct Mailbox {
+    frame: Option<FrameOutput>,
+    #[cfg(feature = "render-diagnostics")]
+    stored_roi: Option<client::render::diagnostics::PixelRoiMeta>,
+    #[cfg(feature = "render-diagnostics")]
+    taken_roi: Option<client::render::diagnostics::PixelRoiMeta>,
 }
 
 impl FrameBuf {
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
-            inner: Mutex::new(None),
-            gen: AtomicU64::new(0),
-            #[cfg(feature = "render-diagnostics")]
-            roi: Mutex::new(RoiPair {
-                stored: None,
-                taken: None,
+            inner: Mutex::new(Mailbox {
+                frame: None,
+                #[cfg(feature = "render-diagnostics")]
+                stored_roi: None,
+                #[cfg(feature = "render-diagnostics")]
+                taken_roi: None,
             }),
+            gen: AtomicU64::new(0),
         })
     }
     /// Store the latest frame and bump the generation. The full
     /// [`FrameOutput`] is kept so the panel can bind a
     /// `FrameOutput::Texture` or pack a `PixMap`.
     pub fn store(&self, frame: FrameOutput) {
+        let mut inner = self.inner.lock().unwrap();
         #[cfg(feature = "render-diagnostics")]
         {
-            self.roi.lock().unwrap().stored =
-                client::render::diagnostics::take_thread_pixel_roi();
+            inner.stored_roi = client::render::diagnostics::take_thread_pixel_roi();
         }
-        *self.inner.lock().unwrap() = Some(frame);
+        inner.frame = Some(frame);
+        drop(inner);
         self.gen.fetch_add(1, Ordering::Relaxed);
     }
     /// Move the stored frame out and clear the mailbox: the single
@@ -151,11 +156,11 @@ impl FrameBuf {
     /// Clone). `None` when nothing was stored since the last take. The
     /// generation is untouched — only [`FrameBuf::store`] bumps it.
     pub fn take(&self) -> Option<FrameOutput> {
-        let frame = self.inner.lock().unwrap().take();
+        let mut inner = self.inner.lock().unwrap();
+        let frame = inner.frame.take();
         #[cfg(feature = "render-diagnostics")]
         if frame.is_some() {
-            let mut roi = self.roi.lock().unwrap();
-            roi.taken = roi.stored.take();
+            inner.taken_roi = inner.stored_roi.take();
         }
         frame
     }
@@ -164,7 +169,7 @@ impl FrameBuf {
     /// builds omit this.
     #[cfg(feature = "render-diagnostics")]
     pub fn take_pixel_roi(&self) -> Option<client::render::diagnostics::PixelRoiMeta> {
-        self.roi.lock().unwrap().taken.take()
+        self.inner.lock().unwrap().taken_roi.take()
     }
     /// CPU path: pack the latest `PixMap`'s pixels via `pack_rgb` (765×503,
     /// same shape the panel's texture upload expects). Empty when nothing
@@ -174,7 +179,7 @@ impl FrameBuf {
         let n = (APPLET_W * APPLET_H) as usize;
         let inner = self.inner.lock().unwrap();
         let mut out = Vec::with_capacity(n);
-        if let Some(FrameOutput::PixMap(pix)) = &*inner {
+        if let Some(FrameOutput::PixMap(pix)) = &inner.frame {
             if pix.width == APPLET_W && pix.height == APPLET_H && pix.pixels.len() >= n {
                 for src in pix.pixels.iter().take(n) {
                     out.push(pack_rgb(*src));
@@ -800,6 +805,139 @@ mod tests {
         assert_eq!(roi.frame_id, 4);
         assert_eq!(roi.cam.cycle, 10);
         assert_ne!(roi.frame_id, 9);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn take_keeps_frame_a_roi_when_frame_b_is_stored_before_take_pixel_roi() {
+        use client::render::backend::FrameOutput;
+        use client::render::diagnostics::{
+            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+        };
+        fn tagged(id: u64, cycle: i32) -> PixelRoiMeta {
+            PixelRoiMeta::produced(
+                id,
+                PixelRoiCam {
+                    cycle,
+                    eye_x: id as i32,
+                    eye_y: 0,
+                    eye_z: 0,
+                    yaw: 0,
+                    pitch: 0,
+                    origin_x: 0,
+                    origin_z: 0,
+                    trace_frame: id as u32,
+                },
+                PackedHist { n: 1, ..PackedHist::EMPTY },
+                PackedHist::EMPTY,
+            )
+        }
+        fn pix(tag: i32) -> FrameOutput {
+            let mut pixels = vec![0i32; 765 * 503];
+            pixels[0] = tag;
+            applet_pixmap(pixels)
+        }
+        let buf = FrameBuf::new();
+        stamp_thread_pixel_roi(tagged(4, 10));
+        buf.store(pix(0x00aa));
+        let frame_a = buf.take().expect("frame A");
+        stamp_thread_pixel_roi(tagged(9, 99));
+        buf.store(pix(0x00bb));
+        let roi = buf.take_pixel_roi().expect("roi taken with frame A");
+        match frame_a {
+            FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00aa, "took frame A pixels"),
+            _ => panic!("expected pixmap A"),
+        }
+        assert_eq!(roi.frame_id, 4, "roi must stay with frame A, not the interleaved store");
+        assert_eq!(roi.cam.cycle, 10);
+        let frame_b = buf.take().expect("frame B");
+        let roi_b = buf.take_pixel_roi().expect("roi B");
+        match frame_b {
+            FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00bb),
+            _ => panic!("expected pixmap B"),
+        }
+        assert_eq!(roi_b.frame_id, 9);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn concurrent_store_take_never_pairs_a_frame_with_another_roi() {
+        use client::render::backend::FrameOutput;
+        use client::render::diagnostics::{
+            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+        fn tagged(id: u64) -> PixelRoiMeta {
+            PixelRoiMeta::produced(
+                id,
+                PixelRoiCam {
+                    cycle: id as i32,
+                    eye_x: id as i32,
+                    eye_y: 0,
+                    eye_z: 0,
+                    yaw: 0,
+                    pitch: 0,
+                    origin_x: 0,
+                    origin_z: 0,
+                    trace_frame: id as u32,
+                },
+                PackedHist { n: 1, ..PackedHist::EMPTY },
+                PackedHist::EMPTY,
+            )
+        }
+        let buf = FrameBuf::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mismatches = Arc::new(AtomicU64::new(0));
+        let seen = Arc::new(AtomicU64::new(0));
+        let producer = {
+            let buf = Arc::clone(&buf);
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                let mut n = 1u64;
+                while !stop.load(Ordering::Relaxed) {
+                    stamp_thread_pixel_roi(tagged(n));
+                    let mut pixels = vec![0i32; 765 * 503];
+                    pixels[0] = n as i32;
+                    buf.store(applet_pixmap(pixels));
+                    n = n.wrapping_add(1);
+                    if n == 0 {
+                        n = 1;
+                    }
+                }
+            })
+        };
+        let consumer = {
+            let buf = Arc::clone(&buf);
+            let stop = Arc::clone(&stop);
+            let mismatches = Arc::clone(&mismatches);
+            let seen = Arc::clone(&seen);
+            thread::spawn(move || {
+                for _ in 0..8_000 {
+                    if let Some(FrameOutput::PixMap(pix)) = buf.take() {
+                        let tag = pix.pixels[0] as u64;
+                        match buf.take_pixel_roi() {
+                            Some(roi) if roi.frame_id == tag => {
+                                seen.fetch_add(1, Ordering::Relaxed);
+                            }
+                            _ => {
+                                mismatches.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                }
+                stop.store(true, Ordering::Relaxed);
+            })
+        };
+        consumer.join().expect("consumer");
+        producer.join().expect("producer");
+        assert_eq!(
+            mismatches.load(Ordering::Relaxed),
+            0,
+            "a taken pixmap tag must equal the sidecar frame_id"
+        );
+        assert!(seen.load(Ordering::Relaxed) > 0, "consumer must observe stores");
     }
 
     #[test]

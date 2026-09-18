@@ -2421,8 +2421,19 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 if let Some(view) = state.game_view.as_mut() {
                     #[cfg(feature = "render-diagnostics")]
-                    if let Some(roi) = buf.as_ref().and_then(|p| p.take_pixel_roi()) {
-                        client::render::diagnostics::set_ui_taken_roi(roi, &name, gen);
+                    {
+                        let roi = buf.as_ref().and_then(|p| p.take_pixel_roi());
+                        client::render::diagnostics::prepare_present_roi(
+                            roi.map(|r| (r, name.as_str(), gen)),
+                        );
+                        match &frame {
+                            client::render::backend::FrameOutput::PixMap(_) => {
+                                client::render::diagnostics::arm_game_image_cpu_upload();
+                            }
+                            client::render::backend::FrameOutput::Texture(_) => {
+                                client::render::diagnostics::arm_game_image_gpu_present();
+                            }
+                        }
                     }
                     view.present(gpu, frame);
                 }
@@ -2430,7 +2441,7 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             } else {
                 false
             };
-            record_presented_upload(&mut state.last_upload, name, gen, took_frame);
+            record_presented_upload(&mut state.last_upload, name.clone(), gen, took_frame);
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
@@ -2441,6 +2452,12 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             client::render::diagnostics::note_game_image_fb(
                 min[0], min[1], size[0], size[1], fb[0], fb[1],
             );
+            let ctx = state
+                .last_upload
+                .as_ref()
+                .map(|(n, _)| n.as_str())
+                .unwrap_or(name.as_str());
+            client::render::diagnostics::note_readback_context(ctx);
         }
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the

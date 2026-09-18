@@ -174,9 +174,13 @@ impl GameView {
         let texture = handle.view.texture();
         if matches!(&self.bound, Bound::Client(held) if held == texture) {
             self.present_stats.bind_noop += 1;
+            #[cfg(feature = "render-diagnostics")]
+            client::render::diagnostics::note_gpu_texture_held();
             return;
         }
         self.present_stats.bind_rereg += 1;
+        #[cfg(feature = "render-diagnostics")]
+        client::render::diagnostics::note_gpu_texture_changed();
         gpu.unregister_texture(self.tex_id);
         self.tex_id = gpu.register_texture(texture, &handle.view);
         self.bound = Bound::Client(texture.clone());
@@ -241,20 +245,12 @@ impl GameView {
         let packed = &pixels[..n.min(pixels.len())];
         expand_rgba(packed, rgba);
         #[cfg(feature = "render-diagnostics")]
-        if let Some((mut meta, slot, generation)) =
-            client::render::diagnostics::take_ui_taken_roi()
-        {
-            client::render::diagnostics::attach_panel_upload(
-                &mut meta,
-                packed,
-                rgba,
-                APPLET_W as i32,
-                APPLET_H as i32,
-                &slot,
-                generation,
-            );
-            client::render::diagnostics::set_presented_roi(meta);
-        }
+        client::render::diagnostics::complete_cpu_upload(
+            packed,
+            rgba,
+            APPLET_W as i32,
+            APPLET_H as i32,
+        );
         let texture = &self
             .cpu_owner
             .as_ref()
