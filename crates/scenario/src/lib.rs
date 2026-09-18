@@ -14979,6 +14979,31 @@ const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
 const SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS: u32 = 280;
 const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420);
 
+/// Gerrant's frozen Draynor preset needs the same four travel legs as other
+/// shop buyouts (initial shop→bank→shop withdrawal, post-buy shop→bank deposit,
+/// bank→shop return, resumed buy). live7zpi0g_0 on host 0a80e7535 completed
+/// first purchase, deposit, empty, close, and 488gp withdraw under the
+/// ordinary 150-dirty arms, then hit the whole-scenario 180s deadline on step
+/// 21 return at 3075,3264 with run energy 6 (315 runner increments, 180.020s;
+/// capture `2026-09-18T11-53-30_shop_buyout_gerrant`).
+///
+/// Chebyshev Gerrant stand 3013,3224 ↔ Draynor approach 3092,3243 is 79
+/// tiles. That yields a 40-tick lower bound at two tiles/tick on a straight
+/// leg; it is not a measured completion time. The fail trace used north-loop
+/// detours (nav hop counts 7–8) and one-tile/tick movement once energy dropped,
+/// so a bank→shop return alone can exceed 79 engine ticks before the keeper
+/// radius-12 arm fires.
+///
+/// Return watch 240 dirty is a bounded trial above the depleted one-tile/tick
+/// leg lower bound plus detour margin; it is not Betty's 280 (Falador West
+/// geometry differs). First-purchase and deposit arms stay 150 — no measured
+/// failure there. Whole-cycle wall 390s: 180s measured through mid-return with
+/// ~62 Chebyshev tiles still to the keeper; ~210s remainder trial estimate
+/// covers depleted return plus resumed buy without copying Betty's 420s envelope
+/// (Betty PASS was 352s/610 increments on a different bank leg).
+const SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS: u32 = 240;
+const SHOP_BUYOUT_GERRANT_DEADLINE: Duration = Duration::from_secs(390);
+
 /// Per-case observation budgets for [`shop_buyout_variant`]. Default matches
 /// ordinary gold watches; Betty widens only the long bank-travel arms.
 struct ShopBuyoutTiming {
@@ -15000,6 +15025,13 @@ const SHOP_BUYOUT_BETTY_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
     deposit_ticks: SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS,
     return_ticks: SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS,
     deadline: SHOP_BUYOUT_BETTY_DEADLINE,
+};
+
+const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
+    first_purchase_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    deposit_ticks: SCRIPT_GOLD_WATCH_TICKS,
+    return_ticks: SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS,
+    deadline: SHOP_BUYOUT_GERRANT_DEADLINE,
 };
 
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
@@ -15563,7 +15595,7 @@ fn shop_buyout_gerrant_scenario() -> Scenario {
         DRAYNOR_BANK_BOOTH_ID,
         "Gerrant",
         FEATHER_ID,
-        SHOP_BUYOUT_DEFAULT_TIMING,
+        SHOP_BUYOUT_GERRANT_TIMING,
     )
 }
 
@@ -27502,14 +27534,14 @@ mod tests {
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
-            let expected_deadline = if name == "shop_buyout_betty" {
-                SHOP_BUYOUT_BETTY_DEADLINE
-            } else {
-                SCRIPT_GOLD_DEADLINE
+            let expected_deadline = match name {
+                "shop_buyout_betty" => SHOP_BUYOUT_BETTY_DEADLINE,
+                "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
+                _ => SCRIPT_GOLD_DEADLINE,
             };
             assert_eq!(
                 scenario.settings.deadline, expected_deadline,
-                "{name}: deadline is Betty long-route 420s or ordinary gold 180s"
+                "{name}: deadline is long-route preset or ordinary gold 180s"
             );
             assert_eq!(
                 scenario.proof,
@@ -27845,12 +27877,11 @@ mod tests {
             "shop_buyout_lowe",
             "shop_buyout_hickton",
             "shop_buyout_harry",
-            "shop_buyout_gerrant",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(
                 s.settings.deadline, SCRIPT_GOLD_DEADLINE,
-                "{name}: non-Betty deadline stays 180s"
+                "{name}: short-route deadline stays 180s"
             );
             for step in s.steps.iter().filter(|step| {
                 step.name.starts_with("watch unseeded purchased")
@@ -27867,5 +27898,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Gerrant Draynor route: measured live7zpi0g_0 fail widens only return
+    /// dirty budget and whole-cycle wall; first purchase/deposit stay gold 150.
+    #[test]
+    fn shop_buyout_gerrant_timing_measured_mid_return_deadline() {
+        let gerrant = get("shop_buyout_gerrant").expect("shop_buyout_gerrant");
+        assert_eq!(
+            gerrant.settings.deadline, SHOP_BUYOUT_GERRANT_DEADLINE,
+            "390s wall covers mid-return 180s fail plus depleted return trial margin"
+        );
+        let watch = |name: &str| {
+            gerrant
+                .steps
+                .iter()
+                .find(|step| step.name == name)
+                .unwrap_or_else(|| panic!("gerrant has {name}"))
+        };
+        assert_eq!(
+            watch("watch unseeded purchased product in pack after Start")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "first purchase stayed within ordinary 150-dirty arm on live trace"
+        );
+        assert_eq!(
+            watch("watch purchased product enter a fresh bank")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "deposit arm unchanged — proved before deadline fail"
+        );
+        assert_eq!(
+            watch("watch return to the named shop after banking")
+                .wait
+                .budget_ticks,
+            SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS,
+            "return widened for Draynor→Gerrant depleted-energy leg"
+        );
+        assert_eq!(
+            watch("watch further purchased product after return")
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "further-purchase arm is not loosened"
+        );
+        assert_eq!(
+            GERRANT_STAND,
+            WorldTile {
+                x: 3013,
+                z: 3224,
+                level: 0
+            }
+        );
+        assert_eq!(
+            DRAYNOR_BANK_APPROACH,
+            WorldTile {
+                x: 3092,
+                z: 3243,
+                level: 0
+            }
+        );
     }
 }
