@@ -481,3 +481,218 @@ fn isolate_stop_start_does_not_consume_prior_request_id() {
     );
     iso2.join();
 }
+
+fn walk_to_src(call: &str) -> String {
+    format!(
+        r#"
+import {{ Traversal }} from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        globalThis.__rs_ok = null;
+        globalThis.__rs_ok = await {call};
+    }}
+}}
+"#
+    )
+}
+
+fn chaos_here() -> TileInput {
+    TileInput {
+        x: 3104,
+        z: 9909,
+        level: 0,
+    }
+}
+
+fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u64 {
+    iso.post_snapshot(encode_snapshot(&base_snapshot(1, here)));
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "queued native route is not arrival"
+    );
+    let drained = iso.drain_interacts();
+    assert!(
+        drained
+            .iter()
+            .all(|req| !matches!(req, InteractReq::WalkTo { .. })),
+        "Traversal.walkTo must not queue scene WalkTo: {drained:?}"
+    );
+    let request_id = if expect_walk_near {
+        match &drained[..] {
+            [InteractReq::WalkNear {
+                x: 3096,
+                z: 9868,
+                level: 0,
+                radius: 2,
+                allow_teleports: false,
+                request_id,
+            }] => *request_id,
+            other => panic!("expected WalkNear radius 2 for world dest: {other:?}"),
+        }
+    } else {
+        match &drained[..] {
+            [InteractReq::Walk {
+                x: 3096,
+                z: 9868,
+                level: 0,
+                allow_teleports: false,
+                request_id,
+            }] => *request_id,
+            other => panic!("expected Walk (radius 0) for world dest: {other:?}"),
+        }
+    };
+    assert_ne!(request_id, 0, "isolate must allocate a walk request id");
+    request_id
+}
+
+#[test]
+fn walk_to_off_scene_world_dest_queues_native_walk_not_scene_walk_to() {
+    let iso = LoadIsolate::spawn(
+        walk_to_src("Traversal.walkTo({ x: 3096, z: 9868, level: 0 })"),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let request_id = park_walk_to(&iso, chaos_here(), false);
+    iso.post_snapshot(encode_snapshot(&base_snapshot(2, chaos_here())));
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "pending native walk must not settle without arrival or matching refusal"
+    );
+    iso.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(3, chaos_here()),
+        fail_native(1, 0, request_id, 3096, 9868, 0),
+    ));
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn walk_to_explicit_nonzero_radius_queues_walk_near() {
+    let iso = LoadIsolate::spawn(
+        walk_to_src(
+            "Traversal.walkTo({ x: 3096, z: 9868, level: 0 }, { radius: 2, timeoutMs: 300000 })",
+        ),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    park_walk_to(&iso, chaos_here(), true);
+    iso.join();
+}
+
+#[test]
+fn walk_to_stays_pending_until_posted_arrival() {
+    let iso = LoadIsolate::spawn(
+        walk_to_src(
+            "Traversal.walkTo({ x: 2820, z: 3556, level: 0 }, { radius: 1, timeoutMs: 300000 })",
+        ),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            request_id,
+        }] => assert_ne!(*request_id, 0),
+        other => panic!("walkTo radius 1 must queue WalkNear: {other:?}"),
+    }
+    iso.post_snapshot(encode_snapshot(&base_snapshot(2, near())));
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+fn walk_to_same_coord_wrong_plane_is_not_arrival() {
+    let iso = LoadIsolate::spawn(
+        walk_to_src(
+            "Traversal.walkTo({ x: 3104, z: 9909, level: 0 }, { radius: 0, timeoutMs: 300000 })",
+        ),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let other_plane = TileInput {
+        x: 3104,
+        z: 9909,
+        level: 1,
+    };
+    iso.post_snapshot(encode_snapshot(&base_snapshot(1, other_plane)));
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "same x/z on another plane is not arrival"
+    );
+    match &iso.drain_interacts()[..] {
+        [InteractReq::Walk {
+            x: 3104,
+            z: 9909,
+            level: 0,
+            allow_teleports: false,
+            request_id,
+        }] => assert_ne!(*request_id, 0),
+        other => panic!("wrong-plane dest must still queue native Walk: {other:?}"),
+    }
+    iso.post_snapshot(encode_snapshot(&base_snapshot(2, other_plane)));
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    iso.join();
+}
+
+#[test]
+fn walk_to_stop_start_does_not_consume_prior_request_id() {
+    let src = walk_to_src(
+        "Traversal.walkTo({ x: 2820, z: 3556, level: 0 }, { radius: 1, timeoutMs: 300000 })",
+    );
+    let iso1 = LoadIsolate::spawn(src.clone(), LoadShape::CompatClass, vec![]).unwrap();
+    iso1.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
+    iso1.on_game_tick(1);
+    assert_eq!(iso1.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    let old_id = match &iso1.drain_interacts()[..] {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
+    iso1.join();
+    let iso2 = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    iso2.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(1, far()),
+        fail_native(4, 1, old_id, 2820, 3556, 1),
+    ));
+    iso2.on_game_tick(1);
+    assert_eq!(
+        iso2.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "leftover host outcome must not settle a new Traversal.walkTo wait"
+    );
+    let new_id = match &iso2.drain_interacts()[..] {
+        [InteractReq::WalkNear { request_id, .. }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
+    assert_ne!(new_id, old_id);
+    iso2.post_snapshot(encode_snapshot_with_native(
+        &base_snapshot(2, far()),
+        fail_native(5, 1, old_id, 2820, 3556, 1),
+    ));
+    iso2.on_game_tick(2);
+    assert_eq!(
+        iso2.probe("__rs_ok").unwrap(),
+        serde_json::Value::Null,
+        "late old-worker request id must not settle the new walkTo wait"
+    );
+    iso2.join();
+}

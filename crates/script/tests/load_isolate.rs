@@ -4835,7 +4835,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_walk_to_queues_packet_not_traveller() {
+fn isolate_walk_to_queues_native_route_not_scene_walk_to() {
     let src = r#"
 import { Traversal } from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {
@@ -4862,17 +4862,22 @@ export default class T extends LoopingBot {
     let msg = value.as_str().unwrap_or("");
     assert!(
         !msg.contains("not impl"),
-        "Traversal.walkTo is the packet walk we already ship: {value:?}"
+        "Traversal.walkTo maps onto the existing native walk: {value:?}"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkTo {
+    let drained = iso.drain_interacts();
+    match &drained[..] {
+        [script::shim::InteractReq::Walk {
             x: 3222,
             z: 3223,
             level: 0,
-        }],
-        "walkTo queues Interactions::walk, not Traveller"
-    );
+            allow_teleports: false,
+            request_id,
+        }] => assert_ne!(
+            *request_id, 0,
+            "walkTo queues InteractReq::Walk with an isolate request id"
+        ),
+        other => panic!("Traversal.walkTo queues native Walk, not scene WalkTo: {other:?}"),
+    }
     iso.join();
 }
 
