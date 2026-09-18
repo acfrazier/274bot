@@ -649,10 +649,12 @@ impl Default for Traveller {
 // before the lock. One window/recovery per route bounds this inference.
 const THIEVING_STUN_WINDOW: u32 = 11;
 
-/// Distinct game ticks a sent walk may sit on `sent_tile` with no map
-/// flag (and no movement) before one same-aim recovery reissue. Covers
-/// the short engine freeze window (Bind ~3 ticks); matches the canonical
-/// WalkExecutor stallTicks default of 5. Not a second hop budget.
+/// Distinct game ticks a sent walk may sit without tile progress, with
+/// no map flag and no movement, before one same-aim recovery reissue.
+/// Counts at the latest observed position (partial-hop progress still
+/// recovers once the player stops). Covers the short engine freeze
+/// window (Bind ~3 ticks); matches the canonical WalkExecutor stallTicks
+/// default of 5. Not a second hop budget.
 const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
 
 /// The legs still to work and current hop state. Budgets are captured at
@@ -808,6 +810,7 @@ impl FollowRun {
                         tries: 0,
                         stall_idle_ticks: 0,
                         stall_idle_last_tick: None,
+                        stall_idle_at: None,
                         stall_recovered: false,
                     };
                     match self.send_walk_hop(d, snapshot, options, hop, here) {
@@ -1161,17 +1164,19 @@ impl FollowRun {
         }
     }
 
-    /// True when a sent walk has been cancelled in place long enough to
-    /// warrant one same-aim recovery: still on `sent_tile`, no map flag,
-    /// not moving, recovery not yet spent, and enough *distinct* game
-    /// ticks of that idle (duplicate snapshot polls do not count).
+    /// True when a sent walk has been cancelled long enough to warrant
+    /// one same-aim recovery: no map flag, not moving, recovery not yet
+    /// spent, and enough *distinct* game ticks with no tile progress at
+    /// the latest observed position (duplicate snapshot polls do not
+    /// count). Progress away from the original `sent_tile` still qualifies
+    /// once the player stops; `sent_tile` remains only for Dropped/Expired.
     fn should_recover_cancelled_walk(
         &self,
         hop: &WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) -> bool {
-        if hop.stall_recovered || hop.sent_tile != Some(here) {
+        if hop.stall_recovered || hop.sent_tile.is_none() {
             return false;
         }
         if snapshot.map_flag().is_some() {
@@ -1183,27 +1188,38 @@ impl FollowRun {
         {
             return false;
         }
-        let idle = match hop.stall_idle_last_tick {
-            Some(t) if t == snapshot.tick() => hop.stall_idle_ticks,
-            _ => hop.stall_idle_ticks.saturating_add(1),
+        let idle = if hop.stall_idle_at != Some(here) {
+            // First observation at this tile after movement (or start).
+            1
+        } else {
+            match hop.stall_idle_last_tick {
+                Some(t) if t == snapshot.tick() => hop.stall_idle_ticks,
+                _ => hop.stall_idle_ticks.saturating_add(1),
+            }
         };
         idle >= WALK_STALL_RECOVER_IDLE_TICKS
     }
 
     /// Advance or clear the cancelled-walk idle counter. Only distinct
-    /// snapshot ticks count; active map flag, movement, or leaving the
-    /// send tile resets the window so a live hop is never spuriously
-    /// reissued.
+    /// snapshot ticks count; active map flag, actor movement, or an
+    /// actual tile change resets the window so a live hop is never
+    /// spuriously reissued. Idle is tracked at the latest observed tile
+    /// so partial-hop progress can still recover once movement stops.
     fn note_walk_stall_idle(&self, hop: &mut WalkHop, snapshot: &GameSnapshot, here: WorldTile) {
-        let stuck = hop.sent_tile == Some(here);
         let active = snapshot.map_flag().is_some()
             || snapshot
                 .local_player()
                 .is_some_and(|p| p.player.actor.moving);
-        if !stuck || active || hop.stall_recovered {
+        if hop.sent_tile.is_none() || active || hop.stall_recovered {
             hop.stall_idle_ticks = 0;
             hop.stall_idle_last_tick = None;
+            hop.stall_idle_at = None;
             return;
+        }
+        if hop.stall_idle_at != Some(here) {
+            hop.stall_idle_at = Some(here);
+            hop.stall_idle_ticks = 0;
+            hop.stall_idle_last_tick = None;
         }
         let tick = snapshot.tick();
         if hop.stall_idle_last_tick == Some(tick) {
@@ -1238,6 +1254,7 @@ impl FollowRun {
                 hop.stall_recovered = true;
                 hop.stall_idle_ticks = 0;
                 hop.stall_idle_last_tick = None;
+                hop.stall_idle_at = None;
                 // Keep ticks_waited: recovery is not a fresh hop budget.
                 self.walk = Some(hop);
                 Poll::Watching
@@ -1253,6 +1270,7 @@ impl FollowRun {
                 hop.stall_recovered = true;
                 hop.stall_idle_ticks = 0;
                 hop.stall_idle_last_tick = None;
+                hop.stall_idle_at = None;
                 self.walk = Some(hop);
                 Poll::Watching
             }
@@ -1723,6 +1741,7 @@ impl FollowRun {
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;
                     hop.stall_idle_last_tick = None;
+                    hop.stall_idle_at = None;
                     hop.stall_recovered = false;
                     self.walk = Some(hop);
                     return Poll::Watching;
@@ -2074,15 +2093,23 @@ struct WalkHop {
     sent: bool,
     sent_tick: u32,
     ticks_waited: u32,
-    /// The player's tile when the hop's walk was sent (stall detection).
+    /// The player's tile when the hop's walk was sent. Used for
+    /// Dropped vs Expired stall classification (`here == sent_tile` →
+    /// Dropped). Cancelled-walk recovery idle is tracked separately at
+    /// the latest observed position (`stall_idle_at`).
     sent_tile: Option<WorldTile>,
     tries: u32,
-    /// Distinct game ticks observed idle on `sent_tile` with no map flag
-    /// and no movement — the cancelled-walk recovery window. Separate from
-    /// `ticks_waited` (poll budget); duplicate snapshot polls do not count.
+    /// Distinct game ticks observed idle at `stall_idle_at` with no map
+    /// flag and no movement — the cancelled-walk recovery window.
+    /// Separate from `ticks_waited` (poll budget); duplicate snapshot
+    /// polls do not count. Tile movement resets this counter.
     stall_idle_ticks: u32,
     /// Snapshot tick last credited to `stall_idle_ticks`.
     stall_idle_last_tick: Option<u32>,
+    /// Latest observed tile while counting cancelled-walk idle. A change
+    /// of tile (partial hop progress) clears the idle window and starts
+    /// a new one at the new position.
+    stall_idle_at: Option<WorldTile>,
     /// A cancelled-walk recovery already reissued this hop's aim once.
     stall_recovered: bool,
 }
@@ -7057,6 +7084,219 @@ mod tests {
         ));
         // First send + one recovery only; max_hops is not expanded by retry.
         assert_eq!(rec.walked.len(), 2);
+    }
+
+    #[test]
+    fn follow_recovers_cancelled_walk_after_partial_progress() {
+        // Chaos-style: hop progresses partway, map flag clears, player
+        // idles off the original sent_tile — one same-aim recovery after
+        // five distinct idle ticks at the new position.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 30,
+            on_event: Some(Box::new(|ev| {
+                if let TravelEvent::WalkAttempt { aim, refusal, .. } = ev {
+                    attempts.borrow_mut().push((aim, refusal));
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1, "first send");
+        let first_aim = attempts.borrow()[0].0;
+        // Partial progress away from sent_tile, then stop (no map flag).
+        plant_player(&mut c, 0, 2);
+        c.minimap_flag_x = 0;
+        c.minimap_flag_z = 0;
+        c.local_player.as_mut().unwrap().entity.route_length = 0;
+        // Four distinct idle ticks at the midway tile: still one send.
+        for _ in 0..4 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "partial-progress idle waits the full window"
+        );
+        // Fifth idle tick at midway tile: same-aim recovery.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 2, "one recovery after partial progress");
+        assert_eq!(attempts.borrow().len(), 2);
+        assert_eq!(
+            attempts.borrow()[1].0,
+            first_aim,
+            "recovery preserves sent aim"
+        );
+        assert_eq!(attempts.borrow()[1].1, None);
+        // Further idle does not spam another recovery.
+        for _ in 0..6 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 2, "at most one recovery per hop");
+    }
+
+    #[test]
+    fn follow_partial_progress_tile_change_resets_stall_idle() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 40,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Idle three ticks at z=2, then move to z=3 — idle window resets.
+        plant_player(&mut c, 0, 2);
+        for _ in 0..3 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1);
+        plant_player(&mut c, 0, 3);
+        for _ in 0..4 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "tile change must clear prior idle credits"
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.walked.len(),
+            2,
+            "fifth distinct idle tick at new tile recovers"
+        );
+    }
+
+    #[test]
+    fn follow_partial_progress_cancel_still_exhausts_original_budget() {
+        // Progress off sent_tile, one recovery spent, continued cancel
+        // still Drop/Expire under the original hop budget.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 12,
+            max_hops: 1,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Move partway and stay put until budget + recovery settle.
+        plant_player(&mut c, 0, 2);
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 0, 2);
+            },
+        );
+        assert!(matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                tries,
+                ..
+            } if tries >= 2
+        ));
+        assert_eq!(rec.walked.len(), 2, "first send + one recovery only");
     }
 
     #[test]
