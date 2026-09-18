@@ -15013,10 +15013,10 @@ const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420);
 /// Proves 150 insufficient for the two-leg + withdraw + buy arm under scene
 /// reload/hitch variance — not a completed first-purchase duration.
 ///
-/// **First-purchase dirty 240:** measured incomplete lower bound 168 dirty
-/// plus trial margin ~40 dirty for post-Trade shop buy chunks (live7zpi0g log
-/// ShopButton spam before pack proof) and ~32 dirty hitch/scene-load pad
-/// (livexjav5j). Not Betty's 320 (Falador West round-trip differs).
+/// **First-purchase dirty 240:** observed arm exhausted 150 dirty while the
+/// whole runner reported 168 increments (including setup). The additional
+/// 90 arm increments are a bounded trial margin for remaining Trade/buy work
+/// and route variation; they are not a measured UI or hitch duration.
 ///
 /// **Deposit dirty 150:** live7zpi0g measured pass for leg 3; one depleted
 /// leg is shorter than the first-purchase composite — no widening without a
@@ -27950,7 +27950,7 @@ mod tests {
                 .wait
                 .budget_ticks,
             SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
-            "first purchase covers two Draynor legs + withdraw + buy beyond livexjav5j 168-dirty fail"
+            "first purchase covers two Draynor legs + withdraw + buy beyond livexjav5j 150-dirty arm fail"
         );
         assert_eq!(
             watch("watch purchased product enter a fresh bank")
