@@ -1822,9 +1822,9 @@ fn nearest_bank_booth(world: &NavWorld, (x, z, level): (i32, i32, i32)) -> Optio
 /// withdraw run through [`api::interact::Interactions`] on the slot's
 /// snapshot + Driver — a request whose target is missing (no loc at the
 /// tile, no bank-side row with the resolved name, no bank open) fails
-/// closed with no send. `walk` (catalog `walkResilient`) routes through
-/// the shared [`ScriptWalkArm`] with the request's `allow_teleports`
-/// (default off). `walk-to` (catalog `walkTo`) is the scene
+/// closed with no send. `walk` / `walk-near` route through the shared
+/// [`ScriptWalkArm`] with the request's three FindOptions bits (serde/old
+/// wire default off). `walk-to` (scene `DirectNavigator`) is the
 /// [`Interactions::walk`] packet. Returns whether the driver's out buffer
 /// was written.
 #[allow(clippy::too_many_arguments)]
@@ -1941,6 +1941,8 @@ fn dispatch_script_interact(
                 z,
                 level,
                 allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
                 request_id,
             } => {
                 let bank_rows: Vec<(i32, i32)> = snapshot
@@ -1962,6 +1964,8 @@ fn dispatch_script_interact(
                     level,
                     FindOptions {
                         allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
                         ..FindOptions::default()
                     },
                     0,
@@ -1975,6 +1979,8 @@ fn dispatch_script_interact(
                 level,
                 radius,
                 allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
                 request_id,
             } => {
                 let arm = ScriptWalkArm {
@@ -1995,6 +2001,8 @@ fn dispatch_script_interact(
                     level,
                     FindOptions {
                         allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
                         ..FindOptions::default()
                     },
                     radius,
@@ -3910,7 +3918,8 @@ struct NavBot {
     route_generation: u64,
     route_worker: Option<Arc<()>>,
     pending_route: Option<ScriptRouteRequest>,
-    requested_route: Option<(WorldTile, i32, bool)>,
+    /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
+    requested_route: Option<(WorldTile, i32, bool, bool, bool)>,
     traveller: Traveller,
     route: Option<Route>,
     bank_fetch: Option<PendingBankFetch>,
@@ -4031,7 +4040,13 @@ impl ScriptWalkArm {
                 );
                 return false;
             }
-            let key = (to, radius, opts.allow_teleports);
+            let key = (
+                to,
+                radius,
+                opts.allow_teleports,
+                opts.allow_wilderness,
+                opts.allow_bank_fetch,
+            );
             if bot.requested_route == Some(key)
                 && (bot.route_worker.is_some()
                     || bot.route.is_some()
@@ -4127,13 +4142,13 @@ impl ScriptWalkArm {
                     .as_ref()
                     .is_some_and(|t| Arc::ptr_eq(t, &token))
                 {
-                    if let Some((to, radius, allow)) = bot.requested_route {
+                    if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
                         bot.note_failure(
                             bot.route_generation,
                             bot.walk_request_id,
                             to,
                             radius,
-                            allow,
+                            allow_teleports,
                         );
                     }
                     bot.route_worker = None;
@@ -4160,9 +4175,15 @@ fn apply_nav_follow_outcome(
             bot.route = None;
         }
         Some(_) => {
-            if let Some((to, radius, allow)) = bot.requested_route {
+            if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
                 if bot.armed_outcome_may_publish(bot.walk_request_id) {
-                    bot.note_failure(bot.route_generation, bot.walk_request_id, to, radius, allow);
+                    bot.note_failure(
+                        bot.route_generation,
+                        bot.walk_request_id,
+                        to,
+                        radius,
+                        allow_teleports,
+                    );
                 }
             } else if let Some(route) = bot.route.as_ref() {
                 if bot.armed_outcome_may_publish(bot.walk_request_id) {
@@ -6760,9 +6781,9 @@ impl NavBot {
             RouteOutcome::Routed(route) => (route, None),
             RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
             RouteOutcome::NoPath => {
-                if let Some((to, radius, allow)) = self.requested_route {
+                if let Some((to, radius, allow_teleports, ..)) = self.requested_route {
                     if self.armed_outcome_may_publish(request_id) {
-                        self.note_failure(generation, request_id, to, radius, allow);
+                        self.note_failure(generation, request_id, to, radius, allow_teleports);
                     }
                 }
                 // The retained route belongs to the previous request. A later
@@ -6791,6 +6812,14 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    fn native_requested(
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+    ) -> (WorldTile, i32, bool, bool, bool) {
+        (to, radius, allow_teleports, false, false)
+    }
 
     #[test]
     fn terminal_startup_error_is_only_the_producer_asset_failure() {
@@ -8366,7 +8395,7 @@ mod tests {
         ));
         assert_eq!(
             navs.lock().unwrap()["nearest-bank"].requested_route,
-            Some((
+            Some(native_requested(
                 WorldTile {
                     x: 6,
                     z: 6,
@@ -8409,6 +8438,8 @@ mod tests {
                 },
                 0,
                 true,
+                false,
+                false,
             )),
             ..Default::default()
         };
@@ -8439,7 +8470,7 @@ mod tests {
         };
         let mut bot = NavBot {
             route_generation: 2,
-            requested_route: Some((dest, 1, false)),
+            requested_route: Some(native_requested(dest, 1, false)),
             ..Default::default()
         };
         bot.publish_route(1, 0, false, RouteOutcome::NoPath);
@@ -8448,7 +8479,7 @@ mod tests {
             "superseded same-target NoPath must not publish"
         );
         assert_eq!(bot.walk_outcome_seq, 0);
-        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
         bot.publish_route(2, 0, false, RouteOutcome::NoPath);
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_outcome_generation, 2);
@@ -8529,7 +8560,7 @@ mod tests {
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((nearby, 1, false)),
+                requested_route: Some(native_requested(nearby, 1, false)),
                 ..Default::default()
             },
         )])));
@@ -8555,7 +8586,7 @@ mod tests {
             let mut all = navs.lock().unwrap();
             let bot = all.get_mut("bank").expect("nav bot");
             assert_eq!(bot.route_generation, 2);
-            assert_eq!(bot.requested_route, Some((exact, 0, false)));
+            assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
             assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(nearby));
             assert!(bot.route_worker.is_some());
             let pending = bot
@@ -8672,7 +8703,7 @@ mod tests {
             "abort".to_string(),
             NavBot {
                 route_generation: 4,
-                requested_route: Some((dest, 0, false)),
+                requested_route: Some(native_requested(dest, 0, false)),
                 walk_outcome_seq: 3,
                 walk_outcome_failed: true,
                 walk_outcome_generation: 4,
@@ -8701,6 +8732,8 @@ mod tests {
                     level: 0,
                 },
                 0,
+                false,
+                false,
                 false,
             )),
             ..Default::default()
@@ -8814,6 +8847,8 @@ export default class T extends LoopingBot {{
                 level: 0,
                 radius: dr,
                 allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
                 request_id,
             }] if *dx == x && *dz == z && *dr == radius => *request_id,
             other => panic!("unexpected interacts: {other:?}"),
@@ -8839,6 +8874,8 @@ export default class T extends LoopingBot {{
                 level: 0,
                 radius: dr0,
                 allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
                 request_id: first,
             }, script::shim::InteractReq::WalkNear {
                 x: dx1,
@@ -8846,6 +8883,8 @@ export default class T extends LoopingBot {{
                 level: 0,
                 radius: dr1,
                 allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
                 request_id: second,
             }] if *dx0 == x
                 && *dz0 == z
@@ -8922,7 +8961,7 @@ export default class T extends LoopingBot {{
         };
         let mut bot = NavBot {
             route_generation: 4,
-            requested_route: Some((dest, 1, false)),
+            requested_route: Some(native_requested(dest, 1, false)),
             walk_outcome_seq: 3,
             walk_outcome_generation: 2,
             walk_outcome_failed: true,
@@ -8937,7 +8976,7 @@ export default class T extends LoopingBot {{
             "lagging same-target worker must not publish"
         );
         assert_eq!(bot.walk_outcome_generation, 2);
-        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
         bot.publish_route(4, 11, false, RouteOutcome::NoPath);
         assert!(bot.walk_outcome_failed);
         assert_eq!(bot.walk_outcome_generation, 4);
@@ -8962,7 +9001,7 @@ export default class T extends LoopingBot {{
             route: Some(route.clone()),
             route_generation: 4,
             walk_request_id: 7,
-            requested_route: Some((dest, 0, false)),
+            requested_route: Some(native_requested(dest, 0, false)),
             walk_outcome_seq: 3,
             walk_outcome_generation: 2,
             walk_outcome_failed: false,
@@ -9106,7 +9145,7 @@ export default class T extends LoopingBot {{
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: 7,
                 ..Default::default()
             },
@@ -9158,7 +9197,7 @@ export default class T extends LoopingBot {{
         let bot = &navs.lock().unwrap()["coal"];
         assert_eq!(bot.route_generation, 1);
         assert_eq!(bot.walk_request_id, 7);
-        assert_eq!(bot.requested_route, Some((dest, 1, false)));
+        assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
         assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
         assert!(bot.route_worker.is_some());
         assert!(bot.walk_outcome_failed);
@@ -9186,7 +9225,7 @@ export default class T extends LoopingBot {{
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: 7,
                 ..Default::default()
             },
@@ -9222,7 +9261,7 @@ export default class T extends LoopingBot {{
             assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
             assert_eq!(bot.walk_request_id, 7);
             assert!(bot.requested_route.is_none());
-            bot.requested_route = Some((dest, 1, false));
+            bot.requested_route = Some(native_requested(dest, 1, false));
         }
         assert!(!arm.queue_route(
             dest.x,
@@ -9243,7 +9282,7 @@ export default class T extends LoopingBot {{
             bot.publish_route(1, 7, false, RouteOutcome::NoPath);
             assert_eq!(bot.walk_outcome_request_id, 11);
             bot.mark_walk_outcome_posted();
-            bot.requested_route = Some((dest, 1, false));
+            bot.requested_route = Some(native_requested(dest, 1, false));
             bot.publish_route(1, 7, false, RouteOutcome::NoPath);
             assert_eq!(
                 bot.walk_outcome_request_id, 7,
@@ -9283,7 +9322,7 @@ export default class T extends LoopingBot {{
                     state: None,
                     bank: vec![],
                 }),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: 7,
                 ..Default::default()
             },
@@ -9340,7 +9379,7 @@ export default class T extends LoopingBot {{
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: first_id,
                 ..Default::default()
             },
@@ -9433,7 +9472,7 @@ export default class T extends LoopingBot {{
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: first_id,
                 ..Default::default()
             },
@@ -9520,7 +9559,7 @@ export default class T extends LoopingBot {{
                 route: Some(old.clone()),
                 route_generation: 1,
                 route_worker: Some(Arc::new(())),
-                requested_route: Some((dest, 1, false)),
+                requested_route: Some(native_requested(dest, 1, false)),
                 walk_request_id: first_id,
                 ..Default::default()
             },
@@ -10557,6 +10596,8 @@ export default class T extends LoopingBot {{
                     },
                     3,
                     false,
+                    false,
+                    false,
                 )),
                 ..NavBot::default()
             },
@@ -10906,6 +10947,8 @@ export default class T extends LoopingBot {{
             },
             0,
             false,
+            false,
+            false,
         ));
         navs.lock().unwrap().extend([
             (
@@ -10980,6 +11023,8 @@ export default class T extends LoopingBot {{
                 level: 0,
             },
             0,
+            false,
+            false,
             false,
         ));
         navs.lock().unwrap().insert(
@@ -14803,6 +14848,8 @@ export default class T extends LoopingBot {
                 z: 4,
                 level: 0,
                 allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 0,
             }],
         ));
@@ -14826,12 +14873,237 @@ export default class T extends LoopingBot {
                 z: 4,
                 level: 0,
                 allow_teleports: true,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 0,
             }],
         ));
         assert!(
             wait_until(200, || queued(&navs_on) == Some(dest)),
             "allow_teleports routes the teleport"
+        );
+    }
+
+    fn wilderness_entry_world() -> NavWorld {
+        let flags = vec![0u32; 5 * 12];
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        NavWorld::from_parts(
+            WorldCollision {
+                origin: WorldTile {
+                    x: 3099,
+                    z: 3518,
+                    level: 0,
+                },
+                width: 5,
+                height: 12,
+                walk,
+                blocked,
+                flags: None,
+            },
+            TransportGraph::default(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
+        let dest = WorldTile {
+            x: 3100,
+            z: 3525,
+            level: 0,
+        };
+        let world = Some(Arc::new(wilderness_entry_world()));
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+
+        let navs_off = Arc::new(Mutex::new(HashMap::new()));
+        assert!(dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((3100, 3519, 0)),
+            &navs_off,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Walk {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 1,
+            }],
+        ));
+        assert!(
+            !wait_until(100, || queued(&navs_off).is_some()),
+            "default-false wilderness must not enter the zone"
+        );
+
+        let navs_on = Arc::new(Mutex::new(HashMap::new()));
+        assert!(dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((3100, 3519, 0)),
+            &navs_on,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Walk {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 2,
+            }],
+        ));
+        assert!(
+            wait_until(200, || queued(&navs_on) == Some(dest)),
+            "explicit wilderness must route into the zone"
+        );
+        let bot = &navs_on.lock().unwrap()["alice"];
+        assert_eq!(
+            bot.requested_route,
+            Some((dest, 0, false, true, true)),
+            "dispatch must copy both newly carried FindOptions bits"
+        );
+    }
+
+    #[test]
+    fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
+        let dest = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "flags".to_string(),
+            NavBot::default(),
+        )])));
+        let arm = ScriptWalkArm {
+            here: Some((0, 0, 0)),
+            world: Some(Arc::new(open_world(7, 7))),
+            navs: Arc::clone(&navs),
+            name: "flags".into(),
+            state: None,
+            bank: vec![],
+        };
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            1,
+            true,
+            11,
+        ));
+        assert!(wait_until(200, || {
+            navs.lock().unwrap()["flags"].requested_route == Some(native_requested(dest, 1, false))
+        }));
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions {
+                allow_wilderness: true,
+                ..FindOptions::default()
+            },
+            1,
+            true,
+            12,
+        ));
+        assert!(
+            wait_until(200, || {
+                let bot = &navs.lock().unwrap()["flags"];
+                bot.walk_request_id == 12
+                    && bot.requested_route == Some((dest, 1, false, true, false))
+            }),
+            "changed wilderness must not reuse the prior permissioned route"
+        );
+        assert!(arm.queue_route(
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions {
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            1,
+            true,
+            13,
+        ));
+        assert!(
+            wait_until(200, || {
+                let bot = &navs.lock().unwrap()["flags"];
+                bot.walk_request_id == 13
+                    && bot.requested_route == Some((dest, 1, false, true, true))
+            }),
+            "changed bank-fetch must not reuse the prior permissioned route"
+        );
+    }
+
+    #[test]
+    fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
+        let dest = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let flags = vec![0u32; 7 * 7];
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let world = Some(Arc::new(NavWorld::from_parts(
+            WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 7,
+                height: 7,
+                walk,
+                blocked,
+                flags: None,
+            },
+            TransportGraph::default(),
+            Vec::new(),
+        )));
+        let mut c = bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        assert!(dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((0, 0, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::WalkNear {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+                radius: 1,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 77,
+            }],
+        ));
+        let bot = &navs.lock().unwrap()["alice"];
+        assert_eq!(bot.walk_request_id, 77);
+        assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
+        assert_eq!(
+            bot.requested_route
+                .map(|(to, radius, ..)| (to.level, radius)),
+            Some((dest.level, 1))
         );
     }
 

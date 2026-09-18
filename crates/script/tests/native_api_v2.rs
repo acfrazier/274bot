@@ -644,3 +644,102 @@ export function tick(api) {
     assert_eq!(iso.drain_lifecycle(), vec![InteractReq::LoopSettled]);
     iso.join();
 }
+
+#[test]
+fn v2_generic_walk_forwards_find_options_and_request_id() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  api.request({ op: 'walk', x: 1, z: 2, level: 1 });
+  api.request({
+    op: 'walk',
+    x: 1,
+    z: 2,
+    level: 1,
+    allow_teleports: false,
+    allow_wilderness: false,
+    allow_bank_fetch: false,
+  });
+  api.request({
+    op: 'walk',
+    x: 1,
+    z: 2,
+    level: 1,
+    allow_teleports: true,
+    allow_wilderness: true,
+    allow_bank_fetch: true,
+  });
+  api.request({
+    op: 'walk-near',
+    x: 3,
+    z: 4,
+    level: 2,
+    radius: 5,
+    request_id: 99,
+  });
+  api.request({ op: 'walk-nearest-bank' });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let drained = iso.drain_interacts();
+    let walks: Vec<_> = drained
+        .into_iter()
+        .filter(|req| {
+            !matches!(
+                req,
+                InteractReq::LoopSettled | InteractReq::WaitEnqueued | InteractReq::WaitSettled
+            )
+        })
+        .collect();
+    assert_eq!(
+        walks,
+        vec![
+            InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 1,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 0,
+            },
+            InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 1,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 0,
+            },
+            InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 1,
+                allow_teleports: true,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 0,
+            },
+            InteractReq::WalkNear {
+                x: 3,
+                z: 4,
+                level: 2,
+                radius: 5,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 99,
+            },
+            InteractReq::WalkNearestBank,
+        ]
+    );
+    let wired = script::isolate_fb::decode_interact_batch(
+        &script::isolate_fb::encode_interact_batch(&walks),
+    )
+    .expect("v2 walk FB roundtrip");
+    assert_eq!(wired, walks);
+    iso.join();
+}

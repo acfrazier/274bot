@@ -47,6 +47,8 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("export interface NativeApi"));
     assert!(src.contains("export type NativeOp"));
     assert!(src.contains("op: 'walk-nearest-bank'"));
+    assert!(src.contains("op: 'walk'"));
+    assert!(src.contains("op: 'walk-near'"));
     assert!(
         !src.contains("export type NativeOp =\n  | { op: 'walk'"),
         "v2 NativeOp must not dump the full InteractReq union"

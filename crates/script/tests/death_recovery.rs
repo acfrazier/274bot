@@ -133,6 +133,8 @@ fn walk_near_anchor() -> InteractReq {
         level: 0,
         radius: 3,
         allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
         request_id: 0,
     }
 }

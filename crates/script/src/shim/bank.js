@@ -28,6 +28,8 @@ async function driveBankOpen(input) {
                 level: step.level,
                 radius: step.radius,
                 allow_teleports: step.allow_teleports === true,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
             });
         } else if (step.kind === 'walk-nearest-bank') {
             queue({ op: 'walk-nearest-bank' });
@@ -429,7 +431,7 @@ export const Bank = new Proxy(
                 return h && h.level === (row.level ?? 0) && Math.max(Math.abs(h.x-row.x), Math.abs(h.z-row.z)) <= 1;
             };
             if (!adjacent()) {
-                queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false});
+                queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false,allow_wilderness:true,allow_bank_fetch:true});
                 if (!(await Execution.delayUntil(adjacent, 60000))) return false;
             }
             return Bank.openBooth();

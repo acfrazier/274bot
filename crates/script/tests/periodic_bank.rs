@@ -305,6 +305,8 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
             level: 0,
             radius: 6,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }]
     );
@@ -402,6 +404,8 @@ export default class T extends TaskBot {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }],
         "RockCrab-shaped bankTile must walk the supplied stand"
@@ -605,6 +609,8 @@ fn chicken_killer_closed_face_walks_approach_dest_before_named_open_booth() {
             level: 0,
             radius: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }],
         "Chebyshev 1 with can_operate false must not OpenBooth across a closed-face row"
@@ -668,6 +674,8 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
             level: 0,
             radius: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }]
     );

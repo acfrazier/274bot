@@ -891,11 +891,15 @@ const V2_OPS = {
   'withdraw': ['name','action'],
   'withdraw-load': ['name','bank_generation'],
   'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
+  'walk': ['x','z','level'],
+  'walk-near': ['x','z','level','radius'],
   'walk-nearest-bank': [],
 };
 const OPTIONAL = {
   'open-booth': ['name','action'],
   'open-stand': ['name','stand_op','choose'],
+  'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
+  'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
 };
 function host() {
   return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });

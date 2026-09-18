@@ -279,7 +279,8 @@ export interface HostHandle {
 export type InteractReq =
   | { op: 'open-booth'; x: number; z: number; level: number; id: number; name?: string | null; action?: string | null}
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string | null; stand_op?: number | null; choose?: string | null}
-  | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean}
+  | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
+  | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
@@ -379,6 +380,8 @@ export type NativeOp =
   | { op: 'withdraw'; name: string; action: string}
   | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
+  | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
+  | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-nearest-bank'};
 
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */

@@ -341,6 +341,9 @@ table Interact {
   xf: double;
   yf: double;
   input_identity: ulong = 0;
+  // Packed-nav FindOptions bits. Absent old buffers stay false.
+  allow_wilderness: bool = false;
+  allow_bank_fetch: bool = false;
 }
 
 // The tick's shim interact queue, forwarded to the host.

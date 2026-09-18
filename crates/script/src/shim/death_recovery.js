@@ -106,6 +106,8 @@ export class DeathRecovery {
                         level: step.level,
                         radius: step.radius,
                         allow_teleports: false,
+                        allow_wilderness: true,
+                        allow_bank_fetch: true,
                     });
                     const ok = await Execution.delayUntil(
                         () => aborted() || adjacent(tile, step.radius),

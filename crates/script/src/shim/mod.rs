@@ -945,8 +945,9 @@ pub enum InteractReq {
         stand_op: Option<i32>,
         choose: Option<String>,
     },
-    /// Packed nav (`Traveller` / `ScriptWalkArm`). `allow_teleports` is
-    /// the only FindOptions opt-in the catalog forwards (default off).
+    /// Packed nav (`Traveller` / `ScriptWalkArm`). FindOptions bits are
+    /// per-request; serde/old buffers default all three off. v1 world
+    /// walk writers set wilderness and bank-fetch explicitly.
     #[serde(rename = "walk")]
     Walk {
         x: i32,
@@ -954,6 +955,10 @@ pub enum InteractReq {
         level: i32,
         #[serde(default)]
         allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
@@ -967,6 +972,10 @@ pub enum InteractReq {
         radius: i32,
         #[serde(default)]
         allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,

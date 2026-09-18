@@ -225,6 +225,9 @@ impl PeriodicBankRuntime {
                         "z": dest.z,
                         "level": dest.level,
                         "radius": 0,
+                        "allow_teleports": false,
+                        "allow_wilderness": true,
+                        "allow_bank_fetch": true,
                         "timeout_ms": WALK_BOUND_MS,
                     }))
                 }
@@ -259,6 +262,9 @@ impl PeriodicBankRuntime {
                                 "z": dest.z,
                                 "level": dest.level,
                                 "radius": ACCESS_RADIUS,
+                                "allow_teleports": false,
+                                "allow_wilderness": true,
+                                "allow_bank_fetch": true,
                                 "timeout_ms": WALK_BOUND_MS,
                             });
                         }
@@ -319,6 +325,9 @@ impl PeriodicBankRuntime {
                                     "z": dest.z,
                                     "level": dest.level,
                                     "radius": 0,
+                                    "allow_teleports": false,
+                                    "allow_wilderness": true,
+                                    "allow_bank_fetch": true,
                                     "timeout_ms": WALK_BOUND_MS,
                                 });
                             }
@@ -645,10 +654,8 @@ fn read_approaches(value: Option<&Value>) -> Vec<ApproachFact> {
                         Some(Tile {
                             x: row.get("dest_x")?.as_i64()? as i32,
                             z: row.get("dest_z")?.as_i64()? as i32,
-                            level: row
-                                .get("dest_level")
-                                .and_then(Value::as_i64)
-                                .unwrap_or(0) as i32,
+                            level: row.get("dest_level").and_then(Value::as_i64).unwrap_or(0)
+                                as i32,
                         })
                     }),
             })
@@ -762,6 +769,9 @@ mod tests {
         assert_eq!(walk["kind"], "walk-near");
         assert_eq!(walk["x"], dest.x);
         assert_eq!(walk["z"], dest.z);
+        assert_eq!(walk["allow_wilderness"], true);
+        assert_eq!(walk["allow_bank_fetch"], true);
+        assert_eq!(walk["allow_teleports"], false);
         let far = runtime.next(
             token,
             &Observation {
@@ -865,6 +875,9 @@ mod tests {
         assert_eq!(walk["radius"], 0);
         assert_eq!(walk["x"], approach_dest.x);
         assert_eq!(walk["z"], approach_dest.z);
+        assert_eq!(walk["allow_wilderness"], true);
+        assert_eq!(walk["allow_bank_fetch"], true);
+        assert_eq!(walk["allow_teleports"], false);
 
         let open = runtime.next(
             token,

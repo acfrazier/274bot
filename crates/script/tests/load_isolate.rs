@@ -2607,6 +2607,8 @@ export default class T extends LoopingBot {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }],
         "the supplied stand is walked near instead of being dropped"
@@ -4619,6 +4621,8 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id,
         }] => assert_ne!(
             *request_id, 0,
@@ -4824,6 +4828,8 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id,
         }] => assert_ne!(
             *request_id, 0,
@@ -4871,6 +4877,8 @@ export default class T extends LoopingBot {
             z: 3223,
             level: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id,
         }] => assert_ne!(
             *request_id, 0,
@@ -4878,6 +4886,11 @@ export default class T extends LoopingBot {
         ),
         other => panic!("Traversal.walkTo queues native Walk, not scene WalkTo: {other:?}"),
     }
+    let wired = script::isolate_fb::decode_interact_batch(
+        &script::isolate_fb::encode_interact_batch(&drained),
+    )
+    .expect("v1 walk FB roundtrip");
+    assert_eq!(wired, drained, "v1 world walk flags survive the FB wire");
     iso.join();
 }
 
@@ -4921,6 +4934,8 @@ export default class T extends LoopingBot {
             z: 3295,
             level: 0,
             allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id,
         }] => assert_ne!(
             *request_id, 0,
@@ -4928,6 +4943,14 @@ export default class T extends LoopingBot {
         ),
         other => panic!("useTeleportCatalog maps onto FindOptions.allow_teleports, got {other:?}"),
     }
+    let wired = script::isolate_fb::decode_interact_batch(
+        &script::isolate_fb::encode_interact_batch(&drained),
+    )
+    .expect("v1 teleport-mapped walk FB roundtrip");
+    assert_eq!(
+        wired, drained,
+        "mapped allow_teleports true stays true through the FB wire"
+    );
     iso.join();
 }
 

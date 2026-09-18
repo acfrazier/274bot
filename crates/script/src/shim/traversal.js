@@ -42,6 +42,8 @@ async function walkWorld(tile, opts = {}) {
         z: target.z,
         level: target.level,
         allow_teleports,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
         request_id: token,
     });
     const done = await Execution.delayUntil(

@@ -277,6 +277,8 @@ impl BankOpenRuntime {
             "level": tile.level,
             "radius": radius,
             "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": true,
         })
     }
 
@@ -294,6 +296,8 @@ impl BankOpenRuntime {
             "level": dest.level,
             "radius": 0,
             "allow_teleports": false,
+            "allow_wilderness": true,
+            "allow_bank_fetch": true,
         })
     }
 
@@ -783,6 +787,9 @@ mod tests {
         assert_eq!(begin["radius"], 0);
         assert_eq!(begin["x"], 3011);
         assert_eq!(begin["z"], 3353);
+        assert_eq!(begin["allow_wilderness"], true);
+        assert_eq!(begin["allow_bank_fetch"], true);
+        assert_eq!(begin["allow_teleports"], false);
     }
 
     #[test]

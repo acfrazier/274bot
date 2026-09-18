@@ -42,16 +42,21 @@ Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 ### Supported requests
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `withdraw`,
-`withdraw-load`, `withdraw-x`, `walk-nearest-bank`.
+`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
 
 - Pass `snapshot.bank_generation` into `withdraw-load` / `withdraw-x`. A
   changed generation is stale, not bank exhaustion.
 - `!bank_loaded` is unavailable contents, not exhaustion.
-- `walk-nearest-bank` uses host packed nav. Watch `walk_outcome_seq` /
-  `walk_outcome_failed` and `here` vs `banks`. No packed stand fails closed
-  in Rust.
+- Generic `walk` / `walk-near` take `x`, `z`, `level` (and `radius` for
+  `walk-near`) plus optional host `FindOptions`: `allow_teleports`,
+  `allow_wilderness`, `allow_bank_fetch`. Omitted fields default false,
+  matching `ctx.walk_with`. Explicit `true`/`false` are preserved.
+  Optional `request_id` is forwarded for wait correlation.
+- `walk-nearest-bank` uses host packed nav with default-false FindOptions.
+  Watch `walk_outcome_seq` / `walk_outcome_failed` and `here` vs `banks`.
+  No packed stand fails closed in Rust.
 
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.

@@ -226,6 +226,9 @@ impl DeathRecoveryRuntime {
                     "z": anchor.z,
                     "level": anchor.level,
                     "radius": self.radius,
+                    "allow_teleports": false,
+                    "allow_wilderness": true,
+                    "allow_bank_fetch": true,
                     "timeout_ms": WALK_BOUND_MS,
                 })
             }
@@ -510,6 +513,9 @@ mod tests {
         assert_eq!(walk["x"], 3235);
         assert_eq!(walk["radius"], 3);
         assert_eq!(walk["timeout_ms"], WALK_BOUND_MS);
+        assert_eq!(walk["allow_wilderness"], true);
+        assert_eq!(walk["allow_bank_fetch"], true);
+        assert_eq!(walk["allow_teleports"], false);
         let still = runtime.next(token, &obs(lumbridge(), &[]));
         assert_eq!(still["kind"], "walk-near", "queued walk is not recovery");
         let done = runtime.next(token, &obs(anchor(), &[]));

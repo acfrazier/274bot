@@ -290,7 +290,8 @@ const VT_VARP_VALUE: VOffsetT = 6;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action,
 //             index, component_id, bank_generation, bank_item_id, lands_as_id,
-//             source_item_id, source_item_slot, target_item_id, target_item_slot }
+//             source_item_id, source_item_slot, target_item_id, target_item_slot,
+//             request_id, xf, yf, input_identity, allow_wilderness, allow_bank_fetch }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -313,6 +314,8 @@ const VT_IN_REQUEST_ID: VOffsetT = 40;
 const VT_IN_XF: VOffsetT = 42;
 const VT_IN_YF: VOffsetT = 44;
 const VT_IN_INPUT_IDENTITY: VOffsetT = 46;
+const VT_IN_ALLOW_WILDERNESS: VOffsetT = 48;
+const VT_IN_ALLOW_BANK_FETCH: VOffsetT = 50;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -4377,6 +4380,12 @@ impl InteractReader<'_> {
     pub fn input_identity(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_INPUT_IDENTITY, None) }.unwrap_or(0)
     }
+    pub fn allow_wilderness(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_WILDERNESS, None) }.unwrap_or(false)
+    }
+    pub fn allow_bank_fetch(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_BANK_FETCH, None) }.unwrap_or(false)
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4404,6 +4413,8 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<f64>("xf", VT_IN_XF, false)?
             .visit_field::<f64>("yf", VT_IN_YF, false)?
             .visit_field::<u64>("input_identity", VT_IN_INPUT_IDENTITY, false)?
+            .visit_field::<bool>("allow_wilderness", VT_IN_ALLOW_WILDERNESS, false)?
+            .visit_field::<bool>("allow_bank_fetch", VT_IN_ALLOW_BANK_FETCH, false)?
             .finish();
         Ok(())
     }
@@ -5448,6 +5459,8 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 z: row.z(),
                 level: row.level(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
@@ -5456,6 +5469,8 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 radius: row.index().unwrap_or(0),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
@@ -5866,6 +5881,8 @@ fn interact_off<'b>(
             level,
             radius,
             request_id,
+            allow_wilderness,
+            allow_bank_fetch,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -5878,6 +5895,12 @@ fn interact_off<'b>(
             if let Some(off) = action_off {
                 b.push_slot_always(VT_IN_ACTION, off);
             }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+            }
         }
         InteractReq::WalkNearestBank => {}
         InteractReq::Walk {
@@ -5885,6 +5908,8 @@ fn interact_off<'b>(
             z,
             level,
             request_id,
+            allow_wilderness,
+            allow_bank_fetch,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -5895,6 +5920,12 @@ fn interact_off<'b>(
             }
             if let Some(off) = action_off {
                 b.push_slot_always(VT_IN_ACTION, off);
+            }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
             }
         }
         InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
@@ -6470,6 +6501,8 @@ pub(crate) mod tests {
                 z: 2,
                 level: 0,
                 allow_teleports: true,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 9,
             },
             InteractReq::WalkNear {
@@ -6478,6 +6511,8 @@ pub(crate) mod tests {
                 level: 0,
                 radius: 3,
                 allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 0,
             },
             InteractReq::WalkTo {
@@ -6499,6 +6534,64 @@ pub(crate) mod tests {
         let ibytes = buf.encode_interact_batch(&reqs);
         let got = decode_interact_batch(&ibytes).expect("interact");
         assert_eq!(got, reqs);
+    }
+
+    #[test]
+    fn walk_find_options_roundtrip_through_interact_batch() {
+        let reqs = vec![
+            InteractReq::Walk {
+                x: 3100,
+                z: 3525,
+                level: 1,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 11,
+            },
+            InteractReq::WalkNear {
+                x: 3222,
+                z: 3222,
+                level: 0,
+                radius: 2,
+                allow_teleports: true,
+                allow_wilderness: false,
+                allow_bank_fetch: true,
+                request_id: 12,
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+
+    #[test]
+    fn old_walk_buffers_default_new_find_options_false() {
+        let mut b = FlatBufferBuilder::new();
+        let op_off = b.create_string("walk");
+        let tab = b.start_table();
+        b.push_slot_always(VT_IN_OP, op_off);
+        b.push_slot_always(VT_IN_X, 1);
+        b.push_slot_always(VT_IN_Z, 2);
+        b.push_slot_always(VT_IN_LEVEL, 0);
+        b.push_slot_always(VT_IN_REQUEST_ID, 7u64);
+        let row = WIPOffset::<InteractReader>::new(b.end_table(tab).value());
+        let reqs = b.create_vector(&[row]);
+        let batch = b.start_table();
+        b.push_slot_always(VT_REQS, reqs);
+        let root = b.end_table(batch);
+        b.finish(root, None);
+        let got = decode_interact_batch(b.finished_data()).expect("old walk");
+        assert_eq!(
+            got,
+            vec![InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 7,
+            }]
+        );
     }
 
     /// Truncated isolate→host buffers must not panic; invalid roots err.
