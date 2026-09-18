@@ -194,6 +194,23 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register bank open: {e}"))?;
+    let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
+    runtime
+        .register_function("__rs2b0t_bank_unlocked", move |args: &[serde_json::Value]| {
+            let payload = args.first().unwrap_or(&serde_json::Value::Null);
+            let Some(name) = payload.get("name").and_then(|v| v.as_str()) else {
+                return Ok(serde_json::Value::Bool(false));
+            };
+            let Some(tile) = json_tile(Some(payload)) else {
+                return Ok(serde_json::Value::Bool(false));
+            };
+            Ok(serde_json::Value::Bool(api::named_banks::bank_unlocked(
+                bank_unlock_facts.as_ref(),
+                name,
+                tile,
+            )))
+        })
+        .map_err(|e| format!("register bank unlocked: {e}"))?;
     runtime
         .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
             Ok(crate::walk_wait::dispatch(
