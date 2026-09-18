@@ -17,4 +17,5 @@ pub mod prot;
 pub mod query;
 pub mod random;
 pub mod settle;
+pub mod shop_facts;
 pub mod snapshot;

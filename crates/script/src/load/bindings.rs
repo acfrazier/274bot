@@ -369,9 +369,11 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register teleport: {e}"))?;
+    let selected_shop = game_data.clone();
     runtime
         .register_function("__rs2b0t_shop", move |args: &[serde_json::Value]| {
             Ok(crate::shop::dispatch(
+                selected_shop.as_deref(),
                 args.first().unwrap_or(&serde_json::Value::Null),
             ))
         })

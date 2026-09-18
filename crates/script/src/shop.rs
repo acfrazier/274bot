@@ -333,12 +333,68 @@ pub fn on_reset() {
     NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
-pub fn dispatch(input: &Value) -> Value {
+pub fn dispatch(game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => begin(input),
         "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
+        "buyout-plan" => buyout_plan(game_data, input),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
     }
+}
+
+fn json_i64(value: Option<&Value>) -> i64 {
+    value
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+        .unwrap_or(0)
+}
+
+fn json_i32(value: &Value) -> i32 {
+    json_i64(Some(value)).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
+/// Rust-owned buyout selection/ranking/stock-price/budget. JS only marshals.
+fn buyout_plan(game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
+    let Some(data) = game_data else {
+        return json!({ "kind": "notImpl", "reason": "missing shop facts" });
+    };
+    let rec = input.get("rec").unwrap_or(&Value::Null);
+    let shop = if let Some(inv) = rec.get("inv").and_then(Value::as_str) {
+        match api::shop_facts::shop_by_inv(data, inv) {
+            Some(shop) => shop,
+            None => {
+                return json!({ "kind": "notImpl", "reason": format!("unsupported shop {inv}") })
+            }
+        }
+    } else if let Some(keepers) = rec.get("keepers").and_then(Value::as_array) {
+        let found = keepers.iter().find_map(|keeper| {
+            keeper
+                .as_str()
+                .and_then(|name| api::shop_facts::shop_by_keeper(data, name))
+        });
+        match found {
+            Some(shop) => shop,
+            None => return json!({ "kind": "notImpl", "reason": "unknown shopkeeper" }),
+        }
+    } else {
+        return json!({ "kind": "notImpl", "reason": "missing shop identity" });
+    };
+    let mut stock = std::collections::HashMap::new();
+    if let Some(map) = input.get("stock").and_then(Value::as_object) {
+        for (obj, count) in map {
+            stock.insert(obj.clone(), json_i32(count));
+        }
+    }
+    let mut chosen = std::collections::HashSet::new();
+    if let Some(names) = input.get("chosen").and_then(Value::as_array) {
+        for name in names {
+            if let Some(name) = name.as_str() {
+                chosen.insert(name.to_string());
+            }
+        }
+    }
+    let coins = json_i64(input.get("coins"));
+    let items = api::shop_facts::buyout_plan(&shop, &stock, coins, &chosen);
+    json!({ "kind": "plan", "items": items })
 }
 
 /// The compact view one decision is made from.

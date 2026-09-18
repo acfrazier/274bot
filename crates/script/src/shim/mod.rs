@@ -837,6 +837,9 @@ pub(crate) fn content_json(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
+        "shops": game_data
+            .map(api::shop_facts::content_json_value)
+            .unwrap_or_else(|| serde_json::json!({})),
         "autocast": game_data.and_then(|data| {
             data.autocast_controls().map(|controls| {
                 serde_json::json!({

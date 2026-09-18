@@ -1,0 +1,29 @@
+// Pinned content excerpts (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Sources:
+//   scripts/areas/area_ardougne_east/configs/ardougne_east.npc [aemad] [kortan]
+//   scripts/areas/area_varrock/configs/varrock.npc [aubury]
+// Only keeper identity and shop coefficients are retained; models/anims are not shop facts.
+[aemad]
+name=Aemad
+param=owned_shop,adventurershop
+param=shop_sell_multiplier,1300
+param=shop_buy_multiplier,400
+param=shop_delta,20
+param=shop_title,Aemad's Adventuring Supplies.
+
+[kortan]
+name=Kortan
+param=owned_shop,adventurershop
+param=shop_sell_multiplier,1300
+param=shop_buy_multiplier,400
+param=shop_delta,20
+param=shop_title,Aemad's Adventuring Supplies.
+
+[aubury]
+name=Aubury
+param=owned_shop,runeshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,550
+param=shop_delta,10
+param=shop_title,Aubury's Rune Shop.

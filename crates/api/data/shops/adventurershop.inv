@@ -1,0 +1,18 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_ardougne_east/configs/ardougne_east.inv [adventurershop]
+[adventurershop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=yes
+stock1=vial_water,500,30
+stock2=bronze_pickaxe,2,100
+stock3=iron_axe,2,100
+stock4=cooked_meat,2,100
+stock5=tinderbox,2,100
+stock6=ball_of_wool,30,100
+stock7=bronze_arrow,500,10
+stock8=rope,20,100
+stock9=papyrus,50,1000
