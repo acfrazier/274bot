@@ -40,7 +40,7 @@ pub const STATION_WEST_BANK: WorldTile = WorldTile {
 const RENDER_CAPTURE_DEADLINE: Duration = Duration::from_secs(300);
 const RENDER_CAPTURE_STEP_BUDGET: u32 = 600;
 
-/// All six one-shot scenario names (one station × yaw per invocation).
+/// One-shot diagnostic cases (one station and fixed camera per invocation).
 pub const NAMES: &[&str] = &[
     "render_betty_views_betty_yaw0",
     "render_betty_views_betty_yaw512",
@@ -48,6 +48,7 @@ pub const NAMES: &[&str] = &[
     "render_betty_views_falador_street_yaw512",
     "render_betty_views_west_bank_yaw0",
     "render_betty_views_west_bank_yaw512",
+    "render_betty_views_dwarven_wall_yaw0",
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +57,7 @@ struct ViewCase {
     shot_label: &'static str,
     station: WorldTile,
     orbit_yaw: i32,
+    orbit_pitch: i32,
 }
 
 const CASES: &[ViewCase] = &[
@@ -64,36 +66,55 @@ const CASES: &[ViewCase] = &[
         shot_label: "betty_s0_yaw0",
         station: STATION_BETTY,
         orbit_yaw: 0,
+        orbit_pitch: RENDER_BETTY_PITCH,
     },
     ViewCase {
         scenario_name: "render_betty_views_betty_yaw512",
         shot_label: "betty_s0_yaw512",
         station: STATION_BETTY,
         orbit_yaw: 512,
+        orbit_pitch: RENDER_BETTY_PITCH,
     },
     ViewCase {
         scenario_name: "render_betty_views_falador_street_yaw0",
         shot_label: "falador_s6_yaw0",
         station: STATION_FALADOR_STREET,
         orbit_yaw: 0,
+        orbit_pitch: RENDER_BETTY_PITCH,
     },
     ViewCase {
         scenario_name: "render_betty_views_falador_street_yaw512",
         shot_label: "falador_s6_yaw512",
         station: STATION_FALADOR_STREET,
         orbit_yaw: 512,
+        orbit_pitch: RENDER_BETTY_PITCH,
     },
     ViewCase {
         scenario_name: "render_betty_views_west_bank_yaw0",
         shot_label: "west_bank_s8_yaw0",
         station: STATION_WEST_BANK,
         orbit_yaw: 0,
+        orbit_pitch: RENDER_BETTY_PITCH,
     },
     ViewCase {
         scenario_name: "render_betty_views_west_bank_yaw512",
         shot_label: "west_bank_s8_yaw512",
         station: STATION_WEST_BANK,
         orbit_yaw: 512,
+        orbit_pitch: RENDER_BETTY_PITCH,
+    },
+    // Operator's CPU cave-wall hole at this tile. Pitch128/yaw0 was recorded
+    // on the same mine run; the operator frame itself has no atomic camera.
+    ViewCase {
+        scenario_name: "render_betty_views_dwarven_wall_yaw0",
+        shot_label: "dwarven_wall_yaw0",
+        station: WorldTile {
+            x: 3011,
+            z: 9813,
+            level: 0,
+        },
+        orbit_yaw: 0,
+        orbit_pitch: 128,
     },
 ];
 
@@ -106,12 +127,12 @@ pub fn get(name: &str) -> Option<Scenario> {
 }
 
 fn scenario_for(case: ViewCase) -> Scenario {
-    let gate = view_gate(case.station, case.orbit_yaw, RENDER_BETTY_PITCH);
+    let gate = view_gate(case.station, case.orbit_yaw, case.orbit_pitch);
     let mut steps = crate::script_live_seed_steps();
     steps.push(Step {
         name: "diagnostic tele and fixed orbit camera",
         kind: StepKind::Perform {
-            send: tele_and_orbit_send(case.station, case.orbit_yaw, RENDER_BETTY_PITCH),
+            send: tele_and_orbit_send(case.station, case.orbit_yaw, case.orbit_pitch),
         },
         wait: Wait {
             arm: Proof::Arrived {
@@ -194,8 +215,8 @@ mod tests {
     use crate::StepKind;
 
     #[test]
-    fn render_betty_views_registers_six_one_shot_cases() {
-        assert_eq!(NAMES.len(), 6);
+    fn render_betty_views_registers_one_shot_cases() {
+        assert_eq!(NAMES.len(), 7);
         for name in NAMES {
             let scenario = get(name).unwrap_or_else(|| panic!("missing {name}"));
             assert_eq!(scenario.name, *name);
