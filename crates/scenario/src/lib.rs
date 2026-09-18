@@ -9887,6 +9887,15 @@ const DRAYNOR_BANK: WorldTile = WorldTile {
     z: 3243,
     level: 0,
 };
+/// Selected 274/289 Draynor booth with native `Use-quickly` (id 2213). Capture
+/// tile matches the open booth west of `DRAYNOR_BANK`; closed 2214/2215 are
+/// not operable. Keep the walk stand separate from the booth identity.
+const DRAYNOR_BANK_BOOTH: WorldTile = WorldTile {
+    x: 3091,
+    z: 3243,
+    level: 0,
+};
+const DRAYNOR_BANK_BOOTH_ID: i32 = 2213;
 
 const FLAX_AIO_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -11762,24 +11771,39 @@ fn flax_aio_spin_scenario() -> Scenario {
     }
 }
 
-fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
+/// Open one exact booth until the bank arm holds. Runner re-fires `Repeat`
+/// every tick *before* checking the arm: re-clicking Use-quickly on an already
+/// open loaded bank bumps the bank session and clears `bank_loaded` /
+/// `bank_side`, so deposit then hard-fails. Skip the booth send once the
+/// current session is open and loaded.
+fn herblore_open_seed_bank_at(
+    name: &'static str,
+    arm: Proof,
+    booth: WorldTile,
+    booth_id: i32,
+) -> Step {
     Step {
         name,
         kind: StepKind::Repeat {
-            send: Box::new(|c, snapshot| {
-                match Interactions::new(snapshot, c)
-                    .open_booth_at(EDGEVILLE_BANK_BOOTH, EDGEVILLE_BANK_BOOTH_ID)
-                {
+            send: Box::new(move |c, snapshot| {
+                if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
+                    return true;
+                }
+                match Interactions::new(snapshot, c).open_booth_at(booth, booth_id) {
                     SendResult::Sent { .. } => true,
                     SendResult::Refused {
                         reason:
                             SendReason::SceneUnavailable
                             | SendReason::OffScene
-                            | SendReason::StaleTarget,
+                            | SendReason::StaleTarget
+                            | SendReason::Unreachable,
                         ..
                     } => true,
                     SendResult::Refused { reason, .. } => {
-                        eprintln!("[scenario] exact Edgeville booth send refused: {reason:?}");
+                        eprintln!(
+                            "[scenario] exact booth {booth_id}@{},{} send refused: {reason:?}",
+                            booth.x, booth.z
+                        );
                         false
                     }
                 }
@@ -11792,6 +11816,15 @@ fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
     }
 }
 
+fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
+    herblore_open_seed_bank_at(
+        name,
+        arm,
+        EDGEVILLE_BANK_BOOTH,
+        EDGEVILLE_BANK_BOOTH_ID,
+    )
+}
+
 fn herblore_seed_bank_readiness() -> Step {
     bank_fletcher_watch(
         "acknowledge exact Edgeville booth identity and Use-quickly action before bank send",
@@ -11800,6 +11833,21 @@ fn herblore_seed_bank_readiness() -> Step {
             x: EDGEVILLE_BANK_BOOTH.x,
             z: EDGEVILLE_BANK_BOOTH.z,
             level: EDGEVILLE_BANK_BOOTH.level,
+            radius: 0,
+            action: "Use-quickly",
+            present: true,
+        },
+    )
+}
+
+fn herblore_newt_seed_bank_readiness() -> Step {
+    bank_fletcher_watch(
+        "acknowledge exact Draynor booth identity and Use-quickly action before bank send",
+        Proof::LocActionNear {
+            id: DRAYNOR_BANK_BOOTH_ID,
+            x: DRAYNOR_BANK_BOOTH.x,
+            z: DRAYNOR_BANK_BOOTH.z,
+            level: DRAYNOR_BANK_BOOTH.level,
             radius: 0,
             action: "Use-quickly",
             present: true,
@@ -12112,12 +12160,15 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
-    steps.push(tanner_open_seed_bank(
+    steps.push(herblore_newt_seed_bank_readiness());
+    steps.push(herblore_open_seed_bank_at(
         "open and acknowledge the coin seed bank",
         Proof::BankItemIdAtMost {
             id: COINS_ID,
             count: 0,
         },
+        DRAYNOR_BANK_BOOTH,
+        DRAYNOR_BANK_BOOTH_ID,
     ));
     steps.extend(native_bank_deposit(
         "deposit the coin seed through the bank window",
@@ -14598,6 +14649,13 @@ fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> 
                         })
                         .check(snapshot, None)
                     {
+                        return true;
+                    }
+                    // Open bank UI without a current full is not ready:
+                    // bank_side is empty and deposit would hard-fail the
+                    // Repeat send. Soft-wait on existing session signals;
+                    // never invent rows or accept a closed/stale bank.
+                    if snapshot.bank_component_id() >= 0 && !snapshot.bank_loaded() {
                         return true;
                     }
                     let mut ix = Interactions::new(snapshot, c);
@@ -18488,6 +18546,147 @@ mod tests {
         );
         assert!(ok, "herblore newt must deposit stackable coins");
         assert_eq!(dispatched, COINS_ID);
+    }
+
+    /// Eggs headed FAIL: deposit hard-rejected with bank UI open, gen1,
+    /// bank_loaded=false, bank_side empty. Soft-wait on that transient.
+    #[test]
+    fn herblore_native_deposit_soft_waits_open_unloaded_bank() {
+        use api::snapshot::Family;
+        use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+        use client::io::{Packet, ServerProt};
+
+        let mut client = native_seed_client();
+        client.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![0]),
+                link_obj_number: Some(vec![0]),
+                ..Default::default()
+            },
+        );
+        let _peer = attach_loopback(&mut client);
+        let mut open = Packet::new(vec![2, 88]);
+        client.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+
+        let mut snapshot = GameSnapshot::new();
+        assert!(snapshot.rebuild_family(&client, Family::Bank));
+        assert!(
+            snapshot.bank_component_id() >= 0,
+            "bank UI must be open like the headed eggs capture"
+        );
+        assert!(
+            !snapshot.bank_loaded(),
+            "open without a full must stay unloaded"
+        );
+        assert!(snapshot.bank_side().is_empty());
+
+        let scenario = get("herblore_secondaries").expect("herblore_secondaries");
+        let step = deposit_step(&scenario, LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
+        let StepKind::Repeat { send } = &step.kind else {
+            panic!("deposit must be Repeat");
+        };
+        let before_out = client.out.pos;
+        assert!(
+            send(&mut client, &snapshot),
+            "open unloaded bank must soft-wait, not hard-reject like headed eggs"
+        );
+        assert_eq!(
+            client.out.pos, before_out,
+            "soft-wait must not emit a deposit op while bank_side is unpublished"
+        );
+    }
+
+    /// Eggs headed root cause: Repeat open re-sends Use-quickly after the
+    /// bank is already loaded. Skip that send so deposit still sees a loaded
+    /// current session.
+    #[test]
+    fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
+        use api::snapshot::Family;
+        use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+        use client::io::{Packet, ServerProt};
+
+        let mut client = native_seed_client();
+        client.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        client.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![0]),
+                link_obj_number: Some(vec![0]),
+                ..Default::default()
+            },
+        );
+        let _peer = attach_loopback(&mut client);
+        let mut full = Packet::new(vec![2, 89, 0]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+        let mut open = Packet::new(vec![2, 88]);
+        client.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+
+        let mut snapshot = GameSnapshot::new();
+        assert!(snapshot.rebuild_family(&client, Family::Bank));
+        assert!(snapshot.bank_component_id() >= 0);
+        assert!(
+            snapshot.bank_loaded(),
+            "full before open must mark the current session loaded"
+        );
+
+        let scenario = get("herblore_secondaries").expect("herblore_secondaries");
+        let open_step = scenario
+            .steps
+            .iter()
+            .find(|step| step.name == "open and acknowledge the lobster seed bank")
+            .expect("eggs lobster bank open");
+        let StepKind::Repeat { send } = &open_step.kind else {
+            panic!("eggs open must be Repeat");
+        };
+        let before = client.out.pos;
+        assert!(
+            send(&mut client, &snapshot),
+            "loaded current bank must skip booth re-open"
+        );
+        assert_eq!(
+            client.out.pos, before,
+            "skip must not emit another booth Use-quickly"
+        );
     }
 
     #[test]
@@ -23751,6 +23950,36 @@ mod tests {
             level: DRAYNOR_BANK.level,
             radius: 8,
         }));
+        assert!(buy_seed.contains(&Proof::LocActionNear {
+            id: DRAYNOR_BANK_BOOTH_ID,
+            x: DRAYNOR_BANK_BOOTH.x,
+            z: DRAYNOR_BANK_BOOTH.z,
+            level: DRAYNOR_BANK_BOOTH.level,
+            radius: 0,
+            action: "Use-quickly",
+            present: true,
+        }));
+        assert_eq!(
+            DRAYNOR_BANK_BOOTH,
+            WorldTile {
+                x: 3091,
+                z: 3243,
+                level: 0
+            }
+        );
+        assert_eq!(DRAYNOR_BANK_BOOTH_ID, 2213);
+        assert!(buy.steps[..buy_start].iter().any(|step| {
+            step.name
+                == "acknowledge exact Draynor booth identity and Use-quickly action before bank send"
+        }));
+        let coin_open = buy.steps[..buy_start]
+            .iter()
+            .find(|step| step.name == "open and acknowledge the coin seed bank")
+            .expect("newt coin bank open");
+        assert!(
+            matches!(coin_open.kind, StepKind::Repeat { .. }),
+            "newt open must Repeat exact booth, not one-shot nearest Perform"
+        );
         assert!(buy_seed.contains(&Proof::ArrivedNear {
             x: 3012,
             z: 3259,
