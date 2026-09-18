@@ -14955,56 +14955,25 @@ const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
 /// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
 const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
-/// Betty ShopBuyout long Falador West bank travel budgets (Betty-only).
+/// Betty's frozen Falador West preset requires four travel legs before a
+/// resumed purchase: shop→bank→shop for the initial withdrawal, then
+/// shop→bank→shop for deposit and return. The 150-dirty first-purchase
+/// watch expired while the player was still progressing back with 500 coins.
 ///
-/// **Units:** `budget_ticks` are runner dirty-snapshot increments
-/// (`runner.rs`: `ticks_waited += 1` only when `snapshot.rebuild` is dirty).
-/// Not engine `World.TICKRATE` (600ms) ticks and not wall seconds. Capture
-/// `tick` advances on PLAYER_INFO; dirty counts and wall time are not
-/// interchangeable proofs.
+/// These are bounded trial estimates, not measured completion times.
+/// Dirty-snapshot increments are distinct from engine ticks and wall time.
+/// The failed trace had 102 engine ticks through initial withdrawal and
+/// 28 on the return. Its remaining 108-tile Chebyshev distance requires at
+/// least 54 ticks at two tiles/tick; later energy depletion and detours
+/// can increase that. It does not establish a 136-tick return lower bound.
 ///
-/// **Geometry (frozen shopPresets; West preserved):** Betty stand
-/// `3012,3258`; bankStand `2946,3369`; open booth `2213@2946,3367` with
-/// approach `2946,3368`. Chebyshev shop↔bankStand =
-/// max(|3012−2946|,|3258−3369|) = max(66,111) = **111**. User noted
-/// Falador East is closer; root verified the preset chooses West and the
-/// operator has not requested changing frozen bankStand/walkResilient.
-///
-/// **Four travel legs** before a resumed purchase can complete:
-/// 1. initial shop→bank withdraw, 2. bank→shop first buy, 3. post-purchase
-/// shop→bank deposit, 4. bank→shop return. Energy depletes across legs.
-///
-/// **Measured lower bound (livedkotdp_0 FAIL, capture
-/// `2026-09-18T11-26-16_shop_buyout_betty`, panel log
-/// `shop-sarim-variants-betty-panel.log`):**
-/// - Leg 1: nav tick 26 at `3012,3258` → Arrived `2945,3368` tick 118 +
-///   OpenBooth/withdraw by ~128 ≈ **102 engine ticks** (running).
-/// - Leg 2 partial: leave tick 128 → FAIL tick 156 at `2995,3366` still
-///   moving (mapflag 81,31), energy 26, inv 500 coins / no runes. 28 ticks
-///   of progress; remaining Chebyshev to Betty max(17,108)=**108** at walk
-///   ≈ ≥108 more → leg 2 LB **≥136** engine ticks. Nav 145–156 moved
-///   `2973,3380→2995,3366` with accepted walk-send — progressive, not stall.
-/// - First-purchase arm exhausted **150 dirties** mid-leg 2 (outcome
-///   167 runner increments / 98.325s wall / exit 1). 150 is demonstrably
-///   insufficient even while progressing.
-/// - Legs 3–4 never reached on this run. Source symmetry: same 111
-///   Chebyshev; energy already 26 so walk-dominant like leg 2 incomplete.
-///
-/// **Budgets (dirty, not equated raw to engine ticks):**
-/// - First purchase (legs 1+2 + open/buy): engine LB ≈ 102+136+20 = **258**;
-///   150 already failed → pad dirty≠engine / interaction → **320**.
-/// - Deposit (leg 3 + booth/deposit) and return (leg 4): one-way walk-
-///   dominant ≥~100–140 → **280** each.
-/// - Empty / close / further stay ordinary **150** (local bank UI / at-shop
-///   buy after return).
-///
-/// **Deadline:** seed ~15–25s + first-purchase wall at measured step-17
-/// rate ~150 dirties / ≈90s ≈ 1.67 dirty/s → 320 ≈ 190s; deposit+return
-/// when each completes near LB ≈ 2×(120/1.67)≈145s + further ~30s →
-/// **~365s** sequential. Use existing **420s** pattern
-/// ([`HERBLORE_EGG_DEADLINE`]). Global [`SCRIPT_GOLD_DEADLINE`] 180s and
-/// watch 150 stay for every other ShopBuyout including Gerrant (not yet
-/// failed). Script `walkTo` / call timeouts and short presets unchanged.
+/// First purchase gets 320 dirties; later deposit/return get 280 each to
+/// allow for depleted energy. At the observed roughly 1.67 dirties/second,
+/// a 320-dirty first purchase is about 190s. Assuming later legs complete
+/// near 120 dirties each, plus setup/actions, gives roughly 365s; 420s is
+/// the wall trial bound. Those future durations remain unmeasured.
+/// Empty/close/further-purchase watches, other presets, runtime timeouts,
+/// and global guards retain their existing limits. Falador West is preserved.
 const SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS: u32 = 320;
 const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
 const SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS: u32 = 280;
@@ -27815,7 +27784,7 @@ mod tests {
                 .wait
                 .budget_ticks,
             SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS,
-            "first purchase dirty-budget covers measured shop→bank→shop LB (>150 mid-return)"
+            "first purchase allows a bounded trial beyond the observed 150-dirty failure"
         );
         assert_eq!(
             watch("watch purchased product enter a fresh bank")
