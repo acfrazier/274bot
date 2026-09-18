@@ -532,6 +532,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "shop_buyout_harry" => Some(shop_buyout_harry_scenario()),
         "shop_buyout_betty" => Some(shop_buyout_betty_scenario()),
         "shop_buyout_gerrant" => Some(shop_buyout_gerrant_scenario()),
+        "shop_buyout_bob" => Some(shop_buyout_bob_scenario()),
+        "shop_buyout_nurmof" => Some(shop_buyout_nurmof_scenario()),
+        "shop_buyout_magic" => Some(shop_buyout_magic_scenario()),
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
@@ -676,6 +679,9 @@ pub fn names() -> Vec<&'static str> {
         "shop_buyout_harry",
         "shop_buyout_betty",
         "shop_buyout_gerrant",
+        "shop_buyout_bob",
+        "shop_buyout_nurmof",
+        "shop_buyout_magic",
         "smithing_bot",
         "smithing_bot_platebody",
         "smithing_bot_nails",
@@ -14875,6 +14881,37 @@ const GERRANT_STAND: WorldTile = WorldTile {
     z: 3224,
     level: 0,
 };
+/// Frozen shopPresets Bob stand (Lumbridge Axe Shop).
+const BOB_STAND: WorldTile = WorldTile {
+    x: 3231,
+    z: 3203,
+    level: 0,
+};
+/// Frozen shopPresets Nurmof stand (Dwarven Mine pickaxe shop).
+const NURMOF_STAND: WorldTile = WorldTile {
+    x: 2997,
+    z: 9844,
+    level: 0,
+};
+/// Frozen shopPresets Magic Store owner stand (Yanille Wizards' Guild, floor 1).
+const MAGIC_STORE_STAND: WorldTile = WorldTile {
+    x: 2594,
+    z: 3090,
+    level: 1,
+};
+/// Stock-facing walkable adjacent for Yanille open booth 2213@2614,3092
+/// (map m40_48 local 54,20). Preset bankStand 2613,3092 is Chebyshev 1 west.
+const YANILLE_BANK_APPROACH: WorldTile = WorldTile {
+    x: 2613,
+    z: 3092,
+    level: 0,
+};
+const YANILLE_BANK_BOOTH: WorldTile = WorldTile {
+    x: 2614,
+    z: 3092,
+    level: 0,
+};
+const YANILLE_BANK_BOOTH_ID: i32 = 2213;
 /// Stock-facing walkable adjacent for Ardougne East open booth 2213@2656,3283
 /// (map m41_51 local 32,19). Preset bankStand 2655,3283 is Chebyshev 1 west;
 /// closed 2215@2656,3280 is not operable. Keep the seed stand off the booth.
@@ -14963,6 +15000,18 @@ const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
 /// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
 const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
+/// Bob nonstackable bronze axe: axeshop baseline 10 cost 16 → 16gp/unit; pack
+/// fill is the natural bank trigger. perTrip 500 / budget 1500 mirror Lowe.
+const SHOP_BUYOUT_BOB_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_BOB_BUDGET_GP: f64 = 1500.0;
+/// Nurmof nonstackable bronze pickaxe: pickaxeshop baseline 6 cost 1; same
+/// nonstackable pack-fill bank trigger. Long Dwarven Mine ↔ Falador East route.
+const SHOP_BUYOUT_NURMOF_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_NURMOF_BUDGET_GP: f64 = 1500.0;
+/// Magic Guild stackable blood rune: magicguildshop baseline 50 cost 50 members.
+/// Stackable coins<100 bank trigger like Aubury; perTrip 500 / budget 1500.
+const SHOP_BUYOUT_MAGIC_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_MAGIC_BUDGET_GP: f64 = 1500.0;
 /// Betty's frozen Falador West preset requires four travel legs before a
 /// resumed purchase: shop→bank→shop for the initial withdrawal, then
 /// shop→bank→shop for deposit and return. The 150-dirty first-purchase
@@ -15071,6 +15120,17 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
     deadline: SHOP_BUYOUT_GERRANT_DEADLINE,
 };
 
+/// Bob Lumbridge ↔ Draynor: Chebyshev stand 3231,3203 ↔ Draynor approach
+/// 3092,3243 is 139 tiles (estimate, not measured) — wider than Gerrant's 79.
+/// Reuses Betty's four-leg trial dirty budgets and 420s wall until LIVE
+/// measures Bob-specific variance.
+const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
+
+/// Nurmof underground shop ↔ surface Falador East: multi-segment route
+/// (estimate, not measured) exceeds short-preset geometry. Reuses Betty trial
+/// bounds conservatively until a scoped LIVE arm exists.
+const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
+
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
     "Aemad's vials — East Ardougne (Ardougne East bank)";
 const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
@@ -15079,6 +15139,9 @@ const SHOP_BUYOUT_HICKTON_LABEL: &str = "Hickton's arrows — Catherby (Catherby
 const SHOP_BUYOUT_HARRY_LABEL: &str = "Harry's fishing — Catherby (Catherby bank)";
 const SHOP_BUYOUT_BETTY_LABEL: &str = "Betty's runes — Port Sarim (Falador West bank)";
 const SHOP_BUYOUT_GERRANT_LABEL: &str = "Gerrant's feathers — Port Sarim (Draynor bank)";
+const SHOP_BUYOUT_BOB_LABEL: &str = "Bob's axes — Lumbridge (Draynor bank)";
+const SHOP_BUYOUT_NURMOF_LABEL: &str = "Nurmof's pickaxes — Dwarven Mine (Falador East bank)";
+const SHOP_BUYOUT_MAGIC_LABEL: &str = "Wizard Guild runes — Yanille (Yanille bank)";
 const SHOP_BUYOUT_AEMAD_ITEM: &str = "Vial of water";
 const SHOP_BUYOUT_AUBURY_ITEM: &str = "Fire rune";
 const SHOP_BUYOUT_LOWE_ITEM: &str = "Bronze arrow";
@@ -15086,7 +15149,12 @@ const SHOP_BUYOUT_HICKTON_ITEM: &str = "Bronze arrow";
 const SHOP_BUYOUT_HARRY_ITEM: &str = "Fishing bait";
 const SHOP_BUYOUT_BETTY_ITEM: &str = "Fire rune";
 const SHOP_BUYOUT_GERRANT_ITEM: &str = "Feather";
+const SHOP_BUYOUT_BOB_ITEM: &str = "Bronze axe";
+const SHOP_BUYOUT_NURMOF_ITEM: &str = "Bronze pickaxe";
+const SHOP_BUYOUT_MAGIC_ITEM: &str = "Blood rune";
 const FISHING_BAIT_ID: i32 = 313;
+const BRONZE_AXE_ID: i32 = 1351;
+const BRONZE_PICKAXE_ID: i32 = 1265;
 
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
 const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -15249,6 +15317,72 @@ const SHOP_BUYOUT_GERRANT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "buyItems",
         value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_GERRANT_ITEM]),
+    },
+];
+const SHOP_BUYOUT_BOB_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_BOB_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_BOB_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_BOB_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_BOB_ITEM]),
+    },
+];
+const SHOP_BUYOUT_NURMOF_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_NURMOF_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_NURMOF_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_NURMOF_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_NURMOF_ITEM]),
+    },
+];
+const SHOP_BUYOUT_MAGIC_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_MAGIC_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_MAGIC_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_MAGIC_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_MAGIC_ITEM]),
     },
 ];
 const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
@@ -15634,6 +15768,80 @@ fn shop_buyout_gerrant_scenario() -> Scenario {
         FEATHER_ID,
         SHOP_BUYOUT_GERRANT_TIMING,
     )
+}
+
+/// Bob nonstackable ShopBuyout: selected `Bronze axe` (obj 1351) only.
+/// Long Lumbridge ↔ Draynor route uses [`SHOP_BUYOUT_BOB_TIMING`].
+fn shop_buyout_bob_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_bob",
+        SHOP_BUYOUT_BOB_INJECT,
+        BOB_STAND,
+        DRAYNOR_BANK_APPROACH,
+        DRAYNOR_BANK_BOOTH,
+        DRAYNOR_BANK_BOOTH_ID,
+        "Bob",
+        BRONZE_AXE_ID,
+        SHOP_BUYOUT_BOB_TIMING,
+    )
+}
+
+/// Nurmof nonstackable ShopBuyout: selected `Bronze pickaxe` (obj 1265) only.
+/// Dwarven Mine ↔ Falador East uses [`SHOP_BUYOUT_NURMOF_TIMING`].
+fn shop_buyout_nurmof_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_nurmof",
+        SHOP_BUYOUT_NURMOF_INJECT,
+        NURMOF_STAND,
+        FALADOR_EAST_BANK,
+        FALADOR_EAST_BOOTH,
+        2213,
+        "Nurmof",
+        BRONZE_PICKAXE_ID,
+        SHOP_BUYOUT_NURMOF_TIMING,
+    )
+}
+
+/// Magic Store owner stackable ShopBuyout: selected `Blood rune` (obj 565) only.
+/// Guild floor-1 shop with Yanille booth seed; pre-Start magic 66 for return
+/// legs through the guild door (`magic_guild.rs2`).
+fn shop_buyout_magic_scenario() -> Scenario {
+    let mut scenario = shop_buyout_variant(
+        "shop_buyout_magic",
+        SHOP_BUYOUT_MAGIC_INJECT,
+        MAGIC_STORE_STAND,
+        YANILLE_BANK_APPROACH,
+        YANILLE_BANK_BOOTH,
+        YANILLE_BANK_BOOTH_ID,
+        "Magic Store owner",
+        BLOOD_RUNE_ID,
+        SHOP_BUYOUT_DEFAULT_TIMING,
+    );
+    let tele_shop = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "tele to the original shop keeper before Start")
+        .expect("shop buyout seed tele to shop");
+    scenario.steps.insert(
+        tele_shop,
+        Step {
+            name: "seed magic 66 for Wizard Guild door on post-bank return legs",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, "setstat magic 66");
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ItemIdAtMost {
+                    id: COINS_ID,
+                    count: 0,
+                },
+                budget_ticks: 200,
+            },
+        },
+    );
+    scenario
 }
 
 fn shop_buyout_variant(
@@ -20089,6 +20297,9 @@ mod tests {
                 "shop_buyout_harry",
                 "shop_buyout_betty",
                 "shop_buyout_gerrant",
+                "shop_buyout_bob",
+                "shop_buyout_nurmof",
+                "shop_buyout_magic",
                 "smithing_bot",
                 "smithing_bot_platebody",
                 "smithing_bot_nails",
@@ -27574,11 +27785,52 @@ mod tests {
                 SHOP_BUYOUT_GERRANT_ITEM,
                 SHOP_BUYOUT_GERRANT_LABEL,
             ),
+            (
+                "shop_buyout_bob",
+                BRONZE_AXE_ID,
+                DRAYNOR_BANK_APPROACH,
+                DRAYNOR_BANK_BOOTH,
+                DRAYNOR_BANK_BOOTH_ID,
+                "Bob",
+                BOB_STAND,
+                SHOP_BUYOUT_BOB_BUDGET_GP,
+                SHOP_BUYOUT_BOB_PER_TRIP_GP,
+                SHOP_BUYOUT_BOB_ITEM,
+                SHOP_BUYOUT_BOB_LABEL,
+            ),
+            (
+                "shop_buyout_nurmof",
+                BRONZE_PICKAXE_ID,
+                FALADOR_EAST_BANK,
+                FALADOR_EAST_BOOTH,
+                2213,
+                "Nurmof",
+                NURMOF_STAND,
+                SHOP_BUYOUT_NURMOF_BUDGET_GP,
+                SHOP_BUYOUT_NURMOF_PER_TRIP_GP,
+                SHOP_BUYOUT_NURMOF_ITEM,
+                SHOP_BUYOUT_NURMOF_LABEL,
+            ),
+            (
+                "shop_buyout_magic",
+                BLOOD_RUNE_ID,
+                YANILLE_BANK_APPROACH,
+                YANILLE_BANK_BOOTH,
+                YANILLE_BANK_BOOTH_ID,
+                "Magic Store owner",
+                MAGIC_STORE_STAND,
+                SHOP_BUYOUT_MAGIC_BUDGET_GP,
+                SHOP_BUYOUT_MAGIC_PER_TRIP_GP,
+                SHOP_BUYOUT_MAGIC_ITEM,
+                SHOP_BUYOUT_MAGIC_LABEL,
+            ),
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
             let expected_deadline = match name {
-                "shop_buyout_betty" => SHOP_BUYOUT_BETTY_DEADLINE,
+                "shop_buyout_betty" | "shop_buyout_bob" | "shop_buyout_nurmof" => {
+                    SHOP_BUYOUT_BETTY_DEADLINE
+                }
                 "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
                 _ => SCRIPT_GOLD_DEADLINE,
             };
@@ -27920,6 +28172,7 @@ mod tests {
             "shop_buyout_lowe",
             "shop_buyout_hickton",
             "shop_buyout_harry",
+            "shop_buyout_magic",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
             assert_eq!(
