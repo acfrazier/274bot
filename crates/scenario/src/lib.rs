@@ -14299,7 +14299,7 @@ const HARD_LEATHER_CERT_ID: i32 = 1744;
 /// Green dragon leather (selected289 `dragon_leather` / alias `dragon_leather`).
 const GREEN_DRAGON_LEATHER_ID: i32 = 1745;
 const GREEN_DRAGON_LEATHER_CERT_ID: i32 = 1746;
-/// Two full needle+thread trips of banked leather (26 free slots × 2).
+/// Enough banked leather for two 26-slot trips, plus four pieces.
 const LEATHER_CRAFTER_TWO_TRIP_SEED: i32 = 56;
 const LOGS_CERT_ID: i32 = 1512;
 const OAK_LOGS_CERT_ID: i32 = 1522;
@@ -15676,7 +15676,7 @@ fn leather_crafter_green_body_scenario() -> Scenario {
     )
 }
 
-/// Soft leather chaps at Crafting 18: leather_crafting interface single-item buttons.
+/// Soft leather chaps at Crafting 18: selected289 uses make-10 button 8645.
 fn leather_crafter_chaps_scenario() -> Scenario {
     leather_crafter_variant(
         "leather_crafter_chaps",
