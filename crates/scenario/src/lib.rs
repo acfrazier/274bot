@@ -525,6 +525,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "aio_teleport_no_staff" => Some(aio_teleport_no_staff_scenario()),
         "shop_buyout" => Some(shop_buyout_scenario()),
         "shop_buyout_aubury" => Some(shop_buyout_aubury_scenario()),
+        "shop_buyout_lowe" => Some(shop_buyout_lowe_scenario()),
+        "shop_buyout_hickton" => Some(shop_buyout_hickton_scenario()),
+        "shop_buyout_harry" => Some(shop_buyout_harry_scenario()),
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
@@ -658,6 +661,9 @@ pub fn names() -> Vec<&'static str> {
         "aio_teleport_no_staff",
         "shop_buyout",
         "shop_buyout_aubury",
+        "shop_buyout_lowe",
+        "shop_buyout_hickton",
+        "shop_buyout_harry",
         "smithing_bot",
         "smithing_bot_platebody",
         "smithing_bot_nails",
@@ -14826,6 +14832,24 @@ const AUBURY_STAND: WorldTile = WorldTile {
     z: 3401,
     level: 0,
 };
+/// Frozen shopPresets Lowe stand (Varrock Archery Emporium).
+const LOWE_STAND: WorldTile = WorldTile {
+    x: 3231,
+    z: 3421,
+    level: 0,
+};
+/// Frozen shopPresets Hickton stand (Catherby Archery Emporium).
+const HICKTON_STAND: WorldTile = WorldTile {
+    x: 2821,
+    z: 3442,
+    level: 0,
+};
+/// Frozen shopPresets Harry stand (Catherby Fishing Shop).
+const HARRY_STAND: WorldTile = WorldTile {
+    x: 2833,
+    z: 3443,
+    level: 0,
+};
 /// Stock-facing walkable adjacent for Ardougne East open booth 2213@2656,3283
 /// (map m41_51 local 32,19). Preset bankStand 2655,3283 is Chebyshev 1 west;
 /// closed 2215@2656,3280 is not operable. Keep the seed stand off the booth.
@@ -14853,6 +14877,17 @@ const VARROCK_EAST_BANK_BOOTH: WorldTile = WorldTile {
     level: 0,
 };
 const VARROCK_EAST_BANK_BOOTH_ID: i32 = 2213;
+/// Stock-facing walkable adjacent for Catherby open booth 2213@2809,3442
+/// (map m43_53 local 57,50 shape 10 angle 2). Preset bankStand 2809,3441 is
+/// Chebyshev 1 south; closed 2215@2806/2808/2812,3442 are not operable.
+/// Reuses the existing cook CATHERBY_BANK stand identity.
+const CATHERBY_BANK_APPROACH: WorldTile = CATHERBY_BANK;
+const CATHERBY_BANK_BOOTH: WorldTile = WorldTile {
+    x: 2809,
+    z: 3442,
+    level: 0,
+};
+const CATHERBY_BANK_BOOTH_ID: i32 = 2213;
 const VARROCK_ANVIL: WorldTile = WorldTile {
     x: 3188,
     z: 3425,
@@ -14876,11 +14911,29 @@ const SHOP_BUYOUT_AEMAD_BUDGET_GP: f64 = 600.0;
 /// remaining budget for a second withdraw+buy.
 const SHOP_BUYOUT_AUBURY_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_AUBURY_BUDGET_GP: f64 = 1500.0;
+/// Lowe/Hickton stackable bronze arrows: cost 1 sell 1000 → 1gp/unit at
+/// baseline (Lowe stock 2000, Hickton 1000). Same stackable bank trigger as
+/// Aubury (coins<100); perTrip 500 exhausts under 100 with stock left.
+const SHOP_BUYOUT_LOWE_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_LOWE_BUDGET_GP: f64 = 1500.0;
+const SHOP_BUYOUT_HICKTON_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_HICKTON_BUDGET_GP: f64 = 1500.0;
+/// Harry stackable fishing bait: cost 3 sell 1000 → 3gp/unit; baseline 1200.
+/// perTrip 500 buys ~166 units (498gp) and leaves coins under 100.
+const SHOP_BUYOUT_HARRY_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_HARRY_BUDGET_GP: f64 = 1500.0;
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
     "Aemad's vials — East Ardougne (Ardougne East bank)";
 const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
+const SHOP_BUYOUT_LOWE_LABEL: &str = "Lowe's arrows — Varrock (Varrock East bank)";
+const SHOP_BUYOUT_HICKTON_LABEL: &str = "Hickton's arrows — Catherby (Catherby bank)";
+const SHOP_BUYOUT_HARRY_LABEL: &str = "Harry's fishing — Catherby (Catherby bank)";
 const SHOP_BUYOUT_AEMAD_ITEM: &str = "Vial of water";
 const SHOP_BUYOUT_AUBURY_ITEM: &str = "Fire rune";
+const SHOP_BUYOUT_LOWE_ITEM: &str = "Bronze arrow";
+const SHOP_BUYOUT_HICKTON_ITEM: &str = "Bronze arrow";
+const SHOP_BUYOUT_HARRY_ITEM: &str = "Fishing bait";
+const FISHING_BAIT_ID: i32 = 313;
 
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
 const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -14933,6 +14986,72 @@ const SHOP_BUYOUT_AUBURY_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "buyItems",
         value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_AUBURY_ITEM]),
+    },
+];
+const SHOP_BUYOUT_LOWE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_LOWE_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_LOWE_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_LOWE_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_LOWE_ITEM]),
+    },
+];
+const SHOP_BUYOUT_HICKTON_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_HICKTON_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_HICKTON_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_HICKTON_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_HICKTON_ITEM]),
+    },
+];
+const SHOP_BUYOUT_HARRY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_HARRY_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_HARRY_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_HARRY_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_HARRY_ITEM]),
     },
 ];
 const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
@@ -15233,6 +15352,51 @@ fn shop_buyout_aubury_scenario() -> Scenario {
         VARROCK_EAST_BANK_BOOTH_ID,
         "Aubury",
         FIRE_RUNE_ID,
+    )
+}
+
+/// Lowe stackable ShopBuyout: selected `Bronze arrow` (obj 882) only. Same
+/// Varrock East bank geometry as Aubury; coins<100 after real buy drives bank.
+fn shop_buyout_lowe_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_lowe",
+        SHOP_BUYOUT_LOWE_INJECT,
+        LOWE_STAND,
+        VARROCK_EAST_BANK_APPROACH,
+        VARROCK_EAST_BANK_BOOTH,
+        VARROCK_EAST_BANK_BOOTH_ID,
+        "Lowe",
+        BRONZE_ARROW_ID,
+    )
+}
+
+/// Hickton stackable ShopBuyout: selected `Bronze arrow` (obj 882) only.
+/// Catherby open booth 2213@2809,3442 with south approach 2809,3441.
+fn shop_buyout_hickton_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_hickton",
+        SHOP_BUYOUT_HICKTON_INJECT,
+        HICKTON_STAND,
+        CATHERBY_BANK_APPROACH,
+        CATHERBY_BANK_BOOTH,
+        CATHERBY_BANK_BOOTH_ID,
+        "Hickton",
+        BRONZE_ARROW_ID,
+    )
+}
+
+/// Harry stackable ShopBuyout: selected `Fishing bait` (obj 313) only. Same
+/// Catherby bank geometry as Hickton.
+fn shop_buyout_harry_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_harry",
+        SHOP_BUYOUT_HARRY_INJECT,
+        HARRY_STAND,
+        CATHERBY_BANK_APPROACH,
+        CATHERBY_BANK_BOOTH,
+        CATHERBY_BANK_BOOTH_ID,
+        "Harry",
+        FISHING_BAIT_ID,
     )
 }
 
@@ -19657,6 +19821,9 @@ mod tests {
                 "aio_teleport_no_staff",
                 "shop_buyout",
                 "shop_buyout_aubury",
+                "shop_buyout_lowe",
+                "shop_buyout_hickton",
+                "shop_buyout_harry",
                 "smithing_bot",
                 "smithing_bot_platebody",
                 "smithing_bot_nails",
@@ -27031,13 +27198,25 @@ mod tests {
         }
     }
 
-    /// ShopBuyout Aemad (nonstackable vial) and Aubury (stackable fire rune):
+    /// ShopBuyout Aemad (nonstackable vial), Aubury (stackable fire rune),
+    /// Lowe/Hickton (stackable bronze arrow), Harry (stackable fishing bait):
     /// selected buyItems only, budget>perTrip for resume, exact operable booth
     /// seed, unseeded product proof order through bank/return/resume.
     #[test]
     fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
-        for (name, product_id, approach, booth, booth_id, keeper, stand, budget, per_trip, item, shop)
-        in [
+        for (
+            name,
+            product_id,
+            approach,
+            booth,
+            booth_id,
+            keeper,
+            stand,
+            budget,
+            per_trip,
+            item,
+            shop,
+        ) in [
             (
                 "shop_buyout",
                 VIAL_OF_WATER_ID,
@@ -27063,6 +27242,45 @@ mod tests {
                 SHOP_BUYOUT_AUBURY_PER_TRIP_GP,
                 SHOP_BUYOUT_AUBURY_ITEM,
                 SHOP_BUYOUT_AUBURY_LABEL,
+            ),
+            (
+                "shop_buyout_lowe",
+                BRONZE_ARROW_ID,
+                VARROCK_EAST_BANK_APPROACH,
+                VARROCK_EAST_BANK_BOOTH,
+                VARROCK_EAST_BANK_BOOTH_ID,
+                "Lowe",
+                LOWE_STAND,
+                SHOP_BUYOUT_LOWE_BUDGET_GP,
+                SHOP_BUYOUT_LOWE_PER_TRIP_GP,
+                SHOP_BUYOUT_LOWE_ITEM,
+                SHOP_BUYOUT_LOWE_LABEL,
+            ),
+            (
+                "shop_buyout_hickton",
+                BRONZE_ARROW_ID,
+                CATHERBY_BANK_APPROACH,
+                CATHERBY_BANK_BOOTH,
+                CATHERBY_BANK_BOOTH_ID,
+                "Hickton",
+                HICKTON_STAND,
+                SHOP_BUYOUT_HICKTON_BUDGET_GP,
+                SHOP_BUYOUT_HICKTON_PER_TRIP_GP,
+                SHOP_BUYOUT_HICKTON_ITEM,
+                SHOP_BUYOUT_HICKTON_LABEL,
+            ),
+            (
+                "shop_buyout_harry",
+                FISHING_BAIT_ID,
+                CATHERBY_BANK_APPROACH,
+                CATHERBY_BANK_BOOTH,
+                CATHERBY_BANK_BOOTH_ID,
+                "Harry",
+                HARRY_STAND,
+                SHOP_BUYOUT_HARRY_BUDGET_GP,
+                SHOP_BUYOUT_HARRY_PER_TRIP_GP,
+                SHOP_BUYOUT_HARRY_ITEM,
+                SHOP_BUYOUT_HARRY_LABEL,
             ),
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
@@ -27259,10 +27477,15 @@ mod tests {
             }
         }
 
-        // Distinct honest representatives: nonstackable vial vs stackable fire rune.
+        // Distinct honest representatives: nonstackable vial vs stackable fire rune
+        // vs stackable bronze arrow vs stackable fishing bait.
         assert_ne!(VIAL_OF_WATER_ID, FIRE_RUNE_ID);
+        assert_ne!(FIRE_RUNE_ID, BRONZE_ARROW_ID);
+        assert_ne!(BRONZE_ARROW_ID, FISHING_BAIT_ID);
         assert_eq!(VIAL_OF_WATER_ID, 227);
         assert_eq!(FIRE_RUNE_ID, 554);
+        assert_eq!(BRONZE_ARROW_ID, 882);
+        assert_eq!(FISHING_BAIT_ID, 313);
         assert_eq!(
             AEMAD_BANK_BOOTH,
             WorldTile {
@@ -27280,6 +27503,14 @@ mod tests {
             }
         );
         assert_eq!(
+            CATHERBY_BANK_BOOTH,
+            WorldTile {
+                x: 2809,
+                z: 3442,
+                level: 0
+            }
+        );
+        assert_eq!(
             AEMAD_BANK_APPROACH,
             WorldTile {
                 x: 2655,
@@ -27292,6 +27523,14 @@ mod tests {
             WorldTile {
                 x: 3253,
                 z: 3420,
+                level: 0
+            }
+        );
+        assert_eq!(
+            CATHERBY_BANK_APPROACH,
+            WorldTile {
+                x: 2809,
+                z: 3441,
                 level: 0
             }
         );

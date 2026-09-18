@@ -7978,6 +7978,9 @@ export default class NativeStop extends LoopingBot {{
             CoreCase::AioTeleportNoStaff,
             CoreCase::ShopBuyout,
             CoreCase::ShopBuyoutAubury,
+            CoreCase::ShopBuyoutLowe,
+            CoreCase::ShopBuyoutHickton,
+            CoreCase::ShopBuyoutHarry,
             CoreCase::SmithingBot,
             CoreCase::SmithingBotPlatebody,
             CoreCase::LeatherCrafter,
@@ -11001,6 +11004,21 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(aubury, &aemad).is_err());
         let aubury_ok = noncombat_obs(AUBURY_STAND, &[], &[], &[], &[], &[]);
         validate_case_baseline(aubury, &aubury_ok).unwrap();
+
+        let lowe = CoreCase::parse("shop_buyout_lowe").unwrap();
+        assert!(validate_case_baseline(lowe, &aubury_ok).is_err());
+        let lowe_ok = noncombat_obs(LOWE_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(lowe, &lowe_ok).unwrap();
+
+        let hickton = CoreCase::parse("shop_buyout_hickton").unwrap();
+        assert!(validate_case_baseline(hickton, &lowe_ok).is_err());
+        let hickton_ok = noncombat_obs(HICKTON_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(hickton, &hickton_ok).unwrap();
+
+        let harry = CoreCase::parse("shop_buyout_harry").unwrap();
+        assert!(validate_case_baseline(harry, &hickton_ok).is_err());
+        let harry_ok = noncombat_obs(HARRY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(harry, &harry_ok).unwrap();
     }
 
     #[test]
@@ -11424,6 +11442,21 @@ export default class NativeStop extends LoopingBot {{
             ),
             (
                 "shop_buyout_aubury",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_lowe",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_hickton",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_harry",
                 "ShopBuyout",
                 "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
             ),

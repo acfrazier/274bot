@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -375,9 +375,13 @@ pub const WATER_RUNE_ID: i32 = 555;
 pub const AIO_LAW_PACK: i32 = 2;
 pub const AIO_ELEMENT_PACK: i32 = 20;
 pub const AIO_LAW_BANK: i32 = 200;
-/// Frozen ShopBuyout first preset (Aemad) and Aubury Varrock East stand.
+/// Frozen ShopBuyout presets: Aemad, Aubury, Lowe, Hickton, Harry stands.
 pub const AEMAD_STAND: (i32, i32, i32) = (2613, 3294, 0);
 pub const AUBURY_STAND: (i32, i32, i32) = (3253, 3401, 0);
+pub const LOWE_STAND: (i32, i32, i32) = (3231, 3421, 0);
+pub const HICKTON_STAND: (i32, i32, i32) = (2821, 3442, 0);
+pub const HARRY_STAND: (i32, i32, i32) = (2833, 3443, 0);
+pub const FISHING_BAIT_ID: i32 = 313;
 pub const SHOP_COIN_BANK: i32 = 20_000;
 /// Varrock West anvil used by SmithingBot. Bronze platebody is Smithing 18,
 /// not the audit's copied Smithing 1 (dagger) seed.
@@ -523,6 +527,9 @@ pub enum CoreCase {
     AioTeleportNoStaff,
     ShopBuyout,
     ShopBuyoutAubury,
+    ShopBuyoutLowe,
+    ShopBuyoutHickton,
+    ShopBuyoutHarry,
     SmithingBot,
     SmithingBotPlatebody,
     LeatherCrafter,
@@ -631,6 +638,9 @@ impl CoreCase {
             "aio_teleport_no_staff" => Ok(Self::AioTeleportNoStaff),
             "shop_buyout" => Ok(Self::ShopBuyout),
             "shop_buyout_aubury" => Ok(Self::ShopBuyoutAubury),
+            "shop_buyout_lowe" => Ok(Self::ShopBuyoutLowe),
+            "shop_buyout_hickton" => Ok(Self::ShopBuyoutHickton),
+            "shop_buyout_harry" => Ok(Self::ShopBuyoutHarry),
             "smithing_bot" => Ok(Self::SmithingBot),
             "smithing_bot_platebody" => Ok(Self::SmithingBotPlatebody),
             "leather_crafter" => Ok(Self::LeatherCrafter),
@@ -742,6 +752,9 @@ impl CoreCase {
             Self::AioTeleportNoStaff => "aio_teleport_no_staff",
             Self::ShopBuyout => "shop_buyout",
             Self::ShopBuyoutAubury => "shop_buyout_aubury",
+            Self::ShopBuyoutLowe => "shop_buyout_lowe",
+            Self::ShopBuyoutHickton => "shop_buyout_hickton",
+            Self::ShopBuyoutHarry => "shop_buyout_harry",
             Self::SmithingBot => "smithing_bot",
             Self::SmithingBotPlatebody => "smithing_bot_platebody",
             Self::LeatherCrafter => "leather_crafter",
@@ -821,7 +834,11 @@ impl CoreCase {
             Self::AioTeleport | Self::AioTeleportFalador | Self::AioTeleportNoStaff => {
                 "AIO Teleport"
             }
-            Self::ShopBuyout | Self::ShopBuyoutAubury => "ShopBuyout",
+            Self::ShopBuyout
+            | Self::ShopBuyoutAubury
+            | Self::ShopBuyoutLowe
+            | Self::ShopBuyoutHickton
+            | Self::ShopBuyoutHarry => "ShopBuyout",
             Self::SmithingBot | Self::SmithingBotPlatebody => "SmithingBot",
             Self::LeatherCrafter | Self::LeatherCrafterHardBody => "LeatherCrafter",
             Self::Firemaker | Self::FiremakerOak => "Firemaker",
@@ -2359,6 +2376,21 @@ pub fn validate_case_baseline_with_preparation(
                 && empty_pack(baseline)
                 && baseline.item_id(AIR_RUNE_ID) == 0
         }
+        CoreCase::ShopBuyoutLowe => {
+            near(baseline.tile, LOWE_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_ARROW_ID) == 0
+        }
+        CoreCase::ShopBuyoutHickton => {
+            near(baseline.tile, HICKTON_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_ARROW_ID) == 0
+        }
+        CoreCase::ShopBuyoutHarry => {
+            near(baseline.tile, HARRY_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(FISHING_BAIT_ID) == 0
+        }
         CoreCase::SmithingBot => {
             near(baseline.tile, VARROCK_WEST_BANK, 8)
                 && baseline.level("smithing") >= 1
@@ -2679,6 +2711,15 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::ShopBuyoutAubury => {
             "Aubury stand (3253,3401,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutLowe => {
+            "Lowe stand (3231,3421,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutHickton => {
+            "Hickton stand (2821,3442,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutHarry => {
+            "Harry stand (2833,3443,0) r6 and empty pack of coins/stock"
         }
         CoreCase::SmithingBot => {
             "Varrock West bank (3185,3440,0), Smithing 1, empty pack of 2347/2349/1205"
@@ -6817,6 +6858,21 @@ pub fn shop_buyout_spec(case: CoreCase) -> Option<ShopBuyoutSpec> {
             stand_radius: 6,
             restock: VARROCK_EAST_BANK,
         }),
+        CoreCase::ShopBuyoutLowe => Some(ShopBuyoutSpec {
+            stand: LOWE_STAND,
+            stand_radius: 6,
+            restock: VARROCK_EAST_BANK,
+        }),
+        CoreCase::ShopBuyoutHickton => Some(ShopBuyoutSpec {
+            stand: HICKTON_STAND,
+            stand_radius: 6,
+            restock: CATHERBY_BANK,
+        }),
+        CoreCase::ShopBuyoutHarry => Some(ShopBuyoutSpec {
+            stand: HARRY_STAND,
+            stand_radius: 6,
+            restock: CATHERBY_BANK,
+        }),
         _ => None,
     }
 }
@@ -8213,7 +8269,11 @@ impl CoreWitness {
             CoreCase::AioTeleport | CoreCase::AioTeleportFalador | CoreCase::AioTeleportNoStaff => {
                 self.aio_teleport_cycle.qualified()
             }
-            CoreCase::ShopBuyout | CoreCase::ShopBuyoutAubury => self.shop_buyout_cycle.qualified(),
+            CoreCase::ShopBuyout
+            | CoreCase::ShopBuyoutAubury
+            | CoreCase::ShopBuyoutLowe
+            | CoreCase::ShopBuyoutHickton
+            | CoreCase::ShopBuyoutHarry => self.shop_buyout_cycle.qualified(),
             CoreCase::SmithingBot | CoreCase::SmithingBotPlatebody => {
                 self.smithing_bot_cycle.qualified()
             }
