@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -67,12 +67,15 @@ pub const FLAX_ID: i32 = 1779;
 pub const COPPER_ORE_ID: i32 = 436;
 pub const TIN_ORE_ID: i32 = 438;
 pub const IRON_ORE_ID: i32 = 440;
+/// Selected 289 `obj.pack`: silver_ore=442, silver_bar=2355.
+pub const SILVER_ORE_ID: i32 = 442;
 pub const COAL_ID: i32 = 453;
 pub const STAFF_OF_FIRE_ID: i32 = 1387;
 pub const FIRE_BATTLESTAFF_ID: i32 = 1393;
 pub const BRONZE_BAR_ID: i32 = 2349;
 pub const IRON_BAR_ID: i32 = 2351;
 pub const STEEL_BAR_ID: i32 = 2353;
+pub const SILVER_BAR_ID: i32 = 2355;
 pub const LUMBRIDGE_DOOR: (i32, i32, i32) = (3208, 3211, 0);
 pub const LUMBRIDGE_DOOR_STAND: (i32, i32, i32) = (3208, 3212, 0);
 pub const LUMBRIDGE_GATE: (i32, i32, i32) = (3213, 3261, 0);
@@ -461,6 +464,7 @@ pub enum CoreCase {
     Superheater,
     SuperheaterSteel,
     SuperheaterFireBattlestaff,
+    SuperheaterSilverLowNatures,
     VialFiller,
     VialFillerEast,
     PotionMaker,
@@ -568,6 +572,7 @@ impl CoreCase {
             "superheater" => Ok(Self::Superheater),
             "superheater_steel" => Ok(Self::SuperheaterSteel),
             "superheater_fire_battlestaff" => Ok(Self::SuperheaterFireBattlestaff),
+            "superheater_silver_low_natures" => Ok(Self::SuperheaterSilverLowNatures),
             "vial_filler" => Ok(Self::VialFiller),
             "vial_filler_east" => Ok(Self::VialFillerEast),
             "potion_maker" => Ok(Self::PotionMaker),
@@ -678,6 +683,7 @@ impl CoreCase {
             Self::Superheater => "superheater",
             Self::SuperheaterSteel => "superheater_steel",
             Self::SuperheaterFireBattlestaff => "superheater_fire_battlestaff",
+            Self::SuperheaterSilverLowNatures => "superheater_silver_low_natures",
             Self::VialFiller => "vial_filler",
             Self::VialFillerEast => "vial_filler_east",
             Self::PotionMaker => "potion_maker",
@@ -776,9 +782,10 @@ impl CoreCase {
             Self::WildyAgility => "WildyAgility",
             Self::BrimhavenAgility => "BrimhavenAgility",
             Self::FlaxPicker => "FlaxPicker",
-            Self::Superheater | Self::SuperheaterSteel | Self::SuperheaterFireBattlestaff => {
-                "Superheater"
-            }
+            Self::Superheater
+            | Self::SuperheaterSteel
+            | Self::SuperheaterFireBattlestaff
+            | Self::SuperheaterSilverLowNatures => "Superheater",
             Self::VialFiller | Self::VialFillerEast => "VialFiller",
             Self::PotionMaker | Self::PotionMakerNamed => "PotionMaker",
             Self::TannerBot | Self::TannerBotHard => "TannerBot",
@@ -2117,6 +2124,14 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
                 && baseline.level("attack") >= 30
         }
+        CoreCase::SuperheaterSilverLowNatures => superheater_baseline_ready(
+            baseline,
+            SILVER_BAR_ID,
+            SILVER_ORE_ID,
+            SILVER_ORE_ID,
+            STAFF_OF_FIRE_ID,
+            20,
+        ),
         CoreCase::VialFiller => {
             near(baseline.tile, FALADOR_WEST_BANK, 6)
                 && baseline.item_id(EMPTY_VIAL_ID) == 0
@@ -2496,6 +2511,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::SuperheaterFireBattlestaff => {
             "Varrock West bank, Magic 43, Attack 30, empty pack of 1393 and no 1387"
+        }
+        CoreCase::SuperheaterSilverLowNatures => {
+            "Varrock West bank, Magic 43, Smithing 20, empty pack of 442/2355/561/1387"
         }
         CoreCase::VialFiller => "Falador West bank (2946,3369,0) and empty pack of 229/227",
         CoreCase::VialFillerEast => "Falador East bank (3013,3355,0) and empty pack of 229/227",
@@ -5470,7 +5488,7 @@ impl SuperheaterCycle {
             staff,
             steel,
         } = spec;
-        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID]
+        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID, SILVER_BAR_ID]
             .into_iter()
             .filter(|id| *id != bar)
             .any(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
@@ -7827,6 +7845,20 @@ impl CoreWitness {
                 observation,
             );
         }
+        if matches!(self.case, CoreCase::SuperheaterSilverLowNatures) {
+            // Single-ore: primary == secondary so the pair-ratio check is a no-op.
+            self.superheater_cycle.observe(
+                SuperheaterSpec {
+                    bar: SILVER_BAR_ID,
+                    primary: SILVER_ORE_ID,
+                    secondary: SILVER_ORE_ID,
+                    staff: STAFF_OF_FIRE_ID,
+                    steel: false,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
         if matches!(self.case, CoreCase::ChickenKillerBank) {
             self.chicken_killer_bank_cycle
                 .observe(&self.baseline, observation);
@@ -8132,7 +8164,8 @@ impl CoreWitness {
             CoreCase::FlaxPicker => self.flax_picker_cycle.qualified(),
             CoreCase::Superheater
             | CoreCase::SuperheaterSteel
-            | CoreCase::SuperheaterFireBattlestaff => self.superheater_cycle.qualified(),
+            | CoreCase::SuperheaterFireBattlestaff
+            | CoreCase::SuperheaterSilverLowNatures => self.superheater_cycle.qualified(),
             CoreCase::VialFiller | CoreCase::VialFillerEast => self.vial_filler_cycle.qualified(),
             CoreCase::PotionMaker | CoreCase::PotionMakerNamed => {
                 self.potion_maker_cycle.qualified()
