@@ -1,11 +1,11 @@
-//! Selected 274/289 shop facts for the ShopBuyout Aemad/Aubury presets.
+//! Selected 274/289 shop facts for the frozen ShopBuyout presets.
 //!
 //! Stock baselines, restock ticks, keeper names and pricing coefficients are
 //! parsed from pinned content inv/npc excerpts. Item name, cost, stackability
 //! and members flags come from selected-revision `game_data` items — this
-//! module does not duplicate catalog/price tables. Only `adventurershop` and
-//! `runeshop` are posted; other keepers stay unpublished so preset lookups
-//! cannot pretend every shop is supported.
+//! module does not duplicate catalog/price tables. Only the twelve ShopBuyout
+//! preset inventories are posted; other content shops stay unpublished so
+//! lookups cannot pretend every shop is supported.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,12 +14,34 @@ use serde::Serialize;
 use crate::game_data::SelectedGameData;
 
 const ADVENTURER_INV: &str = include_str!("../data/shops/adventurershop.inv");
+const MAGEARENA_RUNE_INV: &str = include_str!("../data/shops/magearena_runeshop.inv");
+const MAGIC_INV: &str = include_str!("../data/shops/magicshop.inv");
 const RUNE_INV: &str = include_str!("../data/shops/runeshop.inv");
+const ARCHERY_INV: &str = include_str!("../data/shops/archeryshop.inv");
+const ARCHERY2_INV: &str = include_str!("../data/shops/archeryshop2.inv");
+const FISHING_INV: &str = include_str!("../data/shops/fishingshop.inv");
+const FISHING2_INV: &str = include_str!("../data/shops/fishingshop2.inv");
+const SHILO_FISHING_INV: &str = include_str!("../data/shops/shilofishingshop.inv");
+const AXE_INV: &str = include_str!("../data/shops/axeshop.inv");
+const PICKAXE_INV: &str = include_str!("../data/shops/pickaxeshop.inv");
+const MAGIC_GUILD_INV: &str = include_str!("../data/shops/magicguildshop.inv");
 const KEEPERS: &str = include_str!("../data/shops/keepers.npc");
 
-/// The only shops this release posts. Other content shops are not implied.
-const POSTED_INVS: &[&str] = &["adventurershop", "runeshop"];
-
+/// Frozen ShopBuyout preset inventories only. Other content shops are not implied.
+const POSTED_INVS: &[&str] = &[
+    "adventurershop",
+    "magearena_runeshop",
+    "magicshop",
+    "runeshop",
+    "archeryshop",
+    "archeryshop2",
+    "fishingshop",
+    "fishingshop2",
+    "shilofishingshop",
+    "axeshop",
+    "pickaxeshop",
+    "magicguildshop",
+];
 /// One stock row after joining inv content with selected item facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ShopItemFact {
@@ -75,7 +97,20 @@ struct ParsedKeeper {
 
 /// Posted shops for this revision, skipping any inv whose obj aliases are missing.
 pub fn shops_for(data: &SelectedGameData) -> Vec<ShopRecord> {
-    let invs = parse_invs(&[ADVENTURER_INV, RUNE_INV]);
+    let invs = parse_invs(&[
+        ADVENTURER_INV,
+        MAGEARENA_RUNE_INV,
+        MAGIC_INV,
+        RUNE_INV,
+        ARCHERY_INV,
+        ARCHERY2_INV,
+        FISHING_INV,
+        FISHING2_INV,
+        SHILO_FISHING_INV,
+        AXE_INV,
+        PICKAXE_INV,
+        MAGIC_GUILD_INV,
+    ]);
     let keepers = parse_keepers(KEEPERS);
     POSTED_INVS
         .iter()
@@ -350,14 +385,39 @@ mod tests {
             .collect()
     }
 
+    const PRESET_KEEPERS: &[&str] = &[
+        "Aemad",
+        "Lundail",
+        "Betty",
+        "Aubury",
+        "Lowe",
+        "Hickton",
+        "Gerrant",
+        "Harry",
+        "Fernahei",
+        "Bob",
+        "Nurmof",
+        "Magic Store owner",
+    ];
+
     #[test]
-    fn only_aemad_and_aubury_are_posted_on_both_revisions() {
+    fn all_twelve_shopbuyout_presets_are_posted_on_both_revisions() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
-            let shops = shops_for(&data(rev));
+            let catalog = data(rev);
+            let shops = shops_for(&catalog);
             let invs: Vec<_> = shops.iter().map(|shop| shop.inv.as_str()).collect();
-            assert_eq!(invs, ["adventurershop", "runeshop"]);
-            assert!(shop_by_keeper(&data(rev), "Shop keeper").is_none());
-            assert!(shop_by_inv(&data(rev), "generalshop1").is_none());
+            assert_eq!(invs, POSTED_INVS);
+            for keeper in PRESET_KEEPERS {
+                assert!(
+                    shop_by_keeper(&catalog, keeper).is_some(),
+                    "{keeper} must resolve on {rev:?}"
+                );
+            }
+            // Unpublished identities stay fail-closed.
+            assert!(shop_by_keeper(&catalog, "Shop keeper").is_none());
+            assert!(shop_by_keeper(&catalog, "Chamber guardian").is_none());
+            assert!(shop_by_inv(&catalog, "generalshop1").is_none());
+            assert!(shop_by_inv(&catalog, "magearena_staffshop").is_none());
         }
     }
 
@@ -413,6 +473,170 @@ mod tests {
             assert_eq!(fire.restock_ticks, 10);
             assert!(fire.stackable);
             assert_eq!(fire.cost, 4);
+        }
+    }
+
+    #[test]
+    fn remaining_preset_facts_join_selected_catalog() {
+        for rev in [ClientRevision::R274, ClientRevision::R289] {
+            let catalog = data(rev);
+            let lundail = shop_by_keeper(&catalog, "Lundail").expect("Lundail");
+            assert_eq!(lundail.inv, "magearena_runeshop");
+            assert_eq!(lundail.title, "Lundail's Arena-side Rune Shop.");
+            assert_eq!(lundail.sell, 1000);
+            assert_eq!(lundail.buy, 600);
+            assert_eq!(lundail.delta, 30);
+            assert!(!lundail.allstock);
+            let law = lundail
+                .items
+                .iter()
+                .find(|item| item.obj == "lawrune")
+                .expect("law");
+            assert_eq!(law.name, "Law rune");
+            assert_eq!(law.baseline, 250);
+            assert_eq!(law.restock_ticks, 300);
+            assert_eq!(law.cost, catalog.item_by_alias("lawrune").unwrap().cost);
+            assert!(law.stackable);
+
+            let betty = shop_by_keeper(&catalog, "Betty").expect("Betty");
+            assert_eq!(betty.inv, "magicshop");
+            assert_eq!(betty.title, "Betty's Magic Emporium.");
+            assert_eq!(betty.sell, 1000);
+            assert_eq!(betty.delta, 10);
+            let newt = betty
+                .items
+                .iter()
+                .find(|item| item.obj == "eye_of_newt")
+                .expect("newt");
+            assert_eq!(newt.name, "Eye of newt");
+            assert_eq!(newt.baseline, 300);
+            assert_eq!(
+                newt.cost,
+                catalog.item_by_alias("eye_of_newt").unwrap().cost
+            );
+
+            let lowe = shop_by_keeper(&catalog, "Lowe").expect("Lowe");
+            assert_eq!(lowe.inv, "archeryshop");
+            assert_eq!(lowe.title, "Lowe's Archery Emporium");
+            assert_eq!(lowe.sell, 1000);
+            assert_eq!(lowe.buy, 550);
+            assert_eq!(lowe.delta, 10);
+            let bronze = lowe
+                .items
+                .iter()
+                .find(|item| item.obj == "bronze_arrow")
+                .expect("bronze arrow");
+            assert_eq!(bronze.baseline, 2000);
+            assert_eq!(bronze.restock_ticks, 10);
+            assert!(bronze.stackable);
+
+            let hickton = shop_by_keeper(&catalog, "Hickton").expect("Hickton");
+            assert_eq!(hickton.inv, "archeryshop2");
+            assert_eq!(hickton.title, "Hicktons Archery Emporium.");
+            assert_eq!(hickton.buy, 500);
+            let rune_tips = hickton
+                .items
+                .iter()
+                .find(|item| item.obj == "rune_arrowheads")
+                .expect("rune tips");
+            assert_eq!(rune_tips.baseline, 100);
+            assert!(rune_tips.members);
+            assert_eq!(
+                rune_tips.cost,
+                catalog.item_by_alias("rune_arrowheads").unwrap().cost
+            );
+
+            let gerrant = shop_by_keeper(&catalog, "Gerrant").expect("Gerrant");
+            assert_eq!(gerrant.inv, "fishingshop");
+            assert_eq!(gerrant.title, "Gerrant's Fishy Business.");
+            assert_eq!(gerrant.buy, 700);
+            let feather = gerrant
+                .items
+                .iter()
+                .find(|item| item.obj == "feather")
+                .expect("feather");
+            assert_eq!(feather.name, "Feather");
+            assert_eq!(feather.baseline, 1000);
+            assert_eq!(feather.restock_ticks, 1);
+            assert_eq!(feather.cost, 2);
+            assert!(feather.stackable);
+
+            let harry = shop_by_keeper(&catalog, "Harry").expect("Harry");
+            assert_eq!(harry.inv, "fishingshop2");
+            assert_eq!(harry.title, "Harrys Fishing Shop.");
+            let big_net = harry
+                .items
+                .iter()
+                .find(|item| item.obj == "big_net")
+                .expect("big net");
+            assert_eq!(big_net.name, "Big fishing net");
+            assert_eq!(big_net.baseline, 5);
+            assert!(big_net.members);
+            assert_eq!(big_net.cost, 20);
+
+            let fernahei = shop_by_keeper(&catalog, "Fernahei").expect("Fernahei");
+            assert_eq!(fernahei.inv, "shilofishingshop");
+            assert_eq!(fernahei.title, "Fernahai's Fishing Hut.");
+            assert_eq!(fernahei.delta, 20);
+            assert_eq!(fernahei.items.len(), 7);
+            assert_eq!(fernahei.items[3].obj, "feather");
+            assert_eq!(fernahei.items[3].baseline, 800);
+
+            let bob = shop_by_keeper(&catalog, "Bob").expect("Bob");
+            assert_eq!(bob.inv, "axeshop");
+            assert_eq!(bob.title, "Bob's Brilliant Axes.");
+            assert_eq!(bob.sell, 1000);
+            assert_eq!(bob.buy, 600);
+            assert_eq!(bob.delta, 20);
+            let bronze_axe = bob
+                .items
+                .iter()
+                .find(|item| item.obj == "bronze_axe")
+                .expect("bronze axe");
+            assert_eq!(bronze_axe.name, "Bronze axe");
+            assert_eq!(bronze_axe.baseline, 10);
+            assert_eq!(bronze_axe.cost, 16);
+            assert!(!bronze_axe.stackable);
+
+            let nurmof = shop_by_keeper(&catalog, "Nurmof").expect("Nurmof");
+            assert_eq!(nurmof.inv, "pickaxeshop");
+            assert_eq!(nurmof.title, "Nurmof's Pickaxe Shop.");
+            let rune_pick = nurmof
+                .items
+                .iter()
+                .find(|item| item.obj == "rune_pickaxe")
+                .expect("rune pick");
+            assert_eq!(rune_pick.baseline, 1);
+            assert_eq!(rune_pick.restock_ticks, 700);
+            assert_eq!(
+                rune_pick.cost,
+                catalog.item_by_alias("rune_pickaxe").unwrap().cost
+            );
+
+            let magic = shop_by_keeper(&catalog, "Magic Store owner").expect("Magic Store owner");
+            assert_eq!(magic.inv, "magicguildshop");
+            assert_eq!(magic.title, "Magic Guild Store");
+            assert_eq!(magic.keepers, ["Magic Store owner"]);
+            assert_eq!(magic.sell, 1000);
+            assert_eq!(magic.buy, 600);
+            assert_eq!(magic.delta, 10);
+            let soul = magic
+                .items
+                .iter()
+                .find(|item| item.obj == "soulrune")
+                .expect("soul");
+            assert_eq!(soul.name, "Soul rune");
+            assert_eq!(soul.baseline, 50);
+            assert_eq!(soul.cost, 1250);
+            assert!(soul.members);
+            assert!(soul.stackable);
+            let blood = magic
+                .items
+                .iter()
+                .find(|item| item.obj == "bloodrune")
+                .expect("blood");
+            assert_eq!(blood.cost, 50);
+            assert!(blood.members);
         }
     }
 
@@ -530,11 +754,14 @@ mod tests {
     fn content_json_is_keyed_by_inv_and_omits_unpublished_shops() {
         let value = content_json_value(&data(ClientRevision::R289));
         let obj = value.as_object().expect("shops object");
-        assert_eq!(obj.len(), 2);
-        assert!(obj.contains_key("adventurershop"));
-        assert!(obj.contains_key("runeshop"));
+        assert_eq!(obj.len(), POSTED_INVS.len());
+        for inv in POSTED_INVS {
+            assert!(obj.contains_key(*inv), "missing {inv}");
+        }
         assert_eq!(obj["adventurershop"]["items"][0]["name"], "Vial of water");
         assert_eq!(obj["adventurershop"]["items"][0]["restockTicks"], 30);
+        assert_eq!(obj["fishingshop"]["keepers"][0], "Gerrant");
         assert!(!obj.contains_key("generalshop1"));
+        assert!(!obj.contains_key("magearena_staffshop"));
     }
 }

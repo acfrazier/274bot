@@ -1,0 +1,20 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_mage_arena/configs/mage_arena.inv [magearena_runeshop]
+[magearena_runeshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=firerune,200,50
+stock2=waterrune,200,50
+stock3=airrune,200,50
+stock4=earthrune,200,50
+stock5=mindrune,140,50
+stock6=bodyrune,140,50
+stock7=naturerune,250,300
+stock8=chaosrune,250,100
+stock9=lawrune,250,300
+stock10=cosmicrune,20,100
+stock11=deathrune,250,150

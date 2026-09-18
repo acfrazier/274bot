@@ -80,7 +80,20 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
     );
     assert_eq!(
         probe["posted"],
-        serde_json::json!(["adventurershop", "runeshop"])
+        serde_json::json!([
+            "adventurershop",
+            "archeryshop",
+            "archeryshop2",
+            "axeshop",
+            "fishingshop",
+            "fishingshop2",
+            "magearena_runeshop",
+            "magicguildshop",
+            "magicshop",
+            "pickaxeshop",
+            "runeshop",
+            "shilofishingshop"
+        ])
     );
     assert_eq!(probe["err"], Value::Null);
     let plan = probe["plan"].as_array().expect("plan");

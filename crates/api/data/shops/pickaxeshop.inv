@@ -1,0 +1,15 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_falador/configs/dwarven_mine.inv [pickaxeshop]
+[pickaxeshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=bronze_pickaxe,6,50
+stock2=iron_pickaxe,5,100
+stock3=steel_pickaxe,4,200
+stock4=mithril_pickaxe,3,300
+stock5=adamant_pickaxe,2,500
+stock6=rune_pickaxe,1,700

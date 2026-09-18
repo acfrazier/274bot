@@ -1,0 +1,20 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_port_sarim/configs/port_sarim.inv [magicshop]
+[magicshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=firerune,1000,10
+stock2=waterrune,1000,10
+stock3=airrune,1000,10
+stock4=earthrune,1000,10
+stock5=mindrune,1000,10
+stock6=bodyrune,1000,10
+stock7=chaosrune,1000,100
+stock8=deathrune,1000,150
+stock9=eye_of_newt,300,10
+stock10=bluewizhat,1,100
+stock11=blackwizhat,1,100
