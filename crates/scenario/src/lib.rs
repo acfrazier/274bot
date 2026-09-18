@@ -368,8 +368,9 @@ pub enum StepKind {
     /// Scenario-only native lamp witness. Sends no game action. The runner
     /// latches one post-entry episode from its existing host hold input plus
     /// snapshot facts: hold while `lamp_id` is present, `reward_stat` XP
-    /// advance, consumption, a newly observed active continuation, drainage,
-    /// and hold release. This is host observation, not snapshot ownership.
+    /// advance, consumption, the source-identified award continuation,
+    /// drainage, and hold release. This is host observation, not snapshot
+    /// ownership.
     ObserveLampRedemption { lamp_id: i32, reward_stat: i32 },
     /// Host starts the catalog isolate (`script_start_load`) once when
     /// the live pump sees this step. No-op on the client. The wait is an

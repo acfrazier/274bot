@@ -71,6 +71,8 @@ impl LampEpisodeObservation {
     }
 }
 
+const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -650,6 +652,12 @@ impl ScenarioRunner {
         let reward_xp = self.stat_xp(reward_stat);
         let active_continue =
             Proof::ActiveContinue.check(&self.snapshot, self.obj_names.as_deref());
+        let authentic_award = active_continue
+            && self
+                .snapshot
+                .chat_modal_texts()
+                .iter()
+                .any(|line| line.contains(LAMP_AWARD_MARKER));
         let state = self
             .lamp_episode
             .get_or_insert_with(LampEpisodeObservation::default);
@@ -668,20 +676,18 @@ impl ScenarioRunner {
             .zip(reward_xp)
             .is_some_and(|(before, now)| now > before);
         let consumed_now = state.lamp_seen && !lamp_here;
-        let reward_edge = reward_now && !state.reward_seen;
-        let consumed_edge = consumed_now && !state.consumed_seen;
         state.reward_seen |= reward_now;
         state.consumed_seen |= consumed_now;
 
-        // The selected-289 confirm script consumes the lamp, advances the
-        // selected stat, and opens mesbox in one server script. Accept either
-        // reward/consumption as the last newly published packet, but never an
-        // already-open or later unrelated continuation.
-        if active_continue
+        // xplamp_confirm emits multiple packets before mesbox, so the client
+        // may publish the durable reward and award continuation on different
+        // frames. Bind the continuation to the selected-289 award text and
+        // this post-injection held episode instead of requiring an atomic
+        // reward/consumption edge. A stale entry dialogue still cannot count.
+        if authentic_award
             && state.clear_before_dialogue
-            && state.reward_seen
-            && state.consumed_seen
-            && (reward_edge || consumed_edge)
+            && state.lamp_seen
+            && state.hold_seen
         {
             state.dialogue_seen = true;
         }
@@ -2466,6 +2472,7 @@ mod tests {
     const TEST_LAMP_ID: i32 = 2528;
     const TEST_STRENGTH_STAT: i32 = 2;
     const TEST_PRAYER_STAT: i32 = 5;
+    const TEST_LAMP_AWARD: &str = "Your wish has been granted!";
 
     fn lamp_episode_scenario(budget_ticks: u32) -> Scenario {
         let fresh_prayer = Proof::FreshStatXpGain {
@@ -2501,7 +2508,7 @@ mod tests {
         }
     }
 
-    fn set_continue(c: &mut Client, open: bool) {
+    fn set_continue_text(c: &mut Client, open: bool, text: &str) {
         use client::config::if_type::ButtonType;
 
         const ROOT: usize = 6206;
@@ -2528,6 +2535,7 @@ mod tests {
         c.set_iface_mut(
             CONTINUE,
             IfTypeMut {
+                text: text.into(),
                 button_type: ButtonType::BUTTON_CONTINUE,
                 ..Default::default()
             },
@@ -2538,6 +2546,10 @@ mod tests {
         } else {
             ServerProt::IF_CLOSE
         });
+    }
+
+    fn set_continue(c: &mut Client, open: bool) {
+        set_continue_text(c, open, "");
     }
 
     #[test]
@@ -2558,7 +2570,7 @@ mod tests {
         set_inv(&mut c, &[]);
         c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
         c.bump_gens(ServerProt::UPDATE_STAT);
-        set_continue(&mut c, true);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
         runner.tick_with_hold(&mut c, true);
         assert_eq!(
             runner.status(),
@@ -2596,11 +2608,45 @@ mod tests {
     }
 
     #[test]
+    fn lamp_episode_accepts_source_named_award_after_split_reward_packets() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 200;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(12), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, true);
+
+        // xplamp_confirm publishes the durable reward effects before mesbox;
+        // a client frame may therefore observe these without the award IF.
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, true);
+
+        // The authentic award continuation arrives on a later frame, after
+        // the reward/consumption edges have already been retained.
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
+        runner.tick_with_hold(&mut c, true);
+        set_continue_text(&mut c, false, "");
+        runner.tick_with_hold(&mut c, true);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, false);
+
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "source-identified split award must complete the same held episode"
+        );
+    }
+
+    #[test]
     fn lamp_episode_rejects_preexisting_and_later_unrelated_dialogues() {
         let mut c = seeded_client();
         c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
         set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
-        set_continue(&mut c, true);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
         let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(7), None);
         runner.set_scene_settle(Duration::ZERO);
 
@@ -2641,7 +2687,7 @@ mod tests {
         set_inv(&mut c, &[]);
         c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
         c.bump_gens(ServerProt::UPDATE_STAT);
-        set_continue(&mut c, true);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
         runner.tick_with_hold(&mut c, false);
         set_continue(&mut c, false);
         runner.tick_with_hold(&mut c, false);
@@ -2654,7 +2700,9 @@ mod tests {
             panic!("wrong native hold and elapsed ticks must fail");
         };
         assert!(message.contains("hold=false"), "{message}");
-        assert!(message.contains("dialogue=true"), "{message}");
-        assert!(message.contains("drained=true"), "{message}");
+        assert!(
+            message.contains("dialogue=false"),
+            "an award outside a held episode must not bind: {message}"
+        );
     }
 }
