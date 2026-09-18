@@ -528,6 +528,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "shop_buyout_lowe" => Some(shop_buyout_lowe_scenario()),
         "shop_buyout_hickton" => Some(shop_buyout_hickton_scenario()),
         "shop_buyout_harry" => Some(shop_buyout_harry_scenario()),
+        "shop_buyout_betty" => Some(shop_buyout_betty_scenario()),
+        "shop_buyout_gerrant" => Some(shop_buyout_gerrant_scenario()),
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
         "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
@@ -664,6 +666,8 @@ pub fn names() -> Vec<&'static str> {
         "shop_buyout_lowe",
         "shop_buyout_hickton",
         "shop_buyout_harry",
+        "shop_buyout_betty",
+        "shop_buyout_gerrant",
         "smithing_bot",
         "smithing_bot_platebody",
         "smithing_bot_nails",
@@ -14850,6 +14854,19 @@ const HARRY_STAND: WorldTile = WorldTile {
     z: 3443,
     level: 0,
 };
+/// Frozen shopPresets Betty stand (Port Sarim Magic Emporium). Distinct from
+/// herblore `BETTY_SHOP` 3012,3259 — ShopBuyout pin is shopPresets 3012,3258.
+const BETTY_STAND: WorldTile = WorldTile {
+    x: 3012,
+    z: 3258,
+    level: 0,
+};
+/// Frozen shopPresets Gerrant stand (Port Sarim Fishy Business).
+const GERRANT_STAND: WorldTile = WorldTile {
+    x: 3013,
+    z: 3224,
+    level: 0,
+};
 /// Stock-facing walkable adjacent for Ardougne East open booth 2213@2656,3283
 /// (map m41_51 local 32,19). Preset bankStand 2655,3283 is Chebyshev 1 west;
 /// closed 2215@2656,3280 is not operable. Keep the seed stand off the booth.
@@ -14888,6 +14905,13 @@ const CATHERBY_BANK_BOOTH: WorldTile = WorldTile {
     level: 0,
 };
 const CATHERBY_BANK_BOOTH_ID: i32 = 2213;
+/// Stock-facing walkable adjacent for Falador West open booth 2213@2946,3367
+/// (vial_filler/climbing_boots booth identity). Preset bankStand 2946,3369 is
+/// Chebyshev 2 north of the booth; approach reuses FALADOR_WEST_BANK 2946,3368
+/// (Chebyshev 1). Keep the seed stand off the booth tile.
+const FALADOR_WEST_BANK_APPROACH: WorldTile = FALADOR_WEST_BANK;
+const FALADOR_WEST_BANK_BOOTH: WorldTile = FALADOR_WEST_BOOTH;
+const FALADOR_WEST_BANK_BOOTH_ID: i32 = 2213;
 const VARROCK_ANVIL: WorldTile = WorldTile {
     x: 3188,
     z: 3425,
@@ -14922,17 +14946,30 @@ const SHOP_BUYOUT_HICKTON_BUDGET_GP: f64 = 1500.0;
 /// perTrip 500 buys ~166 units (498gp) and leaves coins under 100.
 const SHOP_BUYOUT_HARRY_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_HARRY_BUDGET_GP: f64 = 1500.0;
+/// Betty stackable fire rune: magicshop firerune baseline 1000 cost 4 sell 1000
+/// → 4gp/unit (same unit math as Aubury). perTrip 500 / budget 1500 for coins<100
+/// bank + resume headroom. Stock 1000 leaves remainder after one trip.
+const SHOP_BUYOUT_BETTY_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_BETTY_BUDGET_GP: f64 = 1500.0;
+/// Gerrant stackable feather: fishingshop feather baseline 1000 cost 2 sell 1000
+/// → 2gp/unit. perTrip 500 buys ~250 units and leaves coins under 100.
+const SHOP_BUYOUT_GERRANT_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_GERRANT_BUDGET_GP: f64 = 1500.0;
 const SHOP_BUYOUT_AEMAD_LABEL: &str =
     "Aemad's vials — East Ardougne (Ardougne East bank)";
 const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
 const SHOP_BUYOUT_LOWE_LABEL: &str = "Lowe's arrows — Varrock (Varrock East bank)";
 const SHOP_BUYOUT_HICKTON_LABEL: &str = "Hickton's arrows — Catherby (Catherby bank)";
 const SHOP_BUYOUT_HARRY_LABEL: &str = "Harry's fishing — Catherby (Catherby bank)";
+const SHOP_BUYOUT_BETTY_LABEL: &str = "Betty's runes — Port Sarim (Falador West bank)";
+const SHOP_BUYOUT_GERRANT_LABEL: &str = "Gerrant's feathers — Port Sarim (Draynor bank)";
 const SHOP_BUYOUT_AEMAD_ITEM: &str = "Vial of water";
 const SHOP_BUYOUT_AUBURY_ITEM: &str = "Fire rune";
 const SHOP_BUYOUT_LOWE_ITEM: &str = "Bronze arrow";
 const SHOP_BUYOUT_HICKTON_ITEM: &str = "Bronze arrow";
 const SHOP_BUYOUT_HARRY_ITEM: &str = "Fishing bait";
+const SHOP_BUYOUT_BETTY_ITEM: &str = "Fire rune";
+const SHOP_BUYOUT_GERRANT_ITEM: &str = "Feather";
 const FISHING_BAIT_ID: i32 = 313;
 
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
@@ -15052,6 +15089,50 @@ const SHOP_BUYOUT_HARRY_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "buyItems",
         value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_HARRY_ITEM]),
+    },
+];
+const SHOP_BUYOUT_BETTY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_BETTY_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_BETTY_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_BETTY_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_BETTY_ITEM]),
+    },
+];
+const SHOP_BUYOUT_GERRANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_GERRANT_LABEL),
+    },
+    ScriptSettingInject {
+        id: "budgetGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_GERRANT_BUDGET_GP),
+    },
+    ScriptSettingInject {
+        id: "perTripGp",
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_GERRANT_PER_TRIP_GP),
+    },
+    ScriptSettingInject {
+        id: "stopFloorGp",
+        value: ScriptInjectValue::Num(0.0),
+    },
+    ScriptSettingInject {
+        id: "buyItems",
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_GERRANT_ITEM]),
     },
 ];
 const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
@@ -15397,6 +15478,37 @@ fn shop_buyout_harry_scenario() -> Scenario {
         CATHERBY_BANK_BOOTH_ID,
         "Harry",
         FISHING_BAIT_ID,
+    )
+}
+
+/// Betty stackable ShopBuyout: selected `Fire rune` (obj 554) only. Falador
+/// West open booth 2213@2946,3367 with approach 2946,3368 (preset bankStand
+/// 2946,3369 is Chebyshev 2). coins<100 after real buy drives bank.
+fn shop_buyout_betty_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_betty",
+        SHOP_BUYOUT_BETTY_INJECT,
+        BETTY_STAND,
+        FALADOR_WEST_BANK_APPROACH,
+        FALADOR_WEST_BANK_BOOTH,
+        FALADOR_WEST_BANK_BOOTH_ID,
+        "Betty",
+        FIRE_RUNE_ID,
+    )
+}
+
+/// Gerrant stackable ShopBuyout: selected `Feather` (obj 314) only. Reuses
+/// Draynor open booth 2213@3091,3243 with approach 3092,3243 (frozen bankStand).
+fn shop_buyout_gerrant_scenario() -> Scenario {
+    shop_buyout_variant(
+        "shop_buyout_gerrant",
+        SHOP_BUYOUT_GERRANT_INJECT,
+        GERRANT_STAND,
+        DRAYNOR_BANK_APPROACH,
+        DRAYNOR_BANK_BOOTH,
+        DRAYNOR_BANK_BOOTH_ID,
+        "Gerrant",
+        FEATHER_ID,
     )
 }
 
@@ -19824,6 +19936,8 @@ mod tests {
                 "shop_buyout_lowe",
                 "shop_buyout_hickton",
                 "shop_buyout_harry",
+                "shop_buyout_betty",
+                "shop_buyout_gerrant",
                 "smithing_bot",
                 "smithing_bot_platebody",
                 "smithing_bot_nails",
@@ -27199,9 +27313,10 @@ mod tests {
     }
 
     /// ShopBuyout Aemad (nonstackable vial), Aubury (stackable fire rune),
-    /// Lowe/Hickton (stackable bronze arrow), Harry (stackable fishing bait):
-    /// selected buyItems only, budget>perTrip for resume, exact operable booth
-    /// seed, unseeded product proof order through bank/return/resume.
+    /// Lowe/Hickton (stackable bronze arrow), Harry (stackable fishing bait),
+    /// Betty (stackable fire rune), Gerrant (stackable feather): selected
+    /// buyItems only, budget>perTrip for resume, exact operable booth seed,
+    /// unseeded product proof order through bank/return/resume.
     #[test]
     fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
         for (
@@ -27281,6 +27396,32 @@ mod tests {
                 SHOP_BUYOUT_HARRY_PER_TRIP_GP,
                 SHOP_BUYOUT_HARRY_ITEM,
                 SHOP_BUYOUT_HARRY_LABEL,
+            ),
+            (
+                "shop_buyout_betty",
+                FIRE_RUNE_ID,
+                FALADOR_WEST_BANK_APPROACH,
+                FALADOR_WEST_BANK_BOOTH,
+                FALADOR_WEST_BANK_BOOTH_ID,
+                "Betty",
+                BETTY_STAND,
+                SHOP_BUYOUT_BETTY_BUDGET_GP,
+                SHOP_BUYOUT_BETTY_PER_TRIP_GP,
+                SHOP_BUYOUT_BETTY_ITEM,
+                SHOP_BUYOUT_BETTY_LABEL,
+            ),
+            (
+                "shop_buyout_gerrant",
+                FEATHER_ID,
+                DRAYNOR_BANK_APPROACH,
+                DRAYNOR_BANK_BOOTH,
+                DRAYNOR_BANK_BOOTH_ID,
+                "Gerrant",
+                GERRANT_STAND,
+                SHOP_BUYOUT_GERRANT_BUDGET_GP,
+                SHOP_BUYOUT_GERRANT_PER_TRIP_GP,
+                SHOP_BUYOUT_GERRANT_ITEM,
+                SHOP_BUYOUT_GERRANT_LABEL,
             ),
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));

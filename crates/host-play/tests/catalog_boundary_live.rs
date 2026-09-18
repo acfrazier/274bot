@@ -7981,6 +7981,8 @@ export default class NativeStop extends LoopingBot {{
             CoreCase::ShopBuyoutLowe,
             CoreCase::ShopBuyoutHickton,
             CoreCase::ShopBuyoutHarry,
+            CoreCase::ShopBuyoutBetty,
+            CoreCase::ShopBuyoutGerrant,
             CoreCase::SmithingBot,
             CoreCase::SmithingBotPlatebody,
             CoreCase::LeatherCrafter,
@@ -11019,6 +11021,16 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(harry, &hickton_ok).is_err());
         let harry_ok = noncombat_obs(HARRY_STAND, &[], &[], &[], &[], &[]);
         validate_case_baseline(harry, &harry_ok).unwrap();
+
+        let betty = CoreCase::parse("shop_buyout_betty").unwrap();
+        assert!(validate_case_baseline(betty, &harry_ok).is_err());
+        let betty_ok = noncombat_obs(BETTY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(betty, &betty_ok).unwrap();
+
+        let gerrant = CoreCase::parse("shop_buyout_gerrant").unwrap();
+        assert!(validate_case_baseline(gerrant, &betty_ok).is_err());
+        let gerrant_ok = noncombat_obs(GERRANT_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(gerrant, &gerrant_ok).unwrap();
     }
 
     #[test]
@@ -11457,6 +11469,16 @@ export default class NativeStop extends LoopingBot {{
             ),
             (
                 "shop_buyout_harry",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_betty",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_gerrant",
                 "ShopBuyout",
                 "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
             ),
