@@ -27,7 +27,12 @@ fn main() {
         std::process::exit(1);
     }
     args.pair_core = true;
-    let _stores = script::IsolatedEnv::enter(&format!("pair-watch-{}", std::process::id()));
+    let catalog_root = script::rs2b0t_env();
+    let stores = script::IsolatedEnv::enter(&format!("pair-watch-{}", std::process::id()));
+    // Isolate mutable stores while retaining the explicitly selected catalog.
+    if let Some(root) = catalog_root {
+        stores.set_rs2b0t(&root);
+    }
     if let Err(error) = panel::run_panel(args) {
         eprintln!("FAIL: pair_watch: {error}");
         std::process::exit(1);
