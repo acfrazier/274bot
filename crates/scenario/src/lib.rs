@@ -2228,6 +2228,20 @@ fn gold_script_nav() -> ScenarioNav {
 const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak.
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
+/// SmithingBot product→fresh-bank watch after the first pack item appears.
+///
+/// selected289 `smithing_anvil`: `p_delay(1)` then work then `p_delay(2)`.
+/// Engine `P_DELAY` sets `delayedUntil = currentTick + 1 + n`, so those are
+/// 2 + 3 = 5 game ticks per bar. `makeFromPanelMax` posts Make-10 (not all).
+/// Dagger trip keeps the hammer → ≤27 bars; deposit proof arms on the first
+/// product, so ≤26 items remain at 5 ticks = 130. Level 1→2 and 2→3 (bronze
+/// dagger 12.5 xp) plus a Make-10 ceiling restart interrupt the session —
+/// each needs ContinueDialog + bar-use + panel (~15 ticks × 3 = 45). Anvil
+/// stand (3188,3425) → Varrock West bank is Chebyshev 15 plus open/deposit
+/// (~30). Bound 130+45+30 = 205, rounded to 220. Live cf41 left 7 bars under
+/// anim 898 after 150 ticks of this step — progressive craft, not a stall.
+/// Global [`SCRIPT_GOLD_DEADLINE`] (180s) is unchanged.
+const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 220;
 
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
 fn drain_advancestat() -> Step {
@@ -15612,7 +15626,24 @@ fn smithing_bot_variant(
         ("watch return to the anvil after restock", anvil),
         ("watch further Smithing XP after restock", further_xp),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        // Deposit arms on the first product while ≤26 bars may still forge
+        // (5 ticks/bar + level-up/Make-10 restarts + bank). Other arms keep
+        // the ordinary gold watch; do not loosen the global deadline.
+        let budget_ticks = if matches!(arm, Proof::BankItemId { .. }) {
+            SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS
+        } else {
+            SCRIPT_GOLD_WATCH_TICKS
+        };
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm,
+                budget_ticks,
+            },
+        });
     }
     Scenario {
         name,
@@ -18149,6 +18180,56 @@ mod tests {
         );
         assert!(ok, "platebody must deposit the 30-bar certificate stack");
         assert_eq!(dispatched, BRONZE_BAR_CERT_ID);
+    }
+
+    #[test]
+    fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
+        for name in ["smithing_bot", "smithing_bot_platebody"] {
+            let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(
+                s.settings.deadline,
+                SCRIPT_GOLD_DEADLINE,
+                "{name}: global deadline stays 180s"
+            );
+            let deposit = s
+                .steps
+                .iter()
+                .find(|step| step.name == "watch script-smithed product enter a fresh bank")
+                .unwrap_or_else(|| panic!("{name} has product deposit watch"));
+            assert_eq!(
+                deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
+                "{name}: deposit watch must cover ≤26 remaining 5-tick bars + restarts + bank"
+            );
+            assert!(
+                matches!(
+                    deposit.wait.arm,
+                    Proof::BankItemId { count: 1, .. }
+                ),
+                "{name}: deposit proof stays fresh bank item ≥1"
+            );
+            let product = s
+                .steps
+                .iter()
+                .find(|step| step.name == "watch the selected smithing product after Start")
+                .unwrap_or_else(|| panic!("{name} watches pack product"));
+            assert_eq!(
+                product.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+                "{name}: first-product arm keeps the ordinary gold watch"
+            );
+            let further = s
+                .steps
+                .iter()
+                .find(|step| step.name == "watch further Smithing XP after restock")
+                .unwrap_or_else(|| panic!("{name} watches post-restock XP"));
+            assert_eq!(
+                further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+                "{name}: post-restock arm is not loosened"
+            );
+            assert!(
+                matches!(further.wait.arm, Proof::FreshStatXpGain { .. }),
+                "{name}: further XP stays FreshStatXpGain"
+            );
+        }
     }
 
     #[test]
