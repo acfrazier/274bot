@@ -7296,6 +7296,7 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "superheater_steel",
         "superheater_fire_battlestaff",
         "superheater_silver_low_natures",
+        "superheater_mithril",
         "vial_filler",
         "vial_filler_east",
         "potion_maker",
