@@ -307,6 +307,8 @@ pub struct SelectedGameData {
     teleports: Vec<TeleportSpell>,
     #[serde(default)]
     herbs: Vec<HerbFact>,
+    #[serde(default)]
+    herb_level_default: Option<i32>,
 }
 
 impl SelectedGameData {
@@ -438,6 +440,10 @@ impl SelectedGameData {
 
     pub fn herbs(&self) -> &[HerbFact] {
         &self.herbs
+    }
+
+    pub fn herb_level_default(&self) -> Option<i32> {
+        self.herb_level_default
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

@@ -83,6 +83,11 @@
         "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
       },
       {
+        "path": "scripts/skill_herblore/configs/identifying/identify.param",
+        "bytes": 137,
+        "sha256": "b74e294aad7be8fa0cfd2a3810375e7625a9c2b223c4b68dd70b44f7e225d87f"
+      },
+      {
         "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
         "bytes": 2174,
         "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
@@ -60643,6 +60648,7 @@
       "id": 249,
       "unidId": 199,
       "level": 3,
+      "level_source": "identified_herb_level_default",
       "source_identified": "guam_leaf",
       "source_unidentified": "unidentified_guam"
     },
@@ -60652,6 +60658,7 @@
       "id": 251,
       "unidId": 201,
       "level": 5,
+      "level_source": "identified_herb_level",
       "source_identified": "marentill",
       "source_unidentified": "unidentified_marentill"
     },
@@ -60661,6 +60668,7 @@
       "id": 253,
       "unidId": 203,
       "level": 11,
+      "level_source": "identified_herb_level",
       "source_identified": "tarromin",
       "source_unidentified": "unidentified_tarromin"
     },
@@ -60670,6 +60678,7 @@
       "id": 255,
       "unidId": 205,
       "level": 20,
+      "level_source": "identified_herb_level",
       "source_identified": "harralander",
       "source_unidentified": "unidentified_harralander"
     },
@@ -60679,6 +60688,7 @@
       "id": 257,
       "unidId": 207,
       "level": 25,
+      "level_source": "identified_herb_level",
       "source_identified": "ranarr_weed",
       "source_unidentified": "unidentified_ranarr"
     },
@@ -60688,6 +60698,7 @@
       "id": 259,
       "unidId": 209,
       "level": 40,
+      "level_source": "identified_herb_level",
       "source_identified": "irit_leaf",
       "source_unidentified": "unidentified_irit"
     },
@@ -60697,6 +60708,7 @@
       "id": 261,
       "unidId": 211,
       "level": 48,
+      "level_source": "identified_herb_level",
       "source_identified": "avantoe",
       "source_unidentified": "unidentified_avantoe"
     },
@@ -60706,6 +60718,7 @@
       "id": 263,
       "unidId": 213,
       "level": 54,
+      "level_source": "identified_herb_level",
       "source_identified": "kwuarm",
       "source_unidentified": "unidentified_kwuarm"
     },
@@ -60715,6 +60728,7 @@
       "id": 265,
       "unidId": 215,
       "level": 65,
+      "level_source": "identified_herb_level",
       "source_identified": "cadantine",
       "source_unidentified": "unidentified_cadantine"
     },
@@ -60724,6 +60738,7 @@
       "id": 2481,
       "unidId": 2485,
       "level": 67,
+      "level_source": "identified_herb_level",
       "source_identified": "lantadyme",
       "source_unidentified": "unidentified_lantadyme"
     },
@@ -60733,6 +60748,7 @@
       "id": 267,
       "unidId": 217,
       "level": 70,
+      "level_source": "identified_herb_level",
       "source_identified": "dwarf_weed",
       "source_unidentified": "unidentified_dwarf_weed"
     },
@@ -60742,6 +60758,7 @@
       "id": 269,
       "unidId": 219,
       "level": 75,
+      "level_source": "identified_herb_level",
       "source_identified": "torstol",
       "source_unidentified": "unidentified_torstol"
     },
@@ -60751,6 +60768,7 @@
       "id": 1526,
       "unidId": 1525,
       "level": 3,
+      "level_source": "identified_herb_level",
       "source_identified": "snake_weed",
       "source_unidentified": "unidentified_snake_weed"
     },
@@ -60760,6 +60778,7 @@
       "id": 1528,
       "unidId": 1527,
       "level": 3,
+      "level_source": "identified_herb_level",
       "source_identified": "ardrigal",
       "source_unidentified": "unidentified_ardrigal"
     },
@@ -60769,6 +60788,7 @@
       "id": 1530,
       "unidId": 1529,
       "level": 3,
+      "level_source": "identified_herb_level",
       "source_identified": "sito_foil",
       "source_unidentified": "unidentified_sito_foil"
     },
@@ -60778,6 +60798,7 @@
       "id": 1532,
       "unidId": 1531,
       "level": 3,
+      "level_source": "identified_herb_level",
       "source_identified": "volencia_moss",
       "source_unidentified": "unidentified_volencia_moss"
     },
@@ -60787,6 +60808,7 @@
       "id": 1534,
       "unidId": 1533,
       "level": 3,
+      "level_source": "identified_herb_level",
       "source_identified": "rogues_purse",
       "source_unidentified": "unidentified_rogues_purse"
     },
@@ -60796,6 +60818,7 @@
       "id": 2998,
       "unidId": 3049,
       "level": 30,
+      "level_source": "identified_herb_level",
       "source_identified": "toadflax",
       "source_unidentified": "unidentified_toadflax"
     },
@@ -60805,10 +60828,12 @@
       "id": 3000,
       "unidId": 3051,
       "level": 59,
+      "level_source": "identified_herb_level",
       "source_identified": "snapdragon",
       "source_unidentified": "unidentified_snapdragon"
     }
   ],
+  "herb_level_default": 3,
   "autocast": {
     "staff_tab_root": 328,
     "spell_panel_root": 1829,

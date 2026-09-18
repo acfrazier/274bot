@@ -367,6 +367,43 @@ export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.
 }
 
 #[test]
+fn empty_herbs_with_posted_item_catalog_fails_at_use_not_import() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() {
+        let herbsErr = null;
+        let optionsErr = null;
+        try { globalThis.__len = HERBS.length; } catch (e) { herbsErr = String(e.message || e); }
+        try { globalThis.__opts = HERB_OPTIONS.includes('Guam leaf'); } catch (e) { optionsErr = String(e.message || e); }
+        globalThis.__probe = { herbsErr, optionsErr };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
+    iso.probe(
+        "globalThis.__rs2b0t_host.content.herbs = []; globalThis.__rs2b0t_host.content.items = [{obj:'probe',id:1,name:'Probe',cost:1}]; true",
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    for field in ["herbsErr", "optionsErr"] {
+        let msg = probe[field].as_str().unwrap_or("");
+        assert!(
+            msg.contains("herb facts are required"),
+            "{field} must fail closed: {msg:?}"
+        );
+    }
+    iso.join();
+}
+
+#[test]
 fn item_db_reads_host_content_alcher_gold_row() {
     let src = r#"
 import { ITEM_DB } from '../../data/itemdb.js';

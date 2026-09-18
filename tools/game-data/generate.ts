@@ -19,7 +19,7 @@ const decoderSources = [
     'src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
     'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack'];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack'];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -285,6 +285,37 @@ export function parseIdentifyHerbPairs(text: string) {
     return pairs;
 }
 
+type ParamDef = { type?: string; default?: string };
+
+export function parseParamDefinitions(text: string) {
+    const defs = new Map<string, ParamDef>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            defs.set(current, {});
+            continue;
+        }
+        if (!current) continue;
+        const entry = defs.get(current)!;
+        if (line.startsWith('type=')) entry.type = line.slice('type='.length);
+        else if (line.startsWith('default=')) entry.default = line.slice('default='.length);
+    }
+    return defs;
+}
+
+/** Default Herblore level from pinned `identify.param`, not obj cost. */
+export function identifiedHerbLevelDefault(content: string) {
+    const defs = parseParamDefinitions(
+        fs.readFileSync(path.join(content, 'scripts/skill_herblore/configs/identifying/identify.param'), 'utf8'),
+    );
+    const level = defs.get('identified_herb_level');
+    if (!level?.default) throw new Error('herbs: missing identified_herb_level default in identify.param');
+    return integer(level.default, 'identified_herb_level default');
+}
+
 /** Script-facing herb key from cleaned display name (reference herbs.ts parity). */
 export function herbKeyFromName(name: string) {
     const lower = name.toLowerCase();
@@ -296,10 +327,11 @@ export function herbKeyFromName(name: string) {
 
 export function extractHerbFacts(content: string, items: ObjType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
+    const levelDefault = identifiedHerbLevelDefault(content);
     const herbsObj = parseObjSections(fs.readFileSync(path.join(content, 'scripts/skill_herblore/configs/herbs.obj'), 'utf8'));
     const identify = fs.readFileSync(path.join(content, 'scripts/skill_herblore/scripts/identifying/identify.rs2'), 'utf8');
     const pairs = parseIdentifyHerbPairs(identify);
-    const herbs: { key: string; name: string; id: number; unidId: number; level: number; source_identified: string; source_unidentified: string }[] = [];
+    const herbs: { key: string; name: string; id: number; unidId: number; level: number; level_source: string; source_identified: string; source_unidentified: string }[] = [];
     for (const { unidAlias, idAlias } of pairs) {
         const section = herbsObj.get(idAlias);
         if (!section) throw new Error(`herbs: missing herbs.obj section ${idAlias}`);
@@ -308,9 +340,8 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
         const levelRaw = section.params.get('identified_herb_level');
         const level = levelRaw !== undefined
             ? integer(levelRaw, `${idAlias} identified_herb_level`)
-            : section.cost !== undefined
-              ? section.cost
-              : (() => { throw new Error(`herbs: ${idAlias} missing identify level`); })();
+            : levelDefault;
+        const levelSource = levelRaw !== undefined ? 'identified_herb_level' : 'identified_herb_level_default';
         const cleaned = itemIds.get(idAlias);
         const unid = itemIds.get(unidAlias);
         if (!cleaned) throw new Error(`herbs: unknown identified obj ${idAlias}`);
@@ -322,15 +353,20 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
             id: cleaned.id,
             unidId: unid.id,
             level,
+            level_source: levelSource,
             source_identified: idAlias,
             source_unidentified: unidAlias,
         });
     }
     const guam = herbs.find((herb) => herb.key === 'guam');
-    if (!guam || guam.level !== 3) throw new Error(`herbs: expected guam level 3, got ${JSON.stringify(guam)}`);
+    if (!guam || guam.level !== levelDefault || guam.level_source !== 'identified_herb_level_default') {
+        throw new Error(`herbs: guam must use identify.param default ${levelDefault}, got ${JSON.stringify(guam)}`);
+    }
     const snake = herbs.find((herb) => herb.key === 'snake weed');
-    if (!snake || snake.level !== 3) throw new Error(`herbs: expected snake weed level 3, got ${JSON.stringify(snake)}`);
-    return { herbs };
+    if (snake && (snake.level !== levelDefault || snake.level_source !== 'identified_herb_level')) {
+        throw new Error(`herbs: snake weed level/source mismatch, got ${JSON.stringify(snake)}`);
+    }
+    return { herbs, herb_level_default: levelDefault };
 }
 
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
@@ -352,7 +388,7 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs); const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs); const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
     const payload = { schema_version: 3, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, ...magic, ...herbs, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 3, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }

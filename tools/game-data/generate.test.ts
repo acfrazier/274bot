@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, parseIdentifyHerbPairs, parseObjSections, parsePack, parseRows } from './generate.ts';
+import { extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -202,11 +202,15 @@ assert.deepEqual(parseIdentifyHerbPairs(`[opheld1,unidentified_guam]
 ~attempt_identify_herb(guam_leaf, last_slot());
 `), [{ unidAlias: 'unidentified_guam', idAlias: 'guam_leaf' }]);
 const herblore = path.join(content, 'scripts/skill_herblore');
-fs.mkdirSync(path.join(herblore, 'configs'), { recursive: true });
+fs.mkdirSync(path.join(herblore, 'configs/identifying'), { recursive: true });
 fs.mkdirSync(path.join(herblore, 'scripts/identifying'), { recursive: true });
+fs.writeFileSync(path.join(herblore, 'configs/identifying/identify.param'), `[identified_herb_level]
+type=int
+default=3
+`);
 fs.writeFileSync(path.join(herblore, 'configs/herbs.obj'), `[guam_leaf]
 name=Guam leaf
-cost=3
+cost=999
 [snake_weed]
 name=Snake weed
 param=identified_herb_level,3
@@ -222,8 +226,12 @@ const herbItems = [
     { id: 1525, debugname: 'unidentified_snake_weed', name: 'Herb', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 1526, debugname: 'snake_weed', name: 'Snake weed', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
 ];
+assert.equal(identifiedHerbLevelDefault(content), 3);
+assert.deepEqual(parseParamDefinitions(fs.readFileSync(path.join(herblore, 'configs/identifying/identify.param'), 'utf8')).get('identified_herb_level'), { type: 'int', default: '3' });
 const herbs = extractHerbFacts(content, herbItems);
 assert.equal(herbs.herbs.length, 2);
-assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unidId: 199, level: 3, source_identified: 'guam_leaf', source_unidentified: 'unidentified_guam' });
+assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unidId: 199, level: 3, level_source: 'identified_herb_level_default', source_identified: 'guam_leaf', source_unidentified: 'unidentified_guam' });
+assert.equal(herbs.herbs[0].level, 3, 'guam uses identify.param default, not cost=999');
 assert.equal(herbs.herbs[1].key, 'snake weed');
+assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
 console.log('generate fixture passed');

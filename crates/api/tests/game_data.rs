@@ -144,6 +144,7 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
         assert_eq!(data.required_thieving("Guard"), Some(40));
         assert_eq!(data.required_thieving("Unknown target"), None);
 
+        assert_eq!(data.herb_level_default(), Some(3));
         let herbs = data.herbs();
         assert!(
             herbs.len() >= 14,
@@ -155,6 +156,8 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
         assert_eq!(guam.level, 3);
         assert_eq!(guam.id, 249);
         assert_eq!(guam.unid_id, 199);
+        let marrentill = data.herb_by_key("marrentill").expect("marrentill");
+        assert_eq!(marrentill.level, 5);
         let snake = data.herb_by_key("snake weed").expect("snake weed");
         assert_eq!(snake.level, 3);
         assert_eq!(snake.unid_id, 1525);

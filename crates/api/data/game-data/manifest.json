@@ -39,8 +39,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1398239,
-      "sha256": "b805ee8c92e737cb3f911cc4dce69681e57821de73a4029f0fb8e79aebfd465f",
+      "bytes": 1399368,
+      "sha256": "cbbe78d7edd139b0113ece84ca81f9a11f83956cbe5289bfad1bce5140bf7c1c",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -120,6 +120,11 @@
           "path": "scripts/skill_herblore/configs/herbs.obj",
           "bytes": 7059,
           "sha256": "d2d95923fb7be430ca3ced3075b80a24744cab4d8a2dd989709c3f8d5704c38b"
+        },
+        {
+          "path": "scripts/skill_herblore/configs/identifying/identify.param",
+          "bytes": 137,
+          "sha256": "b74e294aad7be8fa0cfd2a3810375e7625a9c2b223c4b68dd70b44f7e225d87f"
         },
         {
           "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
@@ -268,8 +273,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1460735,
-      "sha256": "797e7aaa51aba34a3654634f72a41eec11455588a0cfb2396c601a745cae9664",
+      "bytes": 1461864,
+      "sha256": "cb6ed8ee3986ac67e0b94c3d6841af5c3da39fba708cb24be45f9161c83a09c2",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -349,6 +354,11 @@
           "path": "scripts/skill_herblore/configs/herbs.obj",
           "bytes": 7372,
           "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
+        },
+        {
+          "path": "scripts/skill_herblore/configs/identifying/identify.param",
+          "bytes": 137,
+          "sha256": "b74e294aad7be8fa0cfd2a3810375e7625a9c2b223c4b68dd70b44f7e225d87f"
         },
         {
           "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
