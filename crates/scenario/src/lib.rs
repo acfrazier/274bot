@@ -2275,15 +2275,15 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// `tick` advances on PLAYER_INFO. live7wnm9z_0: outcome 170 dirties /
 /// 82.065s wall / snapshot `tick` 141 — those figures are not interchangeable.
 ///
-/// **Why default 150 dirties / 180s cannot cover this cell:** step 29
+/// **Observed exhaustion of the default 150-dirty watch:** step 29
 /// `fresh_bank_item_id(223)>=1` exhausted 150 dirties still in the field.
 /// Terminal 3117,9951, inv 6×223 + 6×379, bank closed gen 6, paint
 /// Got 6 / Trips 0 / Food 6, status taking eggs, in combat HP 6/10.
 /// Canonical `needsRestock` is false until packFull or
 /// (`takeFood && foodWant>0 && foodCount<1`). foodWithdraw default 10 is
-/// already pinned; 6 lobster remain. Not a freeze and not a host Take
-/// defect: six named Takes plus four Eat, then a respawn Take on the
-/// first tile.
+/// already pinned; 6 lobster remain. Collection was progressing: six
+/// named Takes plus four Eat, then a respawn Take on the first tile.
+/// This observation does not rule out defects later in the cycle.
 ///
 /// **Respawn (engine ticks — justification only):** `red_spiders_eggs.obj`
 /// has no `respawnrate` (snape_grass sets 30). `ObjType.respawnrate = 100`
@@ -2294,13 +2294,13 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// take. Six distinct in-radius Takes before that respawn. Packed
 /// `o48_155` obj list is not in this checkout; count is the measured 6.
 ///
-/// **Arm-to-deposit LB:** remaining 6 lobster, eat at HP≤5 (lobster heal
+/// **Provisional arm-to-deposit estimate:** remaining 6 lobster, eat at HP≤5 (lobster heal
 /// 12 never fits maxHp 10). Measured 4 eats during the ~60s first-respawn
-/// wait ≈ 12s/eat → ~72s more. Then Edgeville dungeon walk: field
+/// wait ≈ 15s/eat → ~90s more. Then Edgeville dungeon walk: field
 /// 3120,9952 → ladder 3096,9868 Chebyshev 84 + surface ~25 + booth/deposit
-/// ≈ 80s one-way. Watch already used ~60s. Arm-to-deposit ≈ 60+72+80 =
-/// **~212s wall**. Measured dirty rate on this watch 150/60s ≈ 2.5 dirty/s
-/// → **~530 dirties**. Pad eat-rate sample size and dirty≠engine → **600**.
+/// ≈ 80s one-way. Watch already used ~60s. Arm-to-deposit ≈ 60+90+80 =
+/// **~230s wall**. Measured dirty rate on this watch 150/60s ≈ 2.5 dirty/s
+/// → **~575 dirties**. Use **600** for this bounded trial; estimates are not measured limits.
 /// Return reverse dungeon ~80s × 2.5 ≈ 200 → **240** (same magnitude as
 /// bone_burier / smithing bank-item). First-egg / empty / close / further
 /// stay 150. Global gold 180s / 150 stay for every other script including
