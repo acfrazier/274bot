@@ -11808,8 +11808,9 @@ fn herblore_seed_bank_readiness() -> Step {
 }
 
 /// HerbloreSecondaries default Red spiders' eggs. Empty pack at the
-/// Edgeville dungeon field, lobster food banked only. Ground Take 223,
-/// deposit, closed return, further Take. Eggs are not given.
+/// Edgeville dungeon field, lobster food banked only via native note seed +
+/// deposit (stock289 has no `givebank`). Ground Take 223, deposit, closed
+/// return, further Take. Eggs are not given.
 fn herblore_secondaries_scenario() -> Scenario {
     let field = EGG_FIELD;
     let bank_approach = EDGEVILLE_BANK_APPROACH;
@@ -11817,60 +11818,128 @@ fn herblore_secondaries_scenario() -> Scenario {
         id: RED_SPIDERS_EGGS_ID,
         count: 1,
     };
+    // stock289: 379=lobster (nonstackable), 380=cert_lobster (stackable note).
+    let lobster = NativeSeed {
+        unnoted_id: LOBSTER_ID,
+        debug_alias: "lobster",
+        note_alias: Some("cert_lobster"),
+        quantity: HERBLORE_EGG_FOOD_SEED,
+        note_id: Some(NOTED_LOBSTER_ID),
+    };
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "seed banked lobster and tele to the safe Edgeville booth approach before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~clearinv");
-                cheat(c, &format!("givebank lobster {HERBLORE_EGG_FOOD_SEED}"));
-                cheat(
-                    c,
-                    &tele_args(bank_approach.level, bank_approach.x, bank_approach.z),
-                );
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: bank_approach.x,
-                z: bank_approach.z,
-                level: bank_approach.level,
-                radius: 1,
+    steps.push(native_bank_seed(
+        "seed banked lobster and tele to the safe Edgeville booth approach before Start",
+        bank_approach,
+        vec![lobster],
+        "hitpoints",
+        10,
+    ));
+    for (step_name, arm) in [
+        (
+            "confirm the exact noted lobster seed in pack before deposit",
+            Proof::ItemId {
+                id: NOTED_LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_SEED,
             },
-            budget_ticks: 200,
-        },
-    });
+        ),
+        (
+            "bound the noted lobster seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: NOTED_LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_SEED,
+            },
+        ),
+        (
+            "confirm no seeded eggs in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded eye of newt in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted eggs in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: NOTED_RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(herblore_seed_bank_readiness());
     steps.push(herblore_open_seed_bank(
-        "open and acknowledge the exact lobster food seed bank",
-        Proof::BankItemId {
+        "open and acknowledge the lobster seed bank",
+        Proof::BankItemIdAtMost {
             id: LOBSTER_ID,
-            count: HERBLORE_EGG_FOOD_SEED,
-        },
-    ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded red spiders' eggs in bank",
-        Proof::BankItemIdAtMost {
-            id: RED_SPIDERS_EGGS_ID,
             count: 0,
         },
     ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded noted eggs in bank",
-        Proof::BankItemIdAtMost {
-            id: NOTED_RED_SPIDERS_EGGS_ID,
-            count: 0,
-        },
+    steps.extend(native_bank_deposit(
+        "deposit the noted lobster seed through the bank window",
+        vec![lobster],
     ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded eye of newt in bank",
-        Proof::BankItemIdAtMost {
-            id: EYE_OF_NEWT_ID,
-            count: 0,
-        },
-    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact lobster food seed bank",
+            Proof::BankItemId {
+                id: LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_SEED,
+            },
+        ),
+        (
+            "bound the lobster food seed bank count",
+            Proof::BankItemIdAtMost {
+                id: LOBSTER_ID,
+                count: HERBLORE_EGG_FOOD_SEED,
+            },
+        ),
+        (
+            "confirm the noted lobster seed was removed from pack",
+            Proof::ItemIdAtMost {
+                id: NOTED_LOBSTER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no noted lobster remains in bank",
+            Proof::BankItemIdAtMost {
+                id: NOTED_LOBSTER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded red spiders' eggs in bank",
+            Proof::BankItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded noted eggs in bank",
+            Proof::BankItemIdAtMost {
+                id: NOTED_RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded eye of newt in bank",
+            Proof::BankItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
+    // Pack is empty of seed after deposit; clearinv only after bank accepts seed.
     steps.push(Step {
         name: "tele to the Edgeville dungeon egg field before Start",
         kind: StepKind::Perform {
@@ -11909,6 +11978,13 @@ fn herblore_secondaries_scenario() -> Scenario {
             "confirm no seeded noted eggs in pack before Start",
             Proof::ItemIdAtMost {
                 id: NOTED_RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted lobster in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_LOBSTER_ID,
                 count: 0,
             },
         ),
@@ -11971,7 +12047,8 @@ fn herblore_secondaries_scenario() -> Scenario {
     }
 }
 
-/// HerbloreSecondaries Eye of newt shop branch. Banked coins, Betty stand.
+/// HerbloreSecondaries Eye of newt shop branch. Banked coins via native
+/// stackable seed + deposit (stock289 has no `givebank`), Betty stand.
 /// Distinct from ground eggs. LIVE still waits on Shop.buy publication.
 fn herblore_secondaries_newt_scenario() -> Scenario {
     let shop = BETTY_SHOP;
@@ -11980,56 +12057,120 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
         id: EYE_OF_NEWT_ID,
         count: 1,
     };
+    // stock289: 995=coins (stackable base; no certificate).
+    let coins = NativeSeed {
+        unnoted_id: COINS_ID,
+        debug_alias: "coins",
+        note_alias: None,
+        quantity: HERBLORE_NEWT_COIN_SEED,
+        note_id: None,
+    };
     let mut steps = script_live_seed_steps();
-    steps.push(Step {
-        name: "seed banked coins at Draynor before Start",
-        kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
-                cheat(c, "~clearinv");
-                cheat(c, &format!("givebank coins {HERBLORE_NEWT_COIN_SEED}"));
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
-                true
-            }),
-        },
-        wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 8,
+    steps.push(native_bank_seed(
+        "seed banked coins at Draynor before Start",
+        bank,
+        vec![coins],
+        "hitpoints",
+        10,
+    ));
+    for (step_name, arm) in [
+        (
+            "confirm the exact coin seed in pack before deposit",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: HERBLORE_NEWT_COIN_SEED,
             },
-            budget_ticks: 200,
-        },
-    });
+        ),
+        (
+            "bound the coin seed count in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: HERBLORE_NEWT_COIN_SEED,
+            },
+        ),
+        (
+            "confirm no seeded eye of newt in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded eggs in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted newt in pack before deposit",
+            Proof::ItemIdAtMost {
+                id: NOTED_EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(tanner_open_seed_bank(
-        "open and acknowledge the exact coin seed bank",
-        Proof::BankItemId {
+        "open and acknowledge the coin seed bank",
+        Proof::BankItemIdAtMost {
             id: COINS_ID,
-            count: HERBLORE_NEWT_COIN_SEED,
-        },
-    ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded eye of newt in bank",
-        Proof::BankItemIdAtMost {
-            id: EYE_OF_NEWT_ID,
             count: 0,
         },
     ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded noted newt in bank",
-        Proof::BankItemIdAtMost {
-            id: NOTED_EYE_OF_NEWT_ID,
-            count: 0,
-        },
+    steps.extend(native_bank_deposit(
+        "deposit the coin seed through the bank window",
+        vec![coins],
     ));
-    steps.push(bank_fletcher_watch(
-        "acknowledge no seeded red spiders' eggs in bank",
-        Proof::BankItemIdAtMost {
-            id: RED_SPIDERS_EGGS_ID,
-            count: 0,
-        },
-    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact coin seed bank",
+            Proof::BankItemId {
+                id: COINS_ID,
+                count: HERBLORE_NEWT_COIN_SEED,
+            },
+        ),
+        (
+            "bound the coin seed bank count",
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: HERBLORE_NEWT_COIN_SEED,
+            },
+        ),
+        (
+            "confirm the coin seed was removed from pack",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded eye of newt in bank",
+            Proof::BankItemIdAtMost {
+                id: EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded noted newt in bank",
+            Proof::BankItemIdAtMost {
+                id: NOTED_EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded red spiders' eggs in bank",
+            Proof::BankItemIdAtMost {
+                id: RED_SPIDERS_EGGS_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
+    // Pack is empty of seed after deposit; clearinv only after bank accepts seed.
     steps.push(Step {
         name: "tele to Betty's shop stand before Start",
         kind: StepKind::Perform {
@@ -12068,6 +12209,13 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
             "confirm no seeded noted newt in pack before Start",
             Proof::ItemIdAtMost {
                 id: NOTED_EYE_OF_NEWT_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
                 count: 0,
             },
         ),
@@ -17874,6 +18022,8 @@ mod tests {
             certificate_obj(LOGS_CERT_ID, LOGS_ID),
             unnoted_obj(OAK_LOGS_ID, false),
             certificate_obj(OAK_LOGS_CERT_ID, OAK_LOGS_ID),
+            unnoted_obj(LOBSTER_ID, false),
+            certificate_obj(NOTED_LOBSTER_ID, LOBSTER_ID),
         ] {
             plant_obj(client, obj);
         }
@@ -17887,7 +18037,9 @@ mod tests {
                 matches!(step.kind, StepKind::Perform { .. })
                     && (step.name.starts_with("seed Smithing")
                         || step.name.starts_with("seed Crafting")
-                        || step.name.starts_with("seed Firemaking"))
+                        || step.name.starts_with("seed Firemaking")
+                        || step.name.starts_with("seed banked lobster")
+                        || step.name.starts_with("seed banked coins"))
             })
             .unwrap_or_else(|| panic!("{} has a native inventory seed", scenario.name))
     }
@@ -18104,6 +18256,26 @@ mod tests {
                 &["give tinderbox 1", "give cert_oak_logs 28"],
                 &["givebank", "give oak_logs 28", "give cert_logs 28"],
             ),
+            (
+                "herblore_secondaries",
+                &["give cert_lobster 50"][..],
+                &[
+                    "givebank",
+                    "give lobster 50",
+                    "lobster_cert",
+                    "give coins",
+                ][..],
+            ),
+            (
+                "herblore_secondaries_newt",
+                &["give coins 5000"],
+                &[
+                    "givebank",
+                    "give cert_coins",
+                    "cert_lobster",
+                    "give lobster",
+                ],
+            ),
         ] {
             let mut client = native_seed_client();
             let (ok, written) = send_seed(name, &mut client);
@@ -18160,6 +18332,13 @@ mod tests {
             cache.objs[HARD_LEATHER_CERT_ID as usize].certlink = SOFT_LEATHER_ID;
         }
         assert!(!send_seed("leather_crafter_hard_body", &mut client).0);
+
+        let mut client = native_seed_client();
+        {
+            let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+            cache.objs[NOTED_LOBSTER_ID as usize].certlink = 0;
+        }
+        assert!(!send_seed("herblore_secondaries", &mut client).0);
     }
 
     #[test]
@@ -18277,6 +18456,38 @@ mod tests {
         );
         assert!(ok, "nails must deposit the steel bar certificate stack");
         assert_eq!(dispatched, STEEL_BAR_CERT_ID);
+
+        let (ok, dispatched) = send_deposit(
+            "herblore_secondaries",
+            LOBSTER_ID,
+            HERBLORE_EGG_FOOD_SEED,
+            NOTED_LOBSTER_ID,
+            HERBLORE_EGG_FOOD_SEED,
+        );
+        assert!(ok, "herblore eggs must deposit cert_lobster");
+        assert_eq!(dispatched, NOTED_LOBSTER_ID);
+
+        let (ok, _) = send_deposit(
+            "herblore_secondaries",
+            LOBSTER_ID,
+            HERBLORE_EGG_FOOD_SEED,
+            LOBSTER_ID,
+            HERBLORE_EGG_FOOD_SEED,
+        );
+        assert!(
+            !ok,
+            "unnoted lobster on bank-side must not satisfy the noted seed"
+        );
+
+        let (ok, dispatched) = send_deposit(
+            "herblore_secondaries_newt",
+            COINS_ID,
+            HERBLORE_NEWT_COIN_SEED,
+            COINS_ID,
+            HERBLORE_NEWT_COIN_SEED,
+        );
+        assert!(ok, "herblore newt must deposit stackable coins");
+        assert_eq!(dispatched, COINS_ID);
     }
 
     #[test]
@@ -18378,6 +18589,12 @@ mod tests {
             ),
             ("firemaker", LOGS_CERT_ID, 28, LOGS_ID),
             ("firemaker_oak", OAK_LOGS_CERT_ID, 28, OAK_LOGS_ID),
+            (
+                "herblore_secondaries",
+                NOTED_LOBSTER_ID,
+                HERBLORE_EGG_FOOD_SEED,
+                LOBSTER_ID,
+            ),
         ] {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             let start = scenario
@@ -18459,6 +18676,68 @@ mod tests {
                 "{name} must prove no noted bank remainder"
             );
         }
+
+        // Stackable non-note branch (coins): pack give → bank deposit → pack empty.
+        let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+        let start = newt
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("newt starts");
+        let before = &newt.steps[..start];
+        let seed_at = before
+            .iter()
+            .position(|step| std::ptr::eq(step, seed_step(&newt)))
+            .unwrap();
+        let deposit_at = before
+            .iter()
+            .position(|step| {
+                matches!(
+                    (&step.kind, &step.wait.arm),
+                    (
+                        StepKind::Repeat { .. },
+                        Proof::BankItemId {
+                            id: COINS_ID,
+                            count: HERBLORE_NEWT_COIN_SEED
+                        }
+                    )
+                )
+            })
+            .expect("newt deposits coins");
+        let close_at = before
+            .iter()
+            .position(|step| matches!(step.wait.arm, Proof::BankClosed))
+            .expect("newt closes seed bank");
+        assert!(seed_at < deposit_at);
+        assert!(deposit_at < close_at);
+        let given: Vec<_> = before[seed_at + 1..deposit_at]
+            .iter()
+            .map(|s| s.wait.arm)
+            .collect();
+        assert!(given.contains(&Proof::ItemId {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED
+        }));
+        assert!(given.contains(&Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED
+        }));
+        let after: Vec<_> = before[deposit_at + 1..close_at]
+            .iter()
+            .map(|s| s.wait.arm)
+            .collect();
+        assert!(after.contains(&Proof::BankItemId {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED
+        }));
+        assert!(after.contains(&Proof::BankItemIdAtMost {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED
+        }));
+        assert!(after.contains(&Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0
+        }));
     }
 
     #[test]
@@ -23332,6 +23611,7 @@ mod tests {
 
         let eggs = get("herblore_secondaries").expect("herblore_secondaries");
         assert_eq!(eggs.settings.start_script, Some("HerbloreSecondaries"));
+        assert_eq!(eggs.settings.deadline, SCRIPT_GOLD_DEADLINE);
         let inject = settings_inject_map(eggs.settings.script_settings_inject).unwrap();
         assert_eq!(
             inject.get("secondary"),
@@ -23346,11 +23626,12 @@ mod tests {
             .iter()
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
+        // native_bank_seed arrival radius is 8 (not the old givebank radius 1).
         assert!(eggs_seed.contains(&Proof::ArrivedNear {
             x: EDGEVILLE_BANK_APPROACH.x,
             z: EDGEVILLE_BANK_APPROACH.z,
             level: EDGEVILLE_BANK_APPROACH.level,
-            radius: 1,
+            radius: 8,
         }));
         assert!(eggs_seed.contains(&Proof::ArrivedNear {
             x: 3120,
@@ -23358,21 +23639,38 @@ mod tests {
             level: 0,
             radius: 8,
         }));
+        assert!(eggs_seed.contains(&Proof::ItemId {
+            id: NOTED_LOBSTER_ID,
+            count: HERBLORE_EGG_FOOD_SEED,
+        }));
         assert!(eggs_seed.contains(&Proof::BankItemId {
             id: LOBSTER_ID,
             count: HERBLORE_EGG_FOOD_SEED,
         }));
-        let seed_bank = eggs.steps[..eggs_start]
+        assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
+            id: NOTED_LOBSTER_ID,
+            count: 0,
+        }));
+        assert!(eggs_seed.contains(&Proof::BankItemIdAtMost {
+            id: NOTED_LOBSTER_ID,
+            count: 0,
+        }));
+        let seed_deposit = eggs.steps[..eggs_start]
             .iter()
             .find(|step| {
-                step.wait.arm
-                    == Proof::BankItemId {
-                        id: LOBSTER_ID,
-                        count: HERBLORE_EGG_FOOD_SEED,
-                    }
+                matches!(
+                    (&step.kind, &step.wait.arm),
+                    (
+                        StepKind::Repeat { .. },
+                        Proof::BankItemId {
+                            id: LOBSTER_ID,
+                            count: HERBLORE_EGG_FOOD_SEED
+                        }
+                    )
+                )
             })
-            .expect("exact Edgeville seed-bank acknowledgement");
-        assert!(matches!(seed_bank.kind, StepKind::Repeat { .. }));
+            .expect("native lobster deposit wait");
+        assert_eq!(seed_deposit.wait.budget_ticks, 200);
         assert_eq!(
             EDGEVILLE_BANK_BOOTH,
             WorldTile {
@@ -23382,7 +23680,6 @@ mod tests {
             }
         );
         assert_eq!(EDGEVILLE_BANK_BOOTH_ID, 2213);
-        assert_eq!(seed_bank.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
         assert!(eggs_seed.contains(&Proof::LocActionNear {
             id: EDGEVILLE_BANK_BOOTH_ID,
             x: EDGEVILLE_BANK_BOOTH.x,
@@ -23396,7 +23693,9 @@ mod tests {
             .iter()
             .any(|step| step.name
                 == "acknowledge exact Edgeville booth identity and Use-quickly action before bank send"));
-
+        assert!(eggs.steps[..eggs_start]
+            .iter()
+            .any(|step| step.name == "deposit the noted lobster seed through the bank window"));
         assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
             id: RED_SPIDERS_EGGS_ID,
             count: 0,
@@ -23431,6 +23730,7 @@ mod tests {
 
         let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
         assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
+        assert_eq!(buy.settings.deadline, SCRIPT_GOLD_DEADLINE);
         let inject = settings_inject_map(buy.settings.script_settings_inject).unwrap();
         assert_eq!(
             inject.get("secondary"),
@@ -23446,15 +23746,32 @@ mod tests {
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
         assert!(buy_seed.contains(&Proof::ArrivedNear {
+            x: DRAYNOR_BANK.x,
+            z: DRAYNOR_BANK.z,
+            level: DRAYNOR_BANK.level,
+            radius: 8,
+        }));
+        assert!(buy_seed.contains(&Proof::ArrivedNear {
             x: 3012,
             z: 3259,
             level: 0,
             radius: 6,
         }));
+        assert!(buy_seed.contains(&Proof::ItemId {
+            id: COINS_ID,
+            count: HERBLORE_NEWT_COIN_SEED,
+        }));
         assert!(buy_seed.contains(&Proof::BankItemId {
             id: COINS_ID,
             count: HERBLORE_NEWT_COIN_SEED,
         }));
+        assert!(buy_seed.contains(&Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: 0,
+        }));
+        assert!(buy.steps[..buy_start]
+            .iter()
+            .any(|step| step.name == "deposit the coin seed through the bank window"));
         let buy_watch = buy.steps[buy_start + 1..]
             .iter()
             .map(|step| step.wait.arm)
