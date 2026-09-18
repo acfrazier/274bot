@@ -26,7 +26,7 @@ use client::render::nav_debug::{
     CORNER_SW, FACE_E, FACE_N, FACE_S, FACE_W,
 };
 use client::sound::output::AudioOut;
-use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
+use host::{FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::profile::ProfileEnvironment;
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -336,13 +336,7 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
 /// Loopback hosts get the debug heading / WalkTo Teleport. Public
 /// `w1.rs2b2t.com` and LAN IPs do not.
 pub fn is_local_engine(host: &str) -> bool {
-    matches!(
-        host.trim()
-            .trim_end_matches('.')
-            .to_ascii_lowercase()
-            .as_str(),
-        "127.0.0.1" | "localhost" | "::1"
-    )
+    host_play::is_loopback_host(host)
 }
 
 /// One Teles-popup dest: button label, `CLIENT_CHEAT` body, hover text.
@@ -538,56 +532,7 @@ pub fn combo_index(focused: Option<&str>, names: &[String]) -> Option<usize> {
     focused.and_then(|n| names.iter().position(|x| x == n))
 }
 
-/// Click-through helper: maps a click inside the Game Image (local coords,
-/// Image widget size) to applet coords and enqueues `InputEv::Down`. No-op
-/// when the capture channel has been dropped (capture off) or the point is
-/// outside the Image.
-pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, h: f32) {
-    let Some(tx) = tx else {
-        return;
-    };
-    let Some((x, y)) = map_image_to_applet(lx, ly, w, h) else {
-        return;
-    };
-    let _ = tx.send(InputEv::Down { button: 1, x, y });
-}
-
-/// Stream one hovered capture frame: `Move` first, then `Down` (left=1,
-/// right=2), then `Up`, then keys. No-op when `tx` is `None` (capture off).
-// All capture state arrives flattened from the applet; a param struct would
-// only shuffle names across the one call site.
-#[allow(clippy::too_many_arguments)]
-pub fn stream_capture(
-    tx: &Option<Sender<InputEv>>,
-    lx: f32,
-    ly: f32,
-    w: f32,
-    h: f32,
-    left_down: bool,
-    right_down: bool,
-    left_up: bool,
-    right_up: bool,
-    keys: &[(bool, i32)],
-) {
-    let Some(tx) = tx else {
-        return;
-    };
-    if let Some((x, y)) = map_image_to_applet(lx, ly, w, h) {
-        let _ = tx.send(InputEv::Move { x, y });
-        if left_down {
-            let _ = tx.send(InputEv::Down { button: 1, x, y });
-        }
-        if right_down {
-            let _ = tx.send(InputEv::Down { button: 2, x, y });
-        }
-    }
-    if left_up || right_up {
-        let _ = tx.send(InputEv::Up);
-    }
-    for &(down, ch) in keys {
-        let _ = tx.send(InputEv::Key { down, ch });
-    }
-}
+pub use crate::input_capture::{maybe_send_click, stream_capture};
 
 /// rs2b0t disable rule: a script is active while it holds the slot, so
 /// Start and Browse (and Load) are disabled for those states.
@@ -1000,16 +945,13 @@ pub struct Session {
     /// Live-harness overlay: the scenario's `NavSettings` for this session
     /// without writing prefs. `None` = operator `ui.nav`.
     pub nav_overlay: Option<NavSettings>,
-    /// @deprecated alias kept so tests that still name the force bool
-    /// compile during the overlay swap — prefer [`Session::nav_overlay`].
-    pub nav_live_force_layers: bool,
     /// Optional headed live paint override; never persisted with operator UI.
     nav_paints_override: Option<bool>,
     /// Optional headed/live memory override; never persisted with operator UI.
     memory_override: Option<bool>,
     /// Per-frame nav-paint mirror the slot threads publish from each
     /// observe (see [`publish_nav_debug`]); `pump_status` re-copies it
-    /// from `ui.nav` + `nav_live_force_layers` every UI frame.
+    /// from `ui.nav` / [`Session::nav_overlay`] every UI frame.
     nav_publish: Arc<Mutex<NavPublishCfg>>,
     /// Overlay generation: bumped whenever the focused traveller's route
     /// can change (a new arm, or the focused profile switching). The path
@@ -1354,7 +1296,6 @@ impl Session {
             pending_profile_delete: None,
             delete_understood: false,
             nav_overlay: None,
-            nav_live_force_layers: false,
             nav_paints_override: None,
             memory_override: None,
             nav_publish: Arc::new(Mutex::new(NavPublishCfg::default())),
@@ -1496,11 +1437,7 @@ impl Session {
     }
 
     /// Configure the optional prepare / run-prepared fixture path for the next live boot.
-    pub fn set_fixture_boot(
-        &mut self,
-        mode: scenario::FixtureMode,
-        path: Option<PathBuf>,
-    ) {
+    pub fn set_fixture_boot(&mut self, mode: scenario::FixtureMode, path: Option<PathBuf>) {
         self.fixture_mode = mode;
         self.fixture_path = path;
     }
@@ -2429,7 +2366,6 @@ impl Session {
         self.set_live_full_rate(view.full_rate);
         // Scenario nav bag is session-only — never ui_state::save'd.
         self.nav_overlay = Some(from_scenario(&view.nav));
-        self.nav_live_force_layers = view.nav.show_nav_path;
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
         let world = self.play.as_ref().and_then(|play| play.world());

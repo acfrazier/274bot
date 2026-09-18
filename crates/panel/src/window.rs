@@ -1355,7 +1355,7 @@ where
                     // not be queued a second time, and key-repeat must not
                     // extra-deliver.
                     if !event.repeat {
-                        crate::app::add_shifted_key_event(
+                        crate::input_capture::add_shifted_key_event(
                             window.imgui.context.io_mut(),
                             &event.logical_key,
                             event.location,

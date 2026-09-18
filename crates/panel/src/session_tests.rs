@@ -1,12 +1,11 @@
 use super::{
     arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
     is_local_engine, live_client_trail, live_or_walk_paint, load_live_example_card,
-    maybe_send_click, nav_snapshot_for_follow, null_raster_live_entries_for_target,
-    parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
-    script_active, script_pause_enabled, script_self_stop_observed, script_status_text,
-    script_stop_enabled, seed_on_first_world, start_catalog_with_core, stream_capture,
-    stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
-    ProfilePreparationCompletion, Session, SlotIo, WalkArm,
+    nav_snapshot_for_follow, null_raster_live_entries_for_target, parse_getvar_line,
+    publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime, script_active,
+    script_pause_enabled, script_self_stop_observed, script_status_text, script_stop_enabled,
+    seed_on_first_world, start_catalog_with_core, stress_live_entries_for_target,
+    temp_live_vault_from, walkto_tele_cmd, ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -15,7 +14,7 @@ use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
-use host::{FrameBuf, InputEv, SlotInput};
+use host::{FrameBuf, SlotInput};
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus};
 use nav::collision::WorldCollision;
@@ -3728,82 +3727,6 @@ fn focus_first_profile_noop_when_empty() {
 }
 
 #[test]
-fn maybe_send_click_is_noop_without_tx() {
-    maybe_send_click(&None, 1.0, 1.0, 765.0, 503.0);
-}
-
-#[test]
-fn stream_capture_is_noop_without_tx() {
-    stream_capture(
-        &None,
-        1.0,
-        1.0,
-        765.0,
-        503.0,
-        true,
-        true,
-        true,
-        true,
-        &[(true, b'a' as i32)],
-    );
-}
-
-#[test]
-fn stream_capture_sends_move_then_down() {
-    let (tx, rx) = std::sync::mpsc::channel();
-    stream_capture(
-        &Some(tx),
-        0.0,
-        0.0,
-        765.0,
-        503.0,
-        true,
-        false,
-        false,
-        false,
-        &[],
-    );
-    match rx.try_recv() {
-        Ok(InputEv::Move { x, y }) => assert_eq!((x, y), (0, 0)),
-        other => panic!("{other:?}"),
-    }
-    match rx.try_recv() {
-        Ok(InputEv::Down { button, x, y }) => assert_eq!((button, x, y), (1, 0, 0)),
-        other => panic!("{other:?}"),
-    }
-    assert!(rx.try_recv().is_err());
-}
-
-#[test]
-fn stream_capture_sends_right_up_and_key() {
-    let (tx, rx) = std::sync::mpsc::channel();
-    stream_capture(
-        &Some(tx),
-        0.0,
-        0.0,
-        765.0,
-        503.0,
-        false,
-        true,
-        true,
-        false,
-        &[(true, 10)],
-    );
-    let evs: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
-    assert!(matches!(evs[0], InputEv::Move { x: 0, y: 0 }));
-    assert!(matches!(
-        evs[1],
-        InputEv::Down {
-            button: 2,
-            x: 0,
-            y: 0
-        }
-    ));
-    assert!(matches!(evs[2], InputEv::Up));
-    assert!(matches!(evs[3], InputEv::Key { down: true, ch: 10 }));
-}
-
-#[test]
 fn closing_game_pane_leaves_capture_pref_on() {
     let mut s = Session::new();
     s.select("alice");
@@ -3846,23 +3769,6 @@ fn set_capture_persists_to_panel_ui() {
     assert!(!crate::ui_state::load().capture);
     s.set_capture(true);
     assert!(crate::ui_state::load().capture);
-}
-
-#[test]
-fn maybe_send_click_sends_when_tx_present() {
-    let (tx, rx) = std::sync::mpsc::channel();
-    maybe_send_click(&Some(tx), 0.0, 0.0, 765.0, 503.0);
-    match rx.try_recv() {
-        Ok(InputEv::Down { x, y, .. }) => assert_eq!((x, y), (0, 0)),
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn maybe_send_click_outside_image_sends_nothing() {
-    let (tx, rx) = std::sync::mpsc::channel();
-    maybe_send_click(&Some(tx), -5.0, 10.0, 765.0, 503.0);
-    assert!(rx.try_recv().is_err());
 }
 
 #[test]
