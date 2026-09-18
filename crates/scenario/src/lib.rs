@@ -13790,7 +13790,9 @@ fn chaos_druid_bank_scenario() -> Scenario {
                     x: CHAOS_DRUID_FIELD.x,
                     z: CHAOS_DRUID_FIELD.z,
                     level: CHAOS_DRUID_FIELD.level,
-                    radius: 14,
+                    // Match the script's WalkNear return radius; broad proximity
+                    // can pass while the final hop is still cancelled.
+                    radius: 4,
                 },
             ),
             (
