@@ -215,3 +215,46 @@ fn herb_cleaner_parent_sibling_remaps() {
     let src = "import { HERBS } from '../HerbCleaner/HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
     assert_eq!(script::first_unloadable_specifier(src), None);
 }
+
+#[test]
+fn herbs_data_import_remaps() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = [HERBS.length, HERB_OPTIONS.length]; }
+}
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn autofighter_shaped_herbs_import_remaps() {
+    let src = "import { HERBS, HERB_OPTIONS } from '../../data/herbs.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn herb_cleaner_logic_transitive_herbs_scan_is_loadable() {
+    use script::load::first_unloadable_for_card;
+
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-herb-logic-scan-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let card_dir = dir.join("HerbCleaner");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("HerbCleanerLogic.js"),
+        "import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';\nexport { HERBS, HERB_OPTIONS };\n",
+    )
+    .unwrap();
+    let card_path = card_dir.join("HerbCleaner.ts");
+    let origin = "import { HERBS } from './HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(&card_path, origin).unwrap();
+    assert_eq!(
+        first_unloadable_for_card(origin, &card_path),
+        None,
+        "transitive ../../data/herbs.js must remap through HerbCleanerLogic"
+    );
+}

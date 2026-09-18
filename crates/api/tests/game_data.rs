@@ -143,6 +143,22 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
         assert_eq!(data.fixed_food_heal("Not a food"), None);
         assert_eq!(data.required_thieving("Guard"), Some(40));
         assert_eq!(data.required_thieving("Unknown target"), None);
+
+        let herbs = data.herbs();
+        assert!(
+            herbs.len() >= 14,
+            "revision {} herb row count",
+            revision.as_i32()
+        );
+        let guam = data.herb_by_key("guam").expect("guam");
+        assert_eq!(guam.name, "Guam leaf");
+        assert_eq!(guam.level, 3);
+        assert_eq!(guam.id, 249);
+        assert_eq!(guam.unid_id, 199);
+        let snake = data.herb_by_key("snake weed").expect("snake weed");
+        assert_eq!(snake.level, 3);
+        assert_eq!(snake.unid_id, 1525);
+        assert_eq!(snake.id, 1526);
     }
 }
 

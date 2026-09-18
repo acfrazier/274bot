@@ -10,6 +10,7 @@
       "pickpocket": 12,
       "spells": 16,
       "staves": 14,
+      "herbs": 19,
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -38,8 +39,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1393717,
-      "sha256": "45e1851b207213b93cd2a27c6590ebe2fd7ddf01d4fc55a7e1c14428d5d25cbf",
+      "bytes": 1398239,
+      "sha256": "b805ee8c92e737cb3f911cc4dce69681e57821de73a4029f0fb8e79aebfd465f",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -114,6 +115,16 @@
           "path": "scripts/skill_combat/configs/combat.constant",
           "bytes": 90,
           "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+        },
+        {
+          "path": "scripts/skill_herblore/configs/herbs.obj",
+          "bytes": 7059,
+          "sha256": "d2d95923fb7be430ca3ced3075b80a24744cab4d8a2dd989709c3f8d5704c38b"
+        },
+        {
+          "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
+          "bytes": 2174,
+          "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
         },
         {
           "path": "pack/interface.pack",
@@ -228,6 +239,7 @@
       "pickpocket": 12,
       "spells": 16,
       "staves": 14,
+      "herbs": 19,
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -256,8 +268,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1456213,
-      "sha256": "43bc8e8dff850b98adb1551fd698d06bb7382e5f1b2244c4ab98543a19136061",
+      "bytes": 1460735,
+      "sha256": "797e7aaa51aba34a3654634f72a41eec11455588a0cfb2396c601a745cae9664",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -332,6 +344,16 @@
           "path": "scripts/skill_combat/configs/combat.constant",
           "bytes": 90,
           "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+        },
+        {
+          "path": "scripts/skill_herblore/configs/herbs.obj",
+          "bytes": 7372,
+          "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
+        },
+        {
+          "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
+          "bytes": 2174,
+          "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
         },
         {
           "path": "pack/interface.pack",

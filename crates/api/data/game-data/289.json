@@ -78,6 +78,16 @@
         "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
       },
       {
+        "path": "scripts/skill_herblore/configs/herbs.obj",
+        "bytes": 7372,
+        "sha256": "2b09ae8c0b9f7f3c24f5c6b5549d2cb7162f7890dd1d4301167c6a62a58cd3ea"
+      },
+      {
+        "path": "scripts/skill_herblore/scripts/identifying/identify.rs2",
+        "bytes": 2174,
+        "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
+      },
+      {
         "path": "pack/interface.pack",
         "bytes": 318712,
         "sha256": "259f2c47f0e0b91807be1126c9a7cf66d39bc24efec8caf075c0a52805ec610a"
@@ -60624,6 +60634,179 @@
           "name": "Water rune"
         }
       ]
+    }
+  ],
+  "herbs": [
+    {
+      "key": "guam",
+      "name": "Guam leaf",
+      "id": 249,
+      "unidId": 199,
+      "level": 3,
+      "source_identified": "guam_leaf",
+      "source_unidentified": "unidentified_guam"
+    },
+    {
+      "key": "marrentill",
+      "name": "Marrentill",
+      "id": 251,
+      "unidId": 201,
+      "level": 5,
+      "source_identified": "marentill",
+      "source_unidentified": "unidentified_marentill"
+    },
+    {
+      "key": "tarromin",
+      "name": "Tarromin",
+      "id": 253,
+      "unidId": 203,
+      "level": 11,
+      "source_identified": "tarromin",
+      "source_unidentified": "unidentified_tarromin"
+    },
+    {
+      "key": "harralander",
+      "name": "Harralander",
+      "id": 255,
+      "unidId": 205,
+      "level": 20,
+      "source_identified": "harralander",
+      "source_unidentified": "unidentified_harralander"
+    },
+    {
+      "key": "ranarr",
+      "name": "Ranarr weed",
+      "id": 257,
+      "unidId": 207,
+      "level": 25,
+      "source_identified": "ranarr_weed",
+      "source_unidentified": "unidentified_ranarr"
+    },
+    {
+      "key": "irit",
+      "name": "Irit leaf",
+      "id": 259,
+      "unidId": 209,
+      "level": 40,
+      "source_identified": "irit_leaf",
+      "source_unidentified": "unidentified_irit"
+    },
+    {
+      "key": "avantoe",
+      "name": "Avantoe",
+      "id": 261,
+      "unidId": 211,
+      "level": 48,
+      "source_identified": "avantoe",
+      "source_unidentified": "unidentified_avantoe"
+    },
+    {
+      "key": "kwuarm",
+      "name": "Kwuarm",
+      "id": 263,
+      "unidId": 213,
+      "level": 54,
+      "source_identified": "kwuarm",
+      "source_unidentified": "unidentified_kwuarm"
+    },
+    {
+      "key": "cadantine",
+      "name": "Cadantine",
+      "id": 265,
+      "unidId": 215,
+      "level": 65,
+      "source_identified": "cadantine",
+      "source_unidentified": "unidentified_cadantine"
+    },
+    {
+      "key": "lantadyme",
+      "name": "Lantadyme",
+      "id": 2481,
+      "unidId": 2485,
+      "level": 67,
+      "source_identified": "lantadyme",
+      "source_unidentified": "unidentified_lantadyme"
+    },
+    {
+      "key": "dwarf weed",
+      "name": "Dwarf weed",
+      "id": 267,
+      "unidId": 217,
+      "level": 70,
+      "source_identified": "dwarf_weed",
+      "source_unidentified": "unidentified_dwarf_weed"
+    },
+    {
+      "key": "torstol",
+      "name": "Torstol",
+      "id": 269,
+      "unidId": 219,
+      "level": 75,
+      "source_identified": "torstol",
+      "source_unidentified": "unidentified_torstol"
+    },
+    {
+      "key": "snake weed",
+      "name": "Snake weed",
+      "id": 1526,
+      "unidId": 1525,
+      "level": 3,
+      "source_identified": "snake_weed",
+      "source_unidentified": "unidentified_snake_weed"
+    },
+    {
+      "key": "ardrigal",
+      "name": "Ardrigal",
+      "id": 1528,
+      "unidId": 1527,
+      "level": 3,
+      "source_identified": "ardrigal",
+      "source_unidentified": "unidentified_ardrigal"
+    },
+    {
+      "key": "sito foil",
+      "name": "Sito foil",
+      "id": 1530,
+      "unidId": 1529,
+      "level": 3,
+      "source_identified": "sito_foil",
+      "source_unidentified": "unidentified_sito_foil"
+    },
+    {
+      "key": "volencia moss",
+      "name": "Volencia moss",
+      "id": 1532,
+      "unidId": 1531,
+      "level": 3,
+      "source_identified": "volencia_moss",
+      "source_unidentified": "unidentified_volencia_moss"
+    },
+    {
+      "key": "rogues purse",
+      "name": "Rogues purse",
+      "id": 1534,
+      "unidId": 1533,
+      "level": 3,
+      "source_identified": "rogues_purse",
+      "source_unidentified": "unidentified_rogues_purse"
+    },
+    {
+      "key": "toadflax",
+      "name": "Toadflax",
+      "id": 2998,
+      "unidId": 3049,
+      "level": 30,
+      "source_identified": "toadflax",
+      "source_unidentified": "unidentified_toadflax"
+    },
+    {
+      "key": "snapdragon",
+      "name": "Snapdragon",
+      "id": 3000,
+      "unidId": 3051,
+      "level": 59,
+      "source_identified": "snapdragon",
+      "source_unidentified": "unidentified_snapdragon"
     }
   ],
   "autocast": {

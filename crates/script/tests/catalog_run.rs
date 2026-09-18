@@ -28,6 +28,26 @@ fn locked_unloadable(spec: &str) -> bool {
 }
 
 #[test]
+fn autofighter_and_herb_cleaner_import_herbs_without_unloadable_stamp() {
+    let Some(root) = script::rs2b0t_root() else {
+        return;
+    };
+    let dir = scratch("herb-cards");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog register");
+    for name in ["AutoFighter", "HerbCleaner"] {
+        let card = lib
+            .get(ScriptSource::Catalog, name)
+            .unwrap_or_else(|| panic!("{name} listed"));
+        assert_eq!(
+            card.unloadable, None,
+            "{name} must load after herbs.js remap (not gameplay-qualified)"
+        );
+    }
+}
+
+#[test]
 fn catalog_cards_except_dim_set_remap() {
     let Some(root) = script::rs2b0t_root() else {
         return;

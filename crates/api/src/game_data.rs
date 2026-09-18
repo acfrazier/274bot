@@ -266,6 +266,17 @@ pub struct StaffFact {
     pub runes: Vec<StaffRune>,
 }
 
+/// One identified/unidentified herb pair from selected herblore content.
+#[derive(Debug, Deserialize, Clone)]
+pub struct HerbFact {
+    pub key: String,
+    pub name: String,
+    pub id: i32,
+    #[serde(rename = "unidId")]
+    pub unid_id: i32,
+    pub level: i32,
+}
+
 /// Remaining rune cost after staff substitution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemainingRuneCost {
@@ -294,6 +305,8 @@ pub struct SelectedGameData {
     special: Option<SpecialControls>,
     #[serde(default)]
     teleports: Vec<TeleportSpell>,
+    #[serde(default)]
+    herbs: Vec<HerbFact>,
 }
 
 impl SelectedGameData {
@@ -421,6 +434,17 @@ impl SelectedGameData {
 
     pub fn teleports(&self) -> &[TeleportSpell] {
         &self.teleports
+    }
+
+    pub fn herbs(&self) -> &[HerbFact] {
+        &self.herbs
+    }
+
+    pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {
+        let wanted = key.trim().to_ascii_lowercase();
+        self.herbs
+            .iter()
+            .find(|herb| herb.key.eq_ignore_ascii_case(&wanted))
     }
 
     pub fn teleport(&self, name: &str) -> Option<&TeleportSpell> {

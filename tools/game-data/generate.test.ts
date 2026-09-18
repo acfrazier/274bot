@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, parsePack, parseRows } from './generate.ts';
+import { extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, parseIdentifyHerbPairs, parseObjSections, parsePack, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -182,4 +182,48 @@ assert.deepEqual(teleports[0].runes.map((rune) => [rune.name, rune.count]), [['F
 assert.equal(teleports[1].name, 'Lumbridge');
 assert.equal(teleports[1].component_id, 1167);
 assert.equal(teleports.some((row) => row.spell === 'highlvl_alchemy'), false);
+
+assert.equal(herbKeyFromName('Guam leaf'), 'guam');
+assert.equal(herbKeyFromName('Dwarf weed'), 'dwarf weed');
+assert.equal(herbKeyFromName('Snake weed'), 'snake weed');
+assert.equal(herbKeyFromName('Ranarr weed'), 'ranarr');
+const herbObj = parseObjSections(`[guam_leaf]
+name=Guam leaf
+cost=3
+param=identified_herb_exp,25
+[marentill]
+name=Marrentill
+cost=5
+param=identified_herb_level,5
+`);
+assert.equal(herbObj.get('guam_leaf')?.name, 'Guam leaf');
+assert.equal(herbObj.get('guam_leaf')?.cost, 3);
+assert.deepEqual(parseIdentifyHerbPairs(`[opheld1,unidentified_guam]
+~attempt_identify_herb(guam_leaf, last_slot());
+`), [{ unidAlias: 'unidentified_guam', idAlias: 'guam_leaf' }]);
+const herblore = path.join(content, 'scripts/skill_herblore');
+fs.mkdirSync(path.join(herblore, 'configs'), { recursive: true });
+fs.mkdirSync(path.join(herblore, 'scripts/identifying'), { recursive: true });
+fs.writeFileSync(path.join(herblore, 'configs/herbs.obj'), `[guam_leaf]
+name=Guam leaf
+cost=3
+[snake_weed]
+name=Snake weed
+param=identified_herb_level,3
+`);
+fs.writeFileSync(path.join(herblore, 'scripts/identifying/identify.rs2'), `[opheld1,unidentified_guam]
+~attempt_identify_herb(guam_leaf, last_slot());
+[opheld1,unidentified_snake_weed]
+~attempt_identify_herb(snake_weed, last_slot());
+`);
+const herbItems = [
+    { id: 199, debugname: 'unidentified_guam', name: 'Herb', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 249, debugname: 'guam_leaf', name: 'Guam leaf', cost: 3, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 1525, debugname: 'unidentified_snake_weed', name: 'Herb', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 1526, debugname: 'snake_weed', name: 'Snake weed', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+];
+const herbs = extractHerbFacts(content, herbItems);
+assert.equal(herbs.herbs.length, 2);
+assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unidId: 199, level: 3, source_identified: 'guam_leaf', source_unidentified: 'unidentified_guam' });
+assert.equal(herbs.herbs[1].key, 'snake weed');
 console.log('generate fixture passed');

@@ -313,6 +313,60 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn posted_herbs_match_selected_revision_facts() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            count: HERBS.length,
+            guam: HERBS.find(h => h.key === 'guam') || null,
+            snake: HERBS.find(h => h.key === 'snake weed') || null,
+            optionsHasGuam: HERB_OPTIONS.includes('Guam leaf'),
+        };
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data.clone(),
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert!(
+        probe["count"].as_u64().unwrap() >= 14,
+        "expected a full herb table, got {:?}",
+        probe
+    );
+    let guam = &probe["guam"];
+    assert_eq!(guam["id"], 249);
+    assert_eq!(guam["unidId"], 199);
+    assert_eq!(guam["level"], 3);
+    assert_eq!(guam["name"], "Guam leaf");
+    assert_eq!(probe["snake"]["level"], 3);
+    assert!(probe["optionsHasGuam"].as_bool().unwrap());
+    iso.join();
+
+    let offline = LoadIsolate::spawn(
+        r#"
+import { HERBS } from '../../data/herbs.js';
+export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.length; } }
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    offline.on_game_tick(1);
+    assert_eq!(offline.probe("__probe").unwrap(), 0);
+    offline.join();
+}
+
+#[test]
 fn item_db_reads_host_content_alcher_gold_row() {
     let src = r#"
 import { ITEM_DB } from '../../data/itemdb.js';

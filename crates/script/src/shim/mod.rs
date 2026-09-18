@@ -439,6 +439,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("data/spelldb.js"),
         ),
         Module::new("/rs2b0t/bot/data/itemdb.js", include_str!("data/itemdb.js")),
+        Module::new("/rs2b0t/bot/data/herbs.js", include_str!("data/herbs.js")),
         Module::new("/rs2b0t/bot/data/dropdb.js", include_str!("dropdb.js")),
         Module::new(
             "/rs2b0t/bot/data/cowKillerLocations.js",
@@ -820,6 +821,22 @@ pub(crate) fn content_json(
         "gather_tools": api::gather_tools::content_json_value(),
         "spell_db": spell_db,
         "staff_runes": staff_runes,
+        "herbs": game_data
+            .map(|data| {
+                data.herbs()
+                    .iter()
+                    .map(|herb| {
+                        serde_json::json!({
+                            "key": herb.key,
+                            "name": herb.name,
+                            "id": herb.id,
+                            "unidId": herb.unid_id,
+                            "level": herb.level,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
         "autocast": game_data.and_then(|data| {
             data.autocast_controls().map(|controls| {
                 serde_json::json!({
