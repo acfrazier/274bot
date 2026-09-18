@@ -881,6 +881,23 @@ mod tests {
             orbit_pitch: 256,
         }
         .check(&s, None));
+        let ready = Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        };
+        c.orbit_camera_yaw = 0;
+        assert!(!ready.check(&snap(&mut c), None), "wrong yaw must refuse capture");
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 128;
+        assert!(!ready.check(&snap(&mut c), None), "wrong pitch must refuse capture");
+        c.orbit_camera_pitch = 256;
+        c.scene_state = 1;
+        assert!(!ready.check(&snap(&mut c), None), "rebuilding scene must refuse capture");
+        c.scene_state = 2;
+        assert!(ready.check(&snap(&mut c), None), "restored view must be ready");
         c.main_modal_id = 1;
         let s = snap(&mut c);
         assert!(!Proof::RenderViewReady {
