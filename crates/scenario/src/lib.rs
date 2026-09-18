@@ -527,6 +527,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "shop_buyout_aubury" => Some(shop_buyout_aubury_scenario()),
         "smithing_bot" => Some(smithing_bot_scenario()),
         "smithing_bot_platebody" => Some(smithing_bot_platebody_scenario()),
+        "smithing_bot_nails" => Some(smithing_bot_nails_scenario()),
         "leather_crafter" => Some(leather_crafter_scenario()),
         "leather_crafter_hard_body" => Some(leather_crafter_hard_body_scenario()),
         "leather_crafter_green_body" => Some(leather_crafter_green_body_scenario()),
@@ -659,6 +660,7 @@ pub fn names() -> Vec<&'static str> {
         "shop_buyout_aubury",
         "smithing_bot",
         "smithing_bot_platebody",
+        "smithing_bot_nails",
         "leather_crafter",
         "leather_crafter_hard_body",
         "leather_crafter_green_body",
@@ -14324,8 +14326,16 @@ const STAFF_OF_AIR_ID: i32 = 1381;
 const STAFF_OF_WATER_ID: i32 = 1383;
 const HAMMER_ID: i32 = 2347;
 const BRONZE_BAR_CERT_ID: i32 = 2350;
+/// Selected 289 `obj.pack`: `cert_steel_bar` = 2354 (unnoted steel bar 2353).
+const STEEL_BAR_CERT_ID: i32 = 2354;
 const BRONZE_DAGGER_ID: i32 = 1205;
 const BRONZE_PLATEBODY_ID: i32 = 1117;
+/// Selected 289 nails (steel-only anvil product, stackable, out 2/bar).
+const STEEL_NAILS_ID: i32 = 1539;
+/// Nails recipe levelrequired (steel bar tier is 30; product gate is 34).
+const STEEL_NAILS_SMITHING: i32 = 34;
+/// Stock nails `product_amount` — stack output must prove ≥ this count.
+const STEEL_NAILS_OUTPUT: i32 = 2;
 const NEEDLE_ID: i32 = 1733;
 const THREAD_ID: i32 = 1734;
 const LEATHER_GLOVES_ID: i32 = 1059;
@@ -14575,6 +14585,16 @@ const SMITHING_BOT_PLATEBODY_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "product",
         value: ScriptInjectValue::Str("Platebody"),
+    },
+];
+const SMITHING_BOT_NAILS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "bar",
+        value: ScriptInjectValue::Str("Steel"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Nails"),
     },
 ];
 const LEATHER_CRAFTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -15419,6 +15439,12 @@ fn smithing_bot_scenario() -> Scenario {
         1,
         BRONZE_DAGGER_ID,
         BRONZE_PLATEBODY_ID,
+        BRONZE_BAR_ID,
+        BRONZE_BAR_CERT_ID,
+        "bronze_bar",
+        "cert_bronze_bar",
+        28,
+        1,
     )
 }
 
@@ -15429,6 +15455,30 @@ fn smithing_bot_platebody_scenario() -> Scenario {
         18,
         BRONZE_PLATEBODY_ID,
         BRONZE_DAGGER_ID,
+        BRONZE_BAR_ID,
+        BRONZE_BAR_CERT_ID,
+        "bronze_bar",
+        "cert_bronze_bar",
+        30,
+        1,
+    )
+}
+
+/// Steel Nails: steel-only special panel slot, stackable out=2/bar, F2P.
+/// 28 steel bars → first trip 27 bars (+ hammer) then remaining 1 bar restock.
+fn smithing_bot_nails_scenario() -> Scenario {
+    smithing_bot_variant(
+        "smithing_bot_nails",
+        SMITHING_BOT_NAILS_INJECT,
+        STEEL_NAILS_SMITHING,
+        STEEL_NAILS_ID,
+        BRONZE_DAGGER_ID,
+        STEEL_BAR_ID,
+        STEEL_BAR_CERT_ID,
+        "steel_bar",
+        "cert_steel_bar",
+        28,
+        STEEL_NAILS_OUTPUT,
     )
 }
 
@@ -15438,6 +15488,12 @@ fn smithing_bot_variant(
     smithing: i32,
     product_id: i32,
     wrong_id: i32,
+    bar_id: i32,
+    bar_cert_id: i32,
+    bar_alias: &'static str,
+    bar_note_alias: &'static str,
+    bar_quantity: i32,
+    product_count: i32,
 ) -> Scenario {
     let anvil = Proof::ArrivedNear {
         x: VARROCK_ANVIL.x,
@@ -15447,7 +15503,7 @@ fn smithing_bot_variant(
     };
     let product = Proof::ItemId {
         id: product_id,
-        count: 1,
+        count: product_count,
     };
     let xp = Proof::StatXpGain {
         id: SMITHING_STAT,
@@ -15456,11 +15512,6 @@ fn smithing_bot_variant(
     let further_xp = Proof::FreshStatXpGain {
         id: SMITHING_STAT,
         min: 1,
-    };
-    let bar_quantity = if product_id == BRONZE_PLATEBODY_ID {
-        30
-    } else {
-        28
     };
     let bank = VARROCK_WEST_BANK;
     let mut steps = script_live_seed_steps();
@@ -15476,11 +15527,11 @@ fn smithing_bot_variant(
                 note_id: None,
             },
             NativeSeed {
-                unnoted_id: BRONZE_BAR_ID,
-                debug_alias: "bronze_bar",
-                note_alias: Some("cert_bronze_bar"),
+                unnoted_id: bar_id,
+                debug_alias: bar_alias,
+                note_alias: Some(bar_note_alias),
                 quantity: bar_quantity,
-                note_id: Some(BRONZE_BAR_CERT_ID),
+                note_id: Some(bar_cert_id),
             },
         ],
         "smithing",
@@ -15497,7 +15548,7 @@ fn smithing_bot_variant(
         (
             "confirm the exact noted bar seed in pack before deposit",
             Proof::ItemId {
-                id: BRONZE_BAR_CERT_ID,
+                id: bar_cert_id,
                 count: bar_quantity,
             },
         ),
@@ -15511,7 +15562,7 @@ fn smithing_bot_variant(
         (
             "bound the noted bar seed count in pack before deposit",
             Proof::ItemIdAtMost {
-                id: BRONZE_BAR_CERT_ID,
+                id: bar_cert_id,
                 count: bar_quantity,
             },
         ),
@@ -15542,7 +15593,7 @@ fn smithing_bot_variant(
     steps.push(tanner_open_seed_bank(
         "open and acknowledge the bar seed bank",
         Proof::BankItemIdAtMost {
-            id: BRONZE_BAR_ID,
+            id: bar_id,
             count: 0,
         },
     ));
@@ -15557,11 +15608,11 @@ fn smithing_bot_variant(
                 note_id: None,
             },
             NativeSeed {
-                unnoted_id: BRONZE_BAR_ID,
-                debug_alias: "bronze_bar",
-                note_alias: Some("cert_bronze_bar"),
+                unnoted_id: bar_id,
+                debug_alias: bar_alias,
+                note_alias: Some(bar_note_alias),
                 quantity: bar_quantity,
-                note_id: Some(BRONZE_BAR_CERT_ID),
+                note_id: Some(bar_cert_id),
             },
         ],
     ));
@@ -15574,9 +15625,9 @@ fn smithing_bot_variant(
             },
         ),
         (
-            "acknowledge the exact bronze bar seed bank",
+            "acknowledge the exact bar seed bank",
             Proof::BankItemId {
-                id: BRONZE_BAR_ID,
+                id: bar_id,
                 count: bar_quantity,
             },
         ),
@@ -15590,7 +15641,7 @@ fn smithing_bot_variant(
         (
             "confirm the noted bar seed was removed from pack",
             Proof::ItemIdAtMost {
-                id: BRONZE_BAR_CERT_ID,
+                id: bar_cert_id,
                 count: 0,
             },
         ),
@@ -15602,16 +15653,16 @@ fn smithing_bot_variant(
             },
         ),
         (
-            "bound the bronze bar seed bank count",
+            "bound the bar seed bank count",
             Proof::BankItemIdAtMost {
-                id: BRONZE_BAR_ID,
+                id: bar_id,
                 count: bar_quantity,
             },
         ),
         (
-            "confirm no noted bronze bars remain in bank",
+            "confirm no noted bars remain in bank",
             Proof::BankItemIdAtMost {
-                id: BRONZE_BAR_CERT_ID,
+                id: bar_cert_id,
                 count: 0,
             },
         ),
@@ -15628,7 +15679,7 @@ fn smithing_bot_variant(
             "watch script-smithed product enter a fresh bank",
             Proof::BankItemId {
                 id: product_id,
-                count: 1,
+                count: product_count,
             },
         ),
         (
@@ -15639,9 +15690,9 @@ fn smithing_bot_variant(
             },
         ),
         (
-            "watch a restock of bronze bars",
+            "watch a restock of bars",
             Proof::ItemId {
-                id: BRONZE_BAR_ID,
+                id: bar_id,
                 count: 1,
             },
         ),
@@ -17807,6 +17858,8 @@ mod tests {
             unnoted_obj(HAMMER_ID, false),
             unnoted_obj(BRONZE_BAR_ID, false),
             certificate_obj(BRONZE_BAR_CERT_ID, BRONZE_BAR_ID),
+            unnoted_obj(STEEL_BAR_ID, false),
+            certificate_obj(STEEL_BAR_CERT_ID, STEEL_BAR_ID),
             unnoted_obj(NEEDLE_ID, true),
             unnoted_obj(THREAD_ID, true),
             unnoted_obj(COINS_ID, true),
@@ -17965,6 +18018,16 @@ mod tests {
                 "smithing_bot_platebody",
                 &["give hammer 1", "give cert_bronze_bar 30"],
                 &["givebank", "give cert_bronze_bar 28", "give bronze_bar 30"],
+            ),
+            (
+                "smithing_bot_nails",
+                &["give hammer 1", "give cert_steel_bar 28"],
+                &[
+                    "givebank",
+                    "give steel_bar 28",
+                    "cert_bronze_bar",
+                    "bronze_bar",
+                ],
             ),
             (
                 "leather_crafter",
@@ -18204,11 +18267,25 @@ mod tests {
         );
         assert!(ok, "platebody must deposit the 30-bar certificate stack");
         assert_eq!(dispatched, BRONZE_BAR_CERT_ID);
+
+        let (ok, dispatched) = send_deposit(
+            "smithing_bot_nails",
+            STEEL_BAR_ID,
+            28,
+            STEEL_BAR_CERT_ID,
+            28,
+        );
+        assert!(ok, "nails must deposit the steel bar certificate stack");
+        assert_eq!(dispatched, STEEL_BAR_CERT_ID);
     }
 
     #[test]
     fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
-        for name in ["smithing_bot", "smithing_bot_platebody"] {
+        for (name, product_min) in [
+            ("smithing_bot", 1),
+            ("smithing_bot_platebody", 1),
+            ("smithing_bot_nails", STEEL_NAILS_OUTPUT),
+        ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(
                 s.settings.deadline,
@@ -18227,9 +18304,9 @@ mod tests {
             assert!(
                 matches!(
                     deposit.wait.arm,
-                    Proof::BankItemId { count: 1, .. }
+                    Proof::BankItemId { count, .. } if count == product_min
                 ),
-                "{name}: deposit proof stays fresh bank item ≥1"
+                "{name}: deposit proof stays fresh bank item ≥{product_min}"
             );
             let product = s
                 .steps
@@ -18239,6 +18316,13 @@ mod tests {
             assert_eq!(
                 product.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
                 "{name}: first-product arm keeps the ordinary gold watch"
+            );
+            assert!(
+                matches!(
+                    product.wait.arm,
+                    Proof::ItemId { count, .. } if count == product_min
+                ),
+                "{name}: pack product proves ≥{product_min}"
             );
             let further = s
                 .steps
@@ -18266,6 +18350,7 @@ mod tests {
                 30,
                 BRONZE_BAR_ID,
             ),
+            ("smithing_bot_nails", STEEL_BAR_CERT_ID, 28, STEEL_BAR_ID),
             ("leather_crafter", LEATHER_CERT_ID, 28, SOFT_LEATHER_ID),
             (
                 "leather_crafter_hard_body",
@@ -18698,6 +18783,7 @@ mod tests {
                 "shop_buyout_aubury",
                 "smithing_bot",
                 "smithing_bot_platebody",
+                "smithing_bot_nails",
                 "leather_crafter",
                 "leather_crafter_hard_body",
                 "leather_crafter_green_body",
