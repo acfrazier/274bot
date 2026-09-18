@@ -18,7 +18,8 @@ not a world switch. This is **not** Jagex and not a hosted wall — there is
 model output will be rejected; the product bar is a host that does not suck.
 
 Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
-[FIRST-START.md](FIRST-START.md), [docs/](docs/README.md).
+[FIRST-START.md](FIRST-START.md), [docs/](docs/README.md),
+[docs/architecture.md](docs/architecture.md).
 
 ## Prerequisites
 
@@ -97,11 +98,23 @@ cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-
 
 cargo test --workspace
 cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
+
+# Crate-graph ownership (Python 3.11+). Does not replace fmt/clippy/test.
+python3 tools/architecture/check.py
+python3 tools/architecture/check.py --self-test
 ```
 
+Crate edges are an explicit allowlist
+([`tools/architecture/policy.toml`](tools/architecture/policy.toml),
+[docs/architecture.md](docs/architecture.md)). New reverse or convenience
+dependencies, workspace aliases, target tables, and unknown workspace
+members fail closed. Lifecycle, FlatBuffer isolate/host wire, last-FBO,
+and JS-shim policy are review requirements, not this checker.
+
 GitHub Actions runs the same two manifests after installing ALSA + X11
-headers (`libasound2-dev` — panel pulls client `audio` / cpal). It is still
-a **subset**: `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`.
+headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
+architecture checker (no Rust toolchain). It is still a **subset**:
+`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`.
 A green GH job is not a headed or engine pass.
 
 Live harnesses need the engine for the profile under test. Failures print
