@@ -10008,6 +10008,14 @@ const HILL_GIANT_INJECT: &[ScriptSettingInject] = &[
 ];
 const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Trout"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_FOOD as f64),
+    },
+    ScriptSettingInject {
         id: "target",
         value: ScriptInjectValue::Str("Guard"),
     },
@@ -13185,6 +13193,14 @@ fn ardy_fighter_scenario() -> Scenario {
 /// is unreachable: Guards drop no gems and the card keeps clue items), and
 /// `bankAtLootSlots=1` so the first of those drops is what ends the trip.
 const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Trout"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_BANK_RESTOCK as f64),
+    },
     ScriptSettingInject {
         id: "target",
         value: ScriptInjectValue::Str("Guard"),
