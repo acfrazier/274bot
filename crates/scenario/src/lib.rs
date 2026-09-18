@@ -15182,10 +15182,17 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 /// measures Bob-specific variance.
 const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 
-/// Nurmof underground shop ↔ surface Falador East: multi-segment route
-/// (estimate, not measured) exceeds short-preset geometry. Reuses Betty trial
-/// bounds conservatively until a scoped LIVE arm exists.
-const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
+/// Nurmof livewfnjs8_0 reached the return Trade but hit the 420s deadline
+/// before a fresh purchase. Summed host windows put those Trade sends at
+/// 406.586/410.124/413.621s and termination at 415.941s (approximate process
+/// timing, not an atomic shop-open witness). Native open waits 3s per attempt.
+/// Allow one bounded 30s observation margin for the remaining open/buy work;
+/// this is a trial allowance, not proof that timing is the only defect.
+/// Keep every dirty budget and the fresh post-bank purchase proof unchanged.
+const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
+    deadline: Duration::from_secs(450),
+    ..SHOP_BUYOUT_BETTY_TIMING
+};
 
 /// Lundail cellar shop 2535,4719 ↔ Gundai stand 2533,4714 is Chebyshev 5
 /// (estimate, not measured). Four legs stay inside the Mage Arena cellar —
@@ -28223,15 +28230,16 @@ mod tests {
             let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
             assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
             let expected_deadline = match name {
-                "shop_buyout_betty" | "shop_buyout_bob" | "shop_buyout_nurmof" => {
+                "shop_buyout_betty" | "shop_buyout_bob" => {
                     SHOP_BUYOUT_BETTY_DEADLINE
                 }
                 "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
+                "shop_buyout_nurmof" => Duration::from_secs(450),
                 _ => SCRIPT_GOLD_DEADLINE,
             };
             assert_eq!(
                 scenario.settings.deadline, expected_deadline,
-                "{name}: deadline is long-route preset or ordinary gold 180s"
+                "{name}: deadline matches the scoped observation budget"
             );
             assert_eq!(
                 scenario.proof,
