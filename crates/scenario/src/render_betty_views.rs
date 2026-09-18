@@ -114,20 +114,26 @@ fn scenario_for(case: ViewCase) -> Scenario {
             mainland: true,
         },
         steps: vec![Step {
-            name: "drain mainland tutorial debug dialog",
-            kind: StepKind::DrainDialogs { choice: 1 },
-            wait: Wait {
-                arm: Proof::NoActiveContinue,
-                budget_ticks: 60,
-            },
-        }, Step {
             name: "diagnostic tele and fixed orbit camera",
             kind: StepKind::Perform {
                 send: tele_and_orbit_send(case.station, case.orbit_yaw, RENDER_BETTY_PITCH),
             },
             wait: Wait {
-                arm: gate,
+                arm: Proof::Arrived {
+                    x: case.station.x,
+                    z: case.station.z,
+                    level: case.station.level,
+                },
                 budget_ticks: RENDER_CAPTURE_STEP_BUDGET,
+            },
+        }, Step {
+            // The mainland getvar reply can arrive after initial preparation.
+            // Keep draining until the unchanged final capture gate holds.
+            name: "drain mainland dialog and settle render view",
+            kind: StepKind::DrainDialogs { choice: 1 },
+            wait: Wait {
+                arm: gate,
+                budget_ticks: 60,
             },
         }],
         proof: gate,
@@ -194,7 +200,7 @@ mod tests {
             assert!(scenario.seed.mainland);
             assert_eq!(scenario.steps.len(), 2);
             assert!(
-                matches!(scenario.steps[1].kind, StepKind::Perform { .. }),
+                matches!(scenario.steps[0].kind, StepKind::Perform { .. }),
                 "{name} must use a single perform+wait step"
             );
             assert!(
