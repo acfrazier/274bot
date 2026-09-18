@@ -2224,24 +2224,47 @@ fn gold_script_nav() -> ScenarioNav {
     ScenarioNav::default().with_tick_ms(600)
 }
 
-/// Watch window after Start (~90s at 600ms ticks). Seed/tele/relog stay longer.
+/// Ordinary post-Start watch budget in **runner dirty-snapshot increments**
+/// (`runner`: `ticks_waited += 1` when `snapshot.rebuild` reports any family
+/// gen moved). Not engine `World.TICKRATE` (600ms) game ticks and not wall
+/// seconds — do not convert as 150×600ms.
 const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
-/// Seed + tele + drain + the short watch. Not a 6-minute soak.
+/// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
+/// whole-scenario cap (independent of dirty-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
-/// selected289 `smithing_anvil`: `p_delay(1)` then work then `p_delay(2)`.
-/// Engine `P_DELAY` sets `delayedUntil = currentTick + 1 + n`, so those are
-/// 2 + 3 = 5 game ticks per bar. `makeFromPanelMax` posts Make-10 (not all).
-/// Dagger trip keeps the hammer → ≤27 bars; deposit proof arms on the first
-/// product, so ≤26 items remain at 5 ticks = 130. Level 1→2 and 2→3 (bronze
-/// dagger 12.5 xp) plus a Make-10 ceiling restart interrupt the session —
-/// each needs ContinueDialog + bar-use + panel (~15 ticks × 3 = 45). Anvil
-/// stand (3188,3425) → Varrock West bank is Chebyshev 15 plus open/deposit
-/// (~30). Bound 130+45+30 = 205, rounded to 220. Live cf41 left 7 bars under
-/// anim 898 after 150 ticks of this step — progressive craft, not a stall.
-/// Global [`SCRIPT_GOLD_DEADLINE`] (180s) is unchanged.
-const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 220;
+/// **Units:** this constant is a `budget_ticks` / runner dirty-snapshot
+/// count (`runner.rs`: increment only when `snapshot.rebuild` is dirty —
+/// any family gen moved). It is **not** an engine `p_delay` game-tick
+/// count and not wall time. Capture `tick` advances only on PLAYER_INFO;
+/// live fail at cf41 had outcome total_ticks 204 / 102.075s wall with
+/// snapshot `tick` 173 — those figures are not interchangeable proofs.
+///
+/// **Engine lower bound (separate unit — selected289 `smithing_anvil`):**
+/// `p_delay(1)` + work + `p_delay(2)`; `P_DELAY` → `delayedUntil =
+/// currentTick + 1 + n` → 2+3 = **5 engine ticks/bar**. `makeFromPanelMax`
+/// → Make-10 (op 3). Hammer kept → ≤27 bars/trip; deposit arms on first
+/// product → ≤26 remain → 26×5 = **130 engine ticks** pure forge.
+/// Bronze dagger 12.5 xp; RS thresholds 83 / 174 / 276 → level 1→2, 2→3,
+/// and **3→4** all land inside a 27-bar first trip (3→4 still in the
+/// remaining ≤7 bars after measured 20 daggers / 250 xp / level 3). Each
+/// level-up plus a Make-10 residual restart needs ContinueDialog + re-Use
+/// anvil + panel (~15 engine ticks × 4 interrupts ≈ 60). Anvil
+/// (3188,3425) → VW bank Chebyshev 15 + open/deposit ≈ 30 engine ticks.
+/// Engine LB ≈ 130+60+30 = **220 engine ticks** (not assigned raw to this
+/// constant).
+///
+/// **Dirty budget:** measured deposit step exhausted 150 dirties still
+/// mid-craft (20×1205 + 7 bars, anim 898, three MakePanel op3 +
+/// ContinueDialog pairs, no deposit) — progressive craft, not a freeze.
+/// Residual at ~8 dirties/item (interrupted rate) × 7 bars + L3→4 + bank
+/// walk pushes arm-to-deposit past 220 dirties; pad explicitly for
+/// dirty≠engine and match the existing bone_burier bank-item pattern →
+/// **240**. Diagnosis remains **provisional** until root LIVE confirms
+/// deposit/restock/return/fresh XP inside unchanged 180s deadline.
+/// Global [`SCRIPT_GOLD_DEADLINE`] (180s) and other gold watches stay 150.
+const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
 fn drain_advancestat() -> Step {
@@ -15626,8 +15649,9 @@ fn smithing_bot_variant(
         ("watch return to the anvil after restock", anvil),
         ("watch further Smithing XP after restock", further_xp),
     ] {
-        // Deposit arms on the first product while ≤26 bars may still forge
-        // (5 ticks/bar + level-up/Make-10 restarts + bank). Other arms keep
+        // Deposit arms on the first product while ≤26 bars may still forge.
+        // SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS is runner dirty increments
+        // (not engine p_delay ticks); see constant docs. Other arms keep
         // the ordinary gold watch; do not loosen the global deadline.
         let budget_ticks = if matches!(arm, Proof::BankItemId { .. }) {
             SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS
@@ -18198,7 +18222,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} has product deposit watch"));
             assert_eq!(
                 deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
-                "{name}: deposit watch must cover ≤26 remaining 5-tick bars + restarts + bank"
+                "{name}: deposit dirty-budget covers remaining forge (engine 5/bar + L1-4 + Make-10 + bank), not equated to engine ticks"
             );
             assert!(
                 matches!(
