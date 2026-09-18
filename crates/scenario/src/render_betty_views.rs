@@ -114,6 +114,13 @@ fn scenario_for(case: ViewCase) -> Scenario {
             mainland: true,
         },
         steps: vec![Step {
+            name: "drain mainland tutorial debug dialog",
+            kind: StepKind::DrainDialogs { choice: 1 },
+            wait: Wait {
+                arm: Proof::NoActiveContinue,
+                budget_ticks: 60,
+            },
+        }, Step {
             name: "diagnostic tele and fixed orbit camera",
             kind: StepKind::Perform {
                 send: tele_and_orbit_send(case.station, case.orbit_yaw, RENDER_BETTY_PITCH),
@@ -185,13 +192,13 @@ mod tests {
             assert_eq!(scenario.name, *name);
             assert_eq!(scenario.seed.profiles, [("test", "test")]);
             assert!(scenario.seed.mainland);
-            assert_eq!(scenario.steps.len(), 1);
+            assert_eq!(scenario.steps.len(), 2);
             assert!(
-                matches!(scenario.steps[0].kind, StepKind::Perform { .. }),
+                matches!(scenario.steps[1].kind, StepKind::Perform { .. }),
                 "{name} must use a single perform+wait step"
             );
             assert!(
-                !matches!(scenario.steps[0].kind, StepKind::Shot { .. }),
+                !matches!(scenario.steps[1].kind, StepKind::Shot { .. }),
                 "{name} must not queue an extra Shot step"
             );
         }
@@ -206,7 +213,7 @@ mod tests {
             "terminal shot label drives PNG+JSON naming"
         );
         assert!(matches!(
-            betty0.steps[0].wait.arm,
+            betty0.steps[1].wait.arm,
             Proof::RenderViewReady {
                 x: 3012,
                 z: 3258,
@@ -215,12 +222,12 @@ mod tests {
                 orbit_pitch: 256,
             }
         ));
-        assert_eq!(betty0.proof.name(), betty0.steps[0].wait.arm.name());
+        assert_eq!(betty0.proof.name(), betty0.steps[1].wait.arm.name());
 
         let west512 = get("render_betty_views_west_bank_yaw512").expect("west bank yaw512");
         assert_eq!(west512.settings.terminal_shot, Some("west_bank_s8_yaw512"));
         assert!(matches!(
-            west512.steps[0].wait.arm,
+            west512.steps[1].wait.arm,
             Proof::RenderViewReady {
                 x: 2945,
                 z: 3368,
