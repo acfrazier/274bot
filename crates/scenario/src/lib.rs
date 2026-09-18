@@ -14826,16 +14826,61 @@ const AUBURY_STAND: WorldTile = WorldTile {
     z: 3401,
     level: 0,
 };
-const AEMAD_BANK: WorldTile = WorldTile {
+/// Stock-facing walkable adjacent for Ardougne East open booth 2213@2656,3283
+/// (map m41_51 local 32,19). Preset bankStand 2655,3283 is Chebyshev 1 west;
+/// closed 2215@2656,3280 is not operable. Keep the seed stand off the booth.
+const AEMAD_BANK_APPROACH: WorldTile = WorldTile {
     x: 2655,
     z: 3283,
     level: 0,
 };
+const AEMAD_BANK_BOOTH: WorldTile = WorldTile {
+    x: 2656,
+    z: 3283,
+    level: 0,
+};
+const AEMAD_BANK_BOOTH_ID: i32 = 2213;
+/// Catalog Varrock East stand (content.rs) north of open booth 2213@3253,3419
+/// (m50_53 local 53,27). Closed 2215@3251/3255,3419 are not operable.
+const VARROCK_EAST_BANK_APPROACH: WorldTile = WorldTile {
+    x: 3253,
+    z: 3420,
+    level: 0,
+};
+const VARROCK_EAST_BANK_BOOTH: WorldTile = WorldTile {
+    x: 3253,
+    z: 3419,
+    level: 0,
+};
+const VARROCK_EAST_BANK_BOOTH_ID: i32 = 2213;
 const VARROCK_ANVIL: WorldTile = WorldTile {
     x: 3188,
     z: 3425,
     level: 0,
 };
+
+/// ShopBuyout coin seed: enough banked gp for two+ trips under the injected
+/// budgets without product/ballast seed. Deposited through the ordinary booth.
+const SHOP_BUYOUT_COIN_SEED: i32 = 20_000;
+/// Aemad nonstackable representative: shopdb adventurershop `vial_water`
+/// baseline 500 cost 2 sell 1300 → ~2gp/unit at stock; 28-slot pack fill is
+/// the natural bank trigger (needSpaceFor). perTrip covers one pack + margin;
+/// budget > perTrip leaves sessionSpent headroom for a resumed buy after
+/// deposit (budget==perTrip can Stop on budget spent and kill resume).
+const SHOP_BUYOUT_AEMAD_PER_TRIP_GP: f64 = 200.0;
+const SHOP_BUYOUT_AEMAD_BUDGET_GP: f64 = 600.0;
+/// Aubury stackable representative: shopdb runeshop `firerune` baseline 2000
+/// cost 4 sell 1000 → 4gp/unit. Pack fill does not bank stackables that
+/// already hold a stack; natural bank is coins<100 after a real buy (or
+/// budget spent). perTrip 500 spends down under 100; budget 1500 keeps
+/// remaining budget for a second withdraw+buy.
+const SHOP_BUYOUT_AUBURY_PER_TRIP_GP: f64 = 500.0;
+const SHOP_BUYOUT_AUBURY_BUDGET_GP: f64 = 1500.0;
+const SHOP_BUYOUT_AEMAD_LABEL: &str =
+    "Aemad's vials — East Ardougne (Ardougne East bank)";
+const SHOP_BUYOUT_AUBURY_LABEL: &str = "Aubury's runes — Varrock (Varrock East bank)";
+const SHOP_BUYOUT_AEMAD_ITEM: &str = "Vial of water";
+const SHOP_BUYOUT_AUBURY_ITEM: &str = "Fire rune";
 
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
 const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
@@ -14848,12 +14893,16 @@ const AIO_TELEPORT_NO_STAFF_INJECT: &[ScriptSettingInject] = &[ScriptSettingInje
 }];
 const SHOP_BUYOUT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "shop",
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_AEMAD_LABEL),
+    },
+    ScriptSettingInject {
         id: "budgetGp",
-        value: ScriptInjectValue::Num(2000.0),
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_AEMAD_BUDGET_GP),
     },
     ScriptSettingInject {
         id: "perTripGp",
-        value: ScriptInjectValue::Num(2000.0),
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_AEMAD_PER_TRIP_GP),
     },
     ScriptSettingInject {
         id: "stopFloorGp",
@@ -14861,21 +14910,21 @@ const SHOP_BUYOUT_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "buyItems",
-        value: ScriptInjectValue::StrList(&[]),
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_AEMAD_ITEM]),
     },
 ];
 const SHOP_BUYOUT_AUBURY_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "shop",
-        value: ScriptInjectValue::Str("Aubury's runes — Varrock (Varrock East bank)"),
+        value: ScriptInjectValue::Str(SHOP_BUYOUT_AUBURY_LABEL),
     },
     ScriptSettingInject {
         id: "budgetGp",
-        value: ScriptInjectValue::Num(2000.0),
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_AUBURY_BUDGET_GP),
     },
     ScriptSettingInject {
         id: "perTripGp",
-        value: ScriptInjectValue::Num(2000.0),
+        value: ScriptInjectValue::Num(SHOP_BUYOUT_AUBURY_PER_TRIP_GP),
     },
     ScriptSettingInject {
         id: "stopFloorGp",
@@ -14883,7 +14932,7 @@ const SHOP_BUYOUT_AUBURY_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "buyItems",
-        value: ScriptInjectValue::StrList(&[]),
+        value: ScriptInjectValue::StrList(&[SHOP_BUYOUT_AUBURY_ITEM]),
     },
 ];
 const SMITHING_BOT_INJECT: &[ScriptSettingInject] = &[
@@ -15155,23 +15204,35 @@ fn aio_teleport_variant(plan: AioTeleportPlan) -> Scenario {
     }
 }
 
+/// Aemad nonstackable ShopBuyout: selected `Vial of water` (obj 227) only.
+/// Coin seed via ordinary booth deposit; product unseeded. Natural bank on
+/// pack-full needSpaceFor; budget>perTrip permits resumed purchase.
 fn shop_buyout_scenario() -> Scenario {
     shop_buyout_variant(
         "shop_buyout",
         SHOP_BUYOUT_INJECT,
         AEMAD_STAND,
-        AEMAD_BANK,
+        AEMAD_BANK_APPROACH,
+        AEMAD_BANK_BOOTH,
+        AEMAD_BANK_BOOTH_ID,
         "Aemad",
+        VIAL_OF_WATER_ID,
     )
 }
 
+/// Aubury stackable ShopBuyout: selected `Fire rune` (obj 554) only. Pack
+/// fill does not bank an existing rune stack; natural bank is coins<100
+/// after a real buy with remaining budget for withdraw+resume.
 fn shop_buyout_aubury_scenario() -> Scenario {
     shop_buyout_variant(
         "shop_buyout_aubury",
         SHOP_BUYOUT_AUBURY_INJECT,
         AUBURY_STAND,
-        VARROCK_EAST_BANK,
+        VARROCK_EAST_BANK_APPROACH,
+        VARROCK_EAST_BANK_BOOTH,
+        VARROCK_EAST_BANK_BOOTH_ID,
         "Aubury",
+        FIRE_RUNE_ID,
     )
 }
 
@@ -15179,40 +15240,63 @@ fn shop_buyout_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
     stand: WorldTile,
-    bank: WorldTile,
+    bank_approach: WorldTile,
+    booth: WorldTile,
+    booth_id: i32,
     keeper_name: &'static str,
+    product_id: i32,
 ) -> Scenario {
-    let coins = Proof::ItemId {
-        id: COINS_ID,
+    let product = Proof::ItemId {
+        id: product_id,
         count: 1,
     };
+    let coin_seed = SHOP_BUYOUT_COIN_SEED;
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed stackable coins and stand at the named bank before Start",
+        name: "seed stackable coins and stand at the operable shop bank approach before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "give coins 20000");
-                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                cheat(c, &format!("give coins {coin_seed}"));
+                cheat(
+                    c,
+                    &tele_args(bank_approach.level, bank_approach.x, bank_approach.z),
+                );
                 true
             }),
         },
         wait: Wait {
             arm: Proof::ArrivedNear {
-                x: bank.x,
-                z: bank.z,
-                level: bank.level,
-                radius: 6,
+                x: bank_approach.x,
+                z: bank_approach.z,
+                level: bank_approach.level,
+                radius: 4,
             },
             budget_ticks: 200,
         },
     });
-    steps.push(tanner_open_seed_bank(
-        "open the actual named shop bank for the seed deposit",
+    steps.push(bank_fletcher_watch(
+        "acknowledge exact shop bank booth identity and Use-quickly action before bank send",
+        Proof::LocActionNear {
+            id: booth_id,
+            x: booth.x,
+            z: booth.z,
+            level: booth.level,
+            radius: 0,
+            action: "Use-quickly",
+            present: true,
+        },
+    ));
+    // Same exact-booth open pattern as Herblore readiness (do not retarget
+    // closed booths via open_nearest). Reuses the generic helper only.
+    steps.push(herblore_open_seed_bank_at(
+        "open the exact named shop bank booth for the coin seed deposit",
         Proof::BankItemIdAtMost {
             id: COINS_ID,
             count: 0,
         },
+        booth,
+        booth_id,
     ));
     steps.push(Step {
         name: "deposit the coin seed through the bank window",
@@ -15220,7 +15304,7 @@ fn shop_buyout_variant(
             send: Box::new(move |c, snapshot| {
                 if (Proof::BankItemId {
                     id: COINS_ID,
-                    count: 20000,
+                    count: coin_seed,
                 })
                 .check(snapshot, None)
                 {
@@ -15242,25 +15326,50 @@ fn shop_buyout_variant(
         wait: Wait {
             arm: Proof::BankItemId {
                 id: COINS_ID,
-                count: 20000,
+                count: coin_seed,
             },
             budget_ticks: 200,
         },
     });
-    steps.push(bank_fletcher_watch(
-        "confirm the named bank has no excess coin seed",
-        Proof::BankItemIdAtMost {
-            id: COINS_ID,
-            count: 20000,
-        },
-    ));
-    steps.push(bank_fletcher_watch(
-        "confirm the coin seed left the pack",
-        Proof::ItemIdAtMost {
-            id: COINS_ID,
-            count: 0,
-        },
-    ));
+    for (step_name, arm) in [
+        (
+            "confirm the named bank holds the exact coin seed",
+            Proof::BankItemId {
+                id: COINS_ID,
+                count: coin_seed,
+            },
+        ),
+        (
+            "confirm the named bank has no excess coin seed",
+            Proof::BankItemIdAtMost {
+                id: COINS_ID,
+                count: coin_seed,
+            },
+        ),
+        (
+            "confirm no seeded product in bank before Start",
+            Proof::BankItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm the coin seed left the pack",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
     steps.push(bank_fletcher_close_seed_bank());
     steps.push(Step {
         name: "tele to the original shop keeper before Start",
@@ -15290,21 +15399,53 @@ fn shop_buyout_variant(
             radius: 12,
         },
     ));
+    steps.push(bank_fletcher_watch(
+        "confirm pack still empty of product at the shop before Start",
+        Proof::ItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
     steps.push(start_catalog_step());
+    // Contract: unseeded product → fresh bank product → empty pack →
+    // BankClosed → return named shop → new product. Coins secondary only.
     for (step_name, arm) in [
-        ("watch coins withdrawn after Start", coins),
         (
-            "watch coins spent on posted stock after Start",
+            "watch unseeded purchased product in pack after Start",
+            product,
+        ),
+        (
+            "watch purchased product enter a fresh bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of product after deposit",
             Proof::ItemIdAtMost {
-                id: COINS_ID,
-                count: 1999,
+                id: product_id,
+                count: 0,
             },
         ),
         (
             "watch the buyout bank close after deposit",
             Proof::BankClosed,
         ),
-        ("watch coins after restock for a further buy", coins),
+        (
+            "watch return to the named shop after banking",
+            Proof::NpcNameNear {
+                name: keeper_name,
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 12,
+            },
+        ),
+        (
+            "watch further purchased product after return",
+            product,
+        ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
@@ -15315,7 +15456,7 @@ fn shop_buyout_variant(
             mainland: true,
         },
         steps,
-        proof: coins,
+        proof: product,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
@@ -26911,5 +27052,271 @@ mod tests {
                     .starts_with("select and acknowledge native Strength")
             }));
         }
+    }
+
+    /// ShopBuyout Aemad (nonstackable vial) and Aubury (stackable fire rune):
+    /// selected buyItems only, budget>perTrip for resume, exact operable booth
+    /// seed, unseeded product proof order through bank/return/resume.
+    #[test]
+    fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
+        for (name, product_id, approach, booth, booth_id, keeper, stand, budget, per_trip, item, shop)
+        in [
+            (
+                "shop_buyout",
+                VIAL_OF_WATER_ID,
+                AEMAD_BANK_APPROACH,
+                AEMAD_BANK_BOOTH,
+                AEMAD_BANK_BOOTH_ID,
+                "Aemad",
+                AEMAD_STAND,
+                SHOP_BUYOUT_AEMAD_BUDGET_GP,
+                SHOP_BUYOUT_AEMAD_PER_TRIP_GP,
+                SHOP_BUYOUT_AEMAD_ITEM,
+                SHOP_BUYOUT_AEMAD_LABEL,
+            ),
+            (
+                "shop_buyout_aubury",
+                FIRE_RUNE_ID,
+                VARROCK_EAST_BANK_APPROACH,
+                VARROCK_EAST_BANK_BOOTH,
+                VARROCK_EAST_BANK_BOOTH_ID,
+                "Aubury",
+                AUBURY_STAND,
+                SHOP_BUYOUT_AUBURY_BUDGET_GP,
+                SHOP_BUYOUT_AUBURY_PER_TRIP_GP,
+                SHOP_BUYOUT_AUBURY_ITEM,
+                SHOP_BUYOUT_AUBURY_LABEL,
+            ),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert_eq!(
+                scenario.proof,
+                Proof::ItemId {
+                    id: product_id,
+                    count: 1
+                },
+                "{name}: terminal proof is purchased product ≥1"
+            );
+
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(
+                inject.get("shop"),
+                Some(&Value::String(shop.into())),
+                "{name}: shop label is the named preset"
+            );
+            assert_eq!(
+                inject.get("budgetGp"),
+                Some(&Value::Number(
+                    serde_json::Number::from_f64(budget).unwrap()
+                ))
+            );
+            assert_eq!(
+                inject.get("perTripGp"),
+                Some(&Value::Number(
+                    serde_json::Number::from_f64(per_trip).unwrap()
+                ))
+            );
+            assert!(
+                budget > per_trip,
+                "{name}: budget must exceed perTrip so resume is not budget-spent Stop"
+            );
+            assert_eq!(
+                inject.get("stopFloorGp"),
+                Some(&Value::Number(serde_json::Number::from_f64(0.0).unwrap()))
+            );
+            assert_eq!(
+                inject.get("buyItems"),
+                Some(&Value::Array(vec![Value::String(item.into())])),
+                "{name}: buyItems is the single selected product, not empty-all-stock"
+            );
+
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .expect("StartScript");
+            let seed: Vec<_> = scenario.steps[..start]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect();
+            assert!(
+                seed.contains(&Proof::ArrivedNear {
+                    x: approach.x,
+                    z: approach.z,
+                    level: approach.level,
+                    radius: 4,
+                }),
+                "{name}: seed stands on the operable booth approach"
+            );
+            assert!(
+                seed.contains(&Proof::LocActionNear {
+                    id: booth_id,
+                    x: booth.x,
+                    z: booth.z,
+                    level: booth.level,
+                    radius: 0,
+                    action: "Use-quickly",
+                    present: true,
+                }),
+                "{name}: seed acknowledges exact open booth Use-quickly"
+            );
+            assert_eq!(booth_id, 2213, "{name}: open booth id is 2213");
+            assert!(
+                scenario.steps[..start].iter().any(|step| {
+                    step.name
+                        == "acknowledge exact shop bank booth identity and Use-quickly action before bank send"
+                }),
+                "{name}: readiness step is present"
+            );
+            let open = scenario.steps[..start]
+                .iter()
+                .find(|step| {
+                    step.name == "open the exact named shop bank booth for the coin seed deposit"
+                })
+                .expect("exact booth open");
+            assert!(
+                matches!(open.kind, StepKind::Repeat { .. }),
+                "{name}: open must Repeat exact booth, not one-shot nearest"
+            );
+            assert!(
+                seed.contains(&Proof::BankItemId {
+                    id: COINS_ID,
+                    count: SHOP_BUYOUT_COIN_SEED,
+                }),
+                "{name}: exact coin seed banked"
+            );
+            assert!(
+                seed.contains(&Proof::BankItemIdAtMost {
+                    id: product_id,
+                    count: 0,
+                }),
+                "{name}: product unseeded in bank"
+            );
+            assert!(
+                seed.contains(&Proof::ItemIdAtMost {
+                    id: product_id,
+                    count: 0,
+                }),
+                "{name}: product unseeded in pack"
+            );
+            assert!(
+                seed.contains(&Proof::NpcNameNear {
+                    name: keeper,
+                    x: stand.x,
+                    z: stand.z,
+                    level: stand.level,
+                    radius: 12,
+                }),
+                "{name}: keeper acknowledged before Start"
+            );
+
+            let watches: Vec<_> = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| (step.name, step.wait.arm))
+                .collect();
+            let expected = [
+                (
+                    "watch unseeded purchased product in pack after Start",
+                    Proof::ItemId {
+                        id: product_id,
+                        count: 1,
+                    },
+                ),
+                (
+                    "watch purchased product enter a fresh bank",
+                    Proof::BankItemId {
+                        id: product_id,
+                        count: 1,
+                    },
+                ),
+                (
+                    "watch the pack empty of product after deposit",
+                    Proof::ItemIdAtMost {
+                        id: product_id,
+                        count: 0,
+                    },
+                ),
+                (
+                    "watch the buyout bank close after deposit",
+                    Proof::BankClosed,
+                ),
+                (
+                    "watch return to the named shop after banking",
+                    Proof::NpcNameNear {
+                        name: keeper,
+                        x: stand.x,
+                        z: stand.z,
+                        level: stand.level,
+                        radius: 12,
+                    },
+                ),
+                (
+                    "watch further purchased product after return",
+                    Proof::ItemId {
+                        id: product_id,
+                        count: 1,
+                    },
+                ),
+            ];
+            assert_eq!(
+                watches, expected,
+                "{name}: post-Start proof order is product→bank→empty→close→shop→resume"
+            );
+            for (_, arm) in &watches {
+                // No manufactured coin-only success arms after Start.
+                assert!(
+                    !matches!(
+                        arm,
+                        Proof::ItemId {
+                            id: COINS_ID,
+                            ..
+                        } | Proof::ItemIdAtMost {
+                            id: COINS_ID,
+                            ..
+                        }
+                    ),
+                    "{name}: coins are not the primary post-Start contract"
+                );
+            }
+        }
+
+        // Distinct honest representatives: nonstackable vial vs stackable fire rune.
+        assert_ne!(VIAL_OF_WATER_ID, FIRE_RUNE_ID);
+        assert_eq!(VIAL_OF_WATER_ID, 227);
+        assert_eq!(FIRE_RUNE_ID, 554);
+        assert_eq!(
+            AEMAD_BANK_BOOTH,
+            WorldTile {
+                x: 2656,
+                z: 3283,
+                level: 0
+            }
+        );
+        assert_eq!(
+            VARROCK_EAST_BANK_BOOTH,
+            WorldTile {
+                x: 3253,
+                z: 3419,
+                level: 0
+            }
+        );
+        assert_eq!(
+            AEMAD_BANK_APPROACH,
+            WorldTile {
+                x: 2655,
+                z: 3283,
+                level: 0
+            }
+        );
+        assert_eq!(
+            VARROCK_EAST_BANK_APPROACH,
+            WorldTile {
+                x: 3253,
+                z: 3420,
+                level: 0
+            }
+        );
     }
 }
