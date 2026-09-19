@@ -2838,6 +2838,32 @@ fn login_rearm_clears_latched_display_for_connect_wait() {
     assert!(show_elapsed);
 }
 
+#[test]
+fn preparing_startup_banner_keeps_elapsed_timer() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Preparing,
+        login_latched: false,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("preparing banner");
+    assert_eq!(message, "Preparing client");
+    assert!(show_elapsed);
+}
+
+#[test]
+fn stale_latched_flag_still_overrides_connect_wait_banner() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Queueing,
+        login_latched: true,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched overrides");
+    assert_eq!(message, "Logged out — select Log in to reconnect");
+    assert!(!show_elapsed);
+}
+
 fn live_at(started: Instant) -> LiveNull {
     LiveNull {
         started,

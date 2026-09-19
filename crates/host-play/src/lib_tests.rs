@@ -934,6 +934,33 @@ fn explicit_login_rearm_clears_latch_and_allows_handshake() {
 }
 
 #[test]
+fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        startup_phase: StartupPhase::Queueing,
+        login_latched: true,
+        ..Default::default()
+    }]));
+    let arm = SlotArm::new(0, false);
+    arm.latch.store(true, Ordering::Relaxed);
+    publish_login_latched_from_arm(&statuses, "alice", &arm);
+    assert!(statuses.lock().unwrap()[0].login_latched);
+
+    // Explicit Log in / Login all: same arm flags, then production handoff.
+    arm.latch.store(false, Ordering::Relaxed);
+    arm.want_login.store(true, Ordering::Relaxed);
+    assert!(should_handshake(&arm, false));
+    publish_login_latched_from_arm(&statuses, "alice", &arm);
+
+    let rows = statuses.lock().unwrap();
+    assert!(
+        !rows[0].login_latched,
+        "stale park TRUE must not survive into queue wait"
+    );
+    assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
+}
+
+#[test]
 fn spawn_without_auto_login_does_not_handshake() {
     let arm = SlotArm::new(0, false);
     assert!(!should_handshake(&arm, false));

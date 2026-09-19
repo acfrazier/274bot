@@ -1474,7 +1474,7 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
 }
 
 /// Startup banner text for one slot row. The second flag is whether to append
-/// an elapsed timer (queue/connect waits only).
+/// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
 pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
     if let Some(error) = status.error.as_deref() {
         return Some((error.to_string(), false));
@@ -1517,7 +1517,8 @@ pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option
     } else {
         let show_elapsed = matches!(
             status.startup_phase,
-            host_play::StartupPhase::Queueing
+            host_play::StartupPhase::Preparing
+                | host_play::StartupPhase::Queueing
                 | host_play::StartupPhase::Connecting
                 | host_play::StartupPhase::LoadingScene
         );

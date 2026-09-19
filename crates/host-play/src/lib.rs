@@ -2350,14 +2350,14 @@ fn spawn_slot_thread(
                         // (`Play::prefer_login` for the TV head) that
                         // outlived its intent cannot strand later members.
                         drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
-                        publish_login_latched(
-                            &slot_statuses,
-                            &username,
-                            arm.latch.load(Ordering::Relaxed),
-                        );
+                        publish_login_latched_from_arm(&slot_statuses, &username, &arm);
                         thread::sleep(Duration::from_millis(20));
                         continue;
                     }
+                    // Leaving title park for handshake: refresh latch from the
+                    // arm so an explicit Log in cannot keep a stale TRUE from
+                    // the last park publish through queue/connect.
+                    publish_login_latched_from_arm(&slot_statuses, &username, &arm);
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
@@ -2818,6 +2818,18 @@ fn publish_login_latched(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, lat
     {
         s.login_latched = latched;
     }
+}
+
+fn publish_login_latched_from_arm(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    arm: &SlotArm,
+) {
+    publish_login_latched(
+        statuses,
+        name,
+        arm.latch.load(Ordering::Relaxed),
+    );
 }
 
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
