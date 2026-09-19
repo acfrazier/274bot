@@ -226,6 +226,29 @@ fn take_mainland_seed(
     enabled && last_login_reconnect != Some(true) && sent.lock().unwrap().insert(name.to_string())
 }
 
+fn mainland_seed_options(options: &PlayOptions) -> (bool, PlayOptions) {
+    let enabled = options.mainland;
+    let mut host_options = options.clone();
+    host_options.mainland = false;
+    (enabled, host_options)
+}
+
+fn seed_mainland_on_ready<D: api::interact::Driver>(
+    driver: &mut D,
+    sent: &Mutex<HashSet<String>>,
+    name: &str,
+    enabled: bool,
+    ready: bool,
+    last_login_reconnect: Option<bool>,
+) -> bool {
+    if ready && take_mainland_seed(sent, name, enabled, last_login_reconnect) {
+        api::interact::mainland_hop(driver);
+        true
+    } else {
+        false
+    }
+}
+
 /// Panel-parity walk-arm tick: BankBudget session first, then route follow.
 fn step_walk_arm_follow<D: api::interact::Driver>(
     driver: &mut D,
@@ -552,10 +575,8 @@ impl TuiSession {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
-        let mainland = options.mainland;
+        let (mainland, host_options) = mainland_seed_options(&options);
         let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
-        let mut host_options = options.clone();
-        host_options.mainland = false;
         let map_members = self
             .template
             .as_ref()
@@ -577,13 +598,14 @@ impl TuiSession {
 
             // TUI owns mainland seeding so host-play cannot re-arm it when
             // an intentional scenario logout starts a new run_client stretch.
-            if c.ingame
-                && c.scene_state == 2
-                && c.local_player.is_some()
-                && take_mainland_seed(&mainland_sent, name, mainland, c.last_login_reconnect)
-            {
-                api::interact::mainland_hop(c);
-            }
+            seed_mainland_on_ready(
+                c,
+                &mainland_sent,
+                name,
+                mainland,
+                c.ingame && c.scene_state == 2 && c.local_player.is_some(),
+                c.last_login_reconnect,
+            );
 
             // The shared `--live script_*` runner: tick the driven
             // slot and its companions before the local-player gate
@@ -1831,6 +1853,162 @@ mod tests {
         assert!(
             !take_mainland_seed(&sent, "relog", true, Some(true)),
             "an intentional reconnect must retain the scenario's seeded tile"
+        );
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum RecordedOut {
+        Enc(i32),
+        P1(i32),
+        P2(i32),
+        P4(i32),
+        Jstr(String),
+    }
+
+    #[derive(Default)]
+    struct RecordingOut(Vec<RecordedOut>);
+
+    impl api::prot::Out for RecordingOut {
+        fn p1_enc(&mut self, opcode: i32) {
+            self.0.push(RecordedOut::Enc(opcode));
+        }
+
+        fn p1(&mut self, value: i32) {
+            self.0.push(RecordedOut::P1(value));
+        }
+
+        fn p2(&mut self, value: i32) {
+            self.0.push(RecordedOut::P2(value));
+        }
+
+        fn p4(&mut self, value: i32) {
+            self.0.push(RecordedOut::P4(value));
+        }
+
+        fn pjstr(&mut self, value: &str) {
+            self.0.push(RecordedOut::Jstr(value.to_string()));
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDriver {
+        out: RecordingOut,
+    }
+
+    impl api::interact::Driver for RecordingDriver {
+        fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+
+        fn do_action(&mut self, _slot: i32) -> bool {
+            false
+        }
+
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            _dx: i32,
+            _dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _type: i32,
+        ) -> bool {
+            false
+        }
+
+        fn local_route(&self) -> Option<(i32, i32)> {
+            None
+        }
+
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+
+        fn out(&mut self) -> &mut dyn api::prot::Out {
+            &mut self.out
+        }
+
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
+        use client::io::ClientProt;
+
+        let mut options = dummy_options();
+        options.mainland = true;
+        let (enabled, host_options) = mainland_seed_options(&options);
+        assert!(enabled, "TUI must retain the opt-in");
+        assert!(
+            !host_options.mainland,
+            "host-play must not own or re-arm mainland seeding"
+        );
+
+        let sent = Mutex::new(HashSet::new());
+        let mut driver = RecordingDriver::default();
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "not-ready",
+            enabled,
+            false,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "disabled",
+            false,
+            true,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "reconnect",
+            enabled,
+            true,
+            Some(true),
+        ));
+        assert!(driver.out.0.is_empty());
+
+        assert!(seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "cold",
+            enabled,
+            true,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "cold",
+            enabled,
+            true,
+            Some(false),
+        ));
+
+        let tele = format!("tele {}", api::interact::OFF_ISLAND_TELE);
+        assert_eq!(
+            driver.out.0,
+            vec![
+                RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
+                RecordedOut::P1((tele.len() + 1) as i32),
+                RecordedOut::Jstr(tele),
+                RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
+                RecordedOut::P1(("setvar tutorial 1000".len() + 1) as i32),
+                RecordedOut::Jstr("setvar tutorial 1000".into()),
+            ]
         );
     }
 
