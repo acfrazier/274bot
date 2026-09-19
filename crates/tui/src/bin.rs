@@ -16,7 +16,7 @@
 //! (like the panel) and PASS/FAIL comes from the scenario runner, not a
 //! screenshot.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -213,6 +213,17 @@ fn publish_frontend_slot(
         reset_frontend_slot_session(name, travellers, tick_latch);
     }
     publication.session_boundary
+}
+
+/// Claim the one mainland seed for a slot's cold login. Reconnects retain
+/// scenario-owned position, while an ordinary interactive boot stays opt-in.
+fn take_mainland_seed(
+    sent: &Mutex<HashSet<String>>,
+    name: &str,
+    enabled: bool,
+    last_login_reconnect: Option<bool>,
+) -> bool {
+    enabled && last_login_reconnect != Some(true) && sent.lock().unwrap().insert(name.to_string())
 }
 
 /// Panel-parity walk-arm tick: BankBudget session first, then route follow.
@@ -541,6 +552,10 @@ impl TuiSession {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
+        let mainland = options.mainland;
+        let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
+        let mut host_options = options.clone();
+        host_options.mainland = false;
         let map_members = self
             .template
             .as_ref()
@@ -558,6 +573,16 @@ impl TuiSession {
                 &tick_latch,
             ) {
                 walk_clear.store(true, Ordering::Relaxed);
+            }
+
+            // TUI owns mainland seeding so host-play cannot re-arm it when
+            // an intentional scenario logout starts a new run_client stretch.
+            if c.ingame
+                && c.scene_state == 2
+                && c.local_player.is_some()
+                && take_mainland_seed(&mainland_sent, name, mainland, c.last_login_reconnect)
+            {
+                api::interact::mainland_hop(c);
             }
 
             // The shared `--live script_*` runner: tick the driven
@@ -611,12 +636,12 @@ impl TuiSession {
         let play = match self.template.clone() {
             Some(template) => run_with_template(
                 template,
-                options.mainland,
+                host_options.mainland,
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
             )?,
-            None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
         };
         self.nav_world.lock().unwrap().clone_from(&play.world());
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
@@ -1785,6 +1810,28 @@ mod tests {
             lowmem: true,
             mainland: false,
         }
+    }
+
+    #[test]
+    fn mainland_seed_is_cold_login_only_and_opt_in() {
+        let sent = Mutex::new(HashSet::new());
+
+        assert!(
+            !take_mainland_seed(&sent, "interactive", false, None),
+            "ordinary interactive boot must not opt into mainland seeding"
+        );
+        assert!(
+            take_mainland_seed(&sent, "live", true, Some(false)),
+            "the enabled cold login seeds once"
+        );
+        assert!(
+            !take_mainland_seed(&sent, "live", true, Some(false)),
+            "later ready frames in the same world do not re-seed"
+        );
+        assert!(
+            !take_mainland_seed(&sent, "relog", true, Some(true)),
+            "an intentional reconnect must retain the scenario's seeded tile"
+        );
     }
 
     fn response_15_reconnect(c: &mut client::client::Client) {
