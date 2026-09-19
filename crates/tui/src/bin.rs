@@ -309,6 +309,46 @@ struct PendingCatalogStart {
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
+    loadouts: Vec<script::Loadout>,
+}
+
+fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+    settings
+        .fixture_loadouts
+        .unwrap_or(&[])
+        .iter()
+        .map(|row| {
+            row.carry
+                .iter()
+                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
+                    loadout.with_carry(item, qty)
+                })
+        })
+        .collect()
+}
+
+fn start_stashed_catalog_card(
+    handle: &host_play::ScriptStartHandle,
+    card: &PendingCatalogStart,
+) -> Result<(), String> {
+    if card.loadouts.is_empty() {
+        handle.start_load(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+        )
+    } else {
+        handle.start_load_with_loadouts(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+            &card.loadouts,
+        )
+    }
 }
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start the
@@ -330,15 +370,7 @@ fn fire_pending_catalog_start(
     let Some(h) = handle.as_ref() else {
         return false;
     };
-    if h.start_load(
-        &card.slot,
-        card.js.clone(),
-        card.shape,
-        card.bag.clone(),
-        card.siblings.clone(),
-    )
-    .is_ok()
-    {
+    if start_stashed_catalog_card(h, card).is_ok() {
         pending.take();
         true
     } else {
@@ -748,6 +780,7 @@ impl TuiSession {
         let start_file = scenario.settings.start_file;
         let wait_script_stop = scenario.settings.wait_script_stop;
         let settings_inject = scenario.settings.script_settings_inject;
+        let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries = mint_live_entries_for_target(&names, self.target());
         let pass = live_vault_passphrase_for(self.target());
@@ -817,6 +850,7 @@ impl TuiSession {
                 shape: card.shape,
                 bag,
                 siblings,
+                loadouts: fixture_loadouts.clone(),
             });
         } else if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
@@ -856,6 +890,7 @@ impl TuiSession {
                 shape: card.shape,
                 bag,
                 siblings,
+                loadouts: fixture_loadouts,
             });
         }
         Ok(())
@@ -2551,6 +2586,17 @@ ScriptRegistry.register({
                 .and_then(|pending| pending.bag.clone())
                 .expect("settings bag");
             assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
+            assert!(
+                session
+                    .pending_script
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .expect("file start stashed")
+                    .loadouts
+                    .is_empty(),
+                "native-v2 File starts keep ordinary operator loadout behavior"
+            );
             assert_eq!(
                 session.live_wait_script_stop,
                 Some("confirmed loaded current-generation bank exhaustion")
@@ -2583,12 +2629,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         session
             .live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");
-        let bag = session
-            .pending_script
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("catalog start stashed")
+        let pending = session.pending_script.lock().unwrap();
+        let pending = pending.as_ref().expect("catalog start stashed");
+        let bag = pending
             .bag
             .clone()
             .expect("inject bag is posted even when the card schema is empty");
@@ -2596,6 +2639,11 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             bag.get("target"),
             Some(&serde_json::json!("Guard")),
             "thiever inject must beat the Man fallback"
+        );
+        assert_eq!(
+            pending.loadouts,
+            vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            "production live preparation stages scenario loadouts for catalog Start"
         );
     }
 
