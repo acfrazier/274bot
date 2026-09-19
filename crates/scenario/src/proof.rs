@@ -141,6 +141,8 @@ pub enum Proof {
     /// Player is offline (`!ingame`) after a clean IF_BUTTON logout — the
     /// prepare-fixture save receipt arm. Fail-closed while still ingame.
     LoggedOut,
+    /// The client is in game with the playable scene fully built.
+    IngameScene2,
     /// Headed render diagnostic: ingame scene 2, no modals, on tile, fixed
     /// orbit yaw/pitch (capture gate — not a visual correctness claim).
     RenderViewReady {
@@ -231,6 +233,7 @@ impl Proof {
                 format!("loc_id({id})@({x},{z},{level},r{radius})_{rel}_{action}")
             }
             Proof::LoggedOut => "logged_out".to_string(),
+            Proof::IngameScene2 => "ingame_scene_2".to_string(),
             Proof::RenderViewReady {
                 x,
                 z,
@@ -515,6 +518,7 @@ impl Proof {
                 has == *present
             }
             Proof::LoggedOut => !snap.ingame(),
+            Proof::IngameScene2 => snap.ingame() && snap.scene_state() == 2,
             Proof::RenderViewReady {
                 x,
                 z,
@@ -917,6 +921,27 @@ mod tests {
             orbit_pitch: 256,
         }
         .check(&s, None));
+    }
+
+    #[test]
+    fn ingame_scene_2_requires_both_session_and_ready_scene() {
+        let mut c = seeded();
+        assert!(Proof::IngameScene2.check(&snap(&mut c), None));
+        assert_eq!(Proof::IngameScene2.name(), "ingame_scene_2");
+
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        assert!(
+            !Proof::IngameScene2.check(&snap(&mut c), None),
+            "an in-game rebuild is not final-capture ready"
+        );
+        c.scene_state = 2;
+        c.ingame = false;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        assert!(
+            !Proof::IngameScene2.check(&snap(&mut c), None),
+            "scene state alone must not pass on the title screen"
+        );
     }
 
     #[test]

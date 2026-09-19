@@ -71,6 +71,40 @@ impl LampEpisodeObservation {
     }
 }
 
+/// Ordered facts for one server-owned Maze episode. The fixture sends no
+/// Maze actions; it only observes the shared guardian's hold and snapshots.
+#[derive(Debug, Default)]
+struct MazeEpisodeObservation {
+    return_tile: Option<WorldTile>,
+    reward_baseline: Option<i32>,
+    entry: Option<WorldTile>,
+    last_maze_tile: Option<WorldTile>,
+    tile_changes: u32,
+    max_progress: i32,
+    progress_seen: bool,
+    shrine_seen: bool,
+    returned: bool,
+    reward_seen: bool,
+    released: bool,
+}
+
+impl MazeEpisodeObservation {
+    fn summary(&self) -> String {
+        format!(
+            "maze completion episode [return={:?},entry={:?},progress={},changes={},max={},shrine={},returned={},reward={},released={}]",
+            self.return_tile,
+            self.entry,
+            self.progress_seen,
+            self.tile_changes,
+            self.max_progress,
+            self.shrine_seen,
+            self.returned,
+            self.reward_seen,
+            self.released,
+        )
+    }
+}
+
 const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
 
 /// The machine both runners drive. One instance per scenario run.
@@ -135,6 +169,8 @@ pub struct ScenarioRunner {
     /// Native host-hold + snapshot facts for the current lamp witness step.
     /// This is deliberately not part of [`GameSnapshot`].
     lamp_episode: Option<LampEpisodeObservation>,
+    /// Native host-hold + snapshot ordering for the current Maze witness.
+    maze_episode: Option<MazeEpisodeObservation>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -209,6 +245,7 @@ impl ScenarioRunner {
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             lamp_episode: None,
+            maze_episode: None,
             shot_sink: None,
         }
     }
@@ -418,6 +455,7 @@ impl ScenarioRunner {
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
             self.lamp_episode = None;
+            self.maze_episode = None;
         }
         self.retry_xp_baselines();
         // Scene-settle tracking: the wall-clock instant the scene first
@@ -509,7 +547,8 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true);
+            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
+                && self.observe_maze_completion(hold).unwrap_or(true);
             if native_episode_holds
                 && arm.check_with_xp_context(
                     &self.snapshot,
@@ -548,6 +587,11 @@ impl ScenarioRunner {
                     .lamp_episode
                     .as_ref()
                     .map(LampEpisodeObservation::summary)
+                    .or_else(|| {
+                        self.maze_episode
+                            .as_ref()
+                            .map(MazeEpisodeObservation::summary)
+                    })
                     .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
                     "step {} ({}): {} not seen within {} ticks",
@@ -630,6 +674,19 @@ impl ScenarioRunner {
             }),
             _ => None,
         };
+        self.maze_episode = match self.current_step().kind {
+            StepKind::ObserveMazeCompletion { spawns, .. } => {
+                let ready = self.snapshot.ingame() && self.snapshot.scene_state() == 2;
+                let return_tile = snapshot_tile(&self.snapshot)
+                    .filter(|tile| ready && !on_maze_square(*tile, spawns));
+                Some(MazeEpisodeObservation {
+                    return_tile,
+                    reward_baseline: return_tile.map(|_| inventory_total(&self.snapshot)),
+                    ..MazeEpisodeObservation::default()
+                })
+            }
+            _ => None,
+        };
         self.capture_xp_baseline(self.current_step().wait.arm);
     }
 
@@ -703,6 +760,83 @@ impl ScenarioRunner {
             state.released = true;
         }
         Some(state.released)
+    }
+
+    fn observe_maze_completion(&mut self, hold: bool) -> Option<bool> {
+        let (spawns, shrine, shrine_radius, min_progress, entry_shot) =
+            match self.current_step().kind {
+                StepKind::ObserveMazeCompletion {
+                    spawns,
+                    shrine,
+                    shrine_radius,
+                    min_progress,
+                    entry_shot,
+                } => (spawns, shrine, shrine_radius, min_progress, entry_shot),
+                _ => return None,
+            };
+        let Some(state) = self.maze_episode.as_mut() else {
+            // A disconnect/session boundary clears the episode. Never
+            // recapture a post-event tile as a new return baseline.
+            return Some(false);
+        };
+        let tile = snapshot_tile(&self.snapshot);
+        let ready = self.snapshot.ingame() && self.snapshot.scene_state() == 2;
+        let inv_total = inventory_total(&self.snapshot);
+        let mut entry_capture = None;
+
+        if state.entry.is_none() && hold {
+            if let Some(tile) = tile.filter(|tile| spawns.contains(tile)) {
+                state.entry = Some(tile);
+                state.last_maze_tile = Some(tile);
+                entry_capture = Some(tile);
+            }
+        }
+
+        if let (Some(entry), Some(here)) = (state.entry, tile) {
+            if hold && on_maze_square(here, spawns) {
+                let progressed_before = state.progress_seen;
+                if state.last_maze_tile != Some(here) {
+                    state.tile_changes += 1;
+                    state.last_maze_tile = Some(here);
+                }
+                state.max_progress = state.max_progress.max(tile_distance(entry, here));
+                if state.tile_changes >= 2 && state.max_progress >= min_progress {
+                    state.progress_seen = true;
+                }
+                if progressed_before && tile_distance(here, shrine) <= shrine_radius {
+                    state.shrine_seen = true;
+                }
+            }
+        }
+
+        if state.shrine_seen
+            && ready
+            && tile == state.return_tile
+            && tile.is_some_and(|tile| !on_maze_square(tile, spawns))
+        {
+            state.returned = true;
+        }
+        if state.returned {
+            state.reward_seen |= state
+                .reward_baseline
+                .is_some_and(|baseline| inv_total > baseline);
+        }
+        if state.returned && state.reward_seen && ready && !hold {
+            state.released = true;
+        }
+        let released = state.released;
+        let return_tile = state.return_tile;
+
+        if let Some(entry) = entry_capture {
+            println!(
+                "MAZE_START: spawn=({},{},{}) return={:?}",
+                entry.x, entry.z, entry.level, return_tile
+            );
+            if let Some(sink) = self.shot_sink.as_mut() {
+                sink(entry_shot, &self.snapshot);
+            }
+        }
+        Some(released)
     }
 
     fn stat_xp(&self, id: i32) -> Option<i32> {
@@ -834,7 +968,8 @@ impl ScenarioRunner {
             }
             StepKind::Shot { .. }
             | StepKind::StartScript
-            | StepKind::ObserveLampRedemption { .. } => Ok(()),
+            | StepKind::ObserveLampRedemption { .. }
+            | StepKind::ObserveMazeCompletion { .. } => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
@@ -1021,6 +1156,33 @@ impl ScenarioRunner {
             self.started,
         ));
     }
+}
+
+fn snapshot_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
+    snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level })
+}
+
+fn inventory_total(snapshot: &GameSnapshot) -> i32 {
+    snapshot
+        .inv()
+        .iter()
+        .map(|(_, count)| (*count).max(0))
+        .sum()
+}
+
+fn on_maze_square(tile: WorldTile, spawns: &[WorldTile]) -> bool {
+    spawns.first().is_some_and(|spawn| {
+        tile.level == spawn.level && (tile.x >> 6, tile.z >> 6) == (spawn.x >> 6, spawn.z >> 6)
+    })
+}
+
+fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
+    if a.level != b.level {
+        return i32::MAX;
+    }
+    (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
 /// A `Wait` helper so tests can build steps without importing the field
@@ -2704,5 +2866,218 @@ mod tests {
             message.contains("dialogue=false"),
             "an award outside a held episode must not bind: {message}"
         );
+    }
+
+    const TEST_MAZE_SPAWNS: &[WorldTile] = &[
+        WorldTile {
+            x: 2891,
+            z: 4597,
+            level: 0,
+        },
+        WorldTile {
+            x: 2933,
+            z: 4597,
+            level: 0,
+        },
+        WorldTile {
+            x: 2933,
+            z: 4555,
+            level: 0,
+        },
+        WorldTile {
+            x: 2891,
+            z: 4555,
+            level: 0,
+        },
+    ];
+    const TEST_MAZE_SHRINE: WorldTile = WorldTile {
+        x: 2911,
+        z: 4575,
+        level: 0,
+    };
+
+    fn maze_episode_scenario(budget_ticks: u32) -> Scenario {
+        Scenario {
+            name: "maze-episode",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "observe ordered Maze completion",
+                kind: StepKind::ObserveMazeCompletion {
+                    spawns: TEST_MAZE_SPAWNS,
+                    shrine: TEST_MAZE_SHRINE,
+                    shrine_radius: 4,
+                    min_progress: 8,
+                    entry_shot: "maze entered",
+                },
+                wait: wait(Proof::IngameScene2, budget_ticks),
+            }],
+            proof: Proof::IngameScene2,
+            companions: vec![],
+            settings: ScenarioSettings {
+                terminal_shot: Some("maze final"),
+                ..ScenarioSettings::default()
+            },
+        }
+    }
+
+    fn set_world_tile(c: &mut Client, tile: WorldTile) {
+        c.map_build_base_x = (tile.x >> 6) << 6;
+        c.map_build_base_z = (tile.z >> 6) << 6;
+        c.minusedlevel = tile.level;
+        c.local_player = Some(ClientPlayer::at(
+            tile.x - c.map_build_base_x,
+            tile.z - c.map_build_base_z,
+        ));
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+
+    fn tick_dirty(runner: &mut ScenarioRunner, c: &mut Client, hold: bool) {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(c, hold);
+    }
+
+    #[test]
+    fn maze_episode_requires_held_entry_progress_shrine_return_reward_and_release() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(20), None);
+        runner.set_scene_settle(Duration::ZERO);
+        type Captures = Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>>;
+        let captures: Captures = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&captures);
+        runner.set_shot_sink(Box::new(move |label, snap| {
+            sink.lock().unwrap().push((label.to_string(), snap.tile()));
+        }));
+
+        runner.tick_with_hold(&mut c, false);
+        set_world_tile(&mut c, TEST_MAZE_SPAWNS[0]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            captures.lock().unwrap().as_slice(),
+            &[("maze entered".to_string(), Some((2891, 4597, 0)))],
+            "the entry capture reports the server-selected spawn"
+        );
+
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2891,
+                z: 4590,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2896,
+                z: 4588,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2910,
+                z: 4576,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "server return and reward cannot pass while native hold remains"
+        );
+        tick_dirty(&mut runner, &mut c, false);
+
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(
+            captures.lock().unwrap().as_slice(),
+            &[
+                ("maze entered".to_string(), Some((2891, 4597, 0))),
+                ("maze final".to_string(), Some((3220, 3220, 0))),
+            ]
+        );
+        let evidence = runner.evidence().expect("terminal evidence");
+        assert_eq!(evidence.scene, 2);
+        assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+    }
+
+    #[test]
+    fn maze_episode_rejects_near_shrine_without_canonical_entry() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(4), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TEST_MAZE_SHRINE);
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..5 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("near-shrine and outside planted states must fail");
+        };
+        assert!(message.contains("entry=None"), "{message}");
+        assert!(message.contains("shrine=false"), "{message}");
+    }
+
+    #[test]
+    fn maze_episode_rejects_return_without_real_progress_and_shrine_order() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(5), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TEST_MAZE_SPAWNS[3]);
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..6 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("entry followed by a planted outside state must fail");
+        };
+        assert!(message.contains("progress=false"), "{message}");
+        assert!(message.contains("shrine=false"), "{message}");
+        assert!(message.contains("returned=false"), "{message}");
     }
 }

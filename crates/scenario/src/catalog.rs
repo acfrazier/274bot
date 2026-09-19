@@ -73,6 +73,7 @@ const REGISTRY: &[Entry] = &[
         "strange_plant_owned",
         scenarios::strange_plant_owned_scenario,
     ),
+    Entry::new("maze_owned", scenarios::maze_owned_scenario),
     Entry::new("chicken_killer", scenarios::chicken_killer_scenario),
     Entry::new(
         "chicken_killer_bank",

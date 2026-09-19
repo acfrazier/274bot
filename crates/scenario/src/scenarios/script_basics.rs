@@ -464,3 +464,95 @@ pub(crate) fn strange_plant_owned_scenario() -> Scenario {
         },
     }
 }
+
+const MAZE_RETURN_ANCHOR: WorldTile = WorldTile {
+    x: 3220,
+    z: 3220,
+    level: 0,
+};
+pub(crate) const MAZE_SPAWNS: &[WorldTile] = &[
+    WorldTile {
+        x: 2891,
+        z: 4597,
+        level: 0,
+    },
+    WorldTile {
+        x: 2933,
+        z: 4597,
+        level: 0,
+    },
+    WorldTile {
+        x: 2933,
+        z: 4555,
+        level: 0,
+    },
+    WorldTile {
+        x: 2891,
+        z: 4555,
+        level: 0,
+    },
+];
+pub(crate) const MAZE_SHRINE: WorldTile = WorldTile {
+    x: 2911,
+    z: 4575,
+    level: 0,
+};
+
+/// One server-owned Maze lifecycle. The single selected-289 macro trigger
+/// spawns the Mysterious Old Man; the shared guardian must engage him, enter
+/// whichever canonical spawn the server chooses, solve doors, Touch the
+/// shrine, and release its hold after the server returns and rewards us.
+pub(crate) fn maze_owned_scenario() -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(start_catalog_step());
+    steps.push(Step {
+        name: "spawn one authentic Maze event",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| cheat(c, "~macro_event 8")),
+        },
+        wait: Wait {
+            arm: Proof::NpcNameNear {
+                name: "Mysterious old man",
+                x: MAZE_RETURN_ANCHOR.x,
+                z: MAZE_RETURN_ANCHOR.z,
+                level: MAZE_RETURN_ANCHOR.level,
+                radius: 24,
+            },
+            budget_ticks: 80,
+        },
+    });
+    steps.push(Step {
+        name: "observe held Maze entry, door progress, shrine return, reward, and release",
+        kind: StepKind::ObserveMazeCompletion {
+            spawns: MAZE_SPAWNS,
+            shrine: MAZE_SHRINE,
+            shrine_radius: 4,
+            min_progress: 8,
+            entry_shot: "maze_owned entered",
+        },
+        wait: Wait {
+            arm: Proof::IngameScene2,
+            budget_ticks: 900,
+        },
+    });
+
+    Scenario {
+        name: "maze_owned",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::IngameScene2,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            start_script: Some("TradeBot"),
+            terminal_shot: Some("maze_owned final"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}

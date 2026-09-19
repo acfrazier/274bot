@@ -55,7 +55,7 @@ pub(crate) use production::{
 };
 pub(crate) use render::render_smoke_scenario;
 pub(crate) use script_basics::{
-    bone_burier_scenario, bone_burier_v2_scenario, lamp_redemption_scenario,
+    bone_burier_scenario, bone_burier_v2_scenario, lamp_redemption_scenario, maze_owned_scenario,
     strange_plant_owned_scenario,
 };
 pub(crate) use shop::{
