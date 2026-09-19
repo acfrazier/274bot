@@ -24,6 +24,7 @@ pub mod isolate_fb;
 pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
+mod keep_list;
 pub mod load;
 pub mod loadouts_store;
 pub mod params;

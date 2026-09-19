@@ -297,6 +297,23 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register weapon: {e}"))?;
+    let selected_keep_names = game_data.clone();
+    runtime
+        .register_function(
+            "__rs2b0t_combat_keep_names",
+            move |args: &[serde_json::Value]| {
+                let data = selected_keep_names.as_deref().ok_or_else(|| {
+                    rustyscript::Error::Runtime(
+                        "combatKeepNames requires selected game data".to_string(),
+                    )
+                })?;
+                let options = crate::keep_list::from_args(args);
+                Ok(serde_json::json!(crate::keep_list::combat_keep_names(
+                    data, &options
+                )))
+            },
+        )
+        .map_err(|e| format!("register combat keep names: {e}"))?;
     let selected_spells = game_data.clone();
     runtime
         .register_function(
