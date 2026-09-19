@@ -169,6 +169,39 @@ const CHAOS_DRUID_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Chaos Druid food",
     carry: &[("Lobster", 12)],
 }];
+const MOSS_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Moss Giant food",
+    carry: &[("Lobster", MOSS_GIANT_FOOD as u32)],
+}];
+const HILL_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Hill Giant food",
+    carry: &[("Trout", HILL_GIANT_FOOD as u32)],
+}];
+const GREEN_DRAGON_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[
+    FixtureLoadout {
+        name: "Scenario Green Dragon food",
+        carry: &[("Lobster", GREEN_DRAGON_BASE_FOOD as u32)],
+    },
+    FixtureLoadout {
+        name: "Scenario Green Dragon trip food",
+        carry: &[("Lobster", GREEN_DRAGON_FOOD as u32)],
+    },
+];
+const FIRE_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Fire Giant food",
+    carry: &[("Lobster", FIRE_GIANT_FOOD as u32)],
+}];
+
+fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
+    match card {
+        "ChaosDruidKiller" => Some(CHAOS_DRUID_FIXTURE_LOADOUTS),
+        "MossGiant" => Some(MOSS_GIANT_FIXTURE_LOADOUTS),
+        "HillGiant" => Some(HILL_GIANT_FIXTURE_LOADOUTS),
+        "GreenDragon" => Some(GREEN_DRAGON_FIXTURE_LOADOUTS),
+        "FireGiant" => Some(FIRE_GIANT_FIXTURE_LOADOUTS),
+        _ => None,
+    }
+}
 
 const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -214,6 +247,10 @@ const CHAOS_DRUID_YANILLE_INJECT: &[ScriptSettingInject] = &[
 ];
 const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Moss Giant food"),
+    },
+    ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
     },
@@ -227,6 +264,10 @@ const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const HILL_GIANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Hill Giant food"),
+    },
     ScriptSettingInject {
         id: "meleeStyle",
         value: ScriptInjectValue::Str("strength"),
@@ -432,6 +473,10 @@ const ROCK_CRAB_RANGE_INJECT: &[ScriptSettingInject] = &[
 ];
 const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon food"),
+    },
+    ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
     },
@@ -469,6 +514,10 @@ const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const GREEN_DRAGON_SPECIAL_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
@@ -508,6 +557,10 @@ const GREEN_DRAGON_SPECIAL_INJECT: &[ScriptSettingInject] = &[
 ];
 const GREEN_DRAGON_POTIONS_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
     },
@@ -545,6 +598,10 @@ const GREEN_DRAGON_POTIONS_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const FIRE_GIANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Fire Giant food"),
+    },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
@@ -585,6 +642,10 @@ const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const GREEN_DRAGON_TELE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
@@ -886,7 +947,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
-            fixture_loadouts: (card == "ChaosDruidKiller").then_some(CHAOS_DRUID_FIXTURE_LOADOUTS),
+            fixture_loadouts: combat_fixture_loadouts(card),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
@@ -1970,7 +2031,54 @@ const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
 
 /// HillGiant's always-on trip end, reached on the first loot slot so the cell
 /// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
+const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
+
 const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Hill Giant food"),
+    },
     ScriptSettingInject {
         id: "meleeStyle",
         value: ScriptInjectValue::Str("strength"),
@@ -2192,7 +2300,7 @@ fn combat_bank_scenario(
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
-            fixture_loadouts: (card == "ChaosDruidKiller").then_some(CHAOS_DRUID_FIXTURE_LOADOUTS),
+            fixture_loadouts: combat_fixture_loadouts(card),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
@@ -2605,7 +2713,7 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
         RUNE_SCIMITAR_ID,
         &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
         GREEN_DRAGON_LOOT_EMPTY,
-        GREEN_DRAGON_INJECT,
+        GREEN_DRAGON_BANK_INJECT,
         0,
         "lobster",
         24,

@@ -8303,6 +8303,142 @@ fn pair_companion_close_bank_uses_native_modal_path() {
     );
 }
 
+#[test]
+fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
+    const GREEN_DRAGON_BASE_FOOD: u32 = 20;
+    const GREEN_DRAGON_TRIP_FOOD: u32 = 12;
+    const FIRE_GIANT_TRIP_FOOD: u32 = 12;
+    for (name, card, loadout_name, food_name, carry_qty) in [
+        (
+            "moss_giant",
+            "MossGiant",
+            "Scenario Moss Giant food",
+            "Lobster",
+            MOSS_GIANT_FOOD as u32,
+        ),
+        (
+            "moss_giant_bank",
+            "MossGiant",
+            "Scenario Moss Giant food",
+            "Lobster",
+            MOSS_GIANT_FOOD as u32,
+        ),
+        (
+            "hill_giant",
+            "HillGiant",
+            "Scenario Hill Giant food",
+            "Trout",
+            HILL_GIANT_FOOD as u32,
+        ),
+        (
+            "hill_giant_bank",
+            "HillGiant",
+            "Scenario Hill Giant food",
+            "Trout",
+            HILL_GIANT_FOOD as u32,
+        ),
+        (
+            "green_dragon",
+            "GreenDragon",
+            "Scenario Green Dragon food",
+            "Lobster",
+            GREEN_DRAGON_BASE_FOOD,
+        ),
+        (
+            "green_dragon_special",
+            "GreenDragon",
+            "Scenario Green Dragon trip food",
+            "Lobster",
+            GREEN_DRAGON_TRIP_FOOD,
+        ),
+        (
+            "green_dragon_potions",
+            "GreenDragon",
+            "Scenario Green Dragon trip food",
+            "Lobster",
+            GREEN_DRAGON_TRIP_FOOD,
+        ),
+        (
+            "green_dragon_bank",
+            "GreenDragon",
+            "Scenario Green Dragon trip food",
+            "Lobster",
+            GREEN_DRAGON_TRIP_FOOD,
+        ),
+        (
+            "green_dragon_tele",
+            "GreenDragon",
+            "Scenario Green Dragon trip food",
+            "Lobster",
+            GREEN_DRAGON_TRIP_FOOD,
+        ),
+        (
+            "fire_giant",
+            "FireGiant",
+            "Scenario Fire Giant food",
+            "Lobster",
+            FIRE_GIANT_TRIP_FOOD,
+        ),
+        (
+            "fire_giant_approach",
+            "FireGiant",
+            "Scenario Fire Giant food",
+            "Lobster",
+            FIRE_GIANT_TRIP_FOOD,
+        ),
+        (
+            "fire_giant_bank",
+            "FireGiant",
+            "Scenario Fire Giant food",
+            "Lobster",
+            FIRE_GIANT_TRIP_FOOD,
+        ),
+        (
+            "chaos_druid",
+            "ChaosDruidKiller",
+            "Scenario Chaos Druid food",
+            "Lobster",
+            CHAOS_DRUID_FOOD as u32,
+        ),
+        (
+            "chaos_druid_bank",
+            "ChaosDruidKiller",
+            "Scenario Chaos Druid food",
+            "Lobster",
+            CHAOS_DRUID_FOOD as u32,
+        ),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(scenario.settings.start_script, Some(card));
+        let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("loadout"),
+            Some(&Value::String(loadout_name.into()))
+        );
+        assert!(
+            !inject.contains_key("food"),
+            "{name} must not inject a removed food setting id"
+        );
+        let loadouts = scenario
+            .settings
+            .fixture_loadouts
+            .unwrap_or_else(|| panic!("{name} pins scriptFood via fixture loadout"));
+        let selected = loadouts
+            .iter()
+            .find(|row| row.name == loadout_name)
+            .unwrap_or_else(|| panic!("{name} posts loadout {loadout_name}"));
+        assert_eq!(selected.carry, &[(food_name, carry_qty)]);
+    }
+    let green = get("green_dragon").expect("green_dragon");
+    let green_loadouts = green.settings.fixture_loadouts.expect("green dragon loadouts");
+    assert_eq!(green_loadouts.len(), 2);
+    assert!(
+        green_loadouts
+            .iter()
+            .any(|row| row.name == "Scenario Green Dragon trip food")
+    );
+}
+
 // ---- P4 combat fixture repair: quest prerequisite + trip food ----
 
 /// Whether the client's outbound buffer holds `needle` as plaintext —
