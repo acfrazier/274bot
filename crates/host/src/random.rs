@@ -10,7 +10,8 @@ use std::collections::HashMap;
 pub mod maze;
 
 use api::interact::{
-    op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendResult, SCENE_READY,
+    op_loc, press, walk, walk_nearest, ActionSpec, Driver, Interactions, OpTarget, SendResult,
+    SCENE_READY,
 };
 use api::query::npc_by_index;
 use api::snapshot::{
@@ -1990,7 +1991,7 @@ fn maze_walk_step<D: Driver>(
     if st.walk_sends > maze::WALK_LIMIT {
         return false;
     }
-    walk(driver, target.0, target.1);
+    walk_nearest(driver, target.0, target.1);
     true
 }
 
@@ -2212,7 +2213,7 @@ mod tests {
     use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
     use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::config::{Cache, LocType, NpcType, ObjType};
-    use client::dash3d::{ClientNpc, ClientObj};
+    use client::dash3d::{ClientNpc, ClientObj, LocAngle, LocShape};
     use client::datastruct::LinkList;
     use std::sync::Arc;
 
@@ -2664,6 +2665,7 @@ mod tests {
         menus: Vec<(i32, i32, i32, i32, i32)>,
         actions: Vec<i32>,
         walks: Vec<(i32, i32)>,
+        walk_nearest: Vec<bool>,
         walk_ok: bool,
         route_origin: Option<(i32, i32)>,
         out: NoopOut,
@@ -2675,6 +2677,7 @@ mod tests {
                 menus: Vec::new(),
                 actions: Vec::new(),
                 walks: Vec::new(),
+                walk_nearest: Vec::new(),
                 walk_ok: true,
                 route_origin: Some((0, 0)),
                 out: NoopOut,
@@ -2696,7 +2699,7 @@ mod tests {
             _src_z: i32,
             dx: i32,
             dz: i32,
-            _try_nearest: bool,
+            try_nearest: bool,
             _loc_width: i32,
             _loc_length: i32,
             _loc_angle: i32,
@@ -2705,6 +2708,7 @@ mod tests {
             _t: i32,
         ) -> bool {
             self.walks.push((dx, dz));
+            self.walk_nearest.push(try_nearest);
             self.walk_ok
         }
         fn local_route(&self) -> Option<(i32, i32)> {
@@ -4808,6 +4812,85 @@ mod tests {
         maze::select_route(maze::graph(), maze::MAZE_SPAWNS[0]).expect("the NW spawn solves")
     }
 
+    /// Plant the canonical maze's walls and closed door edges into the real
+    /// client's collision map. Maze world origin is scene (0,0).
+    fn nw_maze_collision_client() -> Client {
+        let mut c = new_client();
+        c.map_build_base_x = 45 * 64;
+        c.map_build_base_z = 71 * 64;
+        c.local_player = Some(ClientPlayer::at(11, 53));
+        c.ingame = true;
+
+        let graph = maze::graph();
+        for &(ax, az, bx, bz) in graph.wall_edge.iter().chain(graph.door.keys()) {
+            let x = ax - c.map_build_base_x;
+            let z = az - c.map_build_base_z;
+            let angle = if bx == ax + 1 {
+                LocAngle::EAST
+            } else if bz == az + 1 {
+                LocAngle::NORTH
+            } else {
+                panic!("maze edge is not in canonical order: ({ax},{az})-({bx},{bz})");
+            };
+            c.collision[0].add_wall(x, z, LocShape::WALL_STRAIGHT, angle, false);
+        }
+        c
+    }
+
+    #[test]
+    fn maze_nw_spawn_uses_real_client_nearest_route_to_open_first_door() {
+        let spawn = maze::MAZE_SPAWNS[0];
+        let first_door = nw_route()[0];
+
+        let mut exact = nw_maze_collision_client();
+        assert!(
+            !walk(&mut exact, first_door.0, first_door.1),
+            "the closed edge makes the NW first-door tile exact-unreachable"
+        );
+        assert_eq!(
+            exact.out.pos, 0,
+            "an unreachable exact walk emits no packet"
+        );
+
+        let mut c = nw_maze_collision_client();
+        let mut solve = maze::MazeSolve::new(nw_route());
+        assert!(step_maze_phase(
+            &mut solve,
+            &mut c,
+            &GameSnapshot::new(),
+            spawn
+        ));
+        assert!(
+            c.out.pos > 0,
+            "the Maze approach must emit a nearest-route move"
+        );
+        assert_eq!(
+            c.try_move_nearest, 1,
+            "the real client must accept its nearest fallback"
+        );
+        assert_eq!(
+            (c.route_x[0], c.route_z[0]),
+            (11, 49),
+            "nearest fallback lands on the reachable near side of the closed first door"
+        );
+        let approached = (
+            c.map_build_base_x + c.route_x[0],
+            c.map_build_base_z + c.route_z[0],
+        );
+
+        assert!(step_maze_phase(
+            &mut solve,
+            &mut c,
+            &GameSnapshot::new(),
+            approached
+        ));
+        assert_eq!(
+            solve.phase,
+            maze::MazePhase::OpenDoor { from: approached },
+            "the near-side arrival opens the first door"
+        );
+    }
+
     #[test]
     fn maze_spawn_walks_opens_and_advances_door_to_door() {
         let mut c = new_client();
@@ -4975,5 +5058,48 @@ mod tests {
         let status = g.tick(&mut drv, &snap, &settings, 0, None);
         assert_eq!(status.kind, None);
         assert!(!status.hold, "off the maze square the hold lifts");
+    }
+
+    #[test]
+    fn maze_touch_walks_preserve_adjacent_and_onto_completion_semantics() {
+        let snap = GameSnapshot::new();
+
+        let mut adjacent = maze::MazeSolve::new(vec![]);
+        adjacent.phase = maze::MazePhase::Touch { pass: 1 };
+        let mut adjacent_driver = FakeDriver::default();
+        let adjacent_stand = maze::TOUCH_STANDS[1];
+        assert!(step_maze_phase(
+            &mut adjacent,
+            &mut adjacent_driver,
+            &snap,
+            (adjacent_stand.0 - 1, adjacent_stand.1)
+        ));
+        assert!(
+            adjacent_driver.walks.is_empty(),
+            "odd touch passes complete adjacent to the stand"
+        );
+        assert_eq!(adjacent.phase, maze::MazePhase::TouchWait);
+
+        let mut onto = maze::MazeSolve::new(vec![]);
+        onto.phase = maze::MazePhase::Touch { pass: 2 };
+        let mut onto_driver = FakeDriver::default();
+        let onto_stand = maze::TOUCH_STANDS[2];
+        assert!(step_maze_phase(
+            &mut onto,
+            &mut onto_driver,
+            &snap,
+            (onto_stand.0 - 1, onto_stand.1)
+        ));
+        assert_eq!(
+            onto_driver.walks,
+            vec![onto_stand],
+            "even touch passes still require standing on the target"
+        );
+        assert_eq!(
+            onto_driver.walk_nearest,
+            vec![true],
+            "canonical Maze walks use nearest routing even for onto passes"
+        );
+        assert_eq!(onto.phase, maze::MazePhase::Touch { pass: 2 });
     }
 }

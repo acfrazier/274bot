@@ -295,11 +295,26 @@ pub fn set_run<D: Driver + ?Sized>(driver: &mut D, on: bool) -> bool {
 /// coordinates — the route head already is, and the absolute target is
 /// translated through [`Driver::build_base`] before `try_move`.
 pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
+    walk_with_nearest(driver, x, z, false)
+}
+
+/// Walk toward an absolute world tile, accepting the client's nearest
+/// reachable fallback when the exact tile is blocked.
+pub fn walk_nearest<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
+    walk_with_nearest(driver, x, z, true)
+}
+
+fn walk_with_nearest<D: Driver + ?Sized>(
+    driver: &mut D,
+    x: i32,
+    z: i32,
+    try_nearest: bool,
+) -> bool {
     let Some((px, pz)) = driver.local_route() else {
         return false;
     };
     let (bx, bz) = driver.build_base();
-    let accepted = driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0);
+    let accepted = driver.try_move(px, pz, x - bx, z - bz, try_nearest, 0, 0, 0, 0, 0, 0);
     mark_input_activity(driver, accepted)
 }
 
