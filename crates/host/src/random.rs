@@ -2050,8 +2050,13 @@ fn step_maze_phase<D: Driver>(
     match st.phase {
         maze::MazePhase::WalkDoor => {
             let Some(door) = st.target() else {
-                // Route exhausted: the chamber door is next.
-                st.phase = maze::MazePhase::ShrineDoor;
+                // A route ending at the chamber door already opened it.
+                // Regenerated routes that missed it retain the fallback.
+                st.phase = if st.doors.last() == Some(&maze::MAZE_SHRINE_DOOR) {
+                    maze::MazePhase::Touch { pass: 0 }
+                } else {
+                    maze::MazePhase::ShrineDoor
+                };
                 st.touch_pass = 0;
                 return true;
             };
@@ -4814,11 +4819,14 @@ mod tests {
 
     /// Plant the canonical maze's walls and closed door edges into the real
     /// client's collision map. Maze world origin is scene (0,0).
-    fn nw_maze_collision_client() -> Client {
+    fn maze_collision_client_at(player: (i32, i32)) -> Client {
         let mut c = new_client();
         c.map_build_base_x = 45 * 64;
         c.map_build_base_z = 71 * 64;
-        c.local_player = Some(ClientPlayer::at(11, 53));
+        c.local_player = Some(ClientPlayer::at(
+            player.0 - c.map_build_base_x,
+            player.1 - c.map_build_base_z,
+        ));
         c.ingame = true;
 
         let graph = maze::graph();
@@ -4835,6 +4843,10 @@ mod tests {
             c.collision[0].add_wall(x, z, LocShape::WALL_STRAIGHT, angle, false);
         }
         c
+    }
+
+    fn nw_maze_collision_client() -> Client {
+        maze_collision_client_at(maze::MAZE_SPAWNS[0])
     }
 
     #[test]
@@ -5017,6 +5029,91 @@ mod tests {
         assert!(
             !step_maze_phase(&mut solve, &mut drv, &snap, (2891, 4597)),
             "resyncs capped: the pass gives up"
+        );
+    }
+
+    #[test]
+    fn maze_chamber_route_exhausts_to_touch_without_reopening() {
+        let mut solve = maze::MazeSolve::new(vec![maze::MAZE_SHRINE_DOOR]);
+        solve.next = solve.doors.len();
+        let mut drv = FakeDriver::default();
+        let snap = GameSnapshot::new();
+        let interior = (maze::MAZE_SHRINE_DOOR.0 + 1, maze::MAZE_SHRINE_DOOR.1);
+
+        assert!(step_maze_phase(&mut solve, &mut drv, &snap, interior));
+        assert_eq!(
+            solve.phase,
+            maze::MazePhase::Touch { pass: 0 },
+            "a route that already opened the chamber proceeds directly to Touch"
+        );
+        assert!(
+            drv.menus.is_empty(),
+            "route exhaustion itself sends no action"
+        );
+
+        assert!(step_maze_phase(&mut solve, &mut drv, &snap, interior));
+        assert_eq!(
+            drv.menus,
+            vec![(
+                0,
+                MiniMenuAction::OP_LOC1,
+                maze::MAZE_SHRINE_LOC,
+                maze::MAZE_SHRINE.0,
+                maze::MAZE_SHRINE.1,
+            )],
+            "the next action is Touch, not a second chamber-door Open"
+        );
+    }
+
+    #[test]
+    fn maze_route_without_chamber_last_still_opens_chamber() {
+        let snap = GameSnapshot::new();
+        let outside = maze::MAZE_SHRINE_DOOR;
+
+        for doors in [vec![], vec![(2900, 4600)]] {
+            let mut solve = maze::MazeSolve::new(doors);
+            solve.next = solve.doors.len();
+            let mut drv = FakeDriver::default();
+
+            assert!(step_maze_phase(&mut solve, &mut drv, &snap, outside));
+            assert_eq!(solve.phase, maze::MazePhase::ShrineDoor);
+            assert!(drv.menus.is_empty());
+
+            assert!(step_maze_phase(&mut solve, &mut drv, &snap, outside));
+            assert_eq!(
+                drv.menus,
+                vec![(
+                    0,
+                    MiniMenuAction::OP_LOC1,
+                    maze::MAZE_DOOR_IDS[0],
+                    maze::MAZE_SHRINE_DOOR.0,
+                    maze::MAZE_SHRINE_DOOR.1,
+                )],
+                "an empty or non-chamber route preserves the chamber-door fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn maze_closed_chamber_collision_blocks_outside_but_reaches_from_interior() {
+        let outside = maze::MAZE_SHRINE_DOOR;
+        let interior = (outside.0 + 1, outside.1);
+
+        let mut blocked = maze_collision_client_at(outside);
+        assert!(
+            !walk(&mut blocked, maze::MAZE_SHRINE.0, maze::MAZE_SHRINE.1),
+            "the closed chamber edge blocks shrine SW from outside"
+        );
+        assert_eq!(blocked.out.pos, 0, "a blocked walk emits no packet");
+
+        let mut reachable = maze_collision_client_at(interior);
+        assert!(
+            walk(&mut reachable, maze::MAZE_SHRINE.0, maze::MAZE_SHRINE.1),
+            "the shrine SW is reachable from the chamber interior"
+        );
+        assert!(
+            reachable.out.pos > 0,
+            "the reachable interior walk emits a packet"
         );
     }
 
