@@ -958,6 +958,43 @@ fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
     !ingame && arm.want_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed)
 }
 
+/// Claim the boundary between a granted reservation and `client.login`.
+/// Cancellation or stop observed here abandons only this unused permit; once
+/// this returns true, the caller must acknowledge the login return instead.
+fn granted_permit_may_start_login(
+    queue: &Arc<Mutex<LoginQueue>>,
+    uid: i32,
+    arm: &SlotArm,
+    ingame: bool,
+) -> bool {
+    if !arm.stop.load(Ordering::Relaxed) && should_handshake(arm, ingame) {
+        return true;
+    }
+    let abandoned = queue.lock().unwrap().abandon_permit(uid);
+    debug_assert!(abandoned, "granted permit must be abandoned exactly once");
+    false
+}
+
+/// Run the login call that owns a granted permit, then acknowledge its return
+/// before success/error handling can branch. Errors are counted deliberately:
+/// the client may have sent the attempt before returning either result.
+fn login_and_acknowledge_permit<T, E>(
+    queue: &Arc<Mutex<LoginQueue>>,
+    uid: i32,
+    login: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let result = login();
+    let acknowledged = queue
+        .lock()
+        .unwrap()
+        .acknowledge_login_return(uid, Instant::now());
+    debug_assert!(
+        acknowledged,
+        "each client.login return acknowledges one granted permit"
+    );
+    result
+}
+
 /// After a successful handshake: stay armed only when this slot was spawned
 /// with auto-login (an unexpected DC re-handshakes); a one-shot Log in /
 /// Login all disarms until the next explicit arm.
@@ -2306,13 +2343,25 @@ fn spawn_slot_thread(
                         continue;
                     }
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
-                    if arm.stop.load(Ordering::Relaxed) {
-                        slot_queue.lock().unwrap().leave(uid);
-                        return;
+                    if wait == PermitWait::Cancelled {
+                        if arm.stop.load(Ordering::Relaxed) {
+                            slot_queue.lock().unwrap().leave(uid);
+                            return;
+                        }
+                        continue;
                     }
-                    // A withdrawal that lands on the granted poll spends the
-                    // permit but must not start the handshake it cancelled.
-                    if wait == PermitWait::Cancelled || !should_handshake(&arm, client.ingame) {
+                    // A withdrawal or stop that lands after the granting poll
+                    // releases the unused reservation before any login call.
+                    if !granted_permit_may_start_login(
+                        &slot_queue,
+                        uid,
+                        &arm,
+                        client.ingame,
+                    ) {
+                        if arm.stop.load(Ordering::Relaxed) {
+                            slot_queue.lock().unwrap().leave(uid);
+                            return;
+                        }
                         continue;
                     }
                     mark_login_started(&slot_statuses, &username);
@@ -2322,7 +2371,10 @@ fn spawn_slot_thread(
                             "[host-play] slot {username}: handshake begin reconnect={reconnect}"
                         );
                     }
-                    match client.login(&username, &password, reconnect) {
+                    let login = login_and_acknowledge_permit(&slot_queue, uid, || {
+                        client.login(&username, &password, reconnect)
+                    });
+                    match login {
                         Ok(()) => {
                             backoff.reset();
                             on_login_success(&arm);
@@ -2755,10 +2807,11 @@ fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) 
 /// re-reads `status(uid)` and never requests a permit.
 const QUEUE_PUBLISH: Duration = Duration::from_millis(200);
 
-/// Outcome of [`wait_for_permit`]. `Granted` may handshake (the caller still
-/// re-checks the intent); `Cancelled` means the request was withdrawn before
-/// any handshake and neither its FIFO place nor its published `k of n`
-/// survives.
+/// Outcome of [`wait_for_permit`]. `Granted` owns a pending reservation that
+/// the caller must either pass into `client.login` and acknowledge on return,
+/// or abandon if its final intent check fails. `Cancelled` owns no reservation:
+/// the request was withdrawn before a grant and neither its FIFO place nor its
+/// published `k of n` survives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PermitWait {
     Granted,

@@ -648,6 +648,7 @@ fn stop_slot_sets_stop_and_forgets_name() {
         let now = Instant::now();
         for i in 0..29 {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            assert!(q.acknowledge_login_return(1000 + i, now));
         }
         assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
     }
@@ -746,6 +747,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
         let now = Instant::now();
         for i in 0..29 {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            assert!(q.acknowledge_login_return(1000 + i, now));
         }
         assert!(matches!(q.request_permit(42, now), Permit::Wait(_)));
     }
@@ -997,6 +999,7 @@ fn fill_address_window(queue: &Arc<Mutex<LoginQueue>>) -> Instant {
     let mut q = queue.lock().unwrap();
     for i in 0..29 {
         assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+        assert!(q.acknowledge_login_return(1000 + i, now));
     }
     now
 }
@@ -1060,8 +1063,84 @@ fn wait_for_permit_grant_clears_the_published_place() {
         wait_for_permit(&queue, &statuses, "alice", 7, &arm),
         PermitWait::Granted
     );
+    assert!(queue
+        .lock()
+        .unwrap()
+        .acknowledge_login_return(7, Instant::now()));
     assert!(queue.lock().unwrap().status(7).is_none());
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+}
+
+#[test]
+fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
+    let queue = Arc::new(Mutex::new(LoginQueue::new(
+        Duration::ZERO,
+        1,
+        Duration::from_secs(60),
+    )));
+    let statuses = rows(&["alice"]);
+    let arm = SlotArm::new(7, true);
+    assert_eq!(
+        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
+        PermitWait::Granted
+    );
+
+    arm.want_login.store(false, Ordering::Relaxed);
+    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    assert_eq!(
+        queue.lock().unwrap().request_permit(8, Instant::now()),
+        Permit::Grant,
+        "an unused grant must not spend the address attempt"
+    );
+}
+
+#[test]
+fn stop_after_grant_before_login_abandons_the_unused_permit() {
+    let queue = Arc::new(Mutex::new(LoginQueue::new(
+        Duration::ZERO,
+        1,
+        Duration::from_secs(60),
+    )));
+    let statuses = rows(&["alice"]);
+    let arm = SlotArm::new(7, true);
+    assert_eq!(
+        wait_for_permit(&queue, &statuses, "alice", 7, &arm),
+        PermitWait::Granted
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    assert_eq!(
+        queue.lock().unwrap().request_permit(8, Instant::now()),
+        Permit::Grant,
+        "a stopped slot must release a grant it never used"
+    );
+}
+
+#[test]
+fn login_error_return_acknowledges_the_reserved_attempt() {
+    let base = Instant::now();
+    let queue = Arc::new(Mutex::new(LoginQueue::new(
+        Duration::ZERO,
+        1,
+        Duration::from_secs(60),
+    )));
+    assert_eq!(queue.lock().unwrap().request_permit(7, base), Permit::Grant);
+
+    let login: Result<(), &str> = login_and_acknowledge_permit(&queue, 7, || Err("connect failed"));
+    assert_eq!(login, Err("connect failed"));
+    assert!(
+        !queue.lock().unwrap().abandon_permit(7),
+        "an error return spent and acknowledged the permit"
+    );
+    assert_eq!(
+        queue
+            .lock()
+            .unwrap()
+            .request_permit(8, base + Duration::from_secs(61)),
+        Permit::Grant,
+        "the conservative completion clock eventually expires"
+    );
 }
 
 #[test]
@@ -1108,6 +1187,7 @@ fn explicit_login_intent_survives_the_auto_login_toggle() {
         wait_for_permit(&queue, &statuses, "alice", 7, &arm),
         PermitWait::Granted
     );
+    assert!(queue.lock().unwrap().abandon_permit(7));
     assert!(arm.want_login.load(Ordering::Relaxed));
 }
 
@@ -1181,6 +1261,10 @@ fn retried_login_re_enters_at_the_fifo_tail() {
         wait_for_permit(&queue, &statuses, "alice", 7, &alice),
         PermitWait::Granted
     );
+    assert!(queue
+        .lock()
+        .unwrap()
+        .acknowledge_login_return(7, Instant::now()));
     assert!(
         queue.lock().unwrap().status(7).is_none(),
         "a granted login holds no place while it backs off"
