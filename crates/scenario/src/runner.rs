@@ -771,6 +771,7 @@ impl ScenarioRunner {
                     shrine_radius,
                     min_progress,
                     entry_shot,
+                    ..
                 } => (spawns, shrine, shrine_radius, min_progress, entry_shot),
                 _ => return None,
             };
@@ -972,10 +973,20 @@ impl ScenarioRunner {
                     }
                 }
             }
+            StepKind::ObserveMazeCompletion { trigger, .. } => {
+                if let Some(cmd) = trigger {
+                    if cheat(client, cmd) {
+                        Ok(())
+                    } else {
+                        Err("driver rejected the send".into())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
             StepKind::Shot { .. }
             | StepKind::StartScript
-            | StepKind::ObserveLampRedemption { .. }
-            | StepKind::ObserveMazeCompletion { .. } => Ok(()),
+            | StepKind::ObserveLampRedemption { .. } => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
@@ -2903,6 +2914,10 @@ mod tests {
     };
 
     fn maze_episode_scenario(budget_ticks: u32) -> Scenario {
+        maze_episode_scenario_with(budget_ticks, None)
+    }
+
+    fn maze_episode_scenario_with(budget_ticks: u32, trigger: Option<&'static str>) -> Scenario {
         Scenario {
             name: "maze-episode",
             seed: Seed {
@@ -2917,6 +2932,7 @@ mod tests {
                     shrine_radius: 4,
                     min_progress: 8,
                     entry_shot: "maze entered",
+                    trigger,
                 },
                 wait: wait(Proof::IngameScene2, budget_ticks),
             }],
@@ -2927,6 +2943,21 @@ mod tests {
                 ..ScenarioSettings::default()
             },
         }
+    }
+
+    fn maze_out_contains(c: &Client, needle: &str) -> bool {
+        let bytes = &c.out.data()[..c.out.pos];
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    fn maze_out_count(c: &Client, needle: &str) -> usize {
+        let bytes = &c.out.data()[..c.out.pos];
+        bytes
+            .windows(needle.len())
+            .filter(|window| *window == needle.as_bytes())
+            .count()
     }
 
     fn set_world_tile(c: &mut Client, tile: WorldTile) {
@@ -3049,6 +3080,93 @@ mod tests {
         set_inv(&mut c, &[(995, 101)]);
         runner.tick_with_hold(&mut c, false);
         assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn maze_episode_accepts_immediate_held_entry_without_npc_snapshot() {
+        const RETURN_TILE: WorldTile = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        const NE_SPAWN: WorldTile = WorldTile {
+            x: 2933,
+            z: 4597,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(
+            maze_episode_scenario_with(30, Some("~macro_event 8")),
+            None,
+        );
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        let episode = runner.maze_episode.as_ref().expect("observer armed");
+        assert_eq!(
+            episode.return_tile,
+            Some(RETURN_TILE),
+            "pre-entry baseline must be captured before the trigger send"
+        );
+        assert_eq!(episode.reward_baseline, Some(100));
+        assert_eq!(
+            maze_out_count(&c, "~macro_event 8"),
+            1,
+            "the armed observer sends the authentic trigger once"
+        );
+        assert!(!maze_out_contains(&c, "mazeend"));
+        assert_eq!(
+            episode.entry, None,
+            "the trigger send must not invent an entry"
+        );
+
+        set_world_tile(&mut c, NE_SPAWN);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().entry,
+            Some(NE_SPAWN),
+            "held canonical NE entry must count without any NPC snapshot"
+        );
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            Some(RETURN_TILE),
+            "immediate entry must keep the pre-send mainland baseline"
+        );
+
+        for tile in [
+            WorldTile {
+                x: 2933,
+                z: 4590,
+                level: 0,
+            },
+            WorldTile {
+                x: 2925,
+                z: 4585,
+                level: 0,
+            },
+            WorldTile {
+                x: 2911,
+                z: 4576,
+                level: 0,
+            },
+        ] {
+            set_world_tile(&mut c, tile);
+            runner.tick_with_hold(&mut c, true);
+        }
+
+        set_world_tile(&mut c, RETURN_TILE);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "return and reward cannot pass while native hold remains"
+        );
+        tick_dirty(&mut runner, &mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(maze_out_count(&c, "~macro_event 8"), 1);
     }
 
     #[test]

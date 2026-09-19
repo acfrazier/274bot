@@ -1652,59 +1652,58 @@ fn maze_owned_is_registered_and_uses_one_authentic_macro_trigger() {
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("passive catalog Start");
     assert_eq!(scenario.settings.start_script, Some("TradeBot"));
-
-    let injections = scenario.steps[start + 1..]
-        .iter()
-        .filter(|step| step.name == "spawn one authentic Maze event")
-        .collect::<Vec<_>>();
-    assert_eq!(
-        injections.len(),
-        1,
-        "one Perform step owns the only macro-event injection"
-    );
-    let StepKind::Perform { send } = &injections[0].kind else {
-        panic!("Maze injection must send once, never Repeat");
-    };
-    assert_eq!(
-        injections[0].wait.arm,
-        Proof::NpcNameNear {
-            name: "Mysterious old man",
-            x: 3220,
-            z: 3220,
-            level: 0,
-            radius: 24,
-        },
-        "selected Maze content must visibly spawn before observation begins"
-    );
-    let mut client = native_seed_client();
-    assert!(send(&mut client, &GameSnapshot::new()));
     assert!(
-        emitted_has(&client, "~macro_event 8"),
-        "fixture must select the authentic Maze content"
+        scenario
+            .steps
+            .iter()
+            .all(|step| !matches!(step.wait.arm, Proof::NpcNameNear { .. })),
+        "macro_maze starts automatically; transient NPC visibility must not gate progress"
     );
-    for forbidden in ["mazeend", "xplamp", "give ", "tele "] {
-        assert!(
-            !emitted_has(&client, forbidden),
-            "Maze trigger must not seed or force completion via {forbidden:?}"
-        );
-    }
-    let observer = &scenario.steps[start + 2];
+    assert!(
+        scenario.steps[start + 1..].iter().all(|step| !matches!(
+            step.kind,
+            StepKind::Perform { .. } | StepKind::Repeat { .. }
+        )),
+        "the one-shot trigger belongs on the armed observer, never a later Repeat"
+    );
+    assert_eq!(
+        scenario.steps[start + 1..].len(),
+        1,
+        "the armed Maze observer owns the only post-Start step"
+    );
+    let observer = &scenario.steps[start + 1];
     let StepKind::ObserveMazeCompletion {
         spawns,
         shrine,
         shrine_radius,
         min_progress,
         entry_shot,
+        trigger,
     } = observer.kind
     else {
         panic!("Maze completion uses the bounded native observer");
     };
+    assert_eq!(
+        trigger,
+        Some("~macro_event 8"),
+        "the observer must send the one authentic trigger after capturing the baseline"
+    );
     assert_eq!(spawns, MAZE_SPAWNS);
     assert_eq!(shrine, MAZE_SHRINE);
     assert_eq!(shrine_radius, 4);
     assert_eq!(min_progress, 8);
     assert_eq!(entry_shot, "maze_owned entered");
-    assert_eq!(observer.wait.arm, Proof::IngameScene2);
+    assert_eq!(
+        observer.wait.arm,
+        Proof::IngameScene2,
+        "the observer keeps the ready-scene arm; do not replace the NPC wait with ProofAlways"
+    );
+    for forbidden in ["mazeend", "xplamp", "give ", "tele "] {
+        assert!(
+            !trigger.unwrap().contains(forbidden.trim()),
+            "Maze trigger must not seed or force completion via {forbidden:?}"
+        );
+    }
     assert_eq!(scenario.proof.name(), "ingame_scene_2");
     assert_eq!(scenario.settings.terminal_shot, Some("maze_owned final"));
 }

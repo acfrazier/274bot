@@ -465,11 +465,6 @@ pub(crate) fn strange_plant_owned_scenario() -> Scenario {
     }
 }
 
-const MAZE_RETURN_ANCHOR: WorldTile = WorldTile {
-    x: 3220,
-    z: 3220,
-    level: 0,
-};
 pub(crate) const MAZE_SPAWNS: &[WorldTile] = &[
     WorldTile {
         x: 2891,
@@ -498,29 +493,15 @@ pub(crate) const MAZE_SHRINE: WorldTile = WorldTile {
     level: 0,
 };
 
-/// One server-owned Maze lifecycle. The single selected-289 macro trigger
-/// spawns the Mysterious Old Man; the shared guardian must engage him, enter
-/// whichever canonical spawn the server chooses, solve doors, Touch the
-/// shrine, and release its hold after the server returns and rewards us.
+/// One server-owned Maze lifecycle. `macro_mysterious_old_man_spawn` case
+/// `macro_maze` is automatic (`npc_say` / `p_delay 1` / `npc_del` /
+/// `start_macro_maze`); the fixture must not wait on that transient NPC.
+/// The observer captures the pre-entry baseline, then sends one authentic
+/// `~macro_event 8` and requires held canonical entry, door progress,
+/// shrine, return/reward, and hold release.
 pub(crate) fn maze_owned_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
-    steps.push(Step {
-        name: "spawn one authentic Maze event",
-        kind: StepKind::Perform {
-            send: Box::new(|c, _| cheat(c, "~macro_event 8")),
-        },
-        wait: Wait {
-            arm: Proof::NpcNameNear {
-                name: "Mysterious old man",
-                x: MAZE_RETURN_ANCHOR.x,
-                z: MAZE_RETURN_ANCHOR.z,
-                level: MAZE_RETURN_ANCHOR.level,
-                radius: 24,
-            },
-            budget_ticks: 80,
-        },
-    });
     steps.push(Step {
         name: "observe held Maze entry, door progress, shrine return, reward, and release",
         kind: StepKind::ObserveMazeCompletion {
@@ -529,6 +510,7 @@ pub(crate) fn maze_owned_scenario() -> Scenario {
             shrine_radius: 4,
             min_progress: 8,
             entry_shot: "maze_owned entered",
+            trigger: Some("~macro_event 8"),
         },
         wait: Wait {
             arm: Proof::IngameScene2,

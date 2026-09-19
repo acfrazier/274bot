@@ -378,15 +378,20 @@ pub enum StepKind {
     /// ownership.
     ObserveLampRedemption { lamp_id: i32, reward_stat: i32 },
     /// Observe one authentic server-owned Maze episode. The runner captures
-    /// the pre-event return tile/inventory, then requires a held canonical
-    /// spawn, ordered tile progress, the shrine region, server return/reward,
-    /// and native hold release. It never sends movement, doors, or Touch.
+    /// the pre-event return tile/inventory before any optional one-shot
+    /// `trigger` send, then requires a held canonical spawn, ordered tile
+    /// progress, the shrine region, server return/reward, and native hold
+    /// release. It never sends movement, doors, or Touch.
     ObserveMazeCompletion {
         spawns: &'static [WorldTile],
         shrine: WorldTile,
         shrine_radius: i32,
         min_progress: i32,
         entry_shot: &'static str,
+        /// One authentic debugproc, sent after the pre-entry baseline is
+        /// latched. `macro_maze` starts itself; do not wait on the transient
+        /// Old Man NPC.
+        trigger: Option<&'static str>,
     },
     /// Host starts the catalog isolate (`script_start_load`) once when
     /// the live pump sees this step. No-op on the client. The wait is an
