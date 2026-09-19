@@ -44,6 +44,18 @@ const REGISTRY: &[Entry] = &[
         "render_betty_views_dwarven_wall_yaw0",
         render_betty_views::dwarven_wall_yaw0_scenario,
     ),
+    Entry::new(
+        "render_fountain_yaw0_pitch128",
+        render_betty_views::fountain_yaw0_pitch128_scenario,
+    ),
+    Entry::new(
+        "render_fountain_yaw0_pitch256",
+        render_betty_views::fountain_yaw0_pitch256_scenario,
+    ),
+    Entry::new(
+        "render_fountain_yaw0_pitch383",
+        render_betty_views::fountain_yaw0_pitch383_scenario,
+    ),
     Entry::new("nav_full", scenarios::nav_full_scenario),
     Entry::new("nav_door", scenarios::nav_door_scenario),
     Entry::new("nav_cart", scenarios::nav_cart_scenario),

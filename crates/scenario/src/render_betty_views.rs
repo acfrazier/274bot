@@ -1,7 +1,8 @@
-//! Headed render-route diagnostic captures along the Betty → Falador shop-buyout
-//! corridor. Each registered name is one station × one fixed orbit yaw; the
-//! headed panel fires a single [`ScenarioSettings::terminal_shot`] once the
-//! view gate holds (capture completion, not visual qualification).
+//! Headed fixed-orbit render captures: Betty → Falador corridor, dwarven wall,
+//! and fountain-station water acceptance views. Each registered name is one
+//! station × fixed yaw/pitch; the headed panel fires a single
+//! [`ScenarioSettings::terminal_shot`] once the view gate holds (capture
+//! completion, not visual qualification).
 
 use std::time::Duration;
 
@@ -35,6 +36,13 @@ pub const STATION_WEST_BANK: WorldTile = WorldTile {
     level: 0,
 };
 
+/// Fountain tile used for water-render acceptance (manual headed reference view).
+pub const STATION_FOUNTAIN: WorldTile = WorldTile {
+    x: 3220,
+    z: 3224,
+    level: 0,
+};
+
 const RENDER_CAPTURE_DEADLINE: Duration = Duration::from_secs(300);
 const RENDER_CAPTURE_STEP_BUDGET: u32 = 600;
 
@@ -47,10 +55,15 @@ pub struct RenderNames;
 pub const NAMES: RenderNames = RenderNames;
 
 #[cfg(test)]
+fn is_render_view_scenario(name: &str) -> bool {
+    name.starts_with("render_betty_views_") || name.starts_with("render_fountain_")
+}
+
+#[cfg(test)]
 impl RenderNames {
     pub fn len(&self) -> usize {
         crate::catalog::registered_names()
-            .filter(|name| name.starts_with("render_betty_views_"))
+            .filter(|name| is_render_view_scenario(name))
             .count()
     }
 }
@@ -62,7 +75,7 @@ impl IntoIterator for RenderNames {
 
     fn into_iter(self) -> Self::IntoIter {
         crate::catalog::registered_name_refs()
-            .filter(|name| name.starts_with("render_betty_views_"))
+            .filter(|name| is_render_view_scenario(name))
             .collect::<Vec<_>>()
             .into_iter()
     }
@@ -133,12 +146,33 @@ const CASES: &[ViewCase] = &[
         orbit_yaw: 0,
         orbit_pitch: 128,
     },
+    ViewCase {
+        scenario_name: "render_fountain_yaw0_pitch128",
+        shot_label: "fountain_yaw0_pitch128",
+        station: STATION_FOUNTAIN,
+        orbit_yaw: 0,
+        orbit_pitch: 128,
+    },
+    ViewCase {
+        scenario_name: "render_fountain_yaw0_pitch256",
+        shot_label: "fountain_yaw0_pitch256",
+        station: STATION_FOUNTAIN,
+        orbit_yaw: 0,
+        orbit_pitch: 256,
+    },
+    ViewCase {
+        scenario_name: "render_fountain_yaw0_pitch383",
+        shot_label: "fountain_yaw0_pitch383",
+        station: STATION_FOUNTAIN,
+        orbit_yaw: 0,
+        orbit_pitch: 383,
+    },
 ];
 
 /// Lookup one matrix cell by its registered scenario name.
 #[cfg(test)]
 pub fn get(name: &str) -> Option<Scenario> {
-    name.starts_with("render_betty_views_")
+    is_render_view_scenario(name)
         .then(|| crate::catalog::get(name))
         .flatten()
 }
@@ -169,6 +203,18 @@ pub(crate) fn west_bank_yaw512_scenario() -> Scenario {
 
 pub(crate) fn dwarven_wall_yaw0_scenario() -> Scenario {
     scenario_for(CASES[6])
+}
+
+pub(crate) fn fountain_yaw0_pitch128_scenario() -> Scenario {
+    scenario_for(CASES[7])
+}
+
+pub(crate) fn fountain_yaw0_pitch256_scenario() -> Scenario {
+    scenario_for(CASES[8])
+}
+
+pub(crate) fn fountain_yaw0_pitch383_scenario() -> Scenario {
+    scenario_for(CASES[9])
 }
 
 fn scenario_for(case: ViewCase) -> Scenario {
@@ -261,7 +307,7 @@ mod tests {
 
     #[test]
     fn render_betty_views_registers_one_shot_cases() {
-        assert_eq!(NAMES.len(), 7);
+        assert_eq!(NAMES.len(), 10);
         for name in NAMES {
             let scenario = get(name).unwrap_or_else(|| panic!("missing {name}"));
             assert_eq!(scenario.name, *name);
@@ -327,6 +373,44 @@ mod tests {
                 orbit_pitch: 256,
             }
         ));
+    }
+
+    #[test]
+    fn render_fountain_views_pin_station_yaw_and_pitch() {
+        let cases = [
+            (
+                "render_fountain_yaw0_pitch128",
+                "fountain_yaw0_pitch128",
+                128,
+            ),
+            (
+                "render_fountain_yaw0_pitch256",
+                "fountain_yaw0_pitch256",
+                256,
+            ),
+            (
+                "render_fountain_yaw0_pitch383",
+                "fountain_yaw0_pitch383",
+                383,
+            ),
+        ];
+        for (name, shot, pitch) in cases {
+            let scenario = get(name).unwrap_or_else(|| panic!("missing {name}"));
+            assert_eq!(scenario.settings.terminal_shot, Some(shot));
+            match scenario.steps[3].wait.arm {
+                Proof::RenderViewReady {
+                    x,
+                    z,
+                    level,
+                    orbit_yaw,
+                    orbit_pitch,
+                } => {
+                    assert_eq!((x, z, level, orbit_yaw, orbit_pitch), (3220, 3224, 0, 0, pitch));
+                }
+                other => panic!("{name} expected RenderViewReady, got {other:?}"),
+            }
+            assert_eq!(scenario.proof.name(), scenario.steps[3].wait.arm.name());
+        }
     }
 
     #[test]
