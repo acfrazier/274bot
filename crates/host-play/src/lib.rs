@@ -31,6 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use api::interact::Driver;
+use client::client::client::SessionExitObservation;
 use client::client::Client;
 use client::client::ClientConfig;
 use client::client::LoginError;
@@ -1014,6 +1015,12 @@ fn on_login_success(arm: &SlotArm) {
 /// press is the only place a clean logout can go out while the slot is
 /// inside [`Host::run_client`].
 fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm) -> bool {
+    if let Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest) =
+        client.take_session_exit_observation()
+    {
+        arm.latch.store(true, Ordering::Relaxed);
+        arm.want_login.store(false, Ordering::Relaxed);
+    }
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);

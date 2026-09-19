@@ -941,6 +941,79 @@ fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
     assert!(!should_handshake(&arm, false));
 }
 
+fn client_after_observed_idle_logout() -> Client {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut client = Client::new_with_revision(
+        ClientConfig {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.ingame = true;
+    client.ptype = -1;
+    client.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    client.shell.idle_cycles = 4500;
+    client.game_loop();
+    let mut opcode = [0; 1];
+    server.read_exact(&mut opcode).unwrap();
+    assert_eq!(opcode, [145]);
+
+    let mut packet = client::io::Packet::new(vec![]);
+    client.psize = 0;
+    client.handle_packet(client::io::ServerProt289::LOGOUT, &mut packet);
+    client
+}
+
+#[test]
+fn tick_flags_latches_an_observed_idle_logout_without_changing_saved_intent() {
+    let mut client = client_after_observed_idle_logout();
+    let arm = SlotArm::new(7, true);
+    arm.reconnect.store(true, Ordering::Relaxed);
+    arm.want_logout.store(true, Ordering::Relaxed);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(arm.latch.load(Ordering::Relaxed));
+    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(arm.reconnect.load(Ordering::Relaxed));
+    assert!(arm.want_logout.load(Ordering::Relaxed));
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(client.take_session_exit_observation(), None);
+}
+
+#[test]
+fn unclassified_server_logout_leaves_auto_login_armed() {
+    let cfg = ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    };
+    let mut client = Client::new_with_revision(cfg, client::client::ClientRevision::R289);
+    client.ingame = true;
+    let mut packet = client::io::Packet::new(vec![]);
+    client.psize = 0;
+    client.handle_packet(client::io::ServerProt289::LOGOUT, &mut packet);
+    let arm = SlotArm::new(7, true);
+
+    assert!(!tick_flags(&mut client, &[], &arm));
+    assert!(!arm.latch.load(Ordering::Relaxed));
+    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.auto_login.load(Ordering::Relaxed));
+    assert!(should_handshake(&arm, false));
+}
+
 #[test]
 fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     let cfg = ClientConfig {
