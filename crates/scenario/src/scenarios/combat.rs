@@ -2029,8 +2029,6 @@ const AUTO_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// HillGiant's always-on trip end, reached on the first loot slot so the cell
-/// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
 const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
@@ -2074,6 +2072,8 @@ const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+/// HillGiant's always-on trip end, reached on the first loot slot so the cell
+/// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
 const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
