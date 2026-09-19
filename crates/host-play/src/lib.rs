@@ -414,6 +414,9 @@ pub struct SlotStatus {
     /// the `walk_*` fields).
     pub queue_position: i32,
     pub queue_total: i32,
+    /// Intentional logout latch ([`SlotArm::latch`]): the slot is parked on
+    /// the title until the operator explicitly arms login again.
+    pub login_latched: bool,
     /// Payload bytes from `Client.stream` (0 when no stream).
     pub bytes_in: u64,
     pub bytes_out: u64,
@@ -776,6 +779,7 @@ impl Default for SlotStatus {
             walk_level: -1,
             queue_position: -1,
             queue_total: -1,
+            login_latched: false,
             bytes_in: 0,
             bytes_out: 0,
             chat_head: String::new(),
@@ -2346,6 +2350,11 @@ fn spawn_slot_thread(
                         // (`Play::prefer_login` for the TV head) that
                         // outlived its intent cannot strand later members.
                         drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
+                        publish_login_latched(
+                            &slot_statuses,
+                            &username,
+                            arm.latch.load(Ordering::Relaxed),
+                        );
                         thread::sleep(Duration::from_millis(20));
                         continue;
                     }
@@ -2399,6 +2408,7 @@ fn spawn_slot_thread(
                 }
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);
+                let arm_latch_obs = Arc::clone(&arm_obs);
                 let obs_name = username.clone();
                 let obs_catalog_core = slot_catalog_core.clone();
                 let obs_paired_core = slot_paired_core.clone();
@@ -2538,6 +2548,8 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
+                                        s.login_latched =
+                                            arm_latch_obs.latch.load(Ordering::Relaxed);
                                         apply_startup_phase(s, name, ready, c.ingame);
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;
@@ -2797,6 +2809,17 @@ fn load_template(cache_dir: &str) -> IfaceTables {
 
 /// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
 /// `None` (granted or not queued) clears both fields back to -1.
+fn publish_login_latched(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, latched: bool) {
+    if let Some(s) = statuses
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s.username == name)
+    {
+        s.login_latched = latched;
+    }
+}
+
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
     let (position, total) = match pos {
         Some(p) => (p.position as i32, p.total as i32),

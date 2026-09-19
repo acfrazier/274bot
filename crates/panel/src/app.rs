@@ -1473,6 +1473,58 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
     }
 }
 
+/// Startup banner text for one slot row. The second flag is whether to append
+/// an elapsed timer (queue/connect waits only).
+pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
+    if let Some(error) = status.error.as_deref() {
+        return Some((error.to_string(), false));
+    }
+    if status.login_latched && !status.ingame {
+        return Some((
+            "Logged out — select Log in to reconnect".to_string(),
+            false,
+        ));
+    }
+    let message = match status.startup_phase {
+        host_play::StartupPhase::Preparing => {
+            if status.startup_progress_message.is_empty() {
+                "Preparing client".to_string()
+            } else if let Some(percent) = status.startup_progress_percent {
+                format!(
+                    "{} — {}%",
+                    status.startup_progress_message, percent
+                )
+            } else {
+                status.startup_progress_message.clone()
+            }
+        }
+        host_play::StartupPhase::Queueing => {
+            if status.queue_position > 0 && status.queue_total > 0 {
+                format!(
+                    "Waiting in login queue ({}/{})",
+                    status.queue_position, status.queue_total
+                )
+            } else {
+                "Waiting to connect".to_string()
+            }
+        }
+        host_play::StartupPhase::Connecting => "Logging in".to_string(),
+        host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
+        host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
+    };
+    if message.is_empty() {
+        None
+    } else {
+        let show_elapsed = matches!(
+            status.startup_phase,
+            host_play::StartupPhase::Queueing
+                | host_play::StartupPhase::Connecting
+                | host_play::StartupPhase::LoadingScene
+        );
+        Some((message, show_elapsed))
+    }
+}
+
 fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
     let text = loading_text(phase, progress);
     ui.text_colored(ACCENT, &text.description);
@@ -1502,37 +1554,15 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             .find(|status| session.focused_name().as_deref() == Some(status.username.as_str()))
             .or_else(|| statuses.first());
         if let Some(status) = status {
-            if let Some(error) = status.error.as_deref() {
-                ui.text_colored(ERROR, error);
-                return;
-            }
-            let message = match status.startup_phase {
-                host_play::StartupPhase::Preparing => {
-                    if status.startup_progress_message.is_empty() {
-                        "Preparing client".to_string()
-                    } else if let Some(percent) = status.startup_progress_percent {
-                        format!("{} — {}%", status.startup_progress_message, percent)
-                    } else {
-                        status.startup_progress_message.clone()
-                    }
+            if let Some((message, show_elapsed)) = slot_startup_banner_line(status) {
+                if status.error.is_some() {
+                    ui.text_colored(ERROR, &message);
+                } else if show_elapsed {
+                    let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
+                    ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
+                } else {
+                    ui.text_colored(ACCENT, &message);
                 }
-                host_play::StartupPhase::Queueing => {
-                    if status.queue_position > 0 && status.queue_total > 0 {
-                        format!(
-                            "Waiting in login queue ({}/{})",
-                            status.queue_position, status.queue_total
-                        )
-                    } else {
-                        "Waiting to connect".to_string()
-                    }
-                }
-                host_play::StartupPhase::Connecting => "Logging in".to_string(),
-                host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
-                host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
-            };
-            if !message.is_empty() {
-                let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
-                ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
             }
         }
     }
@@ -3154,6 +3184,8 @@ fn status_section(ui: &Ui, session: &mut Session) {
         }
     } else if s.login_started.is_some() {
         "logging in…".to_string()
+    } else if s.login_latched {
+        "logged out".to_string()
     } else {
         "waiting".to_string()
     };

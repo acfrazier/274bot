@@ -8,7 +8,8 @@ use super::{
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
     logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
     random_status_text, request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress, Boot, CoreGate,
+    script_failure_scenario, slot_startup_banner_line, smoke_settled, smoke_should_fire,
+    startup_progress, Boot, CoreGate,
     LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
     ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
     BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
@@ -2794,6 +2795,47 @@ fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
         scene_state: scene,
         ..Default::default()
     }
+}
+
+#[test]
+fn latched_title_banner_does_not_promise_automatic_connect() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Queueing,
+        login_latched: true,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched banner");
+    assert_eq!(message, "Logged out — select Log in to reconnect");
+    assert!(!show_elapsed);
+}
+
+#[test]
+fn unlatched_queue_banner_keeps_position_and_elapsed() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Queueing,
+        queue_position: 2,
+        queue_total: 5,
+        login_latched: false,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("queue banner");
+    assert!(message.contains("2/5"));
+    assert!(show_elapsed);
+}
+
+#[test]
+fn login_rearm_clears_latched_display_for_connect_wait() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Queueing,
+        login_latched: false,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("connect banner");
+    assert_eq!(message, "Waiting to connect");
+    assert!(show_elapsed);
 }
 
 fn live_at(started: Instant) -> LiveNull {

@@ -907,6 +907,33 @@ fn apply_queue_wait_writes_k_of_n_and_grant_clears() {
 }
 
 #[test]
+fn publish_login_latched_projects_arm_latch_onto_slot_row() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        startup_phase: StartupPhase::Queueing,
+        ..Default::default()
+    }]));
+    publish_login_latched(&statuses, "alice", true);
+    {
+        let rows = statuses.lock().unwrap();
+        assert!(rows[0].login_latched);
+        assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
+    }
+    publish_login_latched(&statuses, "alice", false);
+    assert!(!statuses.lock().unwrap()[0].login_latched);
+}
+
+#[test]
+fn explicit_login_rearm_clears_latch_and_allows_handshake() {
+    let arm = SlotArm::new(0, true);
+    arm.latch.store(true, Ordering::Relaxed);
+    assert!(!should_handshake(&arm, false));
+    arm.latch.store(false, Ordering::Relaxed);
+    arm.want_login.store(true, Ordering::Relaxed);
+    assert!(should_handshake(&arm, false));
+}
+
+#[test]
 fn spawn_without_auto_login_does_not_handshake() {
     let arm = SlotArm::new(0, false);
     assert!(!should_handshake(&arm, false));
