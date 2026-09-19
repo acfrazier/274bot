@@ -641,12 +641,12 @@ fn stop_slot_sets_stop_and_forgets_name() {
     };
     play.handles.insert("alice".into(), watchdog);
     play.spawned.insert("alice".into());
-    // uid 7 sits on the FIFO behind a full 30/60s address window;
+    // uid 7 sits on the FIFO behind a full 29-grant address TTL;
     // stop_slot must drop it even though the thread is still running.
     {
         let mut q = play.queue.lock().unwrap();
         let now = Instant::now();
-        for i in 0..30 {
+        for i in 0..29 {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
         }
         assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
@@ -744,7 +744,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
     {
         let mut q = play.queue.lock().unwrap();
         let now = Instant::now();
-        for i in 0..30 {
+        for i in 0..29 {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
         }
         assert!(matches!(q.request_permit(42, now), Permit::Wait(_)));
@@ -990,12 +990,12 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
 }
 
-/// Fill the default 30/60 s address window so the next real request has
+/// Fill the default 29-grant / 60 s idle address limit so the next request has
 /// to wait instead of being granted on arrival.
 fn fill_address_window(queue: &Arc<Mutex<LoginQueue>>) -> Instant {
     let now = Instant::now();
     let mut q = queue.lock().unwrap();
-    for i in 0..30 {
+    for i in 0..29 {
         assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
     }
     now
@@ -1027,7 +1027,7 @@ fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
     let queue = Arc::new(Mutex::new(LoginQueue::default()));
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, true);
-    // Fill the 30/60s address window so alice waits on the FIFO.
+    // Fill the 29-grant address TTL so alice waits on the FIFO.
     {
         let now = fill_address_window(&queue);
         assert!(matches!(

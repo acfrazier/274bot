@@ -6,8 +6,8 @@ use super::{
     chooser_should_open_popup, clamp_hop_label_px, debug_caption, drive_startup,
     edit_parameters_enabled, game_window_flags, hold_script_terminal_shot, live_null_tick,
     live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
-    manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-    request_clean_stop_capture, request_native_failure_capture, runner_config,
+    logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
+    random_status_text, request_clean_stop_capture, request_native_failure_capture, runner_config,
     script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress, Boot, CoreGate,
     LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
     ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
@@ -20,6 +20,15 @@ use crate::window::RedrawMode;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+#[test]
+fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {
+    assert!(!logout_enabled(false, true, true, false));
+    assert!(!logout_enabled(true, false, true, false));
+    assert!(!logout_enabled(true, true, false, false));
+    assert!(logout_enabled(true, true, true, false));
+    assert!(logout_enabled(true, true, false, true));
+}
 
 #[test]
 fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {

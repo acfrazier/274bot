@@ -1,9 +1,11 @@
 //! Login FIFO: stay under Lost City's **production** login rate limits.
 //!
 //! Source of truth (local engine checkout, usually `$ENGINE_DIR`):
-//! - `src/util/WorldConfig.ts` — `rateLimitAddressLogin: 30`,
+//! - `src/util/WorldConfig.ts` — `rateLimitAddressLogin: 30` (the engine
+//!   rejects after incrementing to `>= 30`, so only 29 are admitted),
 //!   `rateLimitDeviceLogin: 5` (`NODE_RATELIMIT_*` can override)
-//! - `src/engine/World.ts` — `loginAddressAttempts` TTL **60 s**,
+//! - `src/engine/World.ts` — `loginAddressAttempts` TTL **60 s**, refreshed
+//!   on each attempt,
 //!   `loginDeviceAttempts` TTL **15 s**; both counters run **only** when
 //!   `node.production` is true. Local default is `production: false`, so
 //!   a loopback engine does not apply these at all.
@@ -50,7 +52,8 @@ pub struct LoginQueue {
     queue: VecDeque<i32>,
     preferred: Option<i32>,
     last_grant: Option<Instant>,
-    window: VecDeque<Instant>,
+    ip_count: usize,
+    ip_last: Option<Instant>,
     by_uid: HashMap<i32, UidState>,
 }
 
@@ -61,6 +64,9 @@ struct UidState {
 }
 
 impl LoginQueue {
+    /// Construct a queue with an explicit inter-grant spacing, address grant
+    /// cap, and address idle TTL. `ip_cap` is the number of handshakes the
+    /// host may grant before requiring a full `ip_window` with no grant.
     pub fn new(spacing: Duration, ip_cap: usize, ip_window: Duration) -> Self {
         Self {
             spacing,
@@ -69,7 +75,8 @@ impl LoginQueue {
             queue: VecDeque::new(),
             preferred: None,
             last_grant: None,
-            window: VecDeque::new(),
+            ip_count: 0,
+            ip_last: None,
             by_uid: HashMap::new(),
         }
     }
@@ -156,16 +163,18 @@ impl LoginQueue {
             }
         }
 
-        while self
-            .window
-            .front()
-            .is_some_and(|&t| now.saturating_duration_since(t) >= self.ip_window)
+        if self
+            .ip_last
+            .is_some_and(|last| now.saturating_duration_since(last) >= self.ip_window)
         {
-            self.window.pop_front();
+            self.ip_count = 0;
+            self.ip_last = None;
         }
-        if self.window.len() >= self.ip_cap {
-            let oldest = *self.window.front().expect("window nonempty when over cap");
-            let until = (oldest + self.ip_window).saturating_duration_since(now);
+        if self.ip_count >= self.ip_cap {
+            let latest = self
+                .ip_last
+                .expect("address grant time exists when cap is reached");
+            let until = (latest + self.ip_window).saturating_duration_since(now);
             wait = Some(wait.map_or(until, |w| w.max(until)));
         }
 
@@ -189,7 +198,8 @@ impl LoginQueue {
         debug_assert_eq!(self.queue.front(), Some(&uid));
         self.queue.pop_front();
         self.last_grant = Some(now);
-        self.window.push_back(now);
+        self.ip_count += 1;
+        self.ip_last = Some(now);
 
         let state = self.by_uid.entry(uid).or_insert(UidState {
             count: 0,
@@ -231,9 +241,9 @@ impl LoginQueue {
 
 impl Default for LoginQueue {
     fn default() -> Self {
-        // spacing 0: engine has no inter-grant delay. ip_cap 30 / 60 s is
-        // `rateLimitAddressLogin` + address TTL.
-        Self::new(Duration::ZERO, 30, Duration::from_secs(60))
+        // spacing 0: engine has no inter-grant delay. Its configured address
+        // threshold 30 rejects the 30th attempt, hence 29 grants / 60 s idle.
+        Self::new(Duration::ZERO, 29, Duration::from_secs(60))
     }
 }
 
@@ -336,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn fifty_requests_never_exceed_30_grants_in_any_60s() {
+    fn default_admits_29_and_makes_the_30th_wait() {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         let mut grants = Vec::new();
@@ -345,23 +355,24 @@ mod tests {
                 grants.push(base);
             }
         }
-        // Address cap 30 / 60 s; no invented 2.5 s spacing, so 30 burst.
-        assert_eq!(grants.len(), 30);
-        assert!(matches!(q.request_permit(30, base), Permit::Wait(_)));
+        // The engine rejects attempt >= 30, so only 29 may enter while its
+        // address key is live. There is still no invented inter-grant delay.
+        assert_eq!(grants.len(), 29);
+        assert!(matches!(q.request_permit(29, base), Permit::Wait(_)));
 
         let now = base + Duration::from_secs(60);
-        for i in 30..50 {
+        for i in 29..50 {
             assert!(matches!(q.request_permit(i, now), Permit::Grant));
             grants.push(now);
         }
         assert_eq!(grants.len(), 50);
-        assert!(max_grants_in_60s(&grants) <= 30);
+        assert!(max_grants_in_60s(&grants) <= 29);
     }
 
     #[test]
-    fn ip_window_cap_holds_when_spacing_is_small() {
+    fn ip_idle_ttl_cap_holds_when_spacing_is_small() {
         let base = Instant::now();
-        let mut q = LoginQueue::new(Duration::from_millis(1), 30, Duration::from_secs(60));
+        let mut q = LoginQueue::new(Duration::from_millis(1), 29, Duration::from_secs(60));
         let mut now = base;
         let mut grants = Vec::new();
         for i in 0..50 {
@@ -370,17 +381,47 @@ mod tests {
             }
             now += Duration::from_millis(1);
         }
-        // Cap binds: the 31st grant must wait out the 60 s window.
-        assert_eq!(grants.len(), 30);
+        // Cap binds: the 30th grant must wait out the 60 s idle TTL.
+        assert_eq!(grants.len(), 29);
 
         now = base + Duration::from_secs(61);
-        for i in 30..50 {
+        for i in 29..50 {
             assert!(matches!(q.request_permit(i, now), Permit::Grant));
             grants.push(now);
             now += Duration::from_millis(1);
         }
         assert_eq!(grants.len(), 50);
-        assert!(max_grants_in_60s(&grants) <= 30);
+        assert!(max_grants_in_60s(&grants) <= 29);
+    }
+
+    #[test]
+    fn address_ttl_renews_from_latest_grant_then_resets_after_idle() {
+        let base = Instant::now();
+        let mut q = LoginQueue::new(Duration::ZERO, 2, Duration::from_secs(60));
+        assert_eq!(q.request_permit(1, base), Permit::Grant);
+        assert_eq!(
+            q.request_permit(2, base + Duration::from_secs(30)),
+            Permit::Grant
+        );
+
+        match q.request_permit(3, base + Duration::from_secs(60)) {
+            Permit::Wait(wait) => assert_eq!(wait, Duration::from_secs(30)),
+            Permit::Grant => panic!("oldest + TTL must not release the refreshed address key"),
+        }
+        assert!(matches!(
+            q.request_permit(4, base + Duration::from_secs(60)),
+            Permit::Wait(_)
+        ));
+        assert_eq!(q.queued_uids(), vec![3, 4], "blocked callers remain FIFO");
+
+        assert_eq!(
+            q.request_permit(3, base + Duration::from_secs(90)),
+            Permit::Grant
+        );
+        assert_eq!(
+            q.request_permit(4, base + Duration::from_secs(90)),
+            Permit::Grant
+        );
     }
 
     #[test]
@@ -409,17 +450,17 @@ mod tests {
     fn not_head_polls_20ms_not_depth_times_spacing() {
         let mut q = LoginQueue::default();
         let now = Instant::now();
-        for i in 0..30 {
+        for i in 0..29 {
             assert!(matches!(q.request_permit(i, now), Permit::Grant));
         }
-        match q.request_permit(30, now) {
+        match q.request_permit(29, now) {
             Permit::Wait(d) => assert!(
                 d >= Duration::from_secs(59),
-                "head waits out the address TTL, got {d:?}"
+                "head waits out the address idle TTL, got {d:?}"
             ),
-            other => panic!("head should wait the 60 s window, got {other:?}"),
+            other => panic!("head should wait the 60 s address idle TTL, got {other:?}"),
         }
-        match q.request_permit(31, now) {
+        match q.request_permit(30, now) {
             Permit::Wait(d) => assert_eq!(
                 d,
                 Duration::from_millis(20),
