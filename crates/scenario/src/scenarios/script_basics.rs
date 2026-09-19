@@ -493,14 +493,50 @@ pub(crate) const MAZE_SHRINE: WorldTile = WorldTile {
     level: 0,
 };
 
+/// Verified unblocked Lumbridge courtyard tile. `mainlandAccount` hops to
+/// `0_50_50_20_20` (3220,3220), which `map_blocked` rejects on return;
+/// `macro_return_teleport` then Whoops-falls back to
+/// `map_findsquare(0_50_50_21_18, 0, 2, lineofwalk)`. Live
+/// `maze-native-fixed` stored baseline 3220,3220 and landed 3221,3218.
+const MAZE_RETURN_STAND: WorldTile = WorldTile {
+    x: 3221,
+    z: 3218,
+    level: 0,
+};
+
 /// One server-owned Maze lifecycle. `macro_mysterious_old_man_spawn` case
 /// `macro_maze` is automatic (`npc_say` / `p_delay 1` / `npc_del` /
 /// `start_macro_maze`); the fixture must not wait on that transient NPC.
-/// The observer captures the pre-entry baseline, then sends one authentic
-/// `~macro_event 8` and requires held canonical entry, door progress,
-/// shrine, return/reward, and hold release.
+/// After the mainland hop, stand on the unblocked courtyard tile so
+/// `start_macro_maze` stores a return coord `macro_return_teleport` can
+/// honour exactly. The observer captures that baseline, then sends one
+/// authentic `~macro_event 8` and requires held canonical entry, door
+/// progress, shrine, return/reward, and hold release.
 pub(crate) fn maze_owned_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "stand on the unblocked Lumbridge courtyard return tile",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(
+                        MAZE_RETURN_STAND.level,
+                        MAZE_RETURN_STAND.x,
+                        MAZE_RETURN_STAND.z,
+                    ),
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Arrived {
+                x: MAZE_RETURN_STAND.x,
+                z: MAZE_RETURN_STAND.z,
+                level: MAZE_RETURN_STAND.level,
+            },
+            budget_ticks: 120,
+        },
+    });
     steps.push(start_catalog_step());
     steps.push(Step {
         name: "observe held Maze entry, door progress, shrine return, reward, and release",

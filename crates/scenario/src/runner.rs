@@ -3309,4 +3309,43 @@ mod tests {
         assert!(message.contains("shrine=false"), "{message}");
         assert!(message.contains("returned=false"), "{message}");
     }
+
+    #[test]
+    fn maze_episode_exact_return_rejects_whoops_fallback_when_baseline_is_fountain() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(8), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            Some(WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            }),
+            "the mainland hop tile is the blocked fountain baseline"
+        );
+
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3221,
+                z: 3218,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..9 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("Whoops fallback must not satisfy an exact fountain baseline");
+        };
+        assert!(message.contains("returned=false"), "{message}");
+        assert!(message.contains("entry=Some"), "{message}");
+        assert!(message.contains("shrine=true"), "{message}");
+    }
 }

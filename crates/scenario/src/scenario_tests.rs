@@ -1653,6 +1653,35 @@ fn maze_owned_is_registered_and_uses_one_authentic_macro_trigger() {
         .expect("passive catalog Start");
     assert_eq!(scenario.settings.start_script, Some("TradeBot"));
     assert!(
+        start > 0,
+        "mainland hop must stand on an unblocked courtyard tile before Start"
+    );
+    let stand = &scenario.steps[start - 1];
+    assert_eq!(
+        stand.wait.arm,
+        Proof::Arrived {
+            x: 3221,
+            z: 3218,
+            level: 0,
+        },
+        "pre-trigger stand must be the verified unblocked Whoops-fallback origin, exact"
+    );
+    let StepKind::Perform { send } = &stand.kind else {
+        panic!("the courtyard stand is a one-shot tele, never Repeat or Walk");
+    };
+    let mut stand_client = native_seed_client();
+    assert!(send(&mut stand_client, &GameSnapshot::new()));
+    assert!(
+        emitted_has(&stand_client, "tele 0,50,50,21,18"),
+        "seed must use packed 0_50_50_21_18, the content return-fallback origin"
+    );
+    for forbidden in ["mazeend", "xplamp", "give "] {
+        assert!(
+            !emitted_has(&stand_client, forbidden),
+            "courtyard seed must not force Maze completion via {forbidden:?}"
+        );
+    }
+    assert!(
         scenario
             .steps
             .iter()
