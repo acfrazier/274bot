@@ -331,7 +331,7 @@ fn start_stashed_catalog_card(
     handle: &host_play::ScriptStartHandle,
     card: &PendingCatalogStart,
 ) -> Result<(), String> {
-    if card.loadouts.is_empty() {
+    let result = if card.loadouts.is_empty() {
         handle.start_load(
             &card.slot,
             card.js.clone(),
@@ -348,7 +348,25 @@ fn start_stashed_catalog_card(
             card.siblings.clone(),
             &card.loadouts,
         )
+    };
+    if result.is_ok() && std::env::var_os("BOT_DEBUG").is_some() {
+        let fixture_names = card
+            .loadouts
+            .iter()
+            .map(|loadout| loadout.name.as_str())
+            .collect::<Vec<_>>();
+        let selected_loadout = card
+            .bag
+            .as_ref()
+            .and_then(|bag| bag.get("loadout"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unset>");
+        eprintln!(
+            "[tui-play] catalog start fixtures={} names={fixture_names:?} loadout={selected_loadout:?}",
+            card.loadouts.len()
+        );
     }
+    result
 }
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start the
@@ -698,6 +716,21 @@ impl TuiSession {
             None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
         };
         self.nav_world.lock().unwrap().clone_from(&play.world());
+        if std::env::var_os("BOT_DEBUG").is_some() {
+            let game_data = play.game_data();
+            let lobster_heal = game_data
+                .as_deref()
+                .and_then(|data| data.fixed_food_heal("Lobster"));
+            eprintln!(
+                "[tui-play] script-start handle profile={:?} game_data={} lobster_fixed_heal={lobster_heal:?}",
+                self.profile_label(),
+                if game_data.is_some() {
+                    "attached"
+                } else {
+                    "absent"
+                }
+            );
+        }
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.play = Some(play);
         self.vault = Some(vault);
@@ -1442,6 +1475,17 @@ impl TuiSession {
         let (code, lines, announced) =
             live_proof(name, status, &evidence, soaking, self.live_announced_pass);
         self.live_announced_pass = announced;
+        let mut lines = lines;
+        if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
+            if let (Some(slot), Some(play)) = (self.names.first(), self.play.as_ref()) {
+                if let Some(receipt) = play.script_lifecycle_receipt(slot) {
+                    lines.push(ProofLine::Stderr(format!(
+                        "[tui-play] script lifecycle slot={slot:?} generation={} state={:?} tick={} reason={:?}",
+                        receipt.runtime_generation, receipt.state, receipt.tick, receipt.reason
+                    )));
+                }
+            }
+        }
         (code, lines)
     }
 
