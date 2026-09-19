@@ -784,6 +784,12 @@ impl ScenarioRunner {
         let inv_total = inventory_total(&self.snapshot);
         let mut entry_capture = None;
 
+        if state.entry.is_none() && ready {
+            if let Some(outside) = tile.filter(|tile| !on_maze_square(*tile, spawns)) {
+                state.return_tile = Some(outside);
+                state.reward_baseline = Some(inv_total);
+            }
+        }
         if state.entry.is_none() && hold {
             if let Some(tile) = tile.filter(|tile| spawns.contains(tile)) {
                 state.entry = Some(tile);
@@ -2938,6 +2944,111 @@ mod tests {
     fn tick_dirty(runner: &mut ScenarioRunner, c: &mut Client, hold: bool) {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick_with_hold(c, hold);
+    }
+
+    fn drive_test_maze_to_shrine(runner: &mut ScenarioRunner, c: &mut Client) {
+        set_world_tile(c, TEST_MAZE_SPAWNS[0]);
+        runner.tick_with_hold(c, true);
+        for tile in [
+            WorldTile {
+                x: 2891,
+                z: 4590,
+                level: 0,
+            },
+            WorldTile {
+                x: 2896,
+                z: 4588,
+                level: 0,
+            },
+            WorldTile {
+                x: 2910,
+                z: 4576,
+                level: 0,
+            },
+        ] {
+            set_world_tile(c, tile);
+            runner.tick_with_hold(c, true);
+        }
+    }
+
+    #[test]
+    fn maze_episode_refreshes_pre_entry_baseline_to_last_ready_outside_snapshot() {
+        const TILE_A: WorldTile = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        const TILE_B: WorldTile = WorldTile {
+            x: 3221,
+            z: 3220,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(30), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TILE_B);
+        set_inv(&mut c, &[(995, 105)]);
+        runner.tick_with_hold(&mut c, false);
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+
+        set_world_tile(&mut c, TILE_A);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "the stale observer-entry tile A must not count as the server return"
+        );
+
+        set_world_tile(&mut c, TILE_B);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "inventory above A's baseline but below B's must not count as the reward"
+        );
+
+        set_inv(&mut c, &[(995, 106)]);
+        tick_dirty(&mut runner, &mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn maze_episode_recovers_baseline_after_observer_begins_unready() {
+        const RETURN_TILE: WorldTile = WorldTile {
+            x: 3221,
+            z: 3220,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(30), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.snapshot.rebuild(&mut c);
+        runner.phase = Phase::Running;
+        runner.begin_step();
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            None,
+            "the unready observer start has no usable baseline"
+        );
+
+        c.scene_state = 2;
+        set_world_tile(&mut c, RETURN_TILE);
+        runner.tick_with_hold(&mut c, false);
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+
+        set_world_tile(&mut c, RETURN_TILE);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
     }
 
     #[test]
