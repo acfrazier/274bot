@@ -210,6 +210,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("ardy_fighter", scenarios::ardy_fighter_scenario),
     Entry::new("auto_fighter_bank", scenarios::auto_fighter_bank_scenario),
     Entry::new("moss_giant_bank", scenarios::moss_giant_bank_scenario),
+    Entry::new(
+        "moss_giant_bank_start",
+        scenarios::moss_giant_bank_start_scenario,
+    ),
     Entry::new("hill_giant_bank", scenarios::hill_giant_bank_scenario),
     Entry::new("chaos_druid_bank", scenarios::chaos_druid_bank_scenario),
     Entry::new("ardy_fighter_bank", scenarios::ardy_fighter_bank_scenario),

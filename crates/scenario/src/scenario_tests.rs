@@ -1521,6 +1521,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "ardy_fighter",
             "auto_fighter_bank",
             "moss_giant_bank",
+            "moss_giant_bank_start",
             "hill_giant_bank",
             "chaos_druid_bank",
             "ardy_fighter_bank",
@@ -2265,6 +2266,7 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
     for (name, card) in [
         ("auto_fighter_bank", "AutoFighter"),
         ("moss_giant_bank", "MossGiant"),
+        ("moss_giant_bank_start", "MossGiant"),
         ("hill_giant_bank", "HillGiant"),
         ("chaos_druid_bank", "ChaosDruidKiller"),
         ("ardy_fighter_bank", "ArdyFighter"),
@@ -2636,6 +2638,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     for (name, alias) in [
         ("auto_fighter_bank", "adamant_scimitar"),
         ("moss_giant_bank", "adamant_scimitar"),
+        ("moss_giant_bank_start", "adamant_scimitar"),
         ("hill_giant_bank", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
@@ -2666,6 +2669,103 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         dragon.contains("givebank lobster 24"),
         "green_dragon_bank keeps its withdraw window: {dragon}"
+    );
+    let moss_start = seed("moss_giant_bank_start");
+    assert!(
+        moss_start.contains("give big_bones 1"),
+        "moss_giant_bank_start seeds declared deposit cargo: {moss_start}"
+    );
+    assert!(
+        moss_start.contains("givebank lobster 24"),
+        "moss_giant_bank_start keeps the MossGiant withdraw window: {moss_start}"
+    );
+    assert!(
+        !moss_start.contains("give lobster"),
+        "moss_giant_bank_start must not seed trip food (BankRun before Fight): {moss_start}"
+    );
+}
+
+#[test]
+fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
+    let scenario = get("moss_giant_bank_start").expect("moss_giant_bank_start registered");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let pre_start: Vec<_> = scenario.steps[..start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert!(
+        pre_start.contains(&Proof::ItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        }),
+        "startup cell acknowledges seeded Big bones before Start"
+    );
+    assert!(
+        !pre_start.contains(&Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        }),
+        "startup cell must not forbid seeded Big bones before Start"
+    );
+    let post_start: Vec<_> = scenario.steps[start + 1..]
+        .iter()
+        .map(|step| (step.name, step.wait.arm))
+        .collect();
+    assert!(
+        !post_start.iter().any(|(name, arm)| {
+            *name == "watch Strength XP from the selected melee style after Start"
+                && *arm
+                    == Proof::StatXpGain {
+                        id: STRENGTH_STAT,
+                        min: 1,
+                    }
+        }),
+        "bank-first cell must not wait pre-bank Strength XP"
+    );
+    let watch_arms: Vec<_> = post_start.iter().map(|(_, arm)| *arm).collect();
+    let bones_bank = watch_arms
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                }
+        })
+        .expect("startup bank watch for seeded Big bones");
+    let lobster_restock = watch_arms
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: 20,
+                }
+        })
+        .expect("startup restock watch");
+    let closed = watch_arms
+        .iter()
+        .position(|arm| *arm == Proof::BankClosed)
+        .expect("bank close watch");
+    let fresh_xp = watch_arms
+        .iter()
+        .position(|arm| {
+            matches!(
+                arm,
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1
+                }
+            )
+        })
+        .expect("fresh Strength XP after return");
+    assert!(
+        bones_bank < lobster_restock && lobster_restock < closed && closed < fresh_xp,
+        "startup banking watches must stay ordered before fresh combat XP"
     );
 }
 
@@ -8318,6 +8418,13 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
         ),
         (
             "moss_giant_bank",
+            "MossGiant",
+            "Scenario Moss Giant food",
+            "Lobster",
+            MOSS_GIANT_FOOD as u32,
+        ),
+        (
+            "moss_giant_bank_start",
             "MossGiant",
             "Scenario Moss Giant food",
             "Lobster",

@@ -2273,10 +2273,12 @@ fn combat_bank_scenario(
         },
     });
     steps.push(start_catalog_step());
-    // ChaosDruid's seeded food shortfall deliberately starts with banking.
-    // Its ordered watches and CoreWatch require combat after the return;
+    // Bank-first cells deliberately start with banking (no food and/or seeded
+    // deposit cargo). Their ordered watches require combat after the return;
     // waiting for incidental auto-retaliation XP here gates the wrong phase.
-    if name != "chaos_druid_bank" {
+    const COMBAT_BANK_SKIPS_PREFIGHT_XP: &[&str] =
+        &["chaos_druid_bank", "moss_giant_bank_start"];
+    if !COMBAT_BANK_SKIPS_PREFIGHT_XP.contains(&name) {
         steps.push(bank_fletcher_watch(
             "watch Strength XP from the selected melee style after Start",
             xp,
@@ -2411,6 +2413,63 @@ pub(crate) fn moss_giant_bank_scenario() -> Scenario {
             ),
             (
                 "watch fresh Strength XP after the bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    )
+}
+
+/// MossGiant startup banking: zero trip food and one seeded Big bones (declared
+/// cargo, not a looted kill) so BankRun runs before Fight. Qualifies deposit,
+/// lobster restock, close, safespot return, and fresh Strength XP after return.
+/// The fight-first `moss_giant_bank` cell remains unchanged for its own receipt.
+pub(crate) fn moss_giant_bank_start_scenario() -> Scenario {
+    combat_bank_scenario(
+        "moss_giant_bank_start",
+        "MossGiant",
+        MOSS_GIANT_SAFESPOT,
+        10,
+        "lobster",
+        LOBSTER_ID,
+        0,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[("big_bones", BIG_BONES_ID, 1)],
+        &[],
+        MOSS_GIANT_INJECT,
+        0,
+        "lobster",
+        24,
+        &[
+            (
+                "watch seeded Big bones enter a fresh Ardougne West bank at startup",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the startup restock of Lobster to the card's declared line",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: MOSS_GIANT_BANK_RESTOCK,
+                },
+            ),
+            ("watch MossGiant close its bank after startup banking", Proof::BankClosed),
+            (
+                "watch return to the moss-giant safespot after startup banking",
+                Proof::ArrivedNear {
+                    x: MOSS_GIANT_SAFESPOT.x,
+                    z: MOSS_GIANT_SAFESPOT.z,
+                    level: MOSS_GIANT_SAFESPOT.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the startup bank return",
                 Proof::FreshStatXpGain {
                     id: STRENGTH_STAT,
                     min: 1,
