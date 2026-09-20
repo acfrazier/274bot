@@ -1528,6 +1528,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "chaos_druid_yanille",
             "moss_giant",
             "moss_giant_prepared",
+            "moss_giant_dart",
             "hill_giant",
             "auto_fighter",
             "auto_fighter_mage",
@@ -1536,6 +1537,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "rock_crab_range",
             "green_dragon",
             "green_dragon_prepared",
+            "green_dragon_mage_prepared",
             "green_dragon_special",
             "green_dragon_special_prepared",
             "green_dragon_potions",
@@ -1560,6 +1562,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "fire_giant_approach",
             "fire_giant_bank",
             "fire_giant_bank_prepared",
+            "fire_giant_camelot_prepared",
             "aio_teleport",
             "aio_teleport_falador",
             "aio_teleport_no_staff",
@@ -2648,6 +2651,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         ("green_dragon_bank_default_prepared", "GreenDragon", 99),
         ("green_dragon_tele_prepared", "GreenDragon", 99),
         ("fire_giant_bank_prepared", "FireGiant", 99),
+        ("fire_giant_camelot_prepared", "FireGiant", 99),
         ("moss_giant_prepared", "MossGiant", 70),
         ("hill_giant_bank_prepared", "HillGiant", 70),
     ];
@@ -2658,7 +2662,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             "green_dragon_bank_prepared" => (600, 1500),
             "green_dragon_bank_default_prepared" => (720, 1800),
             "green_dragon_tele_prepared" => (480, 1200),
-            "fire_giant_bank_prepared" => (600, 1500),
+            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => (600, 1500),
             _ => (300, 750),
         };
         assert_eq!(
@@ -8160,7 +8164,26 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
-        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        if name == "rock_crab_range" {
+            assert_eq!(
+                scenario.settings.deadline,
+                Duration::from_secs(300),
+                "rock_crab_range uses the 300s combat qualification wall"
+            );
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            assert!(
+                scenario.steps[start + 1..]
+                    .iter()
+                    .all(|step| step.wait.budget_ticks >= 750),
+                "rock_crab_range post-Start dirty budgets must not pre-empt the 300s wall"
+            );
+        } else {
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        }
         let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
         assert_eq!(
             inject.get("combatStyle"),
@@ -8269,6 +8292,205 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
     ] {
         assert!(names().contains(&name));
     }
+}
+
+#[test]
+fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
+    let dart = get("moss_giant_dart").expect("moss_giant_dart registered");
+    assert_eq!(dart.settings.start_script, Some("MossGiant"));
+    assert_eq!(dart.settings.deadline, Duration::from_secs(300));
+    assert!(
+        dart.settings.fixture_loadouts.is_none(),
+        "bank-only dart Start must not apply a packed food loadout"
+    );
+    let dart_inject = settings_inject_map(dart.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        dart_inject.get("combatStyle"),
+        Some(&Value::String("range".into()))
+    );
+    assert_eq!(
+        dart_inject.get("bow"),
+        Some(&Value::String("Bronze dart".into()))
+    );
+    assert_eq!(
+        dart_inject.get("ammo"),
+        Some(&Value::String("Rune arrow".into()))
+    );
+    assert_eq!(
+        dart_inject.get("ammoWithdraw"),
+        Some(&Value::from(80.0))
+    );
+    let dart_start = dart
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(
+        dart.steps[..dart_start]
+            .iter()
+            .any(|step| step.wait.arm
+                == Proof::ItemIdAtMost {
+                    id: BRONZE_DART_ID,
+                    count: 0
+                }),
+        "dart preStart must prove empty pack 806"
+    );
+    assert!(
+        dart.steps[..dart_start].iter().any(|step| step.wait.arm
+            == Proof::BankItemId {
+                id: BRONZE_DART_ID,
+                count: 80
+            }),
+        "dart preStart must prove open-bank 806x80"
+    );
+    assert!(
+        dart.steps[..dart_start].iter().any(|step| step.wait.arm
+            ==             Proof::BankItemIdAtMost {
+                id: 892,
+                count: 0
+            }),
+        "dart preStart must prove unused Rune arrows absent"
+    );
+    assert!(
+        !dart.steps[..dart_start]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id: BRONZE_DART_ID }),
+        "bank-only dart Start must not require worn 806"
+    );
+    assert!(
+        dart.steps[dart_start + 1..]
+            .iter()
+            .all(|step| step.wait.budget_ticks >= 750)
+    );
+    assert!(
+        dart.steps[dart_start + 1..]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id: BRONZE_DART_ID })
+    );
+    assert!(dart.steps[dart_start + 1..].iter().any(|step| {
+        matches!(
+            step.wait.arm,
+            Proof::ArrivedNear {
+                x: 2553,
+                z: 3406,
+                ..
+            }
+        )
+    }));
+
+    let moss_bank = get("moss_giant_bank").expect("moss fight-first bank cell remains");
+    let moss_bank_start = moss_bank
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(
+        moss_bank.steps[moss_bank_start + 1..]
+            .iter()
+            .any(|step| matches!(step.wait.arm, Proof::BankItemId { id: 532, .. })),
+        "preserved moss_giant_bank still waits for earned Big bones"
+    );
+
+    let mage = get("green_dragon_mage_prepared").expect("mage option registered");
+    assert_eq!(mage.settings.start_script, Some("GreenDragon"));
+    assert_eq!(mage.settings.deadline, Duration::from_secs(300));
+    let mage_inject = settings_inject_map(mage.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        mage_inject.get("combatStyle"),
+        Some(&Value::String("mage".into()))
+    );
+    assert_eq!(
+        mage_inject.get("spell"),
+        Some(&Value::String("Fire Strike".into()))
+    );
+    assert_eq!(
+        mage_inject.get("staff"),
+        Some(&Value::String("Staff of fire".into()))
+    );
+    let mage_start = mage
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(mage.steps[..mage_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::Stat {
+                id: 6,
+                min: 70,
+            }
+    }));
+    assert!(mage.steps[..mage_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::EquipmentId { id: STAFF_OF_FIRE_ID }));
+    assert!(mage.steps[..mage_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::EquipmentId { id: DRAGONFIRE_SHIELD_ID }));
+    assert!(
+        !mage.steps[..mage_start]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id: RUNE_CHAINBODY_ID }),
+        "mage prepared must not wear rune armour"
+    );
+    assert!(mage.steps[..mage_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: 558,
+                count: 150,
+            }
+    }));
+    assert!(mage.steps[mage_start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks >= 750));
+
+    let camelot = get("fire_giant_camelot_prepared").expect("camelot option registered");
+    assert_eq!(camelot.settings.start_script, Some("FireGiant"));
+    assert_eq!(camelot.settings.deadline, Duration::from_secs(600));
+    let camelot_inject = settings_inject_map(camelot.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        camelot_inject.get("escapeTele"),
+        Some(&Value::String("Camelot".into()))
+    );
+    let camelot_start = camelot
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(camelot.steps[camelot_start + 1..].iter().any(|step| {
+        matches!(
+            step.wait.arm,
+            Proof::ArrivedNear {
+                x: 2757,
+                z: 3478,
+                ..
+            }
+        )
+    }));
+    assert!(
+        !camelot.steps.iter().any(|step| {
+            matches!(
+                step.wait.arm,
+                Proof::ArrivedNear {
+                    x: 2527,
+                    z: 3413,
+                    ..
+                }
+            )
+        }),
+        "Camelot cell must not watch the barrel wash-up"
+    );
+    assert!(camelot.steps[..camelot_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::ItemIdAtMost { id: BIG_BONES_ID, count: 0 }));
+    assert!(
+        !camelot
+            .steps
+            .iter()
+            .any(|step| step.name.contains("givebank") && step.name.contains("bone")),
+        "never seed bones and call them earned"
+    );
+    assert!(camelot.steps[camelot_start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks >= 1500));
 }
 
 #[test]

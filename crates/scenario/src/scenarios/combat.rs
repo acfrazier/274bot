@@ -37,7 +37,22 @@ const COMBAT_MODE_VARP: i32 = 43;
 const RAPID_COMBAT_MODE: i32 = 1;
 const MAPLE_SHORTBOW_ID: i32 = 853;
 pub(crate) const BRONZE_ARROW_ID: i32 = 882;
+const RUNE_ARROW_ID: i32 = 892;
 const RANGE_AMMO: i32 = 200;
+const MOSS_GIANT_DART_SUPPLY: i32 = 80;
+const MOSS_GIANT_DART_BANK_FOOD: i32 = 15;
+const MOSS_GIANT_DART_RANGED: i32 = 50;
+const MOSS_GIANT_DART_FOOD_WITHDRAW: i32 = 10;
+const MOSS_GIANT_DART_FIELD_RADIUS: i32 = 12;
+const CAMELOT_TELE_MAGIC: i32 = 45;
+const CAMELOT_TELE_AIR: i32 = 5;
+const CAMELOT_TELE_LAW: i32 = 1;
+const CAMELOT_TELE_STOCK: i32 = 2;
+const CAMELOT_AIR_CARRY: i32 = CAMELOT_TELE_AIR * (CAMELOT_TELE_STOCK + 1);
+const CAMELOT_LAW_CARRY: i32 = CAMELOT_TELE_LAW * (CAMELOT_TELE_STOCK + 1);
+/// Spare bank stock so the keep-list deposit can withdraw teleStock+1 again.
+const CAMELOT_BANK_AIR: i32 = 20;
+const CAMELOT_BANK_LAW: i32 = 5;
 pub(crate) const ROCK_CRAB_FOOD: i32 = 8;
 const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 const GREEN_DRAGON_FOOD: i32 = 12;
@@ -136,6 +151,11 @@ const MOSS_GIANT_SAFESPOT: WorldTile = WorldTile {
     z: 3406,
     level: 0,
 };
+const MOSS_GIANT_BANK: WorldTile = WorldTile {
+    x: 2615,
+    z: 3332,
+    level: 0,
+};
 const HILL_GIANT_PIT: WorldTile = WorldTile {
     x: 3110,
     z: 9832,
@@ -191,6 +211,11 @@ const ROCK_CRAB_BANK_RET: WorldTile = WorldTile {
 const SEERS_BANK: WorldTile = WorldTile {
     x: 2725,
     z: 3491,
+    level: 0,
+};
+const CAMELOT_TELE_LAND: WorldTile = WorldTile {
+    x: 2757,
+    z: 3478,
     level: 0,
 };
 pub(crate) const FIRE_RUNE_ID: i32 = 554;
@@ -294,6 +319,36 @@ const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "meleeStyle",
         value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const MOSS_GIANT_DART_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("range"),
+    },
+    ScriptSettingInject {
+        id: "bow",
+        value: ScriptInjectValue::Str("Bronze dart"),
+    },
+    ScriptSettingInject {
+        id: "ammo",
+        value: ScriptInjectValue::Str("Rune arrow"),
+    },
+    ScriptSettingInject {
+        id: "ammoWithdraw",
+        value: ScriptInjectValue::Num(MOSS_GIANT_DART_SUPPLY as f64),
+    },
+    ScriptSettingInject {
+        id: "rangeStyle",
+        value: ScriptInjectValue::Str("rapid"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(MOSS_GIANT_DART_FOOD_WITHDRAW as f64),
     },
     ScriptSettingInject {
         id: "buryBones",
@@ -550,6 +605,52 @@ const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Dragonfire shield"),
     },
 ];
+const GREEN_DRAGON_MAGE_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("mage"),
+    },
+    ScriptSettingInject {
+        id: "spell",
+        value: ScriptInjectValue::Str("Fire Strike"),
+    },
+    ScriptSettingInject {
+        id: "staff",
+        value: ScriptInjectValue::Str("Staff of fire"),
+    },
+    ScriptSettingInject {
+        id: "runesWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_MAGE_CASTS as f64),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
 const GREEN_DRAGON_SPECIAL_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
@@ -698,6 +799,40 @@ const FIRE_GIANT_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "escapeTele",
         value: ScriptInjectValue::Str("Barrel (free)"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Big bones"]),
+    },
+];
+const FIRE_GIANT_CAMELOT_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Fire Giant food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "escapeTele",
+        value: ScriptInjectValue::Str("Camelot"),
     },
     ScriptSettingInject {
         id: "buryBones",
@@ -1736,6 +1871,225 @@ pub(crate) fn moss_giant_prepared_scenario() -> Scenario {
     scenario
 }
 
+/// Bank-only MossGiant dart option. Pack and worn start empty; 806x80 and
+/// 15 Lobster exist only in the still-open Ardougne North bank. The unused
+/// Rune-arrow setting must stay absent. This is not combat_range_scenario.
+pub(crate) fn moss_giant_dart_scenario() -> Scenario {
+    let ranged_xp = Proof::StatXpGain {
+        id: RANGED_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "clear pack, worn, and bank so darts start bank-only",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "~clearinv inv");
+                cheat(c, "~clearinv worn");
+                cheat(c, "~clearbank");
+                cheat(c, &format!("setstat ranged {MOSS_GIANT_DART_RANGED}"));
+                cheat(c, &format!("setstat defence {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(
+                    c,
+                    &format!("givebank bronze_dart {MOSS_GIANT_DART_SUPPLY}"),
+                );
+                cheat(
+                    c,
+                    &format!("givebank lobster {MOSS_GIANT_DART_BANK_FOOD}"),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: RANGED_STAT,
+                min: MOSS_GIANT_DART_RANGED,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (name, arm) in [
+        (
+            "acknowledge dart Defence 40 before Start",
+            Proof::Stat {
+                id: DEFENCE_STAT,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge dart Hitpoints 40 before Start",
+            Proof::Stat {
+                id: 3,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge empty pack of Bronze darts before Start",
+            Proof::ItemIdAtMost {
+                id: BRONZE_DART_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge empty pack of Rune arrows before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_ARROW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge empty pack of Lobster before Start",
+            Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(Step {
+        name: "teleport to Ardougne North with the bank-only dart fixture",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(MOSS_GIANT_BANK.level, MOSS_GIANT_BANK.x, MOSS_GIANT_BANK.z),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: MOSS_GIANT_BANK.x,
+                z: MOSS_GIANT_BANK.z,
+                level: MOSS_GIANT_BANK.level,
+                radius: 2,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "open the Ardougne North booth so bank-only dart stock is visible",
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snapshot| {
+                if snapshot.bank_component_id() >= 0 && snapshot.bank_loaded() {
+                    return true;
+                }
+                match Interactions::new(snapshot, c).open_nearest_booth() {
+                    SendResult::Sent { .. } => true,
+                    SendResult::Refused {
+                        reason:
+                            SendReason::SceneUnavailable
+                            | SendReason::OffScene
+                            | SendReason::StaleTarget,
+                        ..
+                    } => true,
+                    SendResult::Refused { .. } => false,
+                }
+            }),
+        },
+        wait: Wait {
+            arm: Proof::BankItemId {
+                id: BRONZE_DART_ID,
+                count: MOSS_GIANT_DART_SUPPLY,
+            },
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    });
+    for (name, arm) in [
+        (
+            "acknowledge banked Lobster 15 while the booth stays open",
+            Proof::BankItemId {
+                id: LOBSTER_ID,
+                count: MOSS_GIANT_DART_BANK_FOOD,
+            },
+        ),
+        (
+            "acknowledge no Rune arrows in the open bank",
+            Proof::BankItemIdAtMost {
+                id: RUNE_ARROW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch the script withdraw and wear Bronze darts",
+            Proof::EquipmentId {
+                id: BRONZE_DART_ID,
+            },
+        ),
+        (
+            "watch travel to the moss-giant safespot after the dart withdraw",
+            Proof::ArrivedNear {
+                x: MOSS_GIANT_SAFESPOT.x,
+                z: MOSS_GIANT_SAFESPOT.z,
+                level: MOSS_GIANT_SAFESPOT.level,
+                radius: MOSS_GIANT_DART_FIELD_RADIUS,
+            },
+        ),
+        (
+            "watch a Moss giant in the dart field",
+            Proof::NpcNameNear {
+                name: "Moss giant",
+                x: MOSS_GIANT_SAFESPOT.x,
+                z: MOSS_GIANT_SAFESPOT.z,
+                level: MOSS_GIANT_SAFESPOT.level,
+                radius: MOSS_GIANT_DART_FIELD_RADIUS,
+            },
+        ),
+        (
+            "watch the frozen script select rapid ranged mode",
+            Proof::Varp {
+                id: COMBAT_MODE_VARP,
+                min: RAPID_COMBAT_MODE,
+            },
+        ),
+        ("watch Ranged XP from worn Bronze darts after Start", ranged_xp),
+        (
+            "watch the unused Rune-arrow setting stay absent from the pack",
+            Proof::ItemIdAtMost {
+                id: RUNE_ARROW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    let mut scenario = Scenario {
+        name: "moss_giant_dart",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: ranged_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: COMBAT_QUALIFICATION_DEADLINE,
+            start_script: Some("MossGiant"),
+            script_settings_inject: Some(MOSS_GIANT_DART_INJECT),
+            fixture_loadouts: None,
+            terminal_shot: Some("moss_giant_dart"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    };
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
+}
+
 /// HillGiant default melee in the pit. Target display is Giant. The Brass key
 /// is prepared because this inside-pit cell does not qualify the key-fetch or
 /// entrance branch. Blank weapon. DeathRecovery and banking stay idle.
@@ -2005,7 +2359,7 @@ pub(crate) fn rock_crab_scenario() -> Scenario {
 }
 
 pub(crate) fn rock_crab_range_scenario() -> Scenario {
-    combat_range_scenario(
+    let mut scenario = combat_range_scenario(
         "rock_crab_range",
         "RockCrab",
         ROCK_CRAB_SAFE_STAND,
@@ -2015,7 +2369,13 @@ pub(crate) fn rock_crab_range_scenario() -> Scenario {
         ROCK_CRAB_FOOD,
         ROCK_CRAB_RANGE_INJECT,
         true,
-    )
+    );
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
 }
 
 /// GreenDragon melee in the wilderness field. Shield 1540 is worn with the
@@ -2076,6 +2436,210 @@ pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
             wear: TIER40_RUNE_ARMOUR_WEAR,
         },
     )
+}
+
+/// Prepared GreenDragon Fire Strike option. Exact AutoFighter mage rune
+/// constants stay intact. No rune armour or scimitar; shield stays worn.
+pub(crate) fn green_dragon_mage_prepared_scenario() -> Scenario {
+    let magic_xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare 70-stat Fire Strike kit and shield on the safe tile",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &format!("setstat magic {REMAINING_COMBAT_PREPARED_LEVEL}"),
+                );
+                cheat(
+                    c,
+                    &format!("setstat defence {REMAINING_COMBAT_PREPARED_LEVEL}"),
+                );
+                cheat(
+                    c,
+                    &format!("setstat hitpoints {REMAINING_COMBAT_PREPARED_LEVEL}"),
+                );
+                cheat(c, "~clearinv");
+                cheat(c, "give staff_of_fire 1");
+                cheat(c, "give antidragonbreathshield 1");
+                cheat(c, &format!("give lobster {GREEN_DRAGON_FOOD}"));
+                cheat(c, &format!("give mindrune {AUTO_FIGHTER_MAGE_CASTS}"));
+                cheat(c, &format!("give airrune {AUTO_FIGHTER_MAGE_AIR_RUNES}"));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: MAGIC_STAT,
+                min: REMAINING_COMBAT_PREPARED_LEVEL,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (name, arm) in [
+        (
+            "acknowledge prepared Defence 70 before Start",
+            Proof::Stat {
+                id: DEFENCE_STAT,
+                min: REMAINING_COMBAT_PREPARED_LEVEL,
+            },
+        ),
+        (
+            "acknowledge prepared Hitpoints 70 before Start",
+            Proof::Stat {
+                id: 3,
+                min: REMAINING_COMBAT_PREPARED_LEVEL,
+            },
+        ),
+        (
+            "acknowledge exact lobster 12 before Start",
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: GREEN_DRAGON_FOOD,
+            },
+        ),
+        (
+            "acknowledge 150 Mind runes before Start",
+            Proof::ItemId {
+                id: MIND_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_CASTS,
+            },
+        ),
+        (
+            "acknowledge 300 Air runes before Start",
+            Proof::ItemId {
+                id: AIR_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_AIR_RUNES,
+            },
+        ),
+        (
+            "acknowledge Staff of fire before wielding",
+            Proof::ItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge Dragonfire shield before wearing",
+            Proof::ItemId {
+                id: DRAGONFIRE_SHIELD_ID,
+                count: 1,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    for (name, id) in [
+        (
+            "wield and acknowledge Staff of fire before hostile-field teleport",
+            STAFF_OF_FIRE_ID,
+        ),
+        (
+            "wear and acknowledge Dragonfire shield before hostile-field teleport",
+            DRAGONFIRE_SHIELD_ID,
+        ),
+    ] {
+        steps.push(wear_combat_item_step(name, id));
+    }
+    steps.push(Step {
+        name: "teleport into the hostile field only after preparation is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(
+                        GREEN_DRAGON_FIELD.level,
+                        GREEN_DRAGON_FIELD.x,
+                        GREEN_DRAGON_FIELD.z,
+                    ),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: GREEN_DRAGON_FIELD.x,
+                z: GREEN_DRAGON_FIELD.z,
+                level: GREEN_DRAGON_FIELD.level,
+                radius: 22,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch native Fire Strike autocast become armed",
+            Proof::Varp {
+                id: AUTOCAST_MAGIC_VARP,
+                min: AUTOCAST_ARMED_VALUE,
+            },
+        ),
+        ("watch Magic XP from real Fire Strike combat", magic_xp),
+        (
+            "watch a Mind rune consumed by Fire Strike",
+            Proof::ItemIdAtMost {
+                id: MIND_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_CASTS - 1,
+            },
+        ),
+        (
+            "watch two Air runes consumed by Fire Strike",
+            Proof::ItemIdAtMost {
+                id: AIR_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_AIR_RUNES - 2,
+            },
+        ),
+        (
+            "watch the Dragonfire shield stay worn during mage combat",
+            Proof::EquipmentId {
+                id: DRAGONFIRE_SHIELD_ID,
+            },
+        ),
+        (
+            "watch a Green dragon in the wilderness field",
+            Proof::NpcNameNear {
+                name: "Green dragon",
+                x: GREEN_DRAGON_FIELD.x,
+                z: GREEN_DRAGON_FIELD.z,
+                level: GREEN_DRAGON_FIELD.level,
+                radius: 22,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    let mut scenario = Scenario {
+        name: "green_dragon_mage_prepared",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: magic_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: COMBAT_QUALIFICATION_DEADLINE,
+            start_script: Some("GreenDragon"),
+            script_settings_inject: Some(GREEN_DRAGON_MAGE_PREPARED_INJECT),
+            fixture_loadouts: combat_fixture_loadouts("GreenDragon"),
+            terminal_shot: Some("green_dragon_mage_prepared"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    };
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
 }
 
 fn green_dragon_special_scenario_with_preparation(
@@ -4210,4 +4774,167 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
     insert_waterfall_quest(&mut scenario);
     insert_setstat_drain_before_hostile_tele(&mut scenario);
     scenario
+}
+
+/// Prepared FireGiant Camelot escape: source teleport land + Magic XP, Seers
+/// 25-lobster restock, Waterfall return, and fresh Strength. Earned Big bones
+/// stay required; bones are never seeded.
+pub(crate) fn fire_giant_camelot_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "fire_giant_camelot_prepared",
+        "FireGiant",
+        FIRE_GIANT_ROOM,
+        10,
+        "lobster",
+        LOBSTER_ID,
+        FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
+        &[
+            ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+            ("rope", ROPE_ID, 1),
+            ("airrune", AIR_RUNE_ID, CAMELOT_AIR_CARRY),
+            ("lawrune", LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+        ],
+        FIRE_GIANT_LOOT_EMPTY,
+        FIRE_GIANT_CAMELOT_PREPARED_INJECT,
+        "lobster",
+        40,
+        BANK_PRESSURE_PREPARED_LEVEL,
+        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        BANK_QUALIFICATION_WATCH_TICKS,
+        &[
+            (
+                "watch Magic XP from the Camelot escape teleport after Start",
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: 1,
+                },
+            ),
+            (
+                "watch the Camelot teleport land, not a Seers endpoint alone",
+                Proof::ArrivedNear {
+                    x: CAMELOT_TELE_LAND.x,
+                    z: CAMELOT_TELE_LAND.z,
+                    level: CAMELOT_TELE_LAND.level,
+                    radius: 8,
+                },
+            ),
+            (
+                "watch earned Big bones enter a fresh Seers bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the Camelot trip reach Seers bank",
+                Proof::ArrivedNear {
+                    x: SEERS_BANK.x,
+                    z: SEERS_BANK.z,
+                    level: SEERS_BANK.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch the prepared Camelot trip restock Lobster to 25",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: FIRE_GIANT_BANK_PREPARED_RESTOCK,
+                },
+            ),
+            (
+                "watch prepared Camelot FireGiant close its bank",
+                Proof::BankClosed,
+            ),
+            (
+                "watch prepared re-entry to the fire-giant room after Camelot banking",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_ROOM.x,
+                    z: FIRE_GIANT_ROOM.z,
+                    level: FIRE_GIANT_ROOM.level,
+                    radius: 10,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared Camelot return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    insert_camelot_escape_stock(&mut scenario);
+    insert_waterfall_quest(&mut scenario);
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
+}
+
+fn insert_camelot_escape_stock(scenario: &mut Scenario) {
+    let prepare = scenario
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("prepare melee stats"))
+        .expect("camelot prepared cell prepares stats");
+    scenario.steps.insert(
+        prepare + 1,
+        Step {
+            name: "seed spare Camelot escape runes in the bank and acknowledge Magic 45",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, &format!("setstat magic {CAMELOT_TELE_MAGIC}"));
+                    cheat(c, &format!("givebank airrune {CAMELOT_BANK_AIR}"));
+                    cheat(c, &format!("givebank lawrune {CAMELOT_BANK_LAW}"));
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat {
+                    id: MAGIC_STAT,
+                    min: CAMELOT_TELE_MAGIC,
+                },
+                budget_ticks: 200,
+            },
+        },
+    );
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("camelot prepared cell has a hostile-field teleport");
+    scenario.steps.insert(
+        hostile_teleport,
+        wear_combat_item_step(
+            "wear Glarial's amulet so the 25-lobster restock stays 28 slots",
+            GLARIALS_AMULET_ID,
+        ),
+    );
+    for (name, arm) in [
+        (
+            "acknowledge Camelot Air rune carry before Start",
+            Proof::ItemId {
+                id: AIR_RUNE_ID,
+                count: CAMELOT_AIR_CARRY,
+            },
+        ),
+        (
+            "acknowledge Camelot Law rune carry before Start",
+            Proof::ItemId {
+                id: LAW_RUNE_ID,
+                count: CAMELOT_LAW_CARRY,
+            },
+        ),
+        (
+            "acknowledge empty earned Big bones before Start",
+            Proof::ItemIdAtMost {
+                id: BIG_BONES_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        scenario.steps.insert(hostile_teleport + 1, bank_fletcher_watch(name, arm));
+    }
 }

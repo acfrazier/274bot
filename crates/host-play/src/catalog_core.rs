@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -49,6 +49,13 @@ pub const ARROW_SHAFT_ID: i32 = 52;
 pub const HEADLESS_ARROW_ID: i32 = 53;
 pub const BRONZE_DART_TIP_ID: i32 = 819;
 pub const BRONZE_DART_ID: i32 = 806;
+/// Stock289 `rune_arrow`. MossGiant dart SETTINGS leave this unused on purpose.
+pub const RUNE_ARROW_ID: i32 = 892;
+/// Pinned `e2e/mossgiant-dart-test.ts` bank-only dart stack and food.
+pub const MOSS_GIANT_DART_SUPPLY: i32 = 80;
+pub const MOSS_GIANT_DART_BANK_FOOD: i32 = 15;
+pub const MOSS_GIANT_DART_RANGED: i32 = 50;
+pub const MOSS_GIANT_DART_FIELD_RADIUS: i32 = 12;
 pub const IRON_DART_TIP_ID: i32 = 820;
 pub const IRON_DART_ID: i32 = 807;
 pub const FEATHER_ID: i32 = 314;
@@ -369,6 +376,15 @@ pub const GREEN_DRAGON_BANK: (i32, i32, i32) = (3094, 3493, 0);
 pub const FIRE_GIANT_RAFT: (i32, i32, i32) = (2510, 3493, 0);
 pub const FIRE_GIANT_WASH: (i32, i32, i32) = (2527, 3413, 0);
 pub const FIRE_GIANT_BANK: (i32, i32, i32) = (2616, 3332, 0);
+/// FireGiantLogic `ESCAPE_TELES.Camelot` land and Magic 45 / Air×5+Law×1.
+pub const CAMELOT_TELE_LAND: (i32, i32, i32) = (2757, 3478, 0);
+pub const CAMELOT_TELE_MAGIC: i32 = 45;
+pub const CAMELOT_TELE_AIR: i32 = 5;
+pub const CAMELOT_TELE_LAW: i32 = 1;
+/// Source `teleStock` default 2 spare casts plus the one needed to leave.
+pub const CAMELOT_TELE_STOCK: i32 = 2;
+pub const CAMELOT_AIR_CARRY: i32 = CAMELOT_TELE_AIR * (CAMELOT_TELE_STOCK + 1);
+pub const CAMELOT_LAW_CARRY: i32 = CAMELOT_TELE_LAW * (CAMELOT_TELE_STOCK + 1);
 /// Frozen Varrock teleport land (the same tile FireGiant's Varrock escape uses).
 pub const VARROCK_TELE_LAND: (i32, i32, i32) = (3213, 3424, 0);
 /// Nearest RockCrab `DEFAULT_SPOTS` loc to the safe stand (2712,3707,0) — spot
@@ -518,6 +534,7 @@ pub enum CoreCase {
     ChaosDruidYanille,
     MossGiant,
     MossGiantPrepared,
+    MossGiantDart,
     HillGiant,
     AutoFighter,
     AutoFighterMage,
@@ -526,6 +543,7 @@ pub enum CoreCase {
     RockCrabRange,
     GreenDragon,
     GreenDragonPrepared,
+    GreenDragonMagePrepared,
     GreenDragonSpecial,
     GreenDragonSpecialPrepared,
     GreenDragonPotions,
@@ -548,6 +566,7 @@ pub enum CoreCase {
     FireGiantApproach,
     FireGiantBank,
     FireGiantBankPrepared,
+    FireGiantCamelotPrepared,
     AioTeleport,
     AioTeleportFalador,
     AioTeleportNoStaff,
@@ -641,6 +660,7 @@ impl CoreCase {
             "chaos_druid_yanille" => Ok(Self::ChaosDruidYanille),
             "moss_giant" => Ok(Self::MossGiant),
             "moss_giant_prepared" => Ok(Self::MossGiantPrepared),
+            "moss_giant_dart" => Ok(Self::MossGiantDart),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
             "auto_fighter_mage" => Ok(Self::AutoFighterMage),
@@ -649,6 +669,7 @@ impl CoreCase {
             "rock_crab_range" => Ok(Self::RockCrabRange),
             "green_dragon" => Ok(Self::GreenDragon),
             "green_dragon_prepared" => Ok(Self::GreenDragonPrepared),
+            "green_dragon_mage_prepared" => Ok(Self::GreenDragonMagePrepared),
             "green_dragon_special" => Ok(Self::GreenDragonSpecial),
             "green_dragon_special_prepared" => Ok(Self::GreenDragonSpecialPrepared),
             "green_dragon_potions" => Ok(Self::GreenDragonPotions),
@@ -671,6 +692,7 @@ impl CoreCase {
             "fire_giant_approach" => Ok(Self::FireGiantApproach),
             "fire_giant_bank" => Ok(Self::FireGiantBank),
             "fire_giant_bank_prepared" => Ok(Self::FireGiantBankPrepared),
+            "fire_giant_camelot_prepared" => Ok(Self::FireGiantCamelotPrepared),
             "aio_teleport" => Ok(Self::AioTeleport),
             "aio_teleport_falador" => Ok(Self::AioTeleportFalador),
             "aio_teleport_no_staff" => Ok(Self::AioTeleportNoStaff),
@@ -767,6 +789,7 @@ impl CoreCase {
             Self::ChaosDruidYanille => "chaos_druid_yanille",
             Self::MossGiant => "moss_giant",
             Self::MossGiantPrepared => "moss_giant_prepared",
+            Self::MossGiantDart => "moss_giant_dart",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
             Self::AutoFighterMage => "auto_fighter_mage",
@@ -775,6 +798,7 @@ impl CoreCase {
             Self::RockCrabRange => "rock_crab_range",
             Self::GreenDragon => "green_dragon",
             Self::GreenDragonPrepared => "green_dragon_prepared",
+            Self::GreenDragonMagePrepared => "green_dragon_mage_prepared",
             Self::GreenDragonSpecial => "green_dragon_special",
             Self::GreenDragonSpecialPrepared => "green_dragon_special_prepared",
             Self::GreenDragonPotions => "green_dragon_potions",
@@ -797,6 +821,7 @@ impl CoreCase {
             Self::FireGiantApproach => "fire_giant_approach",
             Self::FireGiantBank => "fire_giant_bank",
             Self::FireGiantBankPrepared => "fire_giant_bank_prepared",
+            Self::FireGiantCamelotPrepared => "fire_giant_camelot_prepared",
             Self::AioTeleport => "aio_teleport",
             Self::AioTeleportFalador => "aio_teleport_falador",
             Self::AioTeleportNoStaff => "aio_teleport_no_staff",
@@ -869,7 +894,10 @@ impl CoreCase {
             | Self::ChaosDruidTower
             | Self::ChaosDruidYanille
             | Self::ChaosDruidBank => "ChaosDruidKiller",
-            Self::MossGiant | Self::MossGiantPrepared | Self::MossGiantBank => "MossGiant",
+            Self::MossGiant
+            | Self::MossGiantPrepared
+            | Self::MossGiantDart
+            | Self::MossGiantBank => "MossGiant",
             Self::HillGiant | Self::HillGiantBank | Self::HillGiantBankPrepared => "HillGiant",
             Self::AutoFighter
             | Self::AutoFighterMage
@@ -878,6 +906,7 @@ impl CoreCase {
             Self::RockCrab | Self::RockCrabRange | Self::RockCrabBank => "RockCrab",
             Self::GreenDragon
             | Self::GreenDragonPrepared
+            | Self::GreenDragonMagePrepared
             | Self::GreenDragonSpecial
             | Self::GreenDragonSpecialPrepared
             | Self::GreenDragonPotions
@@ -891,7 +920,8 @@ impl CoreCase {
             | Self::FireGiantPrepared
             | Self::FireGiantApproach
             | Self::FireGiantBank
-            | Self::FireGiantBankPrepared => "FireGiant",
+            | Self::FireGiantBankPrepared
+            | Self::FireGiantCamelotPrepared => "FireGiant",
             Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
             Self::AioTeleport | Self::AioTeleportFalador | Self::AioTeleportNoStaff => {
                 "AIO Teleport"
@@ -1644,6 +1674,30 @@ pub fn empty_pack(observation: &Observation) -> bool {
     observation.item_ids.values().copied().sum::<i32>() == 0
 }
 
+fn empty_worn(observation: &Observation) -> bool {
+    observation.equipment_ids.values().copied().sum::<i32>() == 0
+}
+
+/// Bank-only MossGiant dart Start. Worn-gear combat_baseline_ready(Ranged) is
+/// the wrong predicate here: the script has to withdraw and equip 806.
+pub fn moss_giant_dart_baseline_ready(baseline: &Observation) -> bool {
+    let bank_ready = baseline.bank_open
+        && baseline.bank_loaded
+        && baseline.bank_item_id(BRONZE_DART_ID) == MOSS_GIANT_DART_SUPPLY
+        && baseline.bank_item_id(LOBSTER_ID) == MOSS_GIANT_DART_BANK_FOOD;
+    near(baseline.tile, MOSS_GIANT_BANK, 2)
+        && empty_pack(baseline)
+        && empty_worn(baseline)
+        && baseline.level("ranged") >= MOSS_GIANT_DART_RANGED
+        && baseline.level("defence") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
+        && held_id(baseline, BRONZE_DART_ID) == 0
+        && held_id(baseline, RUNE_ARROW_ID) == 0
+        && baseline.item_id(LOBSTER_ID) == 0
+        && baseline.bank_item_id(RUNE_ARROW_ID) == 0
+        && bank_ready
+}
+
 pub fn fire_in_varrock_east_plot(observation: &Observation) -> bool {
     observation.loc_facts.iter().any(|loc| {
         loc.level == 0
@@ -2328,6 +2382,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::FlaxAioSpin => flax_aio_spin_baseline_ready(baseline),
         CoreCase::HerbloreSecondaries => herblore_eggs_baseline_ready(baseline),
         CoreCase::HerbloreSecondariesNewt => herblore_newt_baseline_ready(baseline),
+        // Bank-only dart Start is empty pack/worn. Do not route this through
+        // combat_baseline_ready(Ranged), which requires worn weapon+projectile.
+        CoreCase::MossGiantDart => moss_giant_dart_baseline_ready(baseline),
         CoreCase::ChaosDruid
         | CoreCase::ChaosDruidTower
         | CoreCase::ChaosDruidYanille
@@ -2341,6 +2398,7 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::RockCrabRange
         | CoreCase::GreenDragon
         | CoreCase::GreenDragonPrepared
+        | CoreCase::GreenDragonMagePrepared
         | CoreCase::GreenDragonSpecial
         | CoreCase::GreenDragonSpecialPrepared
         | CoreCase::GreenDragonPotions
@@ -2362,7 +2420,8 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::GreenDragonTelePrepared
         | CoreCase::FireGiantApproach
         | CoreCase::FireGiantBank
-        | CoreCase::FireGiantBankPrepared => combat_spec(case).is_some_and(|spec| {
+        | CoreCase::FireGiantBankPrepared
+        | CoreCase::FireGiantCamelotPrepared => combat_spec(case).is_some_and(|spec| {
             combat_baseline_ready(baseline, spec)
                 && match case {
                     CoreCase::ChaosDruidTower => baseline.level("thieving") >= 46,
@@ -2410,8 +2469,10 @@ pub fn validate_case_baseline_with_preparation(
                     | CoreCase::GreenDragonTelePrepared
                     | CoreCase::FireGiantPrepared
                     | CoreCase::FireGiantBankPrepared
+                    | CoreCase::FireGiantCamelotPrepared
                     | CoreCase::MossGiantPrepared
-                    | CoreCase::HillGiantBankPrepared => {
+                    | CoreCase::HillGiantBankPrepared
+                    | CoreCase::GreenDragonMagePrepared => {
                         prepared_combat_baseline_ready(case, baseline)
                     }
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
@@ -2733,6 +2794,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::MossGiantPrepared => {
             "Moss safespot (2553,3406,0), exact Attack/Strength/Defence/Hitpoints 70, exact lobster 10, worn rune scimitar 1333 and 1113/1079/1163, empty big bones 532"
         }
+        CoreCase::MossGiantDart => {
+            "Ardougne North bank (2615,3332,0) r2 with the booth still open, empty pack and worn, Ranged 50 / Defence 40 / Hitpoints 40, bank bronze dart 806x80 and lobster 15, no pack/worn/bank rune arrow 892"
+        }
         CoreCase::HillGiant => {
             "Giant pit (3110,9832,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, empty 532/225"
         }
@@ -2753,6 +2817,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::GreenDragonPrepared => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Defence/Hitpoints 40, exact lobster 20, carried rune scimitar 1333, worn 1113/1079/1163/1540, empty 536/1753"
+        }
+        CoreCase::GreenDragonMagePrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Magic/Defence/Hitpoints 70, exact lobster 12, worn Staff of fire 1387 and shield 1540, exact Mind rune 558x150 and Air rune 556x300, no rune armour or scimitar"
         }
         CoreCase::GreenDragonSpecial => {
             "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
@@ -2822,6 +2889,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::FireGiantBankPrepared => {
             "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty earned Big bones 532, stock-selected one-food escapeTele Barrel and exact restock 25"
+        }
+        CoreCase::FireGiantCamelotPrepared => {
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, Magic 45, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, worn amulet 295, rope 954, Air 556x15 and Law 563x3, empty earned Big bones 532, escapeTele Camelot land 2757,3478 then Seers 25-lobster restock"
         }
         CoreCase::AioTeleport => {
             "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
@@ -2931,6 +3001,7 @@ pub struct CoreWitness {
     pub herblore_eggs_cycle: HerbloreEggsCycle,
     pub herblore_newt_cycle: HerbloreNewtCycle,
     pub combat_core_cycle: CombatCoreCycle,
+    pub combat_dart_branch_cycle: CombatDartBranchCycle,
     pub combat_bank_cycle: CombatBankCycle,
     pub combat_approach_cycle: CombatApproachCycle,
     pub aio_teleport_cycle: AioTeleportCycle,
@@ -4524,6 +4595,21 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        // Observe reuse only. Bank-only dart Start is empty; do not feed this
+        // spec to combat_baseline_ready(Ranged) or CombatCoreCycle::qualified().
+        CoreCase::MossGiantDart => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: MOSS_GIANT_DART_FIELD_RADIUS,
+            food_id: LOBSTER_ID,
+            food_count: 0,
+            weapon_id: BRONZE_DART_ID,
+            style: CombatStyleWitness::Ranged,
+            loot: CombatLoot::None,
+            extra: CombatExtra::None,
+            projectile: Some(BRONZE_DART_ID),
+            consumable: CombatConsumable::None,
+        }),
         CoreCase::HillGiant => Some(CombatSpec {
             target: "Giant",
             stand: HILL_GIANT_PIT,
@@ -4616,6 +4702,21 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // Fire Strike branch on the enabled GreenDragon card. Loot stays None:
+        // this cell does not claim a full kill unless a later hop proves one.
+        CoreCase::GreenDragonMagePrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: STAFF_OF_FIRE_ID,
+            style: CombatStyleWitness::FireStrike,
+            loot: CombatLoot::None,
             extra: CombatExtra::WornShield,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -4874,7 +4975,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
-        CoreCase::FireGiantBankPrepared => Some(CombatSpec {
+        CoreCase::FireGiantBankPrepared | CoreCase::FireGiantCamelotPrepared => Some(CombatSpec {
             target: "Fire giant",
             stand: FIRE_GIANT_ROOM,
             radius: 10,
@@ -5130,6 +5231,22 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             require_combat: true,
             forbid_death: false,
         }),
+        // Source-specific Camelot escape: land + Magic XP, then Seers restock.
+        // The Seers endpoint alone is not this via.
+        CoreCase::FireGiantCamelotPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID],
+            stand: SEERS_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(FIRE_GIANT_BANK_PREPARED_RESTOCK),
+            ret: FIRE_GIANT_ROOM,
+            ret_radius: 10,
+            via: Some(CAMELOT_TELE_LAND),
+            via_radius: 8,
+            via_magic: true,
+            require_combat: true,
+            forbid_death: false,
+        }),
         _ => None,
     }
 }
@@ -5279,6 +5396,25 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
 }
 
 fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> bool {
+    // Mage is 70 Magic/Defence/HP with staff+shield. Rune armour and a
+    // scimitar would falsify this branch; check it before armour_ready.
+    if case == CoreCase::GreenDragonMagePrepared {
+        return ["magic", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
+            && baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
+            && baseline.equipment_id(STAFF_OF_FIRE_ID) == 1
+            && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+            && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+            && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+            && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
+            && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
+            && baseline.item_id(RUNE_SCIMITAR_ID) == 0
+            && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            && [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
+                .into_iter()
+                .all(|id| baseline.equipment_id(id) == 0 && baseline.item_id(id) == 0);
+    }
     let armour_ready = [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
         .into_iter()
         .all(|id| baseline.equipment_id(id) == 1);
@@ -5297,7 +5433,8 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
             .all(|stat| baseline.level(stat) == GREEN_DRAGON_TELE_PREPARED_LEVEL),
         CoreCase::GreenDragonBankPrepared
         | CoreCase::GreenDragonBankDefaultPrepared
-        | CoreCase::FireGiantBankPrepared => {
+        | CoreCase::FireGiantBankPrepared
+        | CoreCase::FireGiantCamelotPrepared => {
             ["attack", "strength", "defence", "hitpoints"]
                 .into_iter()
                 .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL)
@@ -5319,7 +5456,7 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
         }
         CoreCase::GreenDragonTelePrepared => baseline.item_id(LOBSTER_ID) == 0,
         CoreCase::FireGiantPrepared => baseline.item_id(LOBSTER_ID) == FIRE_GIANT_FOOD,
-        CoreCase::FireGiantBankPrepared => {
+        CoreCase::FireGiantBankPrepared | CoreCase::FireGiantCamelotPrepared => {
             baseline.item_id(LOBSTER_ID) == FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
         }
         CoreCase::MossGiantPrepared => baseline.item_id(LOBSTER_ID) == MOSS_GIANT_FOOD,
@@ -5367,6 +5504,16 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
             CoreCase::FireGiantBankPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
                     && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::FireGiantCamelotPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.equipment_id(GLARIALS_AMULET_ID) == 1
+                    && baseline.item_id(GLARIALS_AMULET_ID) == 0
+                    && baseline.level("magic") >= CAMELOT_TELE_MAGIC
+                    && baseline.effective_level("magic") >= CAMELOT_TELE_MAGIC
+                    && baseline.item_id(AIR_RUNE_ID) >= CAMELOT_AIR_CARRY
+                    && baseline.item_id(LAW_RUNE_ID) >= CAMELOT_LAW_CARRY
             }
             CoreCase::MossGiantPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
@@ -5747,6 +5894,55 @@ impl CombatCoreCycle {
             && !self.wrong_item
             && extra_ok
             && consumable_ok
+    }
+}
+
+/// Fire Strike prepared branch: one correct-target engagement, autocast,
+/// Mind+Air spend, and the shield staying worn. Not a full-kill claim.
+pub fn qualified_mage_branch(cycle: &CombatCoreCycle, spec: CombatSpec) -> bool {
+    spec.style == CombatStyleWitness::FireStrike
+        && spec.extra == CombatExtra::WornShield
+        && cycle.engagements >= 1
+        && cycle.style_xp
+        && cycle.autocast_armed
+        && cycle.mind_rune_consumed
+        && cycle.air_runes_consumed
+        && cycle.shield_worn
+        && !cycle.noted
+        && !cycle.wrong_item
+}
+
+/// Bank-only dart branch: script withdrawal/equip/travel plus one ranged
+/// engagement. Never CombatCoreCycle::qualified() (2/1/further_work).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CombatDartBranchCycle {
+    pub combat: CombatCoreCycle,
+    pub withdrawn: bool,
+    pub worn: bool,
+    pub arrived: bool,
+    pub wrong_ammo: bool,
+}
+
+impl CombatDartBranchCycle {
+    pub fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
+        self.combat.observe(spec, baseline, now);
+        self.withdrawn |= held_id(now, BRONZE_DART_ID) > 0;
+        self.worn |= now.equipment_id(BRONZE_DART_ID) >= 1;
+        self.arrived |= near(now.tile, MOSS_GIANT_SAFESPOT, MOSS_GIANT_DART_FIELD_RADIUS);
+        self.wrong_ammo |= held_id(now, RUNE_ARROW_ID) > 0 || now.bank_item_id(RUNE_ARROW_ID) > 0;
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.withdrawn
+            && self.worn
+            && self.arrived
+            && !self.wrong_ammo
+            && self.combat.engagements >= 1
+            && self.combat.style_xp
+            && self.combat.combat_mode
+            && self.combat.projectile_fired
+            && !self.combat.noted
+            && !self.combat.wrong_item
     }
 }
 
@@ -8083,6 +8279,7 @@ impl CoreWitness {
             herblore_eggs_cycle: HerbloreEggsCycle::default(),
             herblore_newt_cycle: HerbloreNewtCycle::default(),
             combat_core_cycle: CombatCoreCycle::default(),
+            combat_dart_branch_cycle: CombatDartBranchCycle::default(),
             combat_bank_cycle: CombatBankCycle::default(),
             combat_approach_cycle: CombatApproachCycle::default(),
             aio_teleport_cycle: AioTeleportCycle::default(),
@@ -8249,7 +8446,12 @@ impl CoreWitness {
             self.herblore_newt_cycle
                 .observe(&self.baseline, observation);
         }
-        if let Some(spec) = combat_spec(self.case) {
+        if matches!(self.case, CoreCase::MossGiantDart) {
+            if let Some(spec) = combat_spec(self.case) {
+                self.combat_dart_branch_cycle
+                    .observe(spec, &self.baseline, observation);
+            }
+        } else if let Some(spec) = combat_spec(self.case) {
             self.combat_core_cycle
                 .observe(spec, &self.baseline, observation);
         }
@@ -8689,7 +8891,8 @@ impl CoreWitness {
             | CoreCase::GreenDragonTele
             | CoreCase::GreenDragonTelePrepared
             | CoreCase::FireGiantBank
-            | CoreCase::FireGiantBankPrepared => {
+            | CoreCase::FireGiantBankPrepared
+            | CoreCase::FireGiantCamelotPrepared => {
                 match (combat_spec(self.case), combat_bank_spec(self.case)) {
                     (Some(spec), Some(bank)) => self.combat_bank_cycle.qualified(spec, bank),
                     _ => false,
@@ -8741,6 +8944,9 @@ impl CoreWitness {
             | CoreCase::ArdyFighter => {
                 combat_spec(self.case).is_some_and(|spec| self.combat_core_cycle.qualified(spec))
             }
+            CoreCase::MossGiantDart => self.combat_dart_branch_cycle.qualified(),
+            CoreCase::GreenDragonMagePrepared => combat_spec(self.case)
+                .is_some_and(|spec| qualified_mage_branch(&self.combat_core_cycle, spec)),
         }
     }
 
@@ -8797,6 +9003,7 @@ impl CoreWitness {
             "herblore_eggs_cycle": self.herblore_eggs_cycle,
             "herblore_newt_cycle": self.herblore_newt_cycle,
             "combat_core_cycle": self.combat_core_cycle,
+            "combat_dart_branch_cycle": self.combat_dart_branch_cycle,
             "combat_bank_cycle": self.combat_bank_cycle,
             "combat_approach_cycle": self.combat_approach_cycle,
             "aio_teleport_cycle": self.aio_teleport_cycle,

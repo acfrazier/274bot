@@ -195,6 +195,7 @@ const REGISTRY: &[Entry] = &[
         "moss_giant_prepared",
         scenarios::moss_giant_prepared_scenario,
     ),
+    Entry::new("moss_giant_dart", scenarios::moss_giant_dart_scenario),
     Entry::new("hill_giant", scenarios::hill_giant_scenario),
     Entry::new("auto_fighter", scenarios::auto_fighter_scenario),
     Entry::new("auto_fighter_mage", scenarios::auto_fighter_mage_scenario),
@@ -205,6 +206,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new(
         "green_dragon_prepared",
         scenarios::green_dragon_prepared_scenario,
+    ),
+    Entry::new(
+        "green_dragon_mage_prepared",
+        scenarios::green_dragon_mage_prepared_scenario,
     ),
     Entry::new(
         "green_dragon_special",
@@ -268,6 +273,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new(
         "fire_giant_bank_prepared",
         scenarios::fire_giant_bank_prepared_scenario,
+    ),
+    Entry::new(
+        "fire_giant_camelot_prepared",
+        scenarios::fire_giant_camelot_prepared_scenario,
     ),
     Entry::new("aio_teleport", scenarios::aio_teleport_scenario),
     Entry::new(

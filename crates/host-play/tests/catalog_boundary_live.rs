@@ -6436,6 +6436,38 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(moss_spec.loot, CombatLoot::BigBones);
         assert!(combat_bank_spec(moss_prepared).is_none());
 
+        let moss_dart = CoreCase::parse("moss_giant_dart").unwrap();
+        assert_eq!(moss_dart.card_name(), "MossGiant");
+        let dart_spec = combat_spec(moss_dart).unwrap();
+        assert_eq!(dart_spec.weapon_id, BRONZE_DART_ID);
+        assert_eq!(dart_spec.projectile, Some(BRONZE_DART_ID));
+        assert_eq!(dart_spec.style, CombatStyleWitness::Ranged);
+        assert_eq!(dart_spec.loot, CombatLoot::None);
+        assert!(combat_bank_spec(moss_dart).is_none());
+
+        let mage = CoreCase::parse("green_dragon_mage_prepared").unwrap();
+        assert_eq!(mage.card_name(), "GreenDragon");
+        let mage_spec = combat_spec(mage).unwrap();
+        assert_eq!(mage_spec.style, CombatStyleWitness::FireStrike);
+        assert_eq!(mage_spec.weapon_id, STAFF_OF_FIRE_ID);
+        assert_eq!(mage_spec.food_count, GREEN_DRAGON_FOOD);
+        assert_eq!(mage_spec.extra, CombatExtra::WornShield);
+        assert_eq!(mage_spec.loot, CombatLoot::None);
+        assert!(combat_bank_spec(mage).is_none());
+
+        let camelot = CoreCase::parse("fire_giant_camelot_prepared").unwrap();
+        assert_eq!(camelot.card_name(), "FireGiant");
+        let camelot_trip = combat_bank_spec(camelot).unwrap();
+        assert!(camelot_trip.require_combat);
+        assert!(camelot_trip.via_magic);
+        assert_eq!(camelot_trip.via, Some(CAMELOT_TELE_LAND));
+        assert_eq!(camelot_trip.stand, SEERS_BANK);
+        assert_eq!(camelot_trip.restock_count, Some(FIRE_GIANT_BANK_PREPARED_RESTOCK));
+        assert_ne!(camelot_trip.via, Some(FIRE_GIANT_WASH));
+        let barrel = combat_bank_spec(CoreCase::FireGiantBankPrepared).unwrap();
+        assert_eq!(barrel.via, Some(FIRE_GIANT_WASH));
+        assert!(!barrel.via_magic);
+
         let hill_prepared = CoreCase::parse("hill_giant_bank_prepared").unwrap();
         assert_eq!(hill_prepared.card_name(), "HillGiant");
         let hill_spec = combat_spec(hill_prepared).unwrap();
@@ -6703,6 +6735,180 @@ export default class NativeStop extends LoopingBot {{
             missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
             assert!(validate_case_baseline(case, &missing_armour).is_err());
         }
+    }
+
+    #[test]
+    fn enabled_combat_option_observers_reject_false_positive_witnesses() {
+        let dart_case = CoreCase::MossGiantDart;
+        let mut dart_baseline = resource_obs(
+            MOSS_GIANT_BANK,
+            &[],
+            &[
+                (BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY),
+                (LOBSTER_ID, MOSS_GIANT_DART_BANK_FOOD),
+            ],
+            &[],
+            &[("ranged", 0)],
+            &[
+                ("ranged", MOSS_GIANT_DART_RANGED),
+                ("defence", COMBAT_ATTACK_LEVEL),
+                ("hitpoints", COMBAT_ATTACK_LEVEL),
+            ],
+        );
+        dart_baseline.bank_open = true;
+        dart_baseline.bank_loaded = true;
+        validate_case_baseline(dart_case, &dart_baseline).unwrap();
+
+        let mut worn_start = dart_baseline.clone();
+        worn_start.equipment_ids.insert(BRONZE_DART_ID, 80);
+        worn_start.bank_ids.remove(&BRONZE_DART_ID);
+        assert!(
+            validate_case_baseline(dart_case, &worn_start).is_err(),
+            "worn-gear combat_baseline_ready must not qualify bank-only dart Start"
+        );
+        let mut closed_bank = dart_baseline.clone();
+        closed_bank.bank_open = false;
+        closed_bank.bank_loaded = false;
+        closed_bank.bank_ids.clear();
+        assert!(
+            validate_case_baseline(dart_case, &closed_bank).is_err(),
+            "closed snapshots drop bank_ids and cannot prove the dart fixture"
+        );
+        let mut wrong_ammo_bank = dart_baseline.clone();
+        wrong_ammo_bank.bank_ids.insert(RUNE_ARROW_ID, 1);
+        assert!(validate_case_baseline(dart_case, &wrong_ammo_bank).is_err());
+
+        let dart_spec = combat_spec(dart_case).unwrap();
+        let mut dart_worn = dart_baseline.clone();
+        dart_worn.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_worn.bank_open = false;
+        dart_worn.bank_loaded = false;
+        dart_worn.equipment_ids.insert(BRONZE_DART_ID, 80);
+        dart_worn.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
+        let mut dart_field = dart_worn.clone();
+        dart_field.equipment_ids.insert(BRONZE_DART_ID, 79);
+        dart_field.xp.insert("ranged".into(), 12);
+        dart_field.npc_facts = vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_field.local_in_combat = true;
+        dart_field.local_target_npc = Some(4);
+        let dart_ok = witness(dart_case, &dart_baseline, [&dart_worn, &dart_field]);
+        assert!(dart_ok.combat_dart_branch_cycle.qualified());
+        assert!(
+            !dart_ok.combat_dart_branch_cycle.combat.qualified(dart_spec),
+            "one engagement must not satisfy generic qualified()"
+        );
+        assert!(dart_ok.qualify().is_ok());
+
+        let mut no_travel = dart_field.clone();
+        no_travel.tile = Some(MOSS_GIANT_BANK);
+        assert!(witness(dart_case, &dart_baseline, [&no_travel])
+            .qualify()
+            .is_err());
+        let mut wrong_ammo_live = dart_field.clone();
+        wrong_ammo_live.item_ids.insert(RUNE_ARROW_ID, 1);
+        assert!(witness(dart_case, &dart_baseline, [&dart_worn, &wrong_ammo_live])
+            .qualify()
+            .is_err());
+
+        let mage_case = CoreCase::GreenDragonMagePrepared;
+        let mage_baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, GREEN_DRAGON_FOOD),
+                (MIND_RUNE_ID, AUTO_FIGHTER_MAGE_CASTS),
+                (AIR_RUNE_ID, AUTO_FIGHTER_MAGE_AIR_RUNES),
+            ],
+            &[(STAFF_OF_FIRE_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[("magic", 100)],
+            &[
+                ("magic", REMAINING_COMBAT_PREPARED_LEVEL),
+                ("defence", REMAINING_COMBAT_PREPARED_LEVEL),
+                ("hitpoints", REMAINING_COMBAT_PREPARED_LEVEL),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(mage_case, &mage_baseline).unwrap();
+        let mut armoured = mage_baseline.clone();
+        armoured.equipment_ids.insert(RUNE_CHAINBODY_ID, 1);
+        assert!(
+            validate_case_baseline(mage_case, &armoured).is_err(),
+            "mage prepared must refuse rune armour"
+        );
+        let mut short_mind = mage_baseline.clone();
+        short_mind.item_ids.insert(MIND_RUNE_ID, 149);
+        assert!(validate_case_baseline(mage_case, &short_mind).is_err());
+
+        let mage_spec = combat_spec(mage_case).unwrap();
+        let mut mage_hit = mage_baseline.clone();
+        mage_hit.item_ids.insert(MIND_RUNE_ID, 149);
+        mage_hit.item_ids.insert(AIR_RUNE_ID, 298);
+        mage_hit.xp.insert("magic".into(), 106);
+        mage_hit.varps.insert(AUTOCAST_MAGIC_VARP, 3);
+        mage_hit.npc_facts = vec![combat_npc(8, "Green dragon", 80, true, GREEN_DRAGON_FIELD)];
+        mage_hit.local_in_combat = true;
+        mage_hit.local_target_npc = Some(8);
+        let mage_ok = witness(mage_case, &mage_baseline, [&mage_hit]);
+        assert!(qualified_mage_branch(&mage_ok.combat_core_cycle, mage_spec));
+        assert!(
+            !mage_ok.combat_core_cycle.qualified(mage_spec),
+            "mage branch must not claim generic 2/1/further_work"
+        );
+        assert!(mage_ok.qualify().is_ok());
+        let mut no_shield = mage_hit.clone();
+        no_shield.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        assert!(witness(mage_case, &mage_baseline, [&no_shield])
+            .qualify()
+            .is_err());
+
+        let camelot_case = CoreCase::FireGiantCamelotPrepared;
+        let camelot_baseline = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (ROPE_ID, 1),
+                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
+                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+            ],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+                (GLARIALS_AMULET_ID, 1),
+            ],
+            &[("strength", 0), ("magic", 0)],
+            &[
+                ("attack", BANK_PRESSURE_PREPARED_LEVEL),
+                ("strength", BANK_PRESSURE_PREPARED_LEVEL),
+                ("defence", BANK_PRESSURE_PREPARED_LEVEL),
+                ("hitpoints", BANK_PRESSURE_PREPARED_LEVEL),
+                ("magic", CAMELOT_TELE_MAGIC),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(camelot_case, &camelot_baseline).unwrap();
+        let mut seeded_bones = camelot_baseline.clone();
+        seeded_bones.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(camelot_case, &seeded_bones).is_err());
+        let mut no_magic = camelot_baseline.clone();
+        no_magic.levels.insert("magic".into(), 1);
+        no_magic.effective_levels.insert("magic".into(), 1);
+        assert!(validate_case_baseline(camelot_case, &no_magic).is_err());
+        let mut packed_amulet = camelot_baseline.clone();
+        packed_amulet.equipment_ids.remove(&GLARIALS_AMULET_ID);
+        packed_amulet.item_ids.insert(GLARIALS_AMULET_ID, 1);
+        assert!(
+            validate_case_baseline(camelot_case, &packed_amulet).is_err(),
+            "Camelot restock slot math needs the amulet worn"
+        );
     }
 
     #[test]
