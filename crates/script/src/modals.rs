@@ -8,7 +8,6 @@ use crate::isolate_fb::SnapshotReader;
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
 
 /// Frozen `Modals.close` wait for `main !== before`.
 pub const CLOSE_TIMEOUT_MS: u64 = 3_000;
@@ -79,10 +78,6 @@ impl ModalsRuntime {
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
-    }
-
-    fn now(&self) -> Instant {
-        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
@@ -227,6 +222,7 @@ fn next(token: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn observe(ingame: bool, main_modal_id: i32) {
         NATIVE_OBSERVATION.with(|slot| {
@@ -292,7 +288,7 @@ mod tests {
         let begin = dispatch(&json!({ "op": "begin", "kind": "close" }));
         let token = begin["token"].as_u64().unwrap();
         RUNTIME.with(|rt| {
-            let now = rt.borrow().now();
+            let now = rt.borrow().clock.now();
             rt.borrow_mut().clock.deadline = Some(now - Duration::from_millis(1));
         });
         let timed = dispatch(&json!({ "op": "next", "token": token }));

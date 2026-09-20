@@ -10,7 +10,6 @@ use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
 
 /// Frozen close-in / stand / Clear walk bound.
 pub const WALK_BOUND_MS: u64 = 90_000;
@@ -216,10 +215,6 @@ impl ReachRuntime {
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
-    }
-
-    fn now(&self) -> Instant {
-        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
@@ -651,10 +646,12 @@ fn with_log(mut value: Value, log: Option<String>) -> Value {
 
 #[cfg(test)]
 pub(crate) fn expire_deadline_for_test() {
+    use std::time::{Duration, Instant};
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
         rt.clock.deadline = Some(
-            rt.now()
+            rt.clock
+                .now()
                 .checked_sub(Duration::from_millis(1))
                 .unwrap_or_else(Instant::now),
         );

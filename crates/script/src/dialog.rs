@@ -11,7 +11,6 @@ use crate::isolate_fb::SnapshotReader;
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
 
 /// Frozen page-turn quiet. A scene that walks an NPC about wants its caller
 /// to name more via `gapMs`.
@@ -194,10 +193,6 @@ impl DialogRuntime {
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
-    }
-
-    fn now(&self) -> Instant {
-        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
@@ -632,6 +627,7 @@ fn with_log(mut value: Value, log: Option<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn npc(name: &str, actions: &[&str], distance: i32, index: i32) -> Npc {
         Npc {
@@ -799,7 +795,8 @@ mod tests {
             wait_continue_ack(&mut runtime, &observation)["kind"],
             "wait"
         );
-        runtime.clock.deadline = Some(runtime.now() - Duration::from_millis(1));
+        runtime.clock.deadline =
+            Some(runtime.clock.now() - Duration::from_millis(1));
         let timed = wait_continue_ack(&mut runtime, &observation);
         assert_eq!(timed["kind"], "done");
         assert_eq!(timed["result"], false);
