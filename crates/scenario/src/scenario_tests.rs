@@ -1591,6 +1591,8 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "firemaker_oak",
             "climbing_boots",
             "climbing_boots_teleport",
+            "ranging_guild_round",
+            "ranging_guild_redeem",
             "script_trade",
             "nature_crafter_air",
             "mule_crafter_air",
@@ -11746,4 +11748,197 @@ fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
         client.out.pos > after_choice,
         "deposit must emit from bank_side, not reject a closed bank"
     );
+}
+
+#[test]
+fn ranging_guild_round_orders_fee_shot_payout_and_further_round() {
+    // Stock 289 / frozen rangingguild-live.ts --phase round, plus a second
+    // 200-coin enter (live full's coinsPerTrip=400 funds two rounds).
+    const COINS: i32 = 995;
+    const MAGIC_SHORTBOW: i32 = 861;
+    const ARCHERY_TICKET: i32 = 1464;
+    const RUNE_ARROW: i32 = 892;
+    const TARGET_COUNT: i32 = 156;
+    const RANGED_STAT: i32 = 4;
+    const STAND_X: i32 = 2672;
+    const STAND_Z: i32 = 3419;
+
+    let round = get("ranging_guild_round").expect("ranging_guild_round");
+    assert_eq!(round.settings.start_script, Some("RangingGuild"));
+    assert_eq!(round.settings.deadline, Duration::from_secs(300));
+    let inject = settings_inject_map(round.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        inject.get("coinsPerTrip").and_then(Value::as_f64),
+        Some(400.0)
+    );
+
+    let start = round
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("StartScript");
+    let seed = round.steps[..start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(seed.contains(&Proof::Stat {
+        id: RANGED_STAT,
+        min: 70
+    }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: MAGIC_SHORTBOW,
+        count: 1
+    }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: COINS,
+        count: 400
+    }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: ARCHERY_TICKET,
+        count: 0
+    }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: RUNE_ARROW,
+        count: 0
+    }));
+    assert!(seed.contains(&Proof::ArrivedNear {
+        x: STAND_X,
+        z: STAND_Z,
+        level: 0,
+        radius: 2,
+    }));
+    assert!(
+        !seed
+            .iter()
+            .any(|proof| matches!(proof, Proof::ItemId { id: ARCHERY_TICKET, .. })),
+        "round must not seed tickets"
+    );
+
+    let watch = round.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        watch,
+        vec![
+            Proof::ItemIdAtMost {
+                id: COINS,
+                count: 200
+            },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 1
+            },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 2
+            },
+            Proof::VarpExact {
+                id: TARGET_COUNT,
+                value: 0
+            },
+            Proof::ItemId {
+                id: ARCHERY_TICKET,
+                count: 1
+            },
+            Proof::ItemIdAtMost { id: COINS, count: 0 },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 1
+            },
+        ]
+    );
+    assert_eq!(
+        round.proof,
+        Proof::Varp {
+            id: TARGET_COUNT,
+            min: 1
+        }
+    );
+    assert!(names().contains(&"ranging_guild_round"));
+}
+
+#[test]
+fn ranging_guild_redeem_orders_seeded_ticket_spend_and_item_change() {
+    // Frozen rangingguild-live.ts --phase redeem: tickets are seeded, not earned.
+    const MAGIC_SHORTBOW: i32 = 861;
+    const ARCHERY_TICKET: i32 = 1464;
+    const RUNE_ARROW: i32 = 892;
+    const RANGED_STAT: i32 = 4;
+    const MERCHANT_X: i32 = 2659;
+    const MERCHANT_Z: i32 = 3430;
+
+    let redeem = get("ranging_guild_redeem").expect("ranging_guild_redeem");
+    assert_eq!(redeem.settings.start_script, Some("RangingGuild"));
+    assert_eq!(redeem.settings.deadline, SCRIPT_GOLD_DEADLINE);
+
+    let start = redeem
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("StartScript");
+    let seed = redeem.steps[..start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(seed.contains(&Proof::Stat {
+        id: RANGED_STAT,
+        min: 70
+    }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: MAGIC_SHORTBOW,
+        count: 1
+    }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: ARCHERY_TICKET,
+        count: 2000
+    }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: RUNE_ARROW,
+        count: 0
+    }));
+    assert!(seed.contains(&Proof::ArrivedNear {
+        x: MERCHANT_X,
+        z: MERCHANT_Z,
+        level: 0,
+        radius: 3,
+    }));
+    assert!(
+        !seed
+            .iter()
+            .any(|proof| matches!(proof, Proof::ItemId { id: 995, .. })),
+        "redeem must not seed coins that could fund a round"
+    );
+    assert!(
+        redeem.steps[..start]
+            .iter()
+            .any(|step| step.name.contains("seeded") || step.name.contains("ticket")),
+        "redemption tickets must be named as seeded, not earned"
+    );
+
+    let watch = redeem.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        watch,
+        vec![
+            Proof::ItemIdAtMost {
+                id: ARCHERY_TICKET,
+                count: 0
+            },
+            Proof::ItemId {
+                id: RUNE_ARROW,
+                count: 50
+            },
+        ]
+    );
+    assert_eq!(
+        redeem.proof,
+        Proof::ItemId {
+            id: RUNE_ARROW,
+            count: 50
+        }
+    );
+    assert!(names().contains(&"ranging_guild_redeem"));
 }

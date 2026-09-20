@@ -380,3 +380,182 @@ fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
         "a later Stop must not move a different qualified core"
     );
 }
+
+use host_play::catalog_core::{
+    ARCHERY_TICKET_ID, ENTRY_FEE, MAGIC_SHORTBOW_ID, RANGING_GUILD_MERCHANT_STAND,
+    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID, TICKETS_PER_TRADE,
+    VARP_TARGET_COUNT, VARP_TARGET_SCORE,
+};
+
+fn ranging_round_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_STAND),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    observation.item_ids.insert(COINS_ID, ENTRY_FEE * 2);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation.varps.insert(VARP_TARGET_SCORE, 0);
+    observation
+}
+
+fn ranging_redeem_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_MERCHANT_STAND),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    observation
+}
+
+#[test]
+fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_round").unwrap(),
+        CoreCase::RangingGuildRound
+    );
+    assert_eq!(CoreCase::RangingGuildRound.card_name(), "RangingGuild");
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRound, "catalogtest");
+    let baseline = ranging_round_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "repeating the seeded stand must not qualify"
+    );
+
+    let mut paid = baseline.clone();
+    paid.item_ids.insert(COINS_ID, ENTRY_FEE);
+    paid.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", paid.clone(), false);
+    assert!(watch.qualify().is_err(), "fee alone is not a round");
+
+    let mut shot = paid.clone();
+    shot.varps.insert(VARP_TARGET_COUNT, 2);
+    shot.xp.insert("ranged".into(), 8);
+    watch.observe("catalogtest", shot.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "a shot without payout is incomplete"
+    );
+
+    let mut reset = shot.clone();
+    reset.varps.insert(VARP_TARGET_COUNT, 0);
+    reset.item_ids.insert(ARCHERY_TICKET_ID, 3);
+    watch.observe("catalogtest", reset.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "one payout must not stand in for a further round"
+    );
+
+    let mut second = reset;
+    second.item_ids.insert(COINS_ID, 0);
+    second.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", second, false);
+    watch.qualify().expect("paid shot payout and second enter");
+}
+
+#[test]
+fn ranging_guild_round_does_not_treat_seeded_tickets_as_payout() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRound, "catalogtest");
+    let mut seeded = ranging_round_baseline();
+    seeded.item_ids.insert(ARCHERY_TICKET_ID, 20);
+    watch.observe("catalogtest", seeded.clone(), false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "seeded tickets are not a round baseline"
+    );
+}
+
+#[test]
+fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_redeem").unwrap(),
+        CoreCase::RangingGuildRedeem
+    );
+    assert_eq!(CoreCase::RangingGuildRedeem.card_name(), "RangingGuild");
+
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildRedeem, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_redeem_baseline();
+    let watch = start(baseline.clone());
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seeded 2000 tickets must not count as a spend"
+    );
+
+    let modal_only = start(baseline.clone());
+    let mut opened = baseline.clone();
+    opened.main_modal = 4461;
+    modal_only.observe("catalogtest", opened, false);
+    assert!(
+        modal_only.qualify().is_err(),
+        "opening the ticket shop without a trade is not redemption"
+    );
+
+    let spent_only = start(baseline.clone());
+    let mut spent = baseline.clone();
+    spent.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    spent_only.observe("catalogtest", spent, false);
+    assert!(
+        spent_only.qualify().is_err(),
+        "ticket loss without rune arrows is not redemption"
+    );
+
+    let arrows_only = start(baseline.clone());
+    let mut arrows = baseline.clone();
+    arrows.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    arrows_only.observe("catalogtest", arrows, false);
+    assert!(
+        arrows_only.qualify().is_err(),
+        "arrows without a ticket spend can be a seed, not a buy"
+    );
+
+    let traded = start(baseline.clone());
+    let mut buy = baseline;
+    buy.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    buy.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    traded.observe("catalogtest", buy, false);
+    traded
+        .qualify()
+        .expect("2000 seeded tickets spent for 50 rune arrows");
+}
+
+#[test]
+fn ranging_guild_redeem_rejects_already_held_arrows_as_baseline() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRedeem, "catalogtest");
+    let mut seeded_arrows = ranging_redeem_baseline();
+    seeded_arrows
+        .item_ids
+        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    watch.observe("catalogtest", seeded_arrows, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "held rune arrows are not a redemption baseline"
+    );
+}

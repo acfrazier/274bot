@@ -2,6 +2,7 @@ pub(crate) mod combat;
 pub(crate) mod navigation;
 pub(crate) mod pair;
 pub(crate) mod production;
+pub(crate) mod ranging_guild;
 pub(crate) mod render;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
@@ -60,6 +61,7 @@ pub(crate) use production::{
     tanner_bot_scenario, thiever_scenario, vial_filler_east_scenario, vial_filler_scenario,
     wildy_agility_scenario,
 };
+pub(crate) use ranging_guild::{ranging_guild_redeem_scenario, ranging_guild_round_scenario};
 pub(crate) use render::render_smoke_scenario;
 pub(crate) use script_basics::{
     bone_burier_scenario, bone_burier_v2_scenario, lamp_redemption_scenario, maze_owned_scenario,

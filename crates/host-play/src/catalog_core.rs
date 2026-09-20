@@ -13,7 +13,17 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+#[path = "catalog_core_ranging.rs"]
+mod ranging;
+pub use ranging::{
+    ranging_guild_redeem_baseline_ready, ranging_guild_round_baseline_ready,
+    RangingGuildRedeemCycle, RangingGuildRoundCycle, ARCHERY_TICKET_ID, ENTRY_FEE, RANGED_LIVE,
+    RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK, RANGING_GUILD_STAND,
+    RUNE_ARROWS_PER_TRADE, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT,
+    VARP_TARGET_SCORE,
+};
+
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -585,6 +595,8 @@ pub enum CoreCase {
     FiremakerOak,
     ClimbingBoots,
     ClimbingBootsTeleport,
+    RangingGuildRound,
+    RangingGuildRedeem,
 }
 
 impl CoreCase {
@@ -711,6 +723,8 @@ impl CoreCase {
             "firemaker_oak" => Ok(Self::FiremakerOak),
             "climbing_boots" => Ok(Self::ClimbingBoots),
             "climbing_boots_teleport" => Ok(Self::ClimbingBootsTeleport),
+            "ranging_guild_round" => Ok(Self::RangingGuildRound),
+            "ranging_guild_redeem" => Ok(Self::RangingGuildRedeem),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -840,6 +854,8 @@ impl CoreCase {
             Self::FiremakerOak => "firemaker_oak",
             Self::ClimbingBoots => "climbing_boots",
             Self::ClimbingBootsTeleport => "climbing_boots_teleport",
+            Self::RangingGuildRound => "ranging_guild_round",
+            Self::RangingGuildRedeem => "ranging_guild_redeem",
         }
     }
 
@@ -937,6 +953,7 @@ impl CoreCase {
             Self::LeatherCrafter | Self::LeatherCrafterHardBody => "LeatherCrafter",
             Self::Firemaker | Self::FiremakerOak => "Firemaker",
             Self::ClimbingBoots | Self::ClimbingBootsTeleport => "ClimbingBoots",
+            Self::RangingGuildRound | Self::RangingGuildRedeem => "RangingGuild",
         }
     }
 }
@@ -1337,6 +1354,9 @@ impl Observation {
                         | COMBAT_MODE_VARP
                         | SA_ENERGY_VARP
                         | SA_ARMED_VARP
+                        | VARP_TARGET_COUNT
+                        | VARP_TARGET_SCORE
+                        | VARP_TARGET_HIT
                 )
             })
             .map(|varp| (varp.index, varp.value))
@@ -2612,6 +2632,8 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.item_id(WATER_RUNE_ID) == 1
                 && baseline.level("magic") >= FALADOR_TELE_MAGIC
         }
+        CoreCase::RangingGuildRound => ranging_guild_round_baseline_ready(baseline),
+        CoreCase::RangingGuildRedeem => ranging_guild_redeem_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -2947,6 +2969,12 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::ClimbingBootsTeleport => {
             "Tenzing hut door (2823,3555,0) r12, zero boots 3105 carried and banked, exact carried 300 coins (25 pair), Law 563x1/Air 556x3/Water 555x1, Magic 37, Death Plateau complete"
         }
+        CoreCase::RangingGuildRound => {
+            "range stand (2672,3419,0) r2, Ranged 70, Magic shortbow 861, 400 coins, no ticket 1464, no rune arrow 892, unpaid targetcount 156"
+        }
+        CoreCase::RangingGuildRedeem => {
+            "merchant stand (2659,3430,0) r3, Ranged 70, Magic shortbow 861, seeded ticket 1464x2000, no rune arrow 892"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -3010,6 +3038,8 @@ pub struct CoreWitness {
     pub leather_crafter_cycle: LeatherCrafterCycle,
     pub firemaker_cycle: FiremakerCycle,
     pub climbing_boots_cycle: ClimbingBootsCycle,
+    pub ranging_guild_round_cycle: RangingGuildRoundCycle,
+    pub ranging_guild_redeem_cycle: RangingGuildRedeemCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -8303,6 +8333,8 @@ impl CoreWitness {
             leather_crafter_cycle: LeatherCrafterCycle::default(),
             firemaker_cycle: FiremakerCycle::default(),
             climbing_boots_cycle: ClimbingBootsCycle::default(),
+            ranging_guild_round_cycle: RangingGuildRoundCycle::default(),
+            ranging_guild_redeem_cycle: RangingGuildRedeemCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -8503,6 +8535,14 @@ impl CoreWitness {
         if let Some(spec) = climbing_boots_spec(self.case) {
             self.climbing_boots_cycle
                 .observe(spec, &self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RangingGuildRound) {
+            self.ranging_guild_round_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RangingGuildRedeem) {
+            self.ranging_guild_redeem_cycle
+                .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -8937,6 +8977,8 @@ impl CoreWitness {
                     None => false,
                 }
             }
+            CoreCase::RangingGuildRound => self.ranging_guild_round_cycle.qualified(),
+            CoreCase::RangingGuildRedeem => self.ranging_guild_redeem_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -9027,6 +9069,8 @@ impl CoreWitness {
             "leather_crafter_cycle": self.leather_crafter_cycle,
             "firemaker_cycle": self.firemaker_cycle,
             "climbing_boots_cycle": self.climbing_boots_cycle,
+            "ranging_guild_round_cycle": self.ranging_guild_round_cycle,
+            "ranging_guild_redeem_cycle": self.ranging_guild_redeem_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
