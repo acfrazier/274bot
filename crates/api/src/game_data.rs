@@ -316,6 +316,143 @@ pub struct PrayerFact {
     pub varp_alias: String,
 }
 
+/// One pickaxe row from `[pickaxeshop]` stock joined to ObjType base cost.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PickaxeShopFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub base_cost: i32,
+    pub shop_baseline_qty: i32,
+    pub cost_source: String,
+}
+
+/// Mapsquare predicate for the enclosed Rune Essence mine (m45_75).
+#[derive(Debug, Deserialize, Clone)]
+pub struct EssenceRegionFact {
+    pub mapsquare_mx: i32,
+    pub mapsquare_mz: i32,
+    pub predicate: String,
+    pub source_map: String,
+    pub mapsquare_from_filename: bool,
+    pub mine_portal_loc_alias: String,
+    pub mine_portal_loc_id: i32,
+    pub mine_portal_loc_placements: i32,
+    pub example_inside: EssenceExampleTile,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EssenceExampleTile {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+/// Curated shop-approach tiles copied from frozen reference tactics, not jm2 facts.
+#[derive(Debug, Deserialize, Clone)]
+pub struct CuratedVendorTactics {
+    pub label: String,
+    pub authority: String,
+    pub keeper: String,
+    pub stand: TileFact,
+    pub bank_stand: TileFact,
+    pub hop_from: TileFact,
+    pub hop_loc: String,
+    pub hop_action: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TileFact {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AuburyTravelNote {
+    pub note: String,
+    pub npc_alias: String,
+    pub npc_id: i32,
+    pub npc_name: String,
+    pub already_packed: bool,
+    pub return_anchor_constant: String,
+    pub return_anchor_coord: String,
+    pub return_anchor_source: String,
+    pub return_anchor_role: String,
+}
+
+/// Nurmof pickaxe shop + essence region facts (no acquire routing).
+#[derive(Debug, Deserialize, Clone)]
+pub struct NurmofEssenceFacts {
+    pub npc_alias: String,
+    pub npc_id: i32,
+    pub npc_name: String,
+    pub shop_inv: String,
+    pub shop_inv_source: String,
+    pub pickaxes: Vec<PickaxeShopFact>,
+    pub essence_region: EssenceRegionFact,
+    pub aubury_travel: AuburyTravelNote,
+    pub curated_vendor_tactics: CuratedVendorTactics,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourItemFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourLocFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub loc_config_source: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProvenanceTile {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+    #[serde(default)]
+    pub role: Option<String>,
+    pub provenance: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub authority: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub mapsquare: Option<String>,
+    #[serde(default)]
+    pub local: Option<FlourLocalTile>,
+    #[serde(default)]
+    pub loc_shape: Option<i32>,
+    #[serde(default)]
+    pub loc_angle: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourLocalTile {
+    pub lx: i32,
+    pub lz: i32,
+}
+
+/// Six Murder Mystery flour pins (quest name, pots, barrel, object + approach + bank tiles).
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourSixFacts {
+    pub quest_name: String,
+    pub quest_name_source: String,
+    pub pot: FlourItemFact,
+    pub pot_flour: FlourItemFact,
+    pub flour_barrel: FlourLocFact,
+    pub flour_barrel_object_tile: ProvenanceTile,
+    pub flour_barrel_approach_tile: ProvenanceTile,
+    pub bank_tile: ProvenanceTile,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -345,6 +482,10 @@ pub struct SelectedGameData {
     drop_tables: Vec<DropTable>,
     #[serde(default)]
     prayers: Vec<PrayerFact>,
+    #[serde(default)]
+    nurmof_essence: Option<NurmofEssenceFacts>,
+    #[serde(default)]
+    flour_six: Option<FlourSixFacts>,
 }
 
 impl SelectedGameData {
@@ -506,6 +647,20 @@ impl SelectedGameData {
         self.prayers
             .iter()
             .find(|row| row.name.eq_ignore_ascii_case(wanted))
+    }
+
+    pub fn nurmof_essence(&self) -> Option<&NurmofEssenceFacts> {
+        self.nurmof_essence.as_ref()
+    }
+
+    pub fn flour_six(&self) -> Option<&FlourSixFacts> {
+        self.flour_six.as_ref()
+    }
+
+    /// Mapsquare predicate from generated facts. `None` when `nurmof_essence` is absent.
+    pub fn in_essence_mine(&self, x: i32, z: i32) -> Option<bool> {
+        let region = &self.nurmof_essence.as_ref()?.essence_region;
+        Some((x >> 6) == region.mapsquare_mx && (z >> 6) == region.mapsquare_mz)
     }
 
     pub fn herb_level_default(&self) -> Option<i32> {

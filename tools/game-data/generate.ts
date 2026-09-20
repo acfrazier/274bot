@@ -32,7 +32,21 @@ const prayerContentFiles = [
     'scripts/skill_prayer/configs/prayers.constant',
     'scripts/skill_prayer/interfaces/prayer.if',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
+const nurmofEssenceContentFiles = [
+    'scripts/areas/area_falador/configs/dwarven_mine.inv',
+    'scripts/areas/area_falador/configs/dwarven_mine.npc',
+    'scripts/skill_runecraft/configs/runecraft.constant',
+    'maps/m45_75.jm2',
+    'pack/npc.pack',
+];
+const flourSixContentFiles = [
+    'scripts/quests/quest_murder/configs/quest_murder.loc',
+    'scripts/general/configs/quest.enum',
+    'maps/m42_55.jm2',
+    'pack/loc.pack',
+    'pack/obj.pack',
+];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -575,6 +589,351 @@ function dropTokens(body: string) {
     return tokens;
 }
 
+export function parseInvShopStock(text: string, shopName: string) {
+    const stock: { alias: string; baseline_qty: number; restock_delta: number }[] = [];
+    let inSection = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line === `[${shopName}]`) {
+            inSection = true;
+            continue;
+        }
+        if (line.startsWith('[') && line.endsWith(']')) {
+            if (inSection) break;
+            continue;
+        }
+        if (!inSection || !line.startsWith('stock')) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) throw new Error(`${shopName}: bad stock line ${line}`);
+        const parts = line.slice(eq + 1).split(',');
+        if (parts.length < 3) throw new Error(`${shopName}: bad stock line ${line}`);
+        stock.push({
+            alias: parts[0],
+            baseline_qty: integer(parts[1], line),
+            restock_delta: integer(parts[2], line),
+        });
+    }
+    if (stock.length === 0) throw new Error(`${shopName}: missing stock rows`);
+    return stock;
+}
+
+export function parseNpcSection(text: string, alias: string) {
+    const sections = new Map<string, Record<string, string>>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            sections.set(current, {});
+            continue;
+        }
+        if (!current || !line.includes('=')) continue;
+        const entry = sections.get(current)!;
+        if (line.startsWith('param=')) {
+            const comma = line.indexOf(',', 'param='.length);
+            if (comma <= 0) throw new Error(`${current}: bad param ${line}`);
+            entry[line.slice('param='.length, comma)] = line.slice(comma + 1);
+            continue;
+        }
+        const eq = line.indexOf('=');
+        entry[line.slice(0, eq)] = line.slice(eq + 1);
+    }
+    const section = sections.get(alias);
+    if (!section) throw new Error(`npc config: missing [${alias}]`);
+    return section;
+}
+
+export function parseQuestEnumEntry(text: string, questName: string) {
+    let inQuestNames = false;
+    let found: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            const section = line.slice(1, -1);
+            if (inQuestNames && section !== 'quest_names_enum') break;
+            inQuestNames = section === 'quest_names_enum';
+            continue;
+        }
+        if (!inQuestNames || !line.startsWith('val=')) continue;
+        const eq = line.indexOf('=');
+        const comma = line.indexOf(',', eq + 1);
+        if (comma <= eq) throw new Error(`quest.enum: malformed val line ${line}`);
+        const name = line.slice(comma + 1).trim();
+        if (name !== questName) continue;
+        if (found) throw new Error(`quest.enum: duplicate val for ${questName}`);
+        found = line;
+    }
+    if (!found) throw new Error(`quest.enum: missing ${questName} in [quest_names_enum]`);
+    return found;
+}
+
+export function parseMapsquarePath(relative: string) {
+    const base = path.basename(relative, '.jm2');
+    const match = /^m(\d+)_(\d+)$/.exec(base);
+    if (!match) throw new Error(`mapsquare path: expected m<x>_<z>.jm2, got ${relative}`);
+    return { mx: integer(match[1], relative), mz: integer(match[2], relative) };
+}
+
+function jm2SectionName(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('==== ') || !trimmed.endsWith(' ====')) return null;
+    return trimmed.slice('==== '.length, -' ===='.length);
+}
+
+export function parseLocSection(text: string, alias: string) {
+    const sections = new Map<string, { name?: string }>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            sections.set(current, {});
+            continue;
+        }
+        if (!current || !line.startsWith('name=')) continue;
+        sections.get(current)!.name = line.slice('name='.length);
+    }
+    const section = sections.get(alias);
+    if (!section?.name) throw new Error(`loc config: missing [${alias}] name`);
+    return section;
+}
+
+/** LOC placements only — mirrors `crates/nav/src/transport.rs` `parse_jm2_locs` gating. */
+export function parseJm2LocPlacements(text: string, locId: number) {
+    const placements: { plane: number; lx: number; lz: number; loc_id: number; shape: number; angle: number }[] = [];
+    let inLoc = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const section = jm2SectionName(line);
+        if (section !== null) {
+            inLoc = section === 'LOC';
+            continue;
+        }
+        if (!inLoc) continue;
+        const colon = line.indexOf(':');
+        if (colon <= 0) throw new Error(`jm2 LOC: malformed row ${line}`);
+        const coords = line.slice(0, colon).trim();
+        const data = line.slice(colon + 1).trim();
+        const coordTokens = coords.split(/\s+/);
+        if (coordTokens.length !== 3) throw new Error(`jm2 LOC: bad coords ${line}`);
+        const plane = integer(coordTokens[0], line);
+        const lx = integer(coordTokens[1], line);
+        const lz = integer(coordTokens[2], line);
+        if (plane < 0 || plane > 3) throw new Error(`jm2 LOC: plane out of range ${line}`);
+        if (lx < 0 || lx > 63 || lz < 0 || lz > 63) throw new Error(`jm2 LOC: local coords out of range ${line}`);
+        const dataTokens = data.split(/\s+/).filter((token) => token.length > 0);
+        if (dataTokens.length === 0) throw new Error(`jm2 LOC: missing loc id ${line}`);
+        if (dataTokens.length > 3) throw new Error(`jm2 LOC: extra tokens ${line}`);
+        const id = integer(dataTokens[0], line);
+        const shape = dataTokens[1] !== undefined ? integer(dataTokens[1], line) : 0;
+        const angle = dataTokens[2] !== undefined ? integer(dataTokens[2], line) : 0;
+        if (id !== locId) continue;
+        placements.push({ plane, lx, lz, loc_id: id, shape, angle });
+    }
+    return placements;
+}
+
+function worldFromMapsquare(mx: number, mz: number, lx: number, lz: number, plane: number) {
+    return { x: mx * 64 + lx, z: mz * 64 + lz, plane };
+}
+
+const PICKAXE_SHOP_ORDER = [
+    'bronze_pickaxe',
+    'iron_pickaxe',
+    'steel_pickaxe',
+    'mithril_pickaxe',
+    'adamant_pickaxe',
+    'rune_pickaxe',
+] as const;
+
+const PICKAXE_BASE_COSTS: Record<string, number> = {
+    'Bronze pickaxe': 1,
+    'Iron pickaxe': 140,
+    'Steel pickaxe': 500,
+    'Mithril pickaxe': 1300,
+    'Adamant pickaxe': 3200,
+    'Rune pickaxe': 32000,
+};
+
+export function extractNurmofEssenceFacts(content: string, items: ObjType[], npcs: NpcType[]) {
+    const itemByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
+    const invRelative = 'scripts/areas/area_falador/configs/dwarven_mine.inv';
+    const stock = parseInvShopStock(fs.readFileSync(path.join(content, invRelative), 'utf8'), 'pickaxeshop');
+    if (stock.length !== 6) throw new Error(`pickaxeshop: expected 6 stock rows, got ${stock.length}`);
+    const stockAliases = stock.map((row) => row.alias);
+    if (JSON.stringify(stockAliases) !== JSON.stringify([...PICKAXE_SHOP_ORDER])) {
+        throw new Error(`pickaxeshop: unexpected stock order ${JSON.stringify(stockAliases)}`);
+    }
+    const pickaxes = stock.map((row) => {
+        const item = itemByAlias.get(row.alias);
+        if (!item?.name) throw new Error(`pickaxeshop: missing obj ${row.alias}`);
+        const expected = PICKAXE_BASE_COSTS[item.name];
+        if (expected === undefined) throw new Error(`pickaxeshop: unexpected pickaxe name ${item.name}`);
+        if (item.cost !== expected) {
+            throw new Error(`pickaxeshop: ${item.name} base cost ${item.cost}, expected ${expected}`);
+        }
+        return {
+            alias: row.alias,
+            id: item.id,
+            name: item.name,
+            base_cost: item.cost,
+            shop_baseline_qty: row.baseline_qty,
+            cost_source: 'obj.cost',
+        };
+    });
+    const npcConfig = parseNpcSection(
+        fs.readFileSync(path.join(content, 'scripts/areas/area_falador/configs/dwarven_mine.npc'), 'utf8'),
+        'nurmof',
+    );
+    if (npcConfig.name !== 'Nurmof') throw new Error(`nurmof: bad display name ${npcConfig.name}`);
+    if (npcConfig.owned_shop !== 'pickaxeshop') throw new Error(`nurmof: bad owned_shop ${npcConfig.owned_shop}`);
+    const nurmof = npcs.find((npc) => npc.debugname === 'nurmof');
+    if (!nurmof?.name) throw new Error('nurmof: missing decoded npc');
+    if (nurmof.id !== 594 || nurmof.name !== 'Nurmof') {
+        throw new Error(`nurmof: npc join mismatch ${nurmof.id}/${nurmof.name}`);
+    }
+    const npcPack = parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'));
+    const packedId = npcPack.get('nurmof');
+    if (packedId !== 594) throw new Error(`nurmof: pack id ${packedId}, expected 594`);
+    const essenceMap = 'maps/m45_75.jm2';
+    if (!fs.existsSync(path.join(content, essenceMap))) throw new Error(`missing ${essenceMap}`);
+    const { mx: essence_mapsquare_mx, mz: essence_mapsquare_mz } = parseMapsquarePath(essenceMap);
+    const minePortalLocId = 2492;
+    const portalPlacements = parseJm2LocPlacements(
+        fs.readFileSync(path.join(content, essenceMap), 'utf8'),
+        minePortalLocId,
+    );
+    if (portalPlacements.length === 0) {
+        throw new Error(`essence mine: no loc ${minePortalLocId} placements in ${essenceMap}`);
+    }
+    const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    const portalAlias = [...locPack.entries()].find(([, id]) => id === minePortalLocId)?.[0];
+    if (portalAlias !== 'blankrunestone_exit_portal') {
+        throw new Error(`essence mine: loc ${minePortalLocId} alias ${portalAlias}, expected blankrunestone_exit_portal`);
+    }
+    const auburyPacked = npcPack.get('aubury');
+    const auburyNpc = npcs.find((npc) => npc.debugname === 'aubury');
+    if (auburyPacked !== 553 || !auburyNpc?.name) {
+        throw new Error(`aubury: pack/npc join mismatch ${auburyPacked}/${auburyNpc?.name}`);
+    }
+    const runecraftConstantPath = 'scripts/skill_runecraft/configs/runecraft.constant';
+    const runecraftConstant = fs.readFileSync(path.join(content, runecraftConstantPath), 'utf8');
+    const returnAnchorMatch = runecraftConstant.match(/^\^essence_mine_to_aubury\s*=\s*(\S+)/m);
+    if (!returnAnchorMatch) throw new Error('runecraft.constant: missing ^essence_mine_to_aubury return anchor');
+    const example = { x: 2880, z: 4800, plane: 0 };
+    return {
+        npc_alias: 'nurmof',
+        npc_id: nurmof.id,
+        npc_name: nurmof.name,
+        shop_inv: 'pickaxeshop',
+        shop_inv_source: invRelative,
+        pickaxes,
+        essence_region: {
+            mapsquare_mx: essence_mapsquare_mx,
+            mapsquare_mz: essence_mapsquare_mz,
+            predicate: `(x >> 6) === ${essence_mapsquare_mx} && (z >> 6) === ${essence_mapsquare_mz}`,
+            source_map: essenceMap,
+            mapsquare_from_filename: true,
+            mine_portal_loc_alias: portalAlias,
+            mine_portal_loc_id: minePortalLocId,
+            mine_portal_loc_placements: portalPlacements.length,
+            example_inside: example,
+        },
+        aubury_travel: {
+            note: 'Essence wizard Aubury entry/return hops are already packed in nav transport; not duplicated here.',
+            npc_alias: 'aubury',
+            npc_id: auburyNpc.id,
+            npc_name: auburyNpc.name,
+            already_packed: true,
+            return_anchor_constant: '^essence_mine_to_aubury',
+            return_anchor_coord: returnAnchorMatch[1],
+            return_anchor_source: runecraftConstantPath,
+            return_anchor_role: 'overworld_exit_after_mine_teleport',
+        },
+        curated_vendor_tactics: {
+            label: 'curated',
+            authority: 'reference rs2b0t-beecd9126b src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR',
+            keeper: 'Nurmof',
+            stand: { x: 2997, z: 9844, plane: 0 },
+            bank_stand: { x: 3013, z: 3355, plane: 0 },
+            hop_from: { x: 3019, z: 3449, plane: 0 },
+            hop_loc: 'Trapdoor',
+            hop_action: 'Climb-down',
+        },
+    };
+}
+
+export function extractFlourSixFacts(content: string, items: ObjType[]) {
+    const itemByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
+    const questEnumLine = parseQuestEnumEntry(
+        fs.readFileSync(path.join(content, 'scripts/general/configs/quest.enum'), 'utf8'),
+        'Murder Mystery',
+    );
+    if (!questEnumLine.includes('Murder Mystery')) throw new Error(`quest.enum: bad line ${questEnumLine}`);
+    const locRelative = 'scripts/quests/quest_murder/configs/quest_murder.loc';
+    const flourLoc = parseLocSection(fs.readFileSync(path.join(content, locRelative), 'utf8'), 'flourbarrel');
+    const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    const flourLocId = locPack.get('flourbarrel');
+    if (flourLocId !== 2662) throw new Error(`flourbarrel: pack id ${flourLocId}, expected 2662`);
+    const pot = itemByAlias.get('pot_empty');
+    const potFlour = itemByAlias.get('pot_flour');
+    if (!pot?.name || pot.id !== 1931) throw new Error(`flour: pot_empty join ${JSON.stringify(pot)}`);
+    if (!potFlour?.name || potFlour.id !== 1933) throw new Error(`flour: pot_flour join ${JSON.stringify(potFlour)}`);
+    const objPack = parsePack(fs.readFileSync(path.join(content, 'pack/obj.pack'), 'utf8'));
+    if (objPack.get('pot_empty') !== 1931 || objPack.get('pot_flour') !== 1933) {
+        throw new Error('flour: obj.pack id mismatch for pot items');
+    }
+    const mapRelative = 'maps/m42_55.jm2';
+    const { mx, mz } = parseMapsquarePath(mapRelative);
+    const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), 2662);
+    if (placements.length !== 1) {
+        throw new Error(`flourbarrel: expected one ${mapRelative} LOC placement, got ${placements.length}`);
+    }
+    const placement = placements[0];
+    const derivedBarrel = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+    return {
+        quest_name: 'Murder Mystery',
+        quest_name_source: 'scripts/general/configs/quest.enum',
+        pot: { alias: 'pot_empty', id: pot.id, name: pot.name },
+        pot_flour: { alias: 'pot_flour', id: potFlour.id, name: potFlour.name },
+        flour_barrel: {
+            alias: 'flourbarrel',
+            id: flourLocId,
+            name: flourLoc.name!,
+            loc_config_source: locRelative,
+        },
+        flour_barrel_object_tile: {
+            ...derivedBarrel,
+            role: 'loc_placement',
+            provenance: 'derived',
+            source: mapRelative,
+            mapsquare: `m${mx}_${mz}`,
+            local: { lx: placement.lx, lz: placement.lz },
+            loc_shape: placement.shape,
+            loc_angle: placement.angle,
+        },
+        flour_barrel_approach_tile: {
+            x: 2735,
+            z: 3581,
+            plane: 0,
+            role: 'interaction_near',
+            provenance: 'curated',
+            authority: 'reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL',
+            note: 'FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582).',
+        },
+        bank_tile: {
+            x: 2725,
+            z: 3491,
+            plane: 0,
+            provenance: 'curated',
+            authority: 'reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK',
+            note: 'Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content.',
+        },
+    };
+}
+
 export function extractDropFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const targets = [
         { alias: 'giant', block: 'ai_queue3:giant' },
@@ -656,8 +1015,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`); const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });
