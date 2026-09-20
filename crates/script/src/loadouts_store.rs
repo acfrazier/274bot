@@ -484,7 +484,11 @@ fn resolve_item_option_spec(
             alch,
         });
     }
-    rows.sort_by(|a, b| b.alch.cmp(&a.alch).then_with(|| a.label.cmp(&b.label)));
+    if spec.sort_keys_by_label {
+        rows.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.key.cmp(&b.key)));
+    } else {
+        rows.sort_by(|a, b| b.alch.cmp(&a.alch).then_with(|| a.label.cmp(&b.label)));
+    }
     for row in rows {
         values.push(row.key);
         labels.push(row.label);
@@ -888,6 +892,7 @@ mod tests {
         ItemOptionSpec {
             prefix: vec!["custom".into()],
             candidates,
+            sort_keys_by_label: false,
         }
     }
 

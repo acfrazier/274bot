@@ -1030,7 +1030,10 @@ export const ALCH_ITEMS: readonly AlchItem[] = FODDER
         return rec ? [{ key: obj, id: rec.id, name: rec.name, label: label ?? rec.name, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
     })
     .sort(richestFirst);
-export const ALCH_OPTIONS: string[] = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+export const ALCH_OPTIONS: string[] = [
+    CUSTOM_ALCH_KEY,
+    ...[...ALCH_ITEMS].sort((a, b) => a.label.localeCompare(b.label)).map(i => i.key)
+];
 export const DEFAULT_ALCH_ITEMS: string[] = ['dragonhide_body'];
 "#;
     let items = alcher_items_setting(logic);
@@ -1039,6 +1042,7 @@ export const DEFAULT_ALCH_ITEMS: string[] = ['dragonhide_body'];
         "descriptor must not bake keys into options"
     );
     let spec = items.item_option_spec.as_ref().expect("high-alchemy spec");
+    assert!(spec.sort_keys_by_label);
     assert_eq!(spec.prefix, vec!["custom".to_string()]);
     assert_eq!(
         spec.candidates
