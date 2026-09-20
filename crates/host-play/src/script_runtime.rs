@@ -3176,6 +3176,33 @@ pub(super) struct ScriptWalkArm {
     pub(super) bank: Vec<(i32, i32)>,
 }
 
+fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
+    match outcome {
+        RouteOutcome::Routed(_) => "Routed",
+        RouteOutcome::BankSession { .. } => "BankSession",
+        RouteOutcome::NoPath => "NoPath",
+    }
+}
+
+fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
+    if debug_enabled() {
+        eprintln!("[nav-walk-arm {name}] {}", build());
+    }
+}
+
+fn walk_arm_worker_slot() -> String {
+    thread::current()
+        .name()
+        .and_then(|n| n.strip_prefix("nav-find-").map(str::to_string))
+        .unwrap_or_else(|| "?".to_string())
+}
+
+fn log_walk_arm_bot(build: impl FnOnce() -> String) {
+    if debug_enabled() {
+        eprintln!("[nav-walk-arm] {}", build());
+    }
+}
+
 impl ScriptWalkArm {
     /// Queue one walk toward `(x, z, level)` with `opts`, routing off-pump
     /// on a short-lived worker (`find_with` over the shared [`NavWorld`]).
@@ -3226,10 +3253,20 @@ impl ScriptWalkArm {
     ) -> bool {
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "queue_route refused-no-here dest={to:?} r={radius} request_id={request_id}"
+                )
+            });
             self.publish_refusal(to, radius, opts.allow_teleports, request_id);
             return false;
         };
         let Some(world) = self.world.as_ref() else {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "queue_route refused-no-world dest={to:?} r={radius} request_id={request_id}"
+                )
+            });
             self.publish_refusal(to, radius, opts.allow_teleports, request_id);
             return false;
         };
@@ -3244,6 +3281,15 @@ impl ScriptWalkArm {
             if bot.bank_fetch.is_some()
                 || (!retarget && (bot.route.is_some() || bot.route_worker.is_some()))
             {
+                log_walk_arm(&self.name, || {
+                    format!(
+                        "queue_route refused-in-flight dest={to:?} r={radius} request_id={request_id} \
+                         bank_fetch={} retarget={retarget} route={} worker={}",
+                        bot.bank_fetch.is_some(),
+                        bot.route.is_some(),
+                        bot.route_worker.is_some()
+                    )
+                });
                 bot.note_failure(
                     bot.route_generation,
                     request_id,
@@ -3269,6 +3315,13 @@ impl ScriptWalkArm {
                 // in-flight find. A later distinct nonzero wait is refused
                 // without restarting search or reassigning the armed id.
                 if request_id != 0 && request_id != bot.walk_request_id {
+                    log_walk_arm(&self.name, || {
+                        format!(
+                            "queue_route coalesced-refused-distinct-id dest={to:?} r={radius} \
+                             request_id={request_id} armed_id={}",
+                            bot.walk_request_id
+                        )
+                    });
                     bot.note_failure(
                         bot.route_generation,
                         request_id,
@@ -3278,6 +3331,13 @@ impl ScriptWalkArm {
                     );
                     return false;
                 }
+                log_walk_arm(&self.name, || {
+                    format!(
+                        "queue_route coalesced dest={to:?} r={radius} request_id={request_id} \
+                         generation={}",
+                        bot.route_generation
+                    )
+                });
                 return true;
             }
             if let Some(ess) = bot.traveller.essence() {
@@ -3298,6 +3358,13 @@ impl ScriptWalkArm {
                 bank: self.bank.clone(),
             });
             if bot.route_worker.is_some() {
+                log_walk_arm(&self.name, || {
+                    format!(
+                        "queue_route handed-pending dest={to:?} r={radius} request_id={request_id} \
+                         generation={} from={from:?}",
+                        bot.route_generation
+                    )
+                });
                 return true;
             }
             let token = Arc::new(());
@@ -3307,12 +3374,20 @@ impl ScriptWalkArm {
         let navs = Arc::clone(&self.navs);
         let name = self.name.clone();
         let worker_token = Arc::clone(&token);
+        log_walk_arm(&self.name, || {
+            format!(
+                "queue_route spawned dest={to:?} r={radius} request_id={request_id} from={from:?} \
+                 allow_teleports={} allow_wilderness={} allow_bank_fetch={}",
+                opts.allow_teleports, opts.allow_wilderness, opts.allow_bank_fetch
+            )
+        });
         let spawned = thread::Builder::new()
             .name(format!("nav-find-{name}"))
             .spawn(move || loop {
                 let request = {
                     let mut all = navs.lock().unwrap();
                     let Some(bot) = all.get_mut(&name) else {
+                        log_walk_arm(&name, || "worker exit bot-gone".to_string());
                         return;
                     };
                     if !bot
@@ -3320,17 +3395,48 @@ impl ScriptWalkArm {
                         .as_ref()
                         .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
                     {
+                        log_walk_arm(&name, || {
+                            "worker discard stale-token before dequeue".to_string()
+                        });
                         return;
                     }
                     let Some(request) = bot.pending_route.take() else {
                         bot.route_worker = None;
+                        log_walk_arm(&name, || "worker exit no-pending-route".to_string());
                         return;
                     };
                     request
                 };
+                let debug = debug_enabled();
+                if debug {
+                    log_walk_arm(&name, || {
+                        format!(
+                            "worker calculate begin generation={} request_id={} from={:?} dest={:?} r={}",
+                            request.generation,
+                            request.request_id,
+                            request.from,
+                            request.to,
+                            request.radius
+                        )
+                    });
+                }
+                let started = debug.then(Instant::now);
                 let outcome = request.calculate();
+                if debug {
+                    let elapsed_ms = started.unwrap().elapsed().as_millis();
+                    log_walk_arm(&name, || {
+                        format!(
+                            "worker calculate end generation={} request_id={} elapsed_ms={elapsed_ms} \
+                             outcome={}",
+                            request.generation,
+                            request.request_id,
+                            walk_arm_outcome_tag(&outcome)
+                        )
+                    });
+                }
                 let mut all = navs.lock().unwrap();
                 let Some(bot) = all.get_mut(&name) else {
+                    log_walk_arm(&name, || "worker exit bot-gone after calculate".to_string());
                     return;
                 };
                 if !bot
@@ -3338,6 +3444,13 @@ impl ScriptWalkArm {
                     .as_ref()
                     .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
                 {
+                    log_walk_arm(&name, || {
+                        format!(
+                            "worker discard stale-token after calculate generation={} \
+                             live_generation={}",
+                            request.generation, bot.route_generation
+                        )
+                    });
                     return;
                 }
                 bot.publish_route(
@@ -3349,6 +3462,11 @@ impl ScriptWalkArm {
             })
             .is_ok();
         if !spawned {
+            log_walk_arm(&self.name, || {
+                format!(
+                    "queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}"
+                )
+            });
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
                 if bot
                     .route_worker
@@ -3552,6 +3670,9 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
         BankStep::Walk { x, z, level } => {
             if here == Some((x, z, level)) {
                 pending.steps.pop_front();
+                log_walk_arm_bot(|| {
+                    format!("bank_fetch phase done Walk on-stand ({x},{z},{level})")
+                });
                 // Restore the post-session route for follow / status.
                 bot.route = Some(pending.final_route.clone());
                 false
@@ -3581,6 +3702,9 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
                 };
                 match find_with(&w.collision, &w.graph, from, to, opts, &state) {
                     Ok(route) => {
+                        log_walk_arm_bot(|| {
+                            format!("bank_fetch Walk armed sub-route dest={to:?}")
+                        });
                         bot.route = Some(route);
                         false
                     }
@@ -3597,9 +3721,14 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
         BankStep::Open => {
             if snapshot.bank_loaded() {
                 pending.steps.pop_front();
+                log_walk_arm_bot(|| "bank_fetch phase done Open already-loaded".to_string());
                 false
             } else if snapshot.bank_component_id() == -1 {
-                open_bank_at_here(driver, snapshot, here, world)
+                let sent = open_bank_at_here(driver, snapshot, here, world);
+                if sent {
+                    log_walk_arm_bot(|| "bank_fetch Open sent Use-quickly".to_string());
+                }
+                sent
             } else {
                 false
             }
@@ -3607,12 +3736,16 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
         BankStep::DepositAll => {
             let wrote = deposit_all_backpack(driver, snapshot);
             pending.steps.pop_front();
+            log_walk_arm_bot(|| format!("bank_fetch phase done DepositAll wrote={wrote}"));
             wrote
         }
         BankStep::Withdraw { id, count } => {
             let wrote = withdraw_id(driver, snapshot, id, count);
             if wrote {
                 pending.steps.pop_front();
+                log_walk_arm_bot(|| {
+                    format!("bank_fetch phase done Withdraw id={id} count={count}")
+                });
             } else {
                 abort = true;
             }
@@ -3622,21 +3755,34 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
             let mut ix = api::interact::Interactions::new(snapshot, driver);
             let wrote = matches!(ix.wear(id), api::interact::SendResult::Sent { .. });
             pending.steps.pop_front();
+            log_walk_arm_bot(|| format!("bank_fetch phase done Wear id={id} wrote={wrote}"));
             wrote
         }
         BankStep::Close => {
             let mut ix = api::interact::Interactions::new(snapshot, driver);
             let wrote = matches!(ix.close_modal(), api::interact::SendResult::Sent { .. });
             pending.steps.pop_front();
+            log_walk_arm_bot(|| format!("bank_fetch phase done Close wrote={wrote}"));
             wrote
         }
     };
     if abort {
+        let session_dest = pending.dest;
+        let remaining = pending.steps.len();
+        log_walk_arm_bot(|| {
+            format!(
+                "bank_fetch abort front={step:?} session_dest={session_dest:?} remaining={remaining}"
+            )
+        });
         bot.bank_fetch = None;
         bot.route = None;
         return wrote;
     }
-    if bot.bank_fetch.as_ref().is_some_and(|p| p.steps.is_empty()) {
+    if pending.steps.is_empty() {
+        let session_dest = pending.dest;
+        log_walk_arm_bot(|| {
+            format!("bank_fetch session cleared complete session_dest={session_dest:?}")
+        });
         bot.bank_fetch = None;
     }
     wrote
@@ -3869,9 +4015,39 @@ impl ScriptRouteRequest {
                 &self.bank,
             );
         }
-        for target in approach_tiles(&self.world, self.from, self.to, self.radius) {
+        let candidates = approach_tiles(&self.world, self.from, self.to, self.radius);
+        let debug = debug_enabled();
+        let slot = walk_arm_worker_slot();
+        if debug {
+            log_walk_arm(&slot, || {
+                format!(
+                    "approach enumerate dest={:?} r={} candidates={}",
+                    self.to, self.radius, candidates.len()
+                )
+            });
+        }
+        for (idx, target) in candidates.into_iter().enumerate() {
+            if debug {
+                log_walk_arm(&slot, || {
+                    format!(
+                        "approach begin idx={idx} target={target:?} generation={} request_id={}",
+                        self.generation, self.request_id
+                    )
+                });
+            }
+            let started = debug.then(Instant::now);
             let outcome =
                 route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
+            if debug {
+                let elapsed_ms = started.unwrap().elapsed().as_millis();
+                log_walk_arm(&slot, || {
+                    format!(
+                        "approach end idx={idx} target={target:?} elapsed_ms={elapsed_ms} \
+                         outcome={}",
+                        walk_arm_outcome_tag(&outcome)
+                    )
+                });
+            }
             if !matches!(outcome, RouteOutcome::NoPath) {
                 return outcome;
             }
@@ -3908,8 +4084,23 @@ impl NavBot {
         // Legacy request id 0 never settles a wait. Do not replace a live
         // nonzero refusal with it before the isolate can observe the refusal.
         if request_id == 0 && self.walk_live_refusal_id != 0 {
+            log_walk_arm_bot(|| {
+                format!(
+                    "note_failure skipped legacy-id dest={to:?} r={radius} request_id={request_id} \
+                     live_refusal_id={}",
+                    self.walk_live_refusal_id
+                )
+            });
             return;
         }
+        log_walk_arm_bot(|| {
+            format!(
+                "note_failure generation={generation} walk_request_id={} request_id={request_id} \
+                 dest={to:?} r={radius} allow_teleports={allow_teleports} seq={}",
+                self.walk_request_id,
+                self.walk_outcome_seq.wrapping_add(1)
+            )
+        });
         self.bump_walk_outcome_seq();
         self.walk_outcome_generation = generation;
         self.walk_outcome_request_id = request_id;
@@ -3949,12 +4140,49 @@ impl NavBot {
         // Superseded workers and aborted/restarted runs keep a newer
         // route_generation. A late NoPath for the same dest must not publish.
         if self.route_generation != generation {
+            log_walk_arm_bot(|| {
+                format!(
+                    "publish_route discard-stale-generation published={generation} \
+                     live={} request_id={request_id} outcome={}",
+                    self.route_generation,
+                    walk_arm_outcome_tag(&outcome)
+                )
+            });
             return;
         }
         let (route, pending) = match outcome {
-            RouteOutcome::Routed(route) => (route, None),
-            RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
+            RouteOutcome::Routed(route) => {
+                log_walk_arm_bot(|| {
+                    format!(
+                        "publish_route Routed request_id={request_id} walk_request_id={} \
+                         route_dest={:?}",
+                        self.walk_request_id, route.dest
+                    )
+                });
+                (route, None)
+            }
+            RouteOutcome::BankSession { pending, route } => {
+                log_walk_arm_bot(|| {
+                    format!(
+                        "publish_route BankSession request_id={request_id} walk_request_id={} \
+                         route_dest={:?} session_steps={} session_dest={:?}",
+                        self.walk_request_id,
+                        route.dest,
+                        pending.steps.len(),
+                        pending.dest
+                    )
+                });
+                (route, Some(pending))
+            }
             RouteOutcome::NoPath => {
+                log_walk_arm_bot(|| {
+                    format!(
+                        "publish_route NoPath request_id={request_id} walk_request_id={} \
+                         may_publish={}",
+                        self.walk_request_id,
+                        self.armed_outcome_may_publish(request_id)
+                    )
+                });
                 if let Some((to, radius, allow_teleports, ..)) = self.requested_route {
                     if self.armed_outcome_may_publish(request_id) {
                         self.note_failure(generation, request_id, to, radius, allow_teleports);
