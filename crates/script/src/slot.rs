@@ -1140,6 +1140,15 @@ impl SlotScript {
         }
     }
 
+    /// Forward a persistent strip/rail/tabs selection to the Load isolate.
+    /// No-op for a compiled script or a slot with no isolate.
+    #[cfg(feature = "load")]
+    pub fn paint_select(&self, key: &str, name: &str) {
+        if let Some(isolate) = &self.load {
+            isolate.paint_select(key, name);
+        }
+    }
+
     /// The bot instance's random-ignore list (a Load isolate's
     /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
     /// script — there is no instance). Cached on the isolate thread

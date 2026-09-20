@@ -392,6 +392,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         }
     }
 

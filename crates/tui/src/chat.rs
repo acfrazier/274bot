@@ -619,6 +619,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let view = ChatView {
             lines: &lines,
@@ -664,6 +665,7 @@ mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -745,6 +747,7 @@ mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let view = ChatView {
             lines: &[],

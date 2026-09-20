@@ -99,6 +99,13 @@ enum IsolateCmd {
         id: String,
         generation: u64,
     },
+    /// Persistent strip/rail/tabs selection, tagged with the isolate
+    /// work generation so a stale overlay cannot land on a later script.
+    PaintSelect {
+        key: String,
+        name: String,
+        generation: u64,
+    },
     /// Generation-bound recoveryAnchor sample. Evaluated on this
     /// thread with the 50 ms budget; the reply is a FlatBuffer interact.
     RecoveryAnchor {
@@ -607,6 +614,23 @@ impl LoadIsolate {
             .load(std::sync::atomic::Ordering::Acquire);
         let _ = self.tx.send(IsolateCmd::PaintClick {
             id: id.to_string(),
+            generation,
+        });
+    }
+
+    /// Store a strip/rail/tabs selection for the current work generation.
+    /// Rejected on pause or generation skip; kept across paints until
+    /// [`LoadIsolate::reset_session_work`].
+    pub fn paint_select(&self, key: &str, name: &str) {
+        if key.is_empty() || name.is_empty() {
+            return;
+        }
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let _ = self.tx.send(IsolateCmd::PaintSelect {
+            key: key.to_string(),
+            name: name.to_string(),
             generation,
         });
     }
@@ -1763,6 +1787,7 @@ fn tick_loop(
                 }
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 clear_unconsumed_paint_click(&mut runtime);
+                super::paint_chrome::reset();
             }
             IsolateCmd::Pause => {
                 paused = true;
@@ -1810,6 +1835,18 @@ fn tick_loop(
                 if let Err(e) = set_paint_click(&mut runtime, &id) {
                     let _ = out.send(ThreadMsg::Log(format!("paintClick: {e}")));
                 }
+            }
+            IsolateCmd::PaintSelect {
+                key,
+                name,
+                generation,
+            } => {
+                if paused
+                    || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    continue;
+                }
+                super::paint_chrome::store_select(&key, &name);
             }
             IsolateCmd::RecoveryAnchor { generation } => {
                 // Pause / generation still reject. host_hold freezes

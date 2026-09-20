@@ -1282,6 +1282,7 @@ mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1515,6 +1516,7 @@ mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         });
         assert_eq!(
             app.on_key(key(KeyCode::Char('1'))),
@@ -2042,6 +2044,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         });
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();

@@ -374,6 +374,7 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
                 true,
             ),
         ],
+        ..Default::default()
     };
     let bytes = IsolateBuf::new().encode_paint(&paint);
     let decoded = decode_paint(&bytes).expect("roundtrip");
@@ -388,6 +389,7 @@ fn encode_decode_preserves_ops_and_old_buffers_decode() {
         buttons: Vec::new(),
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
     let old_bytes = IsolateBuf::new().encode_paint(&old);
     let old_decoded = decode_paint(&old_bytes).expect("old buffer");

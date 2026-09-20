@@ -12454,6 +12454,7 @@ fn identical_script_paint_skips_status_clone() {
         buttons: Vec::new(),
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
     let mut status = SlotStatus {
         username: "alice".into(),
@@ -12476,6 +12477,7 @@ fn identical_script_paint_skips_status_clone() {
         buttons: Vec::new(),
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
     publish_script_paint(&mut status, Some(&changed));
     assert_ne!(
@@ -12495,6 +12497,7 @@ fn identical_script_paint_skips_status_clone() {
         }],
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
     publish_script_paint(&mut status, Some(&relabel));
     assert_eq!(

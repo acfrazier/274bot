@@ -2927,6 +2927,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         });
         dispatch(
             &mut session,

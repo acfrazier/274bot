@@ -412,15 +412,29 @@ table CanvasOp {
   baseline: byte;
 }
 
+// Advertised strip / rail / tabs band. `status` and `brand` are strip-only.
+table PaintChromeBand {
+  id: string;
+  names: [string];
+  selected: string;
+  status: string;
+  brand: string;
+}
+
 // One recorded paint frame (`Paint.begin` … `end()`), isolate→host.
 // Same channel as InteractBatch: a typed buffer, never a JSON value.
-// `buttons` and `canvas` are optional at the end so older buffers decode as empty.
+// `buttons`, `canvas`, and chrome fields are optional at the end so older
+// buffers decode as empty.
 table Paint {
   title: string;
   accent: string;
   lines: [string];
   buttons: [PaintButton];
   canvas: [CanvasOp];
+  strip: PaintChromeBand;
+  rail: PaintChromeBand;
+  footer: string;
+  tabs: [PaintChromeBand];
 }
 
 root_type Snapshot;

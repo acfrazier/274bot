@@ -29,6 +29,10 @@ const MAX_INTERACT_REQS: usize = 256;
 const MAX_PAINT_LINES: usize = 512;
 /// Max advertised paint buttons per frame (isolate→host).
 const MAX_PAINT_BUTTONS: usize = 32;
+/// Max advertised tabs bands per paint frame (isolate→host).
+const MAX_PAINT_TABS: usize = 16;
+/// Max names on one strip/rail/tabs band.
+const MAX_CHROME_NAMES: usize = 32;
 /// Max canvas ops per paint frame (isolate→host).
 const MAX_CANVAS_OPS: usize = crate::canvas::MAX_CANVAS_OPS;
 /// Max UTF-8 bytes per canvas fillText string.
@@ -325,12 +329,23 @@ const VT_REQS: VOffsetT = 4;
 const VT_PAINT_BTN_ID: VOffsetT = 4;
 const VT_PAINT_BTN_LABEL: VOffsetT = 6;
 
-// Paint: { title, accent, lines, buttons, canvas }
+// Paint: { title, accent, lines, buttons, canvas, strip, rail, footer, tabs }
 const VT_PAINT_TITLE: VOffsetT = 4;
 const VT_PAINT_ACCENT: VOffsetT = 6;
 const VT_PAINT_LINES: VOffsetT = 8;
 const VT_PAINT_BUTTONS: VOffsetT = 10;
 const VT_PAINT_CANVAS: VOffsetT = 12;
+const VT_PAINT_STRIP: VOffsetT = 14;
+const VT_PAINT_RAIL: VOffsetT = 16;
+const VT_PAINT_FOOTER: VOffsetT = 18;
+const VT_PAINT_TABS: VOffsetT = 20;
+
+// PaintChromeBand: { id, names, selected, status, brand }
+const VT_CHROME_ID: VOffsetT = 4;
+const VT_CHROME_NAMES: VOffsetT = 6;
+const VT_CHROME_SELECTED: VOffsetT = 8;
+const VT_CHROME_STATUS: VOffsetT = 10;
+const VT_CHROME_BRAND: VOffsetT = 12;
 
 // CanvasOp: { kind, x, y, w, h, color, text, font_px, mono, segs, clips, stops, ... }
 const VT_CANVAS_KIND: VOffsetT = 4;
@@ -4505,6 +4520,29 @@ fn paint_button_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+fn chrome_band_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    band: &crate::shim::PaintChromeBand,
+) -> WIPOffset<PaintChromeBandReader<'b>> {
+    let id_off = b.create_string(&band.id);
+    let name_offs: Vec<_> = band.names.iter().map(|s| b.create_string(s)).collect();
+    let names_off = b.create_vector(&name_offs);
+    let selected_off = b.create_string(&band.selected);
+    let status_off = band.status.as_deref().map(|s| b.create_string(s));
+    let brand_off = band.brand.as_deref().map(|s| b.create_string(s));
+    let tab = b.start_table();
+    b.push_slot_always(VT_CHROME_ID, id_off);
+    b.push_slot_always(VT_CHROME_NAMES, names_off);
+    b.push_slot_always(VT_CHROME_SELECTED, selected_off);
+    if let Some(off) = status_off {
+        b.push_slot_always(VT_CHROME_STATUS, off);
+    }
+    if let Some(off) = brand_off {
+        b.push_slot_always(VT_CHROME_BRAND, off);
+    }
+    WIPOffset::new(b.end_table(tab).value())
+}
+
 fn canvas_seg_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     seg: &crate::canvas::PathSeg,
@@ -4879,6 +4917,19 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
     } else {
         Some(b.create_vector(&canvas_offs))
     };
+    let strip_off = paint.strip.as_ref().map(|band| chrome_band_off(b, band));
+    let rail_off = paint.rail.as_ref().map(|band| chrome_band_off(b, band));
+    let footer_off = paint.footer.as_deref().map(|s| b.create_string(s));
+    let tab_offs: Vec<_> = paint
+        .tabs
+        .iter()
+        .map(|band| chrome_band_off(b, band))
+        .collect();
+    let tabs_off = if tab_offs.is_empty() {
+        None
+    } else {
+        Some(b.create_vector(&tab_offs))
+    };
     let tab = b.start_table();
     if let Some(off) = title_off {
         b.push_slot_always(VT_PAINT_TITLE, off);
@@ -4892,6 +4943,18 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
     }
     if let Some(off) = canvas_off {
         b.push_slot_always(VT_PAINT_CANVAS, off);
+    }
+    if let Some(off) = strip_off {
+        b.push_slot_always(VT_PAINT_STRIP, off);
+    }
+    if let Some(off) = rail_off {
+        b.push_slot_always(VT_PAINT_RAIL, off);
+    }
+    if let Some(off) = footer_off {
+        b.push_slot_always(VT_PAINT_FOOTER, off);
+    }
+    if let Some(off) = tabs_off {
+        b.push_slot_always(VT_PAINT_TABS, off);
     }
     let root = b.end_table(tab);
     b.finish(root, None);
@@ -4929,6 +4992,14 @@ impl Verifiable for PaintReader<'_> {
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasOpReader>>>>(
                 "canvas",
                 VT_PAINT_CANVAS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<PaintChromeBandReader>>("strip", VT_PAINT_STRIP, false)?
+            .visit_field::<ForwardsUOffset<PaintChromeBandReader>>("rail", VT_PAINT_RAIL, false)?
+            .visit_field::<ForwardsUOffset<&str>>("footer", VT_PAINT_FOOTER, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<PaintChromeBandReader>>>>(
+                "tabs",
+                VT_PAINT_TABS,
                 false,
             )?
             .finish();
@@ -4970,6 +5041,85 @@ impl PaintButtonReader<'_> {
                 .get::<ForwardsUOffset<&str>>(VT_PAINT_BTN_LABEL, None)
         }
         .unwrap_or("")
+    }
+}
+
+struct PaintChromeBandReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for PaintChromeBandReader<'a> {
+    type Inner = PaintChromeBandReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for PaintChromeBandReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("id", VT_CHROME_ID, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "names",
+                VT_CHROME_NAMES,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<&str>>("selected", VT_CHROME_SELECTED, false)?
+            .visit_field::<ForwardsUOffset<&str>>("status", VT_CHROME_STATUS, false)?
+            .visit_field::<ForwardsUOffset<&str>>("brand", VT_CHROME_BRAND, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl PaintChromeBandReader<'_> {
+    fn id(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CHROME_ID, None) }.unwrap_or("")
+    }
+    fn names(&self) -> Result<Vec<String>, String> {
+        let names = match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_CHROME_NAMES, None)
+        } {
+            Some(v) => {
+                let len = v.len();
+                if len > MAX_CHROME_NAMES {
+                    return Err(format!(
+                        "vector length {len} exceeds cap {MAX_CHROME_NAMES}"
+                    ));
+                }
+                v.iter().map(str::to_string).collect()
+            }
+            None => Vec::new(),
+        };
+        Ok(names)
+    }
+    fn selected(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_CHROME_SELECTED, None)
+        }
+        .unwrap_or("")
+    }
+    fn status(&self) -> Option<&str> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_CHROME_STATUS, None)
+        }
+    }
+    fn brand(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CHROME_BRAND, None) }
+    }
+    fn into_band(&self) -> Result<crate::shim::PaintChromeBand, String> {
+        Ok(crate::shim::PaintChromeBand {
+            id: self.id().to_string(),
+            names: self.names()?,
+            selected: self.selected().to_string(),
+            status: self.status().map(str::to_string),
+            brand: self.brand().map(str::to_string),
+        })
     }
 }
 
@@ -5394,6 +5544,31 @@ impl PaintReader<'_> {
             })
             .collect())
     }
+    fn strip(&self) -> Result<Option<crate::shim::PaintChromeBand>, String> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PaintChromeBandReader>>(VT_PAINT_STRIP, None)
+        } {
+            Some(row) => Ok(Some(row.into_band()?)),
+            None => Ok(None),
+        }
+    }
+    fn rail(&self) -> Result<Option<crate::shim::PaintChromeBand>, String> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PaintChromeBandReader>>(VT_PAINT_RAIL, None)
+        } {
+            Some(row) => Ok(Some(row.into_band()?)),
+            None => Ok(None),
+        }
+    }
+    fn footer(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_FOOTER, None) }
+    }
+    fn tabs(&self) -> Result<Vec<crate::shim::PaintChromeBand>, String> {
+        let rows = rows_capped::<PaintChromeBandReader>(&self.tab, VT_PAINT_TABS, MAX_PAINT_TABS)?;
+        rows.into_iter().map(|row| row.into_band()).collect()
+    }
     fn canvas(&self) -> Result<Vec<crate::canvas::CanvasOp>, String> {
         let rows = rows_capped::<CanvasOpReader>(&self.tab, VT_PAINT_CANVAS, MAX_CANVAS_OPS)?;
         let mut out = Vec::with_capacity(rows.len());
@@ -5431,6 +5606,10 @@ pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
         buttons: paint.buttons()?,
         canvas: paint.canvas()?,
         generation: 0,
+        strip: paint.strip()?,
+        rail: paint.rail()?,
+        footer: paint.footer().map(str::to_string),
+        tabs: paint.tabs()?,
     })
 }
 
@@ -6505,6 +6684,7 @@ pub(crate) mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let pbytes = buf.encode_paint(&paint);
         let decoded = decode_paint(&pbytes).expect("paint");
@@ -6626,6 +6806,7 @@ pub(crate) mod tests {
             }],
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let full = IsolateBuf::new().encode_paint(&paint);
         for cut in 1..full.len() {

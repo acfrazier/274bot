@@ -986,6 +986,7 @@ fn diagnostic_paint(accent: bool, line: &str) -> crate::shim::ScriptPaint {
         buttons: Vec::new(),
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -997,6 +998,7 @@ fn canvas_only(ops: Vec<CanvasOp>) -> crate::shim::ScriptPaint {
         buttons: Vec::new(),
         generation: 0,
         canvas: ops,
+        ..Default::default()
     }
 }
 
@@ -1472,6 +1474,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let composed = compose_paint(Some(user));
         assert_eq!(composed.title.as_deref(), Some("onPaint"));
@@ -1702,6 +1705,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: taken.ops.clone(),
+            ..Default::default()
         };
         let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
         let decoded =
@@ -1751,6 +1755,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: over,
+            ..Default::default()
         };
         let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
         let err = crate::isolate_fb::decode_paint(&buf).expect_err("decoder frame budget");
