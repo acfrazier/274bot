@@ -45,6 +45,9 @@ const FIRE_GIANT_FOOD: i32 = 12;
 pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 pub(crate) const RUNE_SCIMITAR_ID: i32 = 1333;
 pub(crate) const DRAGONFIRE_SHIELD_ID: i32 = 1540;
+const DEFENCE_STAT: i32 = 1;
+const RUNE_PLATELEGS_ID: i32 = 1079;
+const RUNE_FULL_HELM_ID: i32 = 1163;
 const DRAGON_DAGGER_ID: i32 = 1215;
 const DRAGON_DAGGER_ATTACK_LEVEL: i32 = 60;
 const SPECIAL_ENERGY_VARP: i32 = 300;
@@ -619,6 +622,32 @@ const FIRE_GIANT_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Bool(false),
     },
 ];
+const FIRE_GIANT_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Fire Giant food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "escapeTele",
+        value: ScriptInjectValue::Str("Barrel (free)"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+];
 const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "combatStyle",
@@ -780,7 +809,51 @@ struct CombatCorePlan {
     agility: i32,
 }
 
+#[derive(Clone, Copy)]
+struct PreparedCombatPlan {
+    defence: i32,
+    extra_give: &'static [(&'static str, i32, i32)],
+    wear: &'static [(&'static str, i32)],
+}
+
+const TIER40_RUNE_ARMOUR_GIVE: &[(&str, i32, i32)] = &[
+    ("rune_chainbody", RUNE_CHAINBODY_ID, 1),
+    ("rune_platelegs", RUNE_PLATELEGS_ID, 1),
+    ("rune_full_helm", RUNE_FULL_HELM_ID, 1),
+];
+
+const TIER40_RUNE_ARMOUR_WEAR: &[(&str, i32)] = &[
+    (
+        "wear and acknowledge Rune chainbody before hostile-field teleport",
+        RUNE_CHAINBODY_ID,
+    ),
+    (
+        "wear and acknowledge Rune platelegs before hostile-field teleport",
+        RUNE_PLATELEGS_ID,
+    ),
+    (
+        "wear and acknowledge Rune full helm before hostile-field teleport",
+        RUNE_FULL_HELM_ID,
+    ),
+];
+
 fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
+    combat_core_scenario_with_preparation(plan, None)
+}
+
+fn prepared_combat_core_scenario(
+    plan: CombatCorePlan,
+    preparation: PreparedCombatPlan,
+) -> Scenario {
+    let mut scenario = combat_core_scenario_with_preparation(plan, Some(preparation));
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
+}
+
+fn combat_core_scenario_with_preparation(
+    plan: CombatCorePlan,
+    preparation: Option<PreparedCombatPlan>,
+) -> Scenario {
     let CombatCorePlan {
         name,
         card,
@@ -814,6 +887,9 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                if let Some(preparation) = preparation {
+                    cheat(c, &format!("setstat defence {}", preparation.defence));
+                }
                 if thieving > 0 {
                     cheat(c, &format!("setstat thieving {thieving}"));
                 }
@@ -827,6 +903,11 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 }
                 for &(alias, _, count) in extra_give {
                     cheat(c, &format!("give {alias} {count}"));
+                }
+                if let Some(preparation) = preparation {
+                    for &(alias, _, count) in preparation.extra_give {
+                        cheat(c, &format!("give {alias} {count}"));
+                    }
                 }
                 true
             }),
@@ -853,6 +934,15 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             min: COMBAT_ATTACK_LEVEL,
         },
     ));
+    if let Some(preparation) = preparation {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared Defence 40",
+            Proof::Stat {
+                id: DEFENCE_STAT,
+                min: preparation.defence,
+            },
+        ));
+    }
     steps.push(bank_fletcher_watch(
         "acknowledge prepared Hitpoints 40",
         Proof::Stat {
@@ -900,8 +990,21 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             Proof::ItemId { id, count },
         ));
     }
+    if let Some(preparation) = preparation {
+        for &(_, id, count) in preparation.extra_give {
+            steps.push(bank_fletcher_watch(
+                "acknowledge prepared tier-40 armour before Start",
+                Proof::ItemId { id, count },
+            ));
+        }
+    }
     if let Some((label, id)) = wear {
         steps.push(wear_combat_item_step(label, id));
+    }
+    if let Some(preparation) = preparation {
+        for &(label, id) in preparation.wear {
+            steps.push(wear_combat_item_step(label, id));
+        }
     }
     for &id in loot_empty {
         steps.push(bank_fletcher_watch(
@@ -1766,6 +1869,37 @@ pub(crate) fn green_dragon_scenario() -> Scenario {
     })
 }
 
+pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
+    prepared_combat_core_scenario(
+        CombatCorePlan {
+            name: "green_dragon_prepared",
+            card: "GreenDragon",
+            tele: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_alias: "lobster",
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_BASE_FOOD,
+            weapon_alias: "rune_scimitar",
+            weapon_id: RUNE_SCIMITAR_ID,
+            extra_give: &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+            wear: Some((
+                "wear and acknowledge Dragonfire shield before hostile-field teleport",
+                DRAGONFIRE_SHIELD_ID,
+            )),
+            loot_empty: GREEN_DRAGON_LOOT_EMPTY,
+            inject: GREEN_DRAGON_INJECT,
+            complete_quest: None,
+            thieving: 0,
+            agility: 0,
+        },
+        PreparedCombatPlan {
+            defence: COMBAT_ATTACK_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        },
+    )
+}
+
 pub(crate) fn green_dragon_special_scenario() -> Scenario {
     let mut scenario = combat_core_scenario(CombatCorePlan {
         name: "green_dragon_special",
@@ -1948,6 +2082,40 @@ pub(crate) fn fire_giant_scenario() -> Scenario {
     });
     insert_setstat_drain_before_hostile_tele(&mut scenario);
     scenario
+}
+
+pub(crate) fn fire_giant_prepared_scenario() -> Scenario {
+    prepared_combat_core_scenario(
+        CombatCorePlan {
+            name: "fire_giant_prepared",
+            card: "FireGiant",
+            tele: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_alias: "lobster",
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_alias: "rune_scimitar",
+            weapon_id: RUNE_SCIMITAR_ID,
+            extra_give: &[
+                ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+                ("rope", ROPE_ID, 1),
+            ],
+            wear: Some((
+                "wield and acknowledge the prepared Rune scimitar before the hostile-field teleport",
+                RUNE_SCIMITAR_ID,
+            )),
+            loot_empty: FIRE_GIANT_LOOT_EMPTY,
+            inject: FIRE_GIANT_PREPARED_INJECT,
+            complete_quest: Some(WATERFALL_QUEST_PREREQ),
+            thieving: 0,
+            agility: 0,
+        },
+        PreparedCombatPlan {
+            defence: COMBAT_ATTACK_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        },
+    )
 }
 
 /// ArdyFighter default Guard/strength. No fabricated cakes; the script

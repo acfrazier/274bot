@@ -7868,6 +7868,186 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
     }
 
+    fn prepared_combat_baseline(name: &str) -> (CoreCase, Observation) {
+        let case = CoreCase::parse(name).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let (tile, food, items, worn_weapon) = match name {
+            "green_dragon_prepared" => (
+                GREEN_DRAGON_FIELD,
+                GREEN_DRAGON_BASE_FOOD,
+                vec![(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (RUNE_SCIMITAR_ID, 1)],
+                false,
+            ),
+            "fire_giant_prepared" => (
+                FIRE_GIANT_ROOM,
+                FIRE_GIANT_FOOD,
+                vec![
+                    (LOBSTER_ID, FIRE_GIANT_FOOD),
+                    (GLARIALS_AMULET_ID, 1),
+                    (ROPE_ID, 1),
+                ],
+                true,
+            ),
+            _ => panic!("unknown prepared combat case {name}"),
+        };
+        let mut baseline = combat_obs(
+            tile,
+            &items,
+            &[("strength", 100)],
+            &[
+                ("attack", 40),
+                ("strength", 40),
+                ("defence", 40),
+                ("hitpoints", 40),
+            ],
+            &[],
+            false,
+            None,
+        );
+        baseline.equipment_ids.clear();
+        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+            baseline.equipment_ids.insert(id, 1);
+        }
+        if worn_weapon {
+            baseline.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        } else {
+            baseline.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        }
+        assert_eq!(baseline.item_id(LOBSTER_ID), food);
+        (case, baseline)
+    }
+
+    #[test]
+    fn prepared_combat_baselines_fail_closed_on_defence_food_weapon_and_armour() {
+        for name in ["green_dragon_prepared", "fire_giant_prepared"] {
+            let (case, baseline) = prepared_combat_baseline(name);
+            assert_eq!(case.scenario_name(), name);
+            assert_eq!(
+                case.card_name(),
+                if name.starts_with("green") {
+                    "GreenDragon"
+                } else {
+                    "FireGiant"
+                }
+            );
+            validate_case_baseline(case, &baseline).unwrap();
+
+            for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+                let mut missing = baseline.clone();
+                missing.equipment_ids.remove(&id);
+                assert!(
+                    validate_case_baseline(case, &missing).is_err(),
+                    "{name} rejects missing worn armour {id}"
+                );
+            }
+            for defence in [39, 41] {
+                let mut wrong = baseline.clone();
+                wrong.levels.insert("defence".into(), defence);
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "{name} rejects base Defence {defence}"
+                );
+            }
+            for delta in [-1, 1] {
+                let mut wrong = baseline.clone();
+                *wrong.item_ids.get_mut(&LOBSTER_ID).unwrap() += delta;
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "{name} rejects an inexact food count"
+                );
+            }
+
+            let mut wrong_weapon = baseline.clone();
+            wrong_weapon.item_ids.remove(&RUNE_SCIMITAR_ID);
+            wrong_weapon.equipment_ids.remove(&RUNE_SCIMITAR_ID);
+            wrong_weapon.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+            assert!(
+                validate_case_baseline(case, &wrong_weapon).is_err(),
+                "{name} requires Rune scimitar 1333 in its declared slot"
+            );
+
+            let mut seeded_loot = baseline.clone();
+            seeded_loot.item_ids.insert(
+                if name.starts_with("green") {
+                    DRAGON_BONES_ID
+                } else {
+                    BIG_BONES_ID
+                },
+                1,
+            );
+            assert!(
+                validate_case_baseline(case, &seeded_loot).is_err(),
+                "{name} retains the empty-loot guard"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_combat_reuses_strict_defeat_loot_and_further_work_qualification() {
+        for (name, target, loot) in [
+            ("green_dragon_prepared", "Green dragon", DRAGON_BONES_ID),
+            ("fire_giant_prepared", "Fire giant", BIG_BONES_ID),
+        ] {
+            let (case, baseline) = prepared_combat_baseline(name);
+            let tile = baseline.tile.unwrap();
+
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, target, 50, true, tile)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+
+            let mut defeated_and_next = baseline.clone();
+            defeated_and_next
+                .xp
+                .insert("strength".into(), baseline.skill_xp("strength") + 10);
+            defeated_and_next.item_ids.insert(loot, 1);
+            defeated_and_next.npc_facts = vec![
+                combat_npc(2, target, 0, false, tile),
+                combat_npc(7, target, 40, true, tile),
+            ];
+            defeated_and_next.local_in_combat = true;
+            defeated_and_next.local_target_npc = Some(7);
+
+            let mut further = defeated_and_next.clone();
+            further.npc_facts = vec![combat_npc(7, target, 35, true, tile)];
+
+            assert!(
+                witness(case, &baseline, [&first, &defeated_and_next, &further])
+                    .qualify()
+                    .is_ok(),
+                "{name} qualifies through the unchanged strict combat observer"
+            );
+            assert!(
+                witness(case, &baseline, [&first, &defeated_and_next])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects defeat and loot without further work"
+            );
+
+            let mut no_loot = defeated_and_next.clone();
+            no_loot.item_ids.remove(&loot);
+            let mut no_loot_further = further.clone();
+            no_loot_further.item_ids.remove(&loot);
+            assert!(
+                witness(case, &baseline, [&first, &no_loot, &no_loot_further])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects defeat without exact loot"
+            );
+
+            let mut no_defeat = further.clone();
+            no_defeat.npc_facts = vec![
+                combat_npc(2, target, 30, true, tile),
+                combat_npc(7, target, 35, true, tile),
+            ];
+            assert!(
+                witness(case, &baseline, [&first, &no_defeat, &no_defeat])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects loot and engagements without a defeat"
+            );
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =

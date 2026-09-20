@@ -192,6 +192,25 @@ fn send_seed(name: &str, client: &mut Client) -> (bool, String) {
     (ok, written)
 }
 
+fn send_combat_seed(name: &str, client: &mut Client) -> (bool, String) {
+    let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+    let step = scenario
+        .steps
+        .iter()
+        .find(|step| {
+            step.name == "prepare melee stats, food and gear on the safe tile before Start"
+        })
+        .unwrap_or_else(|| panic!("{name} has a melee preparation seed"));
+    let StepKind::Perform { send } = &step.kind else {
+        panic!("{name} seed must be a Perform step");
+    };
+    let snapshot = GameSnapshot::new();
+    let before = client.out.pos;
+    let ok = send(client, &snapshot);
+    let written = String::from_utf8_lossy(&client.out.data()[before..client.out.pos]).into_owned();
+    (ok, written)
+}
+
 fn attach_loopback(client: &mut Client) -> (std::net::TcpListener, std::net::TcpStream) {
     use client::io::{ClientStream, ServerProt};
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -1515,9 +1534,11 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "rock_crab",
             "rock_crab_range",
             "green_dragon",
+            "green_dragon_prepared",
             "green_dragon_special",
             "green_dragon_potions",
             "fire_giant",
+            "fire_giant_prepared",
             "ardy_fighter",
             "auto_fighter_bank",
             "moss_giant_bank",
@@ -7282,6 +7303,195 @@ fn remaining_fighter_core_cases_register_melee_cycles() {
     }));
     assert!(!seed.contains(&Proof::NoActiveContinue));
     assert_eq!(ardy.proof, strength);
+}
+
+#[test]
+fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
+    const DEFENCE_STAT: i32 = 1;
+    const GREEN_FOOD: i32 = 20;
+    const FIRE_FOOD: i32 = 12;
+    const RUNE_ARMOUR: [i32; 3] = [1113, 1079, 1163];
+
+    for (name, original, food, worn_weapon) in [
+        ("green_dragon_prepared", "green_dragon", GREEN_FOOD, false),
+        ("fire_giant_prepared", "fire_giant", FIRE_FOOD, true),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        let original = get(original).unwrap();
+        assert_eq!(
+            scenario.settings.start_script,
+            original.settings.start_script
+        );
+        let prepared_inject =
+            settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+        let original_inject =
+            settings_inject_map(original.settings.script_settings_inject).unwrap();
+        for (id, value) in original_inject {
+            assert_eq!(
+                prepared_inject.get(&id),
+                Some(&value),
+                "{name} preserves existing setting {id}"
+            );
+        }
+        if name == "fire_giant_prepared" {
+            assert_eq!(
+                prepared_inject.get("weapon"),
+                Some(&Value::String("Rune scimitar".into()))
+            );
+        }
+        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(
+            scenario.proof,
+            Proof::StatXpGain {
+                id: STRENGTH_STAT,
+                min: 1
+            }
+        );
+
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("prepared combat Start");
+        let before = &scenario.steps[..start];
+        let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
+        for id in [0, STRENGTH_STAT, DEFENCE_STAT, 3] {
+            assert!(
+                arms.contains(&Proof::Stat {
+                    id,
+                    min: COMBAT_ATTACK_LEVEL,
+                }),
+                "{name} acknowledges base stat {id} at 40"
+            );
+        }
+        assert!(arms.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: food,
+        }));
+        assert!(arms.contains(&Proof::ItemId {
+            id: RUNE_SCIMITAR_ID,
+            count: 1,
+        }));
+        for id in RUNE_ARMOUR {
+            assert!(
+                arms.contains(&Proof::EquipmentId { id }),
+                "{name} acknowledges worn armour {id}"
+            );
+        }
+        assert_eq!(
+            arms.contains(&Proof::EquipmentId {
+                id: RUNE_SCIMITAR_ID,
+            }),
+            worn_weapon,
+            "{name} keeps its declared weapon preparation path"
+        );
+
+        let drain = before
+            .iter()
+            .position(|step| {
+                step.name == "drain setstat level-up dialogs before the hostile-field teleport"
+            })
+            .expect("prepared setstat drain");
+        let teleport = before
+            .iter()
+            .position(|step| {
+                step.name
+                    == "teleport into the hostile field only after preparation is acknowledged"
+            })
+            .expect("prepared hostile teleport");
+        let last_wear = before
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| matches!(step.wait.arm, Proof::EquipmentId { .. }))
+            .map(|(index, _)| index)
+            .max()
+            .expect("prepared worn equipment");
+        assert!(
+            last_wear < drain && drain < teleport,
+            "{name}: armour/weapon wear, dialog drain, hostile teleport, Start"
+        );
+        assert!(matches!(
+            before[drain].kind,
+            StepKind::DrainDialogs { choice: 1 }
+        ));
+        assert!(before[..teleport]
+            .iter()
+            .any(|step| step.wait.arm == Proof::NoActiveContinue));
+
+        let mut client = native_seed_client();
+        let (_, written) = send_combat_seed(name, &mut client);
+        assert!(written.contains("setstat defence 40"), "{name}: {written}");
+        for alias in ["rune_chainbody", "rune_platelegs", "rune_full_helm"] {
+            assert!(
+                written.contains(&format!("give {alias} 1")),
+                "{name} seeds {alias}: {written}"
+            );
+        }
+    }
+
+    let green = get("green_dragon_prepared").unwrap();
+    let green_start = green
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let green_arms = green.steps[..green_start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(green_arms.contains(&Proof::EquipmentId {
+        id: DRAGONFIRE_SHIELD_ID,
+    }));
+    for id in [DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID] {
+        assert!(green_arms.contains(&Proof::ItemIdAtMost { id, count: 0 }));
+    }
+
+    let fire = get("fire_giant_prepared").unwrap();
+    let fire_start = fire
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let fire_arms = fire.steps[..fire_start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(fire_arms.contains(&Proof::QuestDone {
+        name: "Waterfall Quest",
+    }));
+    for id in [GLARIALS_AMULET_ID, ROPE_ID] {
+        assert!(fire_arms.contains(&Proof::ItemId { id, count: 1 }));
+    }
+    assert!(fire_arms.contains(&Proof::ItemIdAtMost {
+        id: BIG_BONES_ID,
+        count: 0,
+    }));
+}
+
+#[test]
+fn original_dragon_and_fire_fixtures_remain_defence1_profiles() {
+    for name in ["green_dragon", "fire_giant"] {
+        let scenario = get(name).unwrap();
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(
+            scenario.steps[..start].iter().all(|step| {
+                step.wait.arm
+                    != (Proof::Stat {
+                        id: 1,
+                        min: COMBAT_ATTACK_LEVEL,
+                    })
+            }),
+            "{name} must not become a prepared Defence-40 fixture"
+        );
+        let mut client = native_seed_client();
+        let (_, written) = send_combat_seed(name, &mut client);
+        assert!(!written.contains("setstat defence"));
+        assert!(!written.contains("give rune_chainbody"));
+    }
 }
 
 #[test]

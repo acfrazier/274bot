@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_potions|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -25,6 +25,8 @@ pub const MIND_RUNE_ID: i32 = 558;
 pub const COINS_ID: i32 = 995;
 pub const RUNE_CHAINBODY_ID: i32 = 1113;
 pub const CERT_RUNE_CHAINBODY_ID: i32 = 1114;
+pub const RUNE_PLATELEGS_ID: i32 = 1079;
+pub const RUNE_FULL_HELM_ID: i32 = 1163;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 pub const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
 pub const YEW_LONGBOW_ALCH_COINS: i32 = 768;
@@ -513,9 +515,11 @@ pub enum CoreCase {
     RockCrab,
     RockCrabRange,
     GreenDragon,
+    GreenDragonPrepared,
     GreenDragonSpecial,
     GreenDragonPotions,
     FireGiant,
+    FireGiantPrepared,
     ArdyFighter,
     AutoFighterBank,
     MossGiantBank,
@@ -626,9 +630,11 @@ impl CoreCase {
             "rock_crab" => Ok(Self::RockCrab),
             "rock_crab_range" => Ok(Self::RockCrabRange),
             "green_dragon" => Ok(Self::GreenDragon),
+            "green_dragon_prepared" => Ok(Self::GreenDragonPrepared),
             "green_dragon_special" => Ok(Self::GreenDragonSpecial),
             "green_dragon_potions" => Ok(Self::GreenDragonPotions),
             "fire_giant" => Ok(Self::FireGiant),
+            "fire_giant_prepared" => Ok(Self::FireGiantPrepared),
             "ardy_fighter" => Ok(Self::ArdyFighter),
             "auto_fighter_bank" => Ok(Self::AutoFighterBank),
             "moss_giant_bank" => Ok(Self::MossGiantBank),
@@ -742,9 +748,11 @@ impl CoreCase {
             Self::RockCrab => "rock_crab",
             Self::RockCrabRange => "rock_crab_range",
             Self::GreenDragon => "green_dragon",
+            Self::GreenDragonPrepared => "green_dragon_prepared",
             Self::GreenDragonSpecial => "green_dragon_special",
             Self::GreenDragonPotions => "green_dragon_potions",
             Self::FireGiant => "fire_giant",
+            Self::FireGiantPrepared => "fire_giant_prepared",
             Self::ArdyFighter => "ardy_fighter",
             Self::AutoFighterBank => "auto_fighter_bank",
             Self::MossGiantBank => "moss_giant_bank",
@@ -836,11 +844,15 @@ impl CoreCase {
             | Self::AutoFighterBank => "AutoFighter",
             Self::RockCrab | Self::RockCrabRange | Self::RockCrabBank => "RockCrab",
             Self::GreenDragon
+            | Self::GreenDragonPrepared
             | Self::GreenDragonSpecial
             | Self::GreenDragonPotions
             | Self::GreenDragonBank
             | Self::GreenDragonTele => "GreenDragon",
-            Self::FireGiant | Self::FireGiantApproach | Self::FireGiantBank => "FireGiant",
+            Self::FireGiant
+            | Self::FireGiantPrepared
+            | Self::FireGiantApproach
+            | Self::FireGiantBank => "FireGiant",
             Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
             Self::AioTeleport | Self::AioTeleportFalador | Self::AioTeleportNoStaff => {
                 "AIO Teleport"
@@ -2288,9 +2300,11 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::RockCrab
         | CoreCase::RockCrabRange
         | CoreCase::GreenDragon
+        | CoreCase::GreenDragonPrepared
         | CoreCase::GreenDragonSpecial
         | CoreCase::GreenDragonPotions
         | CoreCase::FireGiant
+        | CoreCase::FireGiantPrepared
         | CoreCase::ArdyFighter
         | CoreCase::AutoFighterBank
         | CoreCase::MossGiantBank
@@ -2341,6 +2355,9 @@ pub fn validate_case_baseline_with_preparation(
                     // fixture, so the cell has to arrive already wearing 1331
                     // (the fixture's own pre-Start wear is the native proof).
                     CoreCase::RockCrab => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
+                    CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
+                        prepared_combat_baseline_ready(case, baseline)
+                    }
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
                     CoreCase::GreenDragonTele => {
                         baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
@@ -2675,6 +2692,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::GreenDragon => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 20, rune scimitar 1333, worn shield 1540, empty 536/1753"
         }
+        CoreCase::GreenDragonPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Defence/Hitpoints 40, exact lobster 20, carried rune scimitar 1333, worn 1113/1079/1163/1540, empty 536/1753"
+        }
         CoreCase::GreenDragonSpecial => {
             "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
         }
@@ -2686,6 +2706,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::FireGiant => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, empty 532"
+        }
+        CoreCase::FireGiantPrepared => {
+            "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Defence/Hitpoints 40, exact lobster 12, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty 532"
         }
         CoreCase::ArdyFighter => {
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
@@ -4488,7 +4511,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: Some(BRONZE_ARROW_ID),
             consumable: CombatConsumable::None,
         }),
-        CoreCase::GreenDragon => Some(CombatSpec {
+        CoreCase::GreenDragon | CoreCase::GreenDragonPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
@@ -4538,6 +4561,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: FIRE_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::DungeonAmulet,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::FireGiantPrepared => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::DungeonAmulet,
@@ -5013,6 +5049,32 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
         && !combat_noted(baseline)
         && extra_ok
         && consumable_ok
+}
+
+fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> bool {
+    let armour_ready = [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
+        .into_iter()
+        .all(|id| baseline.equipment_id(id) == 1);
+    let exact_profile = baseline.level("defence") == COMBAT_ATTACK_LEVEL
+        && armour_ready
+        && baseline.item_id(LOBSTER_ID)
+            == match case {
+                CoreCase::GreenDragonPrepared => GREEN_DRAGON_BASE_FOOD,
+                CoreCase::FireGiantPrepared => FIRE_GIANT_FOOD,
+                _ => return false,
+            };
+    exact_profile
+        && match case {
+            CoreCase::GreenDragonPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            }
+            CoreCase::FireGiantPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            _ => false,
+        }
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -8339,9 +8401,11 @@ impl CoreWitness {
             | CoreCase::RockCrab
             | CoreCase::RockCrabRange
             | CoreCase::GreenDragon
+            | CoreCase::GreenDragonPrepared
             | CoreCase::GreenDragonSpecial
             | CoreCase::GreenDragonPotions
             | CoreCase::FireGiant
+            | CoreCase::FireGiantPrepared
             | CoreCase::ArdyFighter => {
                 combat_spec(self.case).is_some_and(|spec| self.combat_core_cycle.qualified(spec))
             }

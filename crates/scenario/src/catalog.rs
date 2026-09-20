@@ -199,6 +199,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("rock_crab_range", scenarios::rock_crab_range_scenario),
     Entry::new("green_dragon", scenarios::green_dragon_scenario),
     Entry::new(
+        "green_dragon_prepared",
+        scenarios::green_dragon_prepared_scenario,
+    ),
+    Entry::new(
         "green_dragon_special",
         scenarios::green_dragon_special_scenario,
     ),
@@ -207,6 +211,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::green_dragon_potions_scenario,
     ),
     Entry::new("fire_giant", scenarios::fire_giant_scenario),
+    Entry::new(
+        "fire_giant_prepared",
+        scenarios::fire_giant_prepared_scenario,
+    ),
     Entry::new("ardy_fighter", scenarios::ardy_fighter_scenario),
     Entry::new("auto_fighter_bank", scenarios::auto_fighter_bank_scenario),
     Entry::new("moss_giant_bank", scenarios::moss_giant_bank_scenario),
