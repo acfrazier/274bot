@@ -27,7 +27,12 @@ const dropContentFiles = [
     'scripts/drop tables/scripts/green_dragon.rs2',
     'scripts/drop tables/scripts/shared_droptables.rs2',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
+const prayerContentFiles = [
+    'scripts/skill_prayer/configs/prayers.dbrow',
+    'scripts/skill_prayer/configs/prayers.constant',
+    'scripts/skill_prayer/interfaces/prayer.if',
+];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -128,6 +133,129 @@ export function extractAutocastControls(content: string) {
         armed_value: 3,
     };
 }
+export function parsePrayerConstants(text: string) {
+    const names = new Set<string>();
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line.startsWith('^prayer_')) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        names.add(line.slice(1, eq).trim());
+    }
+    if (names.size === 0) throw new Error('prayer: missing prayers.constant entries');
+    return names;
+}
+
+/** prayer.if section name → transmitted varp alias from pushvar wiring. */
+export function parsePrayerInterface(text: string) {
+    const out = new Map<string, string>();
+    let current: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = line.slice(1, -1);
+            continue;
+        }
+        if (!current || !line.startsWith('script1op1=pushvar,')) continue;
+        const alias = line.slice('script1op1=pushvar,'.length);
+        if (!alias) throw new Error(`prayer.if: empty pushvar in ${current}`);
+        if (out.has(current)) throw new Error(`prayer.if: duplicate section ${current}`);
+        out.set(current, alias);
+    }
+    return out;
+}
+
+export function extractPrayerFacts(content: string) {
+    const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
+    const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
+    const constants = parsePrayerConstants(
+        fs.readFileSync(path.join(content, 'scripts/skill_prayer/configs/prayers.constant'), 'utf8'),
+    );
+    const ifVarps = parsePrayerInterface(
+        fs.readFileSync(path.join(content, 'scripts/skill_prayer/interfaces/prayer.if'), 'utf8'),
+    );
+    const prayers: {
+        name: string;
+        level: number;
+        source_row: string;
+        prayer_constant: string;
+        button_com: number;
+        com_alias: string;
+        varp: number;
+        varp_alias: string;
+    }[] = [];
+    const seenName = new Set<string>();
+    const seenCom = new Set<number>();
+    const seenVarp = new Set<number>();
+    const seenConstant = new Set<string>();
+    for (const parsed of parseRows(
+        fs.readFileSync(path.join(content, 'scripts/skill_prayer/configs/prayers.dbrow'), 'utf8'),
+    )) {
+        const prayerRaw = parsed.values.prayer?.[0]?.[0];
+        if (!prayerRaw) continue;
+        const constant = prayerRaw.startsWith('^') ? prayerRaw.slice(1) : prayerRaw;
+        if (!constants.has(constant)) throw new Error(`${parsed.name}: unknown prayer constant ${constant}`);
+        if (seenConstant.has(constant)) throw new Error(`${parsed.name}: duplicate prayer constant ${constant}`);
+        seenConstant.add(constant);
+        const varpAlias = ifVarps.get(constant);
+        if (!varpAlias) throw new Error(`${parsed.name}: missing prayer.if pushvar for ${constant}`);
+        const varpId = varps.get(varpAlias);
+        if (varpId === undefined) throw new Error(`${parsed.name}: missing varp.pack entry ${varpAlias}`);
+        const comAlias = `prayer:${constant}`;
+        const buttonCom = interfaces.get(comAlias);
+        if (buttonCom === undefined) throw new Error(`${parsed.name}: missing interface.pack entry ${comAlias}`);
+        const name = required(parsed.values, 'name', parsed.name);
+        const level = integer(required(parsed.values, 'level', parsed.name), parsed.name);
+        if (seenName.has(name)) throw new Error(`${parsed.name}: duplicate prayer name ${name}`);
+        if (seenCom.has(buttonCom)) throw new Error(`${parsed.name}: duplicate button com ${buttonCom}`);
+        if (seenVarp.has(varpId)) throw new Error(`${parsed.name}: duplicate varp ${varpId}`);
+        seenName.add(name);
+        seenCom.add(buttonCom);
+        seenVarp.add(varpId);
+        prayers.push({
+            name,
+            level,
+            source_row: parsed.name,
+            prayer_constant: constant,
+            button_com: buttonCom,
+            com_alias: comAlias,
+            varp: varpId,
+            varp_alias: varpAlias,
+        });
+    }
+    if (prayers.length !== 15) throw new Error(`prayer: expected 15 rows, got ${prayers.length}`);
+    prayers.sort((a, b) => a.button_com - b.button_com || a.name.localeCompare(b.name));
+    const thick = prayers[0];
+    const melee = prayers[14];
+    if (
+        thick.name !== 'Thick Skin'
+        || thick.level !== 1
+        || thick.button_com !== 5609
+        || thick.varp !== 83
+        || thick.varp_alias !== 'prayer0'
+    ) {
+        throw new Error(`prayer: Thick Skin anchor mismatch ${JSON.stringify(thick)}`);
+    }
+    if (
+        melee.name !== 'Protect from Melee'
+        || melee.level !== 43
+        || melee.button_com !== 5623
+        || melee.varp !== 97
+        || melee.varp_alias !== 'prayer14'
+    ) {
+        throw new Error(`prayer: Protect from Melee anchor mismatch ${JSON.stringify(melee)}`);
+    }
+    for (let index = 0; index < prayers.length; index += 1) {
+        const expectedCom = 5609 + index;
+        const expectedVarp = 83 + index;
+        const row = prayers[index];
+        if (row.button_com !== expectedCom || row.varp !== expectedVarp) {
+            throw new Error(`prayer: expected com ${expectedCom}/varp ${expectedVarp}, got ${row.button_com}/${row.varp} for ${row.name}`);
+        }
+    }
+    return { prayers };
+}
+
 export function extractDuelControls(content: string) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const required = (name: string) => {
@@ -528,8 +656,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs); const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

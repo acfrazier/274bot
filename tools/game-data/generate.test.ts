@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -322,4 +322,94 @@ assert.throws(
     /missing drop block proc:missing_proc/,
     'an unresolved recursive join must fail closed',
 );
+
+const prayerContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-prayer-fixture-'));
+const prayerDir = path.join(prayerContent, 'scripts/skill_prayer');
+fs.mkdirSync(path.join(prayerDir, 'configs'), { recursive: true });
+fs.mkdirSync(path.join(prayerDir, 'interfaces'), { recursive: true });
+fs.mkdirSync(path.join(prayerContent, 'pack'), { recursive: true });
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n^prayer_strengthburst = 4\n');
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[prayer_thick_skin]
+data=prayer,^prayer_thickskin
+data=name,Thick Skin
+data=level,1
+[prayer_strength_burst]
+data=prayer,^prayer_strengthburst
+data=name,Burst of Strength
+data=level,4
+`);
+fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), `[prayer_thickskin]
+script1op1=pushvar,prayer0
+[prayer_strengthburst]
+script1op1=pushvar,prayer1
+`);
+fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), '5609=prayer:prayer_thickskin\n5610=prayer:prayer_strengthburst\n');
+fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), '83=prayer0\n84=prayer1\n');
+assert.throws(
+    () => extractPrayerFacts(prayerContent),
+    /expected 15 rows, got 2/,
+    'partial prayer tables must fail closed',
+);
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), [...Array.from({ length: 15 }, (_, index) => `^prayer_row${index} = ${index + 1}`)].join('\n') + '\n');
+let dbrow = '';
+let prayerIf = '';
+let iface = '';
+let varp = '';
+for (let index = 0; index < 15; index += 1) {
+    const constant = `prayer_row${index}`;
+    const name = index === 0 ? 'Thick Skin' : index === 14 ? 'Protect from Melee' : `Prayer ${index}`;
+    const level = index === 0 ? 1 : index === 14 ? 43 : index + 1;
+    dbrow += `[row_${index}]
+data=prayer,^${constant}
+data=name,${name}
+data=level,${level}
+`;
+    prayerIf += `[${constant}]
+script1op1=pushvar,prayer${index}
+`;
+    iface += `${5609 + index}=prayer:${constant}\n`;
+    varp += `${83 + index}=prayer${index}\n`;
+}
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), dbrow);
+fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), prayerIf);
+fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), iface);
+fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), varp);
+const prayerFacts = extractPrayerFacts(prayerContent);
+assert.equal(prayerFacts.prayers.length, 15);
+assert.equal(prayerFacts.prayers[0].button_com, 5609);
+assert.equal(prayerFacts.prayers[14].varp, 97);
+assert.throws(
+    () => parsePrayerInterface('[a]\nscript1op1=pushvar,x\n[a]\nscript1op1=pushvar,y\n'),
+    /duplicate section a/,
+    'duplicate prayer.if sections must fail closed',
+);
+
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[bad]
+data=prayer,^prayer_missing
+data=name,Missing
+data=level,1
+`);
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n');
+assert.throws(
+    () => extractPrayerFacts(prayerContent),
+    /unknown prayer constant prayer_missing/,
+    'prayer constant must exist in prayers.constant',
+);
+fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), `[prayer_thickskin]
+script1op1=pushvar,prayer0
+`);
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[bad]
+data=prayer,^prayer_thickskin
+data=name,Thick Skin
+data=level,1
+`);
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n');
+fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), '5609=prayer:prayer_thickskin\n');
+fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), '83=prayer0\n');
+assert.throws(
+    () => extractPrayerFacts(prayerContent),
+    /expected 15 rows, got 1/,
+    'single-row fixture stays fail-closed until complete',
+);
+
 console.log('generate fixture passed');

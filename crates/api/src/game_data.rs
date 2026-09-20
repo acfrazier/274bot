@@ -303,6 +303,19 @@ pub struct RemainingRuneCost {
     pub count: i32,
 }
 
+/// One prayer row from selected dbrow/interface/varp joins.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PrayerFact {
+    pub name: String,
+    pub level: i32,
+    pub source_row: String,
+    pub prayer_constant: String,
+    pub button_com: i32,
+    pub com_alias: String,
+    pub varp: i32,
+    pub varp_alias: String,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -330,6 +343,8 @@ pub struct SelectedGameData {
     herb_level_default: Option<i32>,
     #[serde(default)]
     drop_tables: Vec<DropTable>,
+    #[serde(default)]
+    prayers: Vec<PrayerFact>,
 }
 
 impl SelectedGameData {
@@ -478,6 +493,17 @@ impl SelectedGameData {
     pub fn drop_table(&self, name: &str) -> Option<&DropTable> {
         let wanted = name.trim();
         self.drop_tables
+            .iter()
+            .find(|row| row.name.eq_ignore_ascii_case(wanted))
+    }
+
+    pub fn prayers(&self) -> &[PrayerFact] {
+        &self.prayers
+    }
+
+    pub fn prayer_by_name(&self, name: &str) -> Option<&PrayerFact> {
+        let wanted = name.trim();
+        self.prayers
             .iter()
             .find(|row| row.name.eq_ignore_ascii_case(wanted))
     }

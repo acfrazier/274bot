@@ -93,6 +93,21 @@
         "sha256": "290f73ecb7cd9f8e43cde6b2c5359b4eb7e4c51dab08cda01d48e9c9f4b19767"
       },
       {
+        "path": "scripts/skill_prayer/configs/prayers.dbrow",
+        "bytes": 3194,
+        "sha256": "04a960ddd63d2f33c4e6de1fc471de03b8ab2750f24c43bbea11691bd8cc5fa9"
+      },
+      {
+        "path": "scripts/skill_prayer/configs/prayers.constant",
+        "bytes": 399,
+        "sha256": "3d71f9fd1581d966cbbf747f14d40e3d1efbee8a0abd927419189d80f7c3a550"
+      },
+      {
+        "path": "scripts/skill_prayer/interfaces/prayer.if",
+        "bytes": 11731,
+        "sha256": "5eb68ee2dabf251196d5540d8e79510bdff5b77ffae41ba8687b19eb79108ff1"
+      },
+      {
         "path": "pack/interface.pack",
         "bytes": 286718,
         "sha256": "74f8c9d15bcf4c519a709a92a756450eb1d617d493eec50b8439f8d12b4aae00"
@@ -59751,6 +59766,158 @@
       "x": 2890,
       "z": 3679,
       "plane": 0
+    }
+  ],
+  "prayers": [
+    {
+      "name": "Thick Skin",
+      "level": 1,
+      "source_row": "prayer_thick_skin",
+      "prayer_constant": "prayer_thickskin",
+      "button_com": 5609,
+      "com_alias": "prayer:prayer_thickskin",
+      "varp": 83,
+      "varp_alias": "prayer0"
+    },
+    {
+      "name": "Burst of Strength",
+      "level": 4,
+      "source_row": "prayer_strength_burst",
+      "prayer_constant": "prayer_strengthburst",
+      "button_com": 5610,
+      "com_alias": "prayer:prayer_strengthburst",
+      "varp": 84,
+      "varp_alias": "prayer1"
+    },
+    {
+      "name": "Clarity of Thought",
+      "level": 7,
+      "source_row": "prayer_clarity",
+      "prayer_constant": "prayer_clarity",
+      "button_com": 5611,
+      "com_alias": "prayer:prayer_clarity",
+      "varp": 85,
+      "varp_alias": "prayer2"
+    },
+    {
+      "name": "Rock Skin",
+      "level": 10,
+      "source_row": "prayer_rock_skin",
+      "prayer_constant": "prayer_rockskin",
+      "button_com": 5612,
+      "com_alias": "prayer:prayer_rockskin",
+      "varp": 86,
+      "varp_alias": "prayer3"
+    },
+    {
+      "name": "Superhuman Strength",
+      "level": 13,
+      "source_row": "prayer_superhuman_strength",
+      "prayer_constant": "prayer_superhumanstrength",
+      "button_com": 5613,
+      "com_alias": "prayer:prayer_superhumanstrength",
+      "varp": 87,
+      "varp_alias": "prayer4"
+    },
+    {
+      "name": "Improved Reflexes",
+      "level": 16,
+      "source_row": "prayer_improved_reflexes",
+      "prayer_constant": "prayer_improvedreflexes",
+      "button_com": 5614,
+      "com_alias": "prayer:prayer_improvedreflexes",
+      "varp": 88,
+      "varp_alias": "prayer5"
+    },
+    {
+      "name": "Rapid Restore",
+      "level": 19,
+      "source_row": "prayer_rapid_restore",
+      "prayer_constant": "prayer_rapidrestore",
+      "button_com": 5615,
+      "com_alias": "prayer:prayer_rapidrestore",
+      "varp": 89,
+      "varp_alias": "prayer6"
+    },
+    {
+      "name": "Rapid Heal",
+      "level": 22,
+      "source_row": "prayer_rapid_heal",
+      "prayer_constant": "prayer_rapidheal",
+      "button_com": 5616,
+      "com_alias": "prayer:prayer_rapidheal",
+      "varp": 90,
+      "varp_alias": "prayer7"
+    },
+    {
+      "name": "Protect Item",
+      "level": 25,
+      "source_row": "prayer_protect_item",
+      "prayer_constant": "prayer_protectitems",
+      "button_com": 5617,
+      "com_alias": "prayer:prayer_protectitems",
+      "varp": 91,
+      "varp_alias": "prayer8"
+    },
+    {
+      "name": "Steel Skin",
+      "level": 28,
+      "source_row": "prayer_steel_skin",
+      "prayer_constant": "prayer_steelskin",
+      "button_com": 5618,
+      "com_alias": "prayer:prayer_steelskin",
+      "varp": 92,
+      "varp_alias": "prayer9"
+    },
+    {
+      "name": "Ultimate Strength",
+      "level": 31,
+      "source_row": "prayer_ultimate_strength",
+      "prayer_constant": "prayer_ultimatestrength",
+      "button_com": 5619,
+      "com_alias": "prayer:prayer_ultimatestrength",
+      "varp": 93,
+      "varp_alias": "prayer10"
+    },
+    {
+      "name": "Incredible Reflexes",
+      "level": 34,
+      "source_row": "prayer_incredible_reflexes",
+      "prayer_constant": "prayer_incrediblereflexes",
+      "button_com": 5620,
+      "com_alias": "prayer:prayer_incrediblereflexes",
+      "varp": 94,
+      "varp_alias": "prayer11"
+    },
+    {
+      "name": "Protect from Magic",
+      "level": 37,
+      "source_row": "prayer_protect_from_magic",
+      "prayer_constant": "prayer_protectfrommagic",
+      "button_com": 5621,
+      "com_alias": "prayer:prayer_protectfrommagic",
+      "varp": 95,
+      "varp_alias": "prayer12"
+    },
+    {
+      "name": "Protect from Missiles",
+      "level": 40,
+      "source_row": "prayer_protect_from_missiles",
+      "prayer_constant": "prayer_protectfrommissiles",
+      "button_com": 5622,
+      "com_alias": "prayer:prayer_protectfrommissiles",
+      "varp": 96,
+      "varp_alias": "prayer13"
+    },
+    {
+      "name": "Protect from Melee",
+      "level": 43,
+      "source_row": "prayer_protect_from_melee",
+      "prayer_constant": "prayer_protectfrommelee",
+      "button_com": 5623,
+      "com_alias": "prayer:prayer_protectfrommelee",
+      "varp": 97,
+      "varp_alias": "prayer14"
     }
   ]
 }

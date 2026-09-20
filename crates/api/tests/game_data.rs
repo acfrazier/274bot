@@ -368,3 +368,33 @@ fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
         assert!(data.drop_table("unknown").is_none());
     }
 }
+
+#[test]
+fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let prayers = data.prayers();
+        assert_eq!(prayers.len(), 15, "revision {}", revision.as_i32());
+        assert_eq!(prayers[0].name, "Thick Skin");
+        assert_eq!(prayers[0].level, 1);
+        assert_eq!(prayers[0].button_com, 5609);
+        assert_eq!(prayers[0].varp, 83);
+        assert_eq!(prayers[0].varp_alias, "prayer0");
+        assert_eq!(prayers[14].name, "Protect from Melee");
+        assert_eq!(prayers[14].level, 43);
+        assert_eq!(prayers[14].button_com, 5623);
+        assert_eq!(prayers[14].varp, 97);
+        assert_eq!(prayers[14].varp_alias, "prayer14");
+        for (index, row) in prayers.iter().enumerate() {
+            assert_eq!(row.button_com, 5609 + index as i32);
+            assert_eq!(row.varp, 83 + index as i32);
+        }
+        let burst = data
+            .prayer_by_name("Burst of Strength")
+            .expect("burst of strength");
+        assert_eq!(burst.button_com, 5610);
+        assert_eq!(burst.varp, 84);
+        assert_eq!(burst.level, 4);
+        assert_eq!(data.prayer_by_name("Not a prayer"), None);
+    }
+}
