@@ -55,23 +55,6 @@ impl InstantTaskClock {
     pub(crate) fn bound_reached(&self) -> bool {
         self.deadline.is_some_and(|deadline| self.now() >= deadline)
     }
-
-    #[cfg(test)]
-    fn set_freeze_at(&mut self, paused: bool, held: bool, now: Instant) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(now);
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += now.saturating_duration_since(at);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -92,10 +75,9 @@ mod tests {
     #[test]
     fn now_while_frozen_returns_frozen_at() {
         let mut clock = InstantTaskClock::new();
-        let frozen_at = Instant::now();
-        clock.set_freeze_at(true, false, frozen_at);
+        clock.set_freeze(true, false);
+        let frozen_at = clock.frozen_at.expect("captured on freeze");
         assert_eq!(clock.now(), frozen_at);
-        assert_eq!(clock.now(), clock.frozen_at.expect("captured"));
         assert_eq!(clock.now(), frozen_at);
     }
 
@@ -103,21 +85,22 @@ mod tests {
     fn hold_is_equivalent_to_pause_for_frozen() {
         let mut pause = InstantTaskClock::new();
         let mut hold = InstantTaskClock::new();
-        let at = Instant::now();
-        pause.set_freeze_at(true, false, at);
-        hold.set_freeze_at(false, true, at);
+        pause.set_freeze(true, false);
+        hold.set_freeze(false, true);
         assert!(pause.frozen());
         assert!(hold.frozen());
-        assert_eq!(pause.now(), hold.now());
+        let pause_at = pause.frozen_at.expect("pause captured");
+        let hold_at = hold.frozen_at.expect("hold captured");
+        assert_eq!(pause.now(), pause_at);
+        assert_eq!(hold.now(), hold_at);
     }
 
     #[test]
     fn thaw_with_none_deadline_is_a_noop() {
         let mut clock = InstantTaskClock::new();
-        let t0 = Instant::now();
-        let t1 = t0 + Duration::from_millis(250);
-        clock.set_freeze_at(true, false, t0);
-        clock.set_freeze_at(false, false, t1);
+        clock.set_freeze(true, false);
+        assert!(clock.frozen_at.is_some());
+        clock.set_freeze(false, false);
         assert!(!clock.frozen());
         assert!(clock.deadline.is_none());
         assert!(clock.frozen_at.is_none());
@@ -125,15 +108,28 @@ mod tests {
     }
 
     #[test]
-    fn freeze_then_thaw_reclaims_deadline_by_exact_gap() {
+    fn thaw_reclaims_deadline_between_observed_clock_bounds() {
         let mut clock = InstantTaskClock::new();
-        let t0 = Instant::now();
-        let window = Duration::from_millis(100);
-        let frozen_for = Duration::from_millis(250);
-        clock.deadline = Some(t0 + window);
-        clock.set_freeze_at(true, false, t0);
-        clock.set_freeze_at(false, false, t0 + frozen_for);
-        assert_eq!(clock.deadline, Some(t0 + window + frozen_for));
+        let window = Duration::from_millis(500);
+        let before = Instant::now();
+        clock.deadline = Some(before + window);
+        let original = clock.deadline.expect("seeded deadline");
+
+        clock.set_freeze(true, false);
+        let after_freeze = Instant::now();
+        let frozen_at = clock.frozen_at.expect("frozen");
+        assert!(frozen_at >= before);
+        assert!(frozen_at <= after_freeze);
+
+        let before_thaw = Instant::now();
+        clock.set_freeze(false, false);
+        let after_thaw = Instant::now();
+
+        let gap_min = before_thaw.saturating_duration_since(frozen_at);
+        let gap_max = after_thaw.saturating_duration_since(frozen_at);
+        let reclaimed = clock.deadline.expect("reclaimed deadline");
+        assert!(reclaimed >= original + gap_min);
+        assert!(reclaimed <= original + gap_max);
         assert!(clock.frozen_at.is_none());
         assert!(!clock.frozen());
     }
@@ -141,32 +137,42 @@ mod tests {
     #[test]
     fn overlapping_pause_and_hold_reclaim_once_from_first_freeze() {
         let mut clock = InstantTaskClock::new();
-        let t0 = Instant::now();
-        let window = Duration::from_millis(100);
-        clock.deadline = Some(t0 + window);
-        clock.set_freeze_at(true, false, t0);
+        let before = Instant::now();
+        clock.deadline = Some(before + Duration::from_millis(100));
+        let original_deadline = clock.deadline;
+
+        clock.set_freeze(true, false);
         let captured = clock.frozen_at;
-        clock.set_freeze_at(true, true, t0 + Duration::from_millis(40));
+
+        clock.set_freeze(true, true);
         assert_eq!(clock.frozen_at, captured);
-        clock.set_freeze_at(false, true, t0 + Duration::from_millis(80));
+        assert_eq!(clock.deadline, original_deadline);
+
+        clock.set_freeze(false, true);
         assert!(clock.frozen());
         assert_eq!(clock.frozen_at, captured);
-        assert_eq!(clock.deadline, Some(t0 + window));
-        let thaw = t0 + Duration::from_millis(250);
-        clock.set_freeze_at(false, false, thaw);
+        assert_eq!(clock.deadline, original_deadline);
+
+        let frozen_at = captured.expect("still frozen from first edge");
+        let before_final_thaw = Instant::now();
+        clock.set_freeze(false, false);
+        let after_final_thaw = Instant::now();
+
         assert!(!clock.frozen());
-        assert_eq!(
-            clock.deadline,
-            Some(t0 + window + Duration::from_millis(250))
-        );
         assert!(clock.frozen_at.is_none());
+        let gap_min = before_final_thaw.saturating_duration_since(frozen_at);
+        let gap_max = after_final_thaw.saturating_duration_since(frozen_at);
+        let expected_base = original_deadline.expect("original");
+        let reclaimed = clock.deadline.expect("reclaimed once");
+        assert!(reclaimed >= expected_base + gap_min);
+        assert!(reclaimed <= expected_base + gap_max);
     }
 
     #[test]
     fn arm_while_frozen_uses_frozen_at_not_wall_clock() {
         let mut clock = InstantTaskClock::new();
-        let frozen_at = Instant::now();
-        clock.set_freeze_at(true, false, frozen_at);
+        clock.set_freeze(true, false);
+        let frozen_at = clock.frozen_at.expect("captured");
         clock.arm(250);
         assert_eq!(clock.deadline, Some(frozen_at + Duration::from_millis(250)));
         assert!(!clock.bound_reached());
@@ -177,10 +183,18 @@ mod tests {
     #[test]
     fn bound_reached_is_false_when_deadline_is_none() {
         let mut clock = InstantTaskClock::new();
-        clock.set_freeze_at(true, false, Instant::now());
+        clock.set_freeze(true, false);
         assert!(!clock.bound_reached());
         clock.set_freeze(false, false);
         assert!(!clock.bound_reached());
+    }
+
+    #[test]
+    fn bound_reached_stays_true_when_already_due_while_frozen() {
+        let mut clock = InstantTaskClock::new();
+        clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        clock.set_freeze(true, false);
+        assert!(clock.bound_reached());
     }
 
     #[test]
