@@ -414,6 +414,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register dialog: {e}"))?;
     runtime
+        .register_function("__rs2b0t_modals", move |args: &[serde_json::Value]| {
+            Ok(crate::modals::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register modals: {e}"))?;
+    runtime
         .register_function("__rs2b0t_reach", move |args: &[serde_json::Value]| {
             Ok(crate::reach::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),

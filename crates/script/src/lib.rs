@@ -106,6 +106,8 @@ mod drive_partner_trade;
 #[cfg(feature = "load")]
 mod fire;
 #[cfg(feature = "load")]
+mod modals;
+#[cfg(feature = "load")]
 mod periodic_bank;
 #[cfg(feature = "load")]
 mod production;
