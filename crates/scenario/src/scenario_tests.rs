@@ -3039,6 +3039,83 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         earned_deposit < restock && restock < closed && closed < returned && returned < fresh_xp,
         "earned deposit, exact restock, close, return and fresh XP stay ordered"
     );
+
+    let camelot = get("fire_giant_camelot_prepared").unwrap();
+    let camelot_inject =
+        settings_inject_map(camelot.settings.script_settings_inject).unwrap();
+    assert_eq!(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK, 24);
+    assert_eq!(
+        camelot_inject.get("foodWithdraw"),
+        Some(&Value::from(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK as f64))
+    );
+    assert_ne!(
+        camelot_inject.get("foodWithdraw"),
+        Some(&Value::from(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64)),
+        "Camelot inject must not reuse the barrel restock line"
+    );
+    let camelot_start = start_idx(&camelot);
+    let camelot_watch = camelot.steps[camelot_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    let camelot_restock = camelot_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: FIRE_GIANT_CAMELOT_PREPARED_RESTOCK,
+            }
+        })
+        .expect("prepared Camelot restocks exactly 24 Lobsters");
+    assert!(
+        camelot.steps[..camelot_start].iter().any(|step| {
+            step.wait.arm
+                == Proof::ItemId {
+                    id: AIR_RUNE_ID,
+                    count: 15,
+                }
+        }),
+        "Camelot pre-Start acknowledges Air carry before Start"
+    );
+    assert!(
+        camelot.steps[..camelot_start].iter().any(|step| {
+            step.wait.arm
+                == Proof::ItemId {
+                    id: LAW_RUNE_ID,
+                    count: 3,
+                }
+        }),
+        "Camelot pre-Start acknowledges Law carry before Start"
+    );
+    assert_eq!(
+        FIRE_GIANT_CAMELOT_PREPARED_RESTOCK + 1 + 1 + 1,
+        27,
+        "Camelot worn amulet: food slots plus rope plus Air plus Law stacks leave one cargo slot free"
+    );
+    assert_eq!(
+        FIRE_GIANT_BANK_PREPARED_RESTOCK + 1 + 1,
+        27,
+        "barrel prepared invariant unchanged: 25 food plus amulet plus rope"
+    );
+    let camelot_closed = camelot_watch
+        .iter()
+        .position(|arm| *arm == Proof::BankClosed)
+        .expect("prepared Camelot closes the bank");
+    let camelot_returned = camelot_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ArrivedNear {
+                x: FIRE_GIANT_ROOM.x,
+                z: FIRE_GIANT_ROOM.z,
+                level: FIRE_GIANT_ROOM.level,
+                radius: 10,
+            }
+        })
+        .expect("prepared Camelot returns to the room");
+    assert!(
+        camelot_restock < camelot_closed && camelot_closed < camelot_returned,
+        "Camelot restock, close, and return stay ordered"
+    );
 }
 
 /// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
@@ -8461,6 +8538,10 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
     assert_eq!(
         camelot_inject.get("escapeTele"),
         Some(&Value::String("Camelot".into()))
+    );
+    assert_eq!(
+        camelot_inject.get("foodWithdraw"),
+        Some(&Value::from(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK as f64))
     );
     let camelot_start = camelot
         .steps

@@ -61,6 +61,9 @@ const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const FIRE_GIANT_FOOD: i32 = 12;
 pub(crate) const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
 pub(crate) const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
+/// Camelot escape restocks Air/Law after food; `foodWithdraw` 25 fills 28/28 and
+/// re-triggers frozen `BankRun.isFull()`. Barrel prepared keeps the shared 25.
+pub(crate) const FIRE_GIANT_CAMELOT_PREPARED_RESTOCK: i32 = 24;
 pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
@@ -852,7 +855,7 @@ const FIRE_GIANT_CAMELOT_PREPARED_INJECT: &[ScriptSettingInject] = &[
     },
     ScriptSettingInject {
         id: "foodWithdraw",
-        value: ScriptInjectValue::Num(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64),
+        value: ScriptInjectValue::Num(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK as f64),
     },
     ScriptSettingInject {
         id: "loot",
@@ -4786,7 +4789,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
 }
 
 /// Prepared FireGiant Camelot escape: source teleport land + Magic XP, Seers
-/// 25-lobster restock, Waterfall return, and fresh Strength. Earned Big bones
+/// 24-lobster restock, Waterfall return, and fresh Strength. Earned Big bones
 /// stay required; bones are never seeded.
 pub(crate) fn fire_giant_camelot_prepared_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
@@ -4846,10 +4849,10 @@ pub(crate) fn fire_giant_camelot_prepared_scenario() -> Scenario {
                 },
             ),
             (
-                "watch the prepared Camelot trip restock Lobster to 25",
+                "watch the prepared Camelot trip restock Lobster to 24",
                 Proof::ItemId {
                     id: LOBSTER_ID,
-                    count: FIRE_GIANT_BANK_PREPARED_RESTOCK,
+                    count: FIRE_GIANT_CAMELOT_PREPARED_RESTOCK,
                 },
             ),
             (
@@ -4917,7 +4920,7 @@ fn insert_camelot_escape_stock(scenario: &mut Scenario) {
     scenario.steps.insert(
         hostile_teleport,
         wear_combat_item_step(
-            "wear Glarial's amulet so the 25-lobster restock stays 28 slots",
+            "wear Glarial's amulet so pack food plus rope and escape runes stay at 27 slots",
             GLARIALS_AMULET_ID,
         ),
     );
