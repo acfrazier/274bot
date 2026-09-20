@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use script::load::{JsLibrary, LoadShape};
+use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{ScriptKind, ScriptSource};
 
 /// The brief's fake `index.ts`: a default import, a display name that
@@ -1103,4 +1103,187 @@ export const DEFAULT_ALCH_ITEMS = ['maple_longbow'];
         bad.item_option_spec.is_none(),
         "malformed FODDER must not partially succeed"
     );
+}
+
+fn moss_default_loot(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| {
+            let lower = name.to_ascii_lowercase();
+            !lower
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| part == "arrow")
+                && lower != "coal"
+                && !lower.contains("spinach roll")
+        })
+        .cloned()
+        .collect()
+}
+
+fn green_default_loot(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| name.to_ascii_lowercase() != "bass")
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn published_drop_db_matches_selected_revision_and_card_defaults() {
+    let src = r#"
+import { DROP_DB } from '../../data/dropdb.js';
+export default class T extends LoopingBot {
+    loop() {
+        const green = DROP_DB['Green dragon'] ?? [];
+        const fire = DROP_DB['Fire giant'] ?? [];
+        const moss = DROP_DB['Moss giant'] ?? [];
+        const giant = DROP_DB['Giant'] ?? [];
+        globalThis.__probe = {
+            keys: Object.keys(DROP_DB).sort(),
+            hillGiant: DROP_DB['Hill Giant'],
+            green,
+            fire,
+            moss,
+            giant,
+            greenDefault: green.filter((n) => n.toLowerCase() !== 'bass'),
+            mossDefault: moss.filter((n) => !/\barrow\b|^coal$|spinach roll/i.test(n)),
+            hillDefault: ['Limpwurt root', 'Big bones'],
+            hasDragonhide: green.includes('Dragonhide'),
+            hasBones: green.includes('Bones'),
+        };
+    }
+}
+"#;
+    for revision in [
+        client::io::ClientRevision::R274,
+        client::io::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected data");
+        let green = data
+            .drop_table("Green dragon")
+            .expect("green")
+            .display_names
+            .clone();
+        let fire = data
+            .drop_table("Fire giant")
+            .expect("fire")
+            .display_names
+            .clone();
+        let moss = data
+            .drop_table("Moss giant")
+            .expect("moss")
+            .display_names
+            .clone();
+        let giant = data
+            .drop_table("Giant")
+            .expect("giant")
+            .display_names
+            .clone();
+        let iso = LoadIsolate::spawn_with_game_data(
+            src.to_string(),
+            LoadShape::CompatClass,
+            vec![],
+            data,
+        )
+        .unwrap();
+        iso.on_game_tick(1);
+        let probe = iso.probe("__probe").unwrap();
+        assert_eq!(
+            probe["keys"],
+            serde_json::json!(["Fire giant", "Giant", "Green dragon", "Moss giant"]),
+            "{revision:?} published keys"
+        );
+        assert!(
+            probe["hillGiant"].is_null(),
+            "{revision:?} Hill Giant alias must stay unpublished"
+        );
+        assert_eq!(
+            probe["green"],
+            serde_json::json!(green),
+            "{revision:?} green rows"
+        );
+        assert_eq!(
+            probe["fire"],
+            serde_json::json!(fire),
+            "{revision:?} fire rows"
+        );
+        assert_eq!(
+            probe["moss"],
+            serde_json::json!(moss),
+            "{revision:?} moss rows"
+        );
+        assert_eq!(
+            probe["giant"],
+            serde_json::json!(giant),
+            "{revision:?} giant rows"
+        );
+        assert_eq!(
+            probe["greenDefault"],
+            serde_json::json!(green_default_loot(&green)),
+            "{revision:?} GreenDragon default excludes Bass"
+        );
+        assert_eq!(
+            probe["mossDefault"],
+            serde_json::json!(moss_default_loot(&moss)),
+            "{revision:?} MossGiant default excludes arrows/Coal/Spinach roll"
+        );
+        assert_eq!(
+            probe["hillDefault"],
+            serde_json::json!(["Limpwurt root", "Big bones"]),
+            "{revision:?} HillGiant default Limpwurt + Big bones"
+        );
+        assert!(
+            giant.iter().any(|name| name == "Limpwurt root")
+                && giant.iter().any(|name| name == "Big bones"),
+            "{revision:?} HillGiant options come from Giant"
+        );
+        assert_eq!(probe["hasDragonhide"], true);
+        assert_eq!(probe["hasBones"], false);
+        iso.join();
+    }
+}
+
+#[test]
+fn drop_db_fails_closed_without_game_data_and_after_delete() {
+    let src = r#"
+import { DROP_DB } from '../../data/dropdb.js';
+export default class T extends LoopingBot {
+    loop() {
+        let err = null;
+        try { globalThis.__len = Object.keys(DROP_DB).length; } catch (e) { err = String(e.message || e); }
+        globalThis.__probe = { err, imported: typeof DROP_DB === 'object' };
+    }
+}
+"#;
+    let offline = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    offline.on_game_tick(1);
+    let offline_probe = offline.probe("__probe").unwrap();
+    assert_eq!(
+        offline_probe["imported"], true,
+        "import itself must succeed"
+    );
+    let offline_err = offline_probe["err"].as_str().unwrap_or("");
+    assert!(
+        offline_err.contains("drop facts are required"),
+        "absent game_data must fail closed: {offline_err:?}"
+    );
+    offline.join();
+
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
+    iso.probe("delete globalThis.__rs2b0t_host.content.drop_db; true")
+        .unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    let err = probe["err"].as_str().unwrap_or("");
+    assert!(
+        err.contains("drop facts are required"),
+        "deleted drop_db must fail closed: {err:?}"
+    );
+    iso.join();
 }

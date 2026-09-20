@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "generator": "tools/game-data/generate.ts",
   "revisions": [
     {
@@ -8,6 +8,7 @@
       "records": 3894,
       "consumption": 250,
       "pickpocket": 12,
+      "drop_tables": 4,
       "spells": 16,
       "staves": 14,
       "herbs": 19,
@@ -39,8 +40,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1399368,
-      "sha256": "cbbe78d7edd139b0113ece84ca81f9a11f83956cbe5289bfad1bce5140bf7c1c",
+      "bytes": 1423418,
+      "sha256": "f2e0dcad9ab4174891ac84a4bc5b73e78e06966a6ba5be753cf126ee812e8b7b",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -145,6 +146,36 @@
           "path": "pack/param.pack",
           "bytes": 4626,
           "sha256": "9cc4db0b4c58591ed335590e526327d1810373cef6ea697383f06f05e2edf36b"
+        },
+        {
+          "path": "scripts/_unpack/225/all.npc",
+          "bytes": 133601,
+          "sha256": "c9f1d425bfbe070ddc3a1662aa06329e982782592dbb77c875b0066c0d837d95"
+        },
+        {
+          "path": "scripts/drop tables/scripts/giant.rs2",
+          "bytes": 2248,
+          "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
+        },
+        {
+          "path": "scripts/drop tables/scripts/moss_giant.rs2",
+          "bytes": 2573,
+          "sha256": "292fd7e715a913740bcb305114d20c0ed9135abcdb9eb7bda431ea46c8b7a885"
+        },
+        {
+          "path": "scripts/drop tables/scripts/fire_giant.rs2",
+          "bytes": 2011,
+          "sha256": "405c5508bd5f8f4002dd2ea58bec6b05f013f1638ed7f57ea913e4c848907e3b"
+        },
+        {
+          "path": "scripts/drop tables/scripts/green_dragon.rs2",
+          "bytes": 2051,
+          "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+        },
+        {
+          "path": "scripts/drop tables/scripts/shared_droptables.rs2",
+          "bytes": 3889,
+          "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
         }
       ],
       "decoder_sources": [
@@ -242,6 +273,7 @@
       "records": 4089,
       "consumption": 250,
       "pickpocket": 12,
+      "drop_tables": 4,
       "spells": 16,
       "staves": 14,
       "herbs": 19,
@@ -273,8 +305,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1461864,
-      "sha256": "cb6ed8ee3986ac67e0b94c3d6841af5c3da39fba708cb24be45f9161c83a09c2",
+      "bytes": 1485914,
+      "sha256": "3863733619c02ab2a0f43c62430a42ae82b4f767e5deccf547d9606a2e41d88c",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -379,6 +411,36 @@
           "path": "pack/param.pack",
           "bytes": 4698,
           "sha256": "5000136e59d80917ded02dc94bbf8a129d3ae4339ae09e081bf23021ca74515b"
+        },
+        {
+          "path": "scripts/_unpack/225/all.npc",
+          "bytes": 109749,
+          "sha256": "a1fac9f721daab99848f0cb30d8eb59ee880ed01a6ce095cd5ee28496cbc3a13"
+        },
+        {
+          "path": "scripts/drop tables/scripts/giant.rs2",
+          "bytes": 2248,
+          "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
+        },
+        {
+          "path": "scripts/drop tables/scripts/moss_giant.rs2",
+          "bytes": 2573,
+          "sha256": "292fd7e715a913740bcb305114d20c0ed9135abcdb9eb7bda431ea46c8b7a885"
+        },
+        {
+          "path": "scripts/drop tables/scripts/fire_giant.rs2",
+          "bytes": 2011,
+          "sha256": "405c5508bd5f8f4002dd2ea58bec6b05f013f1638ed7f57ea913e4c848907e3b"
+        },
+        {
+          "path": "scripts/drop tables/scripts/green_dragon.rs2",
+          "bytes": 2051,
+          "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+        },
+        {
+          "path": "scripts/drop tables/scripts/shared_droptables.rs2",
+          "bytes": 3889,
+          "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
         }
       ],
       "decoder_sources": [

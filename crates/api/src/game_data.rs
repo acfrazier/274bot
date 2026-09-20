@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 use client::io::ClientRevision;
 use serde::Deserialize;
 
-const SCHEMA_VERSION: u16 = 3;
+const SCHEMA_VERSION: u16 = 4;
 const REVISION_274: &[u8] = include_bytes!("../data/game-data/274.json");
 const REVISION_289: &[u8] = include_bytes!("../data/game-data/289.json");
 
@@ -266,6 +266,25 @@ pub struct StaffFact {
     pub runes: Vec<StaffRune>,
 }
 
+/// One generated drop-table item, preserving alias/id evidence.
+#[derive(Debug, Deserialize, Clone)]
+pub struct DropItem {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+}
+
+/// One selected-revision monster drop row for the four enabled combat cards.
+#[derive(Debug, Deserialize, Clone)]
+pub struct DropTable {
+    pub npc_alias: String,
+    pub npc_id: i32,
+    pub name: String,
+    pub source_block: String,
+    pub items: Vec<DropItem>,
+    pub display_names: Vec<String>,
+}
+
 /// One identified/unidentified herb pair from selected herblore content.
 #[derive(Debug, Deserialize, Clone)]
 pub struct HerbFact {
@@ -309,6 +328,8 @@ pub struct SelectedGameData {
     herbs: Vec<HerbFact>,
     #[serde(default)]
     herb_level_default: Option<i32>,
+    #[serde(default)]
+    drop_tables: Vec<DropTable>,
 }
 
 impl SelectedGameData {
@@ -345,9 +366,17 @@ impl SelectedGameData {
     }
 
     pub fn source_inputs(&self) -> impl Iterator<Item = (bool, &SourceInput)> {
-        self.provenance.inputs.iter().chain(&self.provenance.decoder_sources)
+        self.provenance
+            .inputs
+            .iter()
+            .chain(&self.provenance.decoder_sources)
             .map(|input| (false, input))
-            .chain(self.provenance.content_inputs.iter().map(|input| (true, input)))
+            .chain(
+                self.provenance
+                    .content_inputs
+                    .iter()
+                    .map(|input| (true, input)),
+            )
     }
 
     pub fn items(&self) -> &[GameItem] {
@@ -440,6 +469,17 @@ impl SelectedGameData {
 
     pub fn herbs(&self) -> &[HerbFact] {
         &self.herbs
+    }
+
+    pub fn drop_tables(&self) -> &[DropTable] {
+        &self.drop_tables
+    }
+
+    pub fn drop_table(&self, name: &str) -> Option<&DropTable> {
+        let wanted = name.trim();
+        self.drop_tables
+            .iter()
+            .find(|row| row.name.eq_ignore_ascii_case(wanted))
     }
 
     pub fn herb_level_default(&self) -> Option<i32> {

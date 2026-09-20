@@ -837,6 +837,14 @@ pub(crate) fn content_json(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
+        "drop_db": game_data
+            .map(|data| {
+                data.drop_tables()
+                    .iter()
+                    .map(|row| (row.name.clone(), serde_json::json!(row.display_names.clone())))
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .unwrap_or_default(),
         "shops": game_data
             .map(api::shop_facts::content_json_value)
             .unwrap_or_else(|| serde_json::json!({})),

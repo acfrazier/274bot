@@ -276,3 +276,95 @@ fn generated_wearpos_maps_to_loadout_slots_without_guessing_names() {
         assert!(hits.iter().all(|hit| hit.id != cert.id));
     }
 }
+
+const GREEN_DISPLAY: &[&str] = &[
+    "Adamant full helm",
+    "Adamantite ore",
+    "Bass",
+    "Chaos talisman",
+    "Coins",
+    "Dragon bones",
+    "Dragon spear",
+    "Dragonhide",
+    "Fire rune",
+    "Half of a key",
+    "Herb",
+    "Law rune",
+    "Mithril axe",
+    "Mithril kiteshield",
+    "Mithril spear",
+    "Nature rune",
+    "Nature talisman",
+    "Rune dagger",
+    "Rune javelin",
+    "Rune spear",
+    "Shield left half",
+    "Steel battleaxe",
+    "Steel platelegs",
+    "Uncut diamond",
+    "Uncut emerald",
+    "Uncut ruby",
+    "Uncut sapphire",
+    "Water rune",
+];
+
+#[test]
+fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        assert_eq!(
+            data.drop_tables()
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Giant", "Moss giant", "Fire giant", "Green dragon"]
+        );
+        assert!(data.drop_table("Hill Giant").is_none());
+
+        let green = data.drop_table("Green dragon").expect("green dragon row");
+        assert_eq!(green.npc_alias, "green_dragon");
+        assert_eq!(green.npc_id, 941);
+        assert_eq!(
+            green
+                .display_names
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            GREEN_DISPLAY
+        );
+        assert!(
+            !green.display_names.iter().any(|name| name == "Bones"),
+            "invented Green Bones must stay absent"
+        );
+        let hide = green
+            .items
+            .iter()
+            .find(|item| item.name == "Dragonhide")
+            .expect("Dragonhide alias/id evidence");
+        assert_eq!(hide.alias, "dragonhide_green");
+        assert_eq!(hide.id, 1753);
+
+        let giant = data.drop_table("Giant").expect("giant row");
+        assert!(giant
+            .display_names
+            .iter()
+            .any(|name| name == "Limpwurt root"));
+        assert!(giant.display_names.iter().any(|name| name == "Big bones"));
+        let bones = giant
+            .items
+            .iter()
+            .find(|item| item.alias == "big_bones")
+            .expect("Giant big_bones join");
+        assert_eq!(bones.id, 532);
+        assert_eq!(bones.name, "Big bones");
+
+        let moss = data.drop_table("Moss giant").expect("moss row");
+        assert!(moss.display_names.iter().any(|name| name == "Spinach roll"));
+        assert!(moss.display_names.iter().any(|name| name == "Big bones"));
+
+        let fire = data.drop_table("Fire giant").expect("fire row");
+        assert!(fire.display_names.iter().any(|name| name == "Big bones"));
+        assert!(fire.display_names.iter().any(|name| name == "Lobster"));
+        assert!(data.drop_table("unknown").is_none());
+    }
+}

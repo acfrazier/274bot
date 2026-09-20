@@ -19,7 +19,15 @@ const decoderSources = [
     'src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
     'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack'];
+const dropContentFiles = [
+    'scripts/_unpack/225/all.npc',
+    'scripts/drop tables/scripts/giant.rs2',
+    'scripts/drop tables/scripts/moss_giant.rs2',
+    'scripts/drop tables/scripts/fire_giant.rs2',
+    'scripts/drop tables/scripts/green_dragon.rs2',
+    'scripts/drop tables/scripts/shared_droptables.rs2',
+];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -369,6 +377,138 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
     return { herbs, herb_level_default: levelDefault };
 }
 
+type DropBlock = { type: string; name: string; body: string };
+type DropToken = { value: string; optional: boolean };
+
+function parseDropBlocks(content: string) {
+    const blocks = new Map<string, DropBlock>();
+    for (const relative of dropContentFiles.filter((file) => file.endsWith('.rs2'))) {
+        const file = path.join(content, relative);
+        if (!fs.existsSync(file)) throw new Error(`missing content input ${relative}`);
+        let current: DropBlock | null = null;
+        let lines: string[] = [];
+        const flush = () => {
+            if (!current) return;
+            const key = `${current.type}:${current.name}`;
+            if (blocks.has(key)) throw new Error(`duplicate drop block ${key}`);
+            current.body = lines.join('\n');
+            blocks.set(key, current);
+            lines = [];
+        };
+        for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+            const head = /^\[([a-z0-9_]+)\s*,\s*([a-z0-9_]+)\]/.exec(raw.trim());
+            if (head) {
+                flush();
+                current = { type: head[1], name: head[2], body: '' };
+            } else if (current) {
+                lines.push(raw);
+            }
+        }
+        flush();
+    }
+    return blocks;
+}
+
+function parseDropNpcs(content: string) {
+    const relative = dropContentFiles.find((file) => file.endsWith('.npc'))!;
+    const file = path.join(content, relative);
+    if (!fs.existsSync(file)) throw new Error(`missing content input ${relative}`);
+    const rows = new Map<string, { name?: string; death_drop?: string }>();
+    let current: string | null = null;
+    for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+        const line = raw.trim();
+        const head = /^\[([a-z0-9_]+)\]$/.exec(line);
+        if (head) {
+            current = head[1];
+            if (rows.has(current)) throw new Error(`duplicate npc config ${current}`);
+            rows.set(current, {});
+        } else if (current && line.startsWith('name=')) {
+            rows.get(current)!.name = line.slice('name='.length);
+        } else if (current && line.startsWith('param=death_drop,')) {
+            rows.get(current)!.death_drop = line.slice('param=death_drop,'.length).split(',')[0].trim();
+        }
+    }
+    return rows;
+}
+
+function dropTokens(body: string) {
+    const tokens: DropToken[] = [];
+    for (const match of body.matchAll(/obj_add\s*\(\s*npc_coord\s*,\s*(~?[a-z0-9_]+)/g)) {
+        tokens.push({ value: match[1], optional: false });
+    }
+    for (const match of body.matchAll(/return\s*\(\s*(~?[a-z0-9_]+)/g)) {
+        tokens.push({ value: match[1], optional: false });
+    }
+    // Some tables stage an item in a local before returning the variable.
+    // Non-item assignments are ignored only when they do not join to ObjType.
+    for (const match of body.matchAll(/=\s*([a-z][a-z0-9_]*)\s*;/g)) {
+        tokens.push({ value: match[1], optional: true });
+    }
+    return tokens;
+}
+
+export function extractDropFacts(content: string, items: ObjType[], npcs: NpcType[]) {
+    const targets = [
+        { alias: 'giant', block: 'ai_queue3:giant' },
+        { alias: 'mossgiant', block: 'ai_queue3:mossgiant' },
+        { alias: 'firegiant', block: 'ai_queue3:firegiant' },
+        { alias: 'green_dragon', block: 'ai_queue3:green_dragon' },
+    ];
+    const blocks = parseDropBlocks(content);
+    const npcConfigs = parseDropNpcs(content);
+    const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
+    const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
+
+    const resolve = (key: string, deathDrop: string, seen: Set<string>, out: Set<string>) => {
+        if (seen.has(key)) return;
+        const block = blocks.get(key);
+        if (!block) throw new Error(`missing drop block ${key}`);
+        seen.add(key);
+        for (const token of dropTokens(block.body)) {
+            if (token.value.startsWith('~')) {
+                resolve(`proc:${token.value.slice(1)}`, deathDrop, seen, out);
+                continue;
+            }
+            const alias = token.value === 'npc_param' ? deathDrop : token.value;
+            if (itemIds.has(alias)) {
+                out.add(alias);
+            } else if (alias.startsWith('cert_') && itemIds.has(alias.slice('cert_'.length))) {
+                out.add(alias.slice('cert_'.length));
+            } else if (!token.optional) {
+                throw new Error(`${key}: unknown drop item ${alias}`);
+            }
+        }
+    };
+
+    return targets.map((target) => {
+        const config = npcConfigs.get(target.alias);
+        if (!config?.name) throw new Error(`${target.alias}: missing npc display name`);
+        if (!config.death_drop) throw new Error(`${target.alias}: missing death_drop`);
+        const npc = npcIds.get(target.alias);
+        if (!npc) throw new Error(`${target.alias}: missing decoded npc`);
+        if (npc.name !== config.name) throw new Error(`${target.alias}: npc display mismatch ${npc.name}/${config.name}`);
+        const aliases = new Set<string>();
+        resolve(target.block, config.death_drop, new Set(), aliases);
+        const rows = [...aliases]
+            .map((alias) => {
+                const item = itemIds.get(alias)!;
+                if (!item.name) throw new Error(`${target.alias}: ${alias} has no display name`);
+                return { alias, id: item.id, name: item.name };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name) || a.alias.localeCompare(b.alias));
+        const displayNames = [...new Set(rows.map((item) => item.name))].sort((a, b) => a.localeCompare(b));
+        if (rows.length === 0 || displayNames.length === 0) throw new Error(`${target.alias}: empty drop table`);
+        return {
+            npc_alias: target.alias,
+            npc_id: npc.id,
+            name: config.name,
+            source_block: target.block,
+            items: rows,
+            display_names: displayNames,
+        };
+    });
+}
+
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
@@ -388,8 +528,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs); const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 3, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, ...magic, ...herbs, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs); const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
-async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 3, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
+async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

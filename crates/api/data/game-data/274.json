@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "revision": 274,
   "provenance": {
     "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
@@ -106,6 +106,36 @@
         "path": "pack/param.pack",
         "bytes": 4626,
         "sha256": "9cc4db0b4c58591ed335590e526327d1810373cef6ea697383f06f05e2edf36b"
+      },
+      {
+        "path": "scripts/_unpack/225/all.npc",
+        "bytes": 133601,
+        "sha256": "c9f1d425bfbe070ddc3a1662aa06329e982782592dbb77c875b0066c0d837d95"
+      },
+      {
+        "path": "scripts/drop tables/scripts/giant.rs2",
+        "bytes": 2248,
+        "sha256": "ac38239a050771542e019ec1e0cc1e5b0ffb61791a2fdf4afd723971a7c2d8a6"
+      },
+      {
+        "path": "scripts/drop tables/scripts/moss_giant.rs2",
+        "bytes": 2573,
+        "sha256": "292fd7e715a913740bcb305114d20c0ed9135abcdb9eb7bda431ea46c8b7a885"
+      },
+      {
+        "path": "scripts/drop tables/scripts/fire_giant.rs2",
+        "bytes": 2011,
+        "sha256": "405c5508bd5f8f4002dd2ea58bec6b05f013f1638ed7f57ea913e4c848907e3b"
+      },
+      {
+        "path": "scripts/drop tables/scripts/green_dragon.rs2",
+        "bytes": 2051,
+        "sha256": "41bdc2b9fa12af871ab98e5e0c93534a9e9299bb081271fcb32a45367d2c1637"
+      },
+      {
+        "path": "scripts/drop tables/scripts/shared_droptables.rs2",
+        "bytes": 3889,
+        "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
       }
     ],
     "decoder_sources": [
@@ -57514,6 +57544,1048 @@
         }
       ],
       "pocket": "Fremennik's pocket"
+    }
+  ],
+  "drop_tables": [
+    {
+      "npc_alias": "giant",
+      "npc_id": 117,
+      "name": "Giant",
+      "source_block": "ai_queue3:giant",
+      "items": [
+        {
+          "alias": "beer",
+          "id": 1917,
+          "name": "Beer"
+        },
+        {
+          "alias": "big_bones",
+          "id": 532,
+          "name": "Big bones"
+        },
+        {
+          "alias": "body_talisman",
+          "id": 1446,
+          "name": "Body talisman"
+        },
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune"
+        },
+        {
+          "alias": "chaos_talisman",
+          "id": 1452,
+          "name": "Chaos talisman"
+        },
+        {
+          "alias": "coins",
+          "id": 995,
+          "name": "Coins"
+        },
+        {
+          "alias": "cosmicrune",
+          "id": 564,
+          "name": "Cosmic rune"
+        },
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune"
+        },
+        {
+          "alias": "dragon_spear",
+          "id": 1249,
+          "name": "Dragon spear"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        },
+        {
+          "alias": "keyhalf1",
+          "id": 985,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "keyhalf2",
+          "id": 987,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "unidentified_avantoe",
+          "id": 211,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_cadantine",
+          "id": 215,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_dwarf_weed",
+          "id": 217,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_guam",
+          "id": 199,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_harralander",
+          "id": 205,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_irit",
+          "id": 209,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_kwuarm",
+          "id": 213,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_lantadyme",
+          "id": 2485,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_marentill",
+          "id": 201,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_ranarr",
+          "id": 207,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_tarromin",
+          "id": 203,
+          "name": "Herb"
+        },
+        {
+          "alias": "iron_arrow",
+          "id": 884,
+          "name": "Iron arrow"
+        },
+        {
+          "alias": "iron_dagger",
+          "id": 1203,
+          "name": "Iron dagger"
+        },
+        {
+          "alias": "iron_full_helm",
+          "id": 1153,
+          "name": "Iron full helm"
+        },
+        {
+          "alias": "iron_kiteshield",
+          "id": 1191,
+          "name": "Iron kiteshield"
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune"
+        },
+        {
+          "alias": "limpwurt_root",
+          "id": 225,
+          "name": "Limpwurt root"
+        },
+        {
+          "alias": "mindrune",
+          "id": 558,
+          "name": "Mind rune"
+        },
+        {
+          "alias": "naturerune",
+          "id": 561,
+          "name": "Nature rune"
+        },
+        {
+          "alias": "nature_talisman",
+          "id": 1462,
+          "name": "Nature talisman"
+        },
+        {
+          "alias": "rune_javelin",
+          "id": 830,
+          "name": "Rune javelin"
+        },
+        {
+          "alias": "rune_spear",
+          "id": 1247,
+          "name": "Rune spear"
+        },
+        {
+          "alias": "dragonshield_a",
+          "id": 2366,
+          "name": "Shield left half"
+        },
+        {
+          "alias": "steel_arrow",
+          "id": 886,
+          "name": "Steel arrow"
+        },
+        {
+          "alias": "steel_longsword",
+          "id": 1295,
+          "name": "Steel longsword"
+        },
+        {
+          "alias": "uncut_diamond",
+          "id": 1617,
+          "name": "Uncut diamond"
+        },
+        {
+          "alias": "uncut_emerald",
+          "id": 1621,
+          "name": "Uncut emerald"
+        },
+        {
+          "alias": "uncut_ruby",
+          "id": 1619,
+          "name": "Uncut ruby"
+        },
+        {
+          "alias": "uncut_sapphire",
+          "id": 1623,
+          "name": "Uncut sapphire"
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune"
+        }
+      ],
+      "display_names": [
+        "Beer",
+        "Big bones",
+        "Body talisman",
+        "Chaos rune",
+        "Chaos talisman",
+        "Coins",
+        "Cosmic rune",
+        "Death rune",
+        "Dragon spear",
+        "Fire rune",
+        "Half of a key",
+        "Herb",
+        "Iron arrow",
+        "Iron dagger",
+        "Iron full helm",
+        "Iron kiteshield",
+        "Law rune",
+        "Limpwurt root",
+        "Mind rune",
+        "Nature rune",
+        "Nature talisman",
+        "Rune javelin",
+        "Rune spear",
+        "Shield left half",
+        "Steel arrow",
+        "Steel longsword",
+        "Uncut diamond",
+        "Uncut emerald",
+        "Uncut ruby",
+        "Uncut sapphire",
+        "Water rune"
+      ]
+    },
+    {
+      "npc_alias": "mossgiant",
+      "npc_id": 112,
+      "name": "Moss giant",
+      "source_block": "ai_queue3:mossgiant",
+      "items": [
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune"
+        },
+        {
+          "alias": "big_bones",
+          "id": 532,
+          "name": "Big bones"
+        },
+        {
+          "alias": "black_sq_shield",
+          "id": 1179,
+          "name": "Black sq shield"
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune"
+        },
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune"
+        },
+        {
+          "alias": "chaos_talisman",
+          "id": 1452,
+          "name": "Chaos talisman"
+        },
+        {
+          "alias": "coal",
+          "id": 453,
+          "name": "Coal"
+        },
+        {
+          "alias": "coins",
+          "id": 995,
+          "name": "Coins"
+        },
+        {
+          "alias": "cosmicrune",
+          "id": 564,
+          "name": "Cosmic rune"
+        },
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune"
+        },
+        {
+          "alias": "dragon_spear",
+          "id": 1249,
+          "name": "Dragon spear"
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        },
+        {
+          "alias": "keyhalf1",
+          "id": 985,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "keyhalf2",
+          "id": 987,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "unidentified_avantoe",
+          "id": 211,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_cadantine",
+          "id": 215,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_dwarf_weed",
+          "id": 217,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_guam",
+          "id": 199,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_harralander",
+          "id": 205,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_irit",
+          "id": 209,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_kwuarm",
+          "id": 213,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_lantadyme",
+          "id": 2485,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_marentill",
+          "id": 201,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_ranarr",
+          "id": 207,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_tarromin",
+          "id": 203,
+          "name": "Herb"
+        },
+        {
+          "alias": "iron_arrow",
+          "id": 884,
+          "name": "Iron arrow"
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune"
+        },
+        {
+          "alias": "magic_staff",
+          "id": 1389,
+          "name": "Magic staff"
+        },
+        {
+          "alias": "mithril_spear",
+          "id": 1243,
+          "name": "Mithril spear"
+        },
+        {
+          "alias": "mithril_sword",
+          "id": 1285,
+          "name": "Mithril sword"
+        },
+        {
+          "alias": "naturerune",
+          "id": 561,
+          "name": "Nature rune"
+        },
+        {
+          "alias": "nature_talisman",
+          "id": 1462,
+          "name": "Nature talisman"
+        },
+        {
+          "alias": "rune_javelin",
+          "id": 830,
+          "name": "Rune javelin"
+        },
+        {
+          "alias": "rune_spear",
+          "id": 1247,
+          "name": "Rune spear"
+        },
+        {
+          "alias": "dragonshield_a",
+          "id": 2366,
+          "name": "Shield left half"
+        },
+        {
+          "alias": "spinach_roll",
+          "id": 1969,
+          "name": "Spinach roll"
+        },
+        {
+          "alias": "steel_arrow",
+          "id": 886,
+          "name": "Steel arrow"
+        },
+        {
+          "alias": "steel_bar",
+          "id": 2353,
+          "name": "Steel bar"
+        },
+        {
+          "alias": "steel_kiteshield",
+          "id": 1193,
+          "name": "Steel kiteshield"
+        },
+        {
+          "alias": "steel_med_helm",
+          "id": 1141,
+          "name": "Steel med helm"
+        },
+        {
+          "alias": "uncut_diamond",
+          "id": 1617,
+          "name": "Uncut diamond"
+        },
+        {
+          "alias": "uncut_emerald",
+          "id": 1621,
+          "name": "Uncut emerald"
+        },
+        {
+          "alias": "uncut_ruby",
+          "id": 1619,
+          "name": "Uncut ruby"
+        },
+        {
+          "alias": "uncut_sapphire",
+          "id": 1623,
+          "name": "Uncut sapphire"
+        }
+      ],
+      "display_names": [
+        "Air rune",
+        "Big bones",
+        "Black sq shield",
+        "Blood rune",
+        "Chaos rune",
+        "Chaos talisman",
+        "Coal",
+        "Coins",
+        "Cosmic rune",
+        "Death rune",
+        "Dragon spear",
+        "Earth rune",
+        "Half of a key",
+        "Herb",
+        "Iron arrow",
+        "Law rune",
+        "Magic staff",
+        "Mithril spear",
+        "Mithril sword",
+        "Nature rune",
+        "Nature talisman",
+        "Rune javelin",
+        "Rune spear",
+        "Shield left half",
+        "Spinach roll",
+        "Steel arrow",
+        "Steel bar",
+        "Steel kiteshield",
+        "Steel med helm",
+        "Uncut diamond",
+        "Uncut emerald",
+        "Uncut ruby",
+        "Uncut sapphire"
+      ]
+    },
+    {
+      "npc_alias": "firegiant",
+      "npc_id": 110,
+      "name": "Fire giant",
+      "source_block": "ai_queue3:firegiant",
+      "items": [
+        {
+          "alias": "adamant_javelin",
+          "id": 829,
+          "name": "Adamant javelin"
+        },
+        {
+          "alias": "big_bones",
+          "id": 532,
+          "name": "Big bones"
+        },
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune"
+        },
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune"
+        },
+        {
+          "alias": "chaos_talisman",
+          "id": 1452,
+          "name": "Chaos talisman"
+        },
+        {
+          "alias": "coins",
+          "id": 995,
+          "name": "Coins"
+        },
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune"
+        },
+        {
+          "alias": "dragon_med_helm",
+          "id": 1149,
+          "name": "Dragon med helm"
+        },
+        {
+          "alias": "dragon_spear",
+          "id": 1249,
+          "name": "Dragon spear"
+        },
+        {
+          "alias": "dragonstone",
+          "id": 1615,
+          "name": "Dragonstone"
+        },
+        {
+          "alias": "fire_battlestaff",
+          "id": 1393,
+          "name": "Fire battlestaff"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        },
+        {
+          "alias": "keyhalf1",
+          "id": 985,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "keyhalf2",
+          "id": 987,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "unidentified_avantoe",
+          "id": 211,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_cadantine",
+          "id": 215,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_dwarf_weed",
+          "id": 217,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_guam",
+          "id": 199,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_harralander",
+          "id": 205,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_irit",
+          "id": 209,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_kwuarm",
+          "id": 213,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_lantadyme",
+          "id": 2485,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_marentill",
+          "id": 201,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_ranarr",
+          "id": 207,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_tarromin",
+          "id": 203,
+          "name": "Herb"
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune"
+        },
+        {
+          "alias": "lobster",
+          "id": 379,
+          "name": "Lobster"
+        },
+        {
+          "alias": "mithril_sq_shield",
+          "id": 1181,
+          "name": "Mithril sq shield"
+        },
+        {
+          "alias": "naturerune",
+          "id": 561,
+          "name": "Nature rune"
+        },
+        {
+          "alias": "nature_talisman",
+          "id": 1462,
+          "name": "Nature talisman"
+        },
+        {
+          "alias": "rune_2h_sword",
+          "id": 1319,
+          "name": "Rune 2h sword"
+        },
+        {
+          "alias": "rune_arrow",
+          "id": 892,
+          "name": "Rune arrow"
+        },
+        {
+          "alias": "rune_battleaxe",
+          "id": 1373,
+          "name": "Rune battleaxe"
+        },
+        {
+          "alias": "rune_javelin",
+          "id": 830,
+          "name": "Rune javelin"
+        },
+        {
+          "alias": "rune_kiteshield",
+          "id": 1201,
+          "name": "Rune kiteshield"
+        },
+        {
+          "alias": "rune_scimitar",
+          "id": 1333,
+          "name": "Rune scimitar"
+        },
+        {
+          "alias": "rune_spear",
+          "id": 1247,
+          "name": "Rune spear"
+        },
+        {
+          "alias": "rune_sq_shield",
+          "id": 1185,
+          "name": "Rune sq shield"
+        },
+        {
+          "alias": "runite_bar",
+          "id": 2363,
+          "name": "Runite bar"
+        },
+        {
+          "alias": "dragonshield_a",
+          "id": 2366,
+          "name": "Shield left half"
+        },
+        {
+          "alias": "cert_silver_ore",
+          "id": 443,
+          "name": "Silver ore"
+        },
+        {
+          "alias": "steel_arrow",
+          "id": 886,
+          "name": "Steel arrow"
+        },
+        {
+          "alias": "steel_axe",
+          "id": 1353,
+          "name": "Steel axe"
+        },
+        {
+          "alias": "steel_bar",
+          "id": 2353,
+          "name": "Steel bar"
+        },
+        {
+          "alias": "2dose1strength",
+          "id": 117,
+          "name": "Strength potion(2)"
+        },
+        {
+          "alias": "uncut_diamond",
+          "id": 1617,
+          "name": "Uncut diamond"
+        },
+        {
+          "alias": "uncut_emerald",
+          "id": 1621,
+          "name": "Uncut emerald"
+        },
+        {
+          "alias": "uncut_ruby",
+          "id": 1619,
+          "name": "Uncut ruby"
+        },
+        {
+          "alias": "uncut_sapphire",
+          "id": 1623,
+          "name": "Uncut sapphire"
+        }
+      ],
+      "display_names": [
+        "Adamant javelin",
+        "Big bones",
+        "Blood rune",
+        "Chaos rune",
+        "Chaos talisman",
+        "Coins",
+        "Death rune",
+        "Dragon med helm",
+        "Dragon spear",
+        "Dragonstone",
+        "Fire battlestaff",
+        "Fire rune",
+        "Half of a key",
+        "Herb",
+        "Law rune",
+        "Lobster",
+        "Mithril sq shield",
+        "Nature rune",
+        "Nature talisman",
+        "Rune 2h sword",
+        "Rune arrow",
+        "Rune battleaxe",
+        "Rune javelin",
+        "Rune kiteshield",
+        "Rune scimitar",
+        "Rune spear",
+        "Rune sq shield",
+        "Runite bar",
+        "Shield left half",
+        "Silver ore",
+        "Steel arrow",
+        "Steel axe",
+        "Steel bar",
+        "Strength potion(2)",
+        "Uncut diamond",
+        "Uncut emerald",
+        "Uncut ruby",
+        "Uncut sapphire"
+      ]
+    },
+    {
+      "npc_alias": "green_dragon",
+      "npc_id": 941,
+      "name": "Green dragon",
+      "source_block": "ai_queue3:green_dragon",
+      "items": [
+        {
+          "alias": "adamant_full_helm",
+          "id": 1161,
+          "name": "Adamant full helm"
+        },
+        {
+          "alias": "adamantite_ore",
+          "id": 449,
+          "name": "Adamantite ore"
+        },
+        {
+          "alias": "bass",
+          "id": 365,
+          "name": "Bass"
+        },
+        {
+          "alias": "chaos_talisman",
+          "id": 1452,
+          "name": "Chaos talisman"
+        },
+        {
+          "alias": "coins",
+          "id": 995,
+          "name": "Coins"
+        },
+        {
+          "alias": "dragon_bones",
+          "id": 536,
+          "name": "Dragon bones"
+        },
+        {
+          "alias": "dragon_spear",
+          "id": 1249,
+          "name": "Dragon spear"
+        },
+        {
+          "alias": "dragonhide_green",
+          "id": 1753,
+          "name": "Dragonhide"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        },
+        {
+          "alias": "keyhalf1",
+          "id": 985,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "keyhalf2",
+          "id": 987,
+          "name": "Half of a key"
+        },
+        {
+          "alias": "unidentified_avantoe",
+          "id": 211,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_cadantine",
+          "id": 215,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_dwarf_weed",
+          "id": 217,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_guam",
+          "id": 199,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_harralander",
+          "id": 205,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_irit",
+          "id": 209,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_kwuarm",
+          "id": 213,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_lantadyme",
+          "id": 2485,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_marentill",
+          "id": 201,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_ranarr",
+          "id": 207,
+          "name": "Herb"
+        },
+        {
+          "alias": "unidentified_tarromin",
+          "id": 203,
+          "name": "Herb"
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune"
+        },
+        {
+          "alias": "mithril_axe",
+          "id": 1355,
+          "name": "Mithril axe"
+        },
+        {
+          "alias": "mithril_kiteshield",
+          "id": 1197,
+          "name": "Mithril kiteshield"
+        },
+        {
+          "alias": "mithril_spear",
+          "id": 1243,
+          "name": "Mithril spear"
+        },
+        {
+          "alias": "naturerune",
+          "id": 561,
+          "name": "Nature rune"
+        },
+        {
+          "alias": "nature_talisman",
+          "id": 1462,
+          "name": "Nature talisman"
+        },
+        {
+          "alias": "rune_dagger",
+          "id": 1213,
+          "name": "Rune dagger"
+        },
+        {
+          "alias": "rune_javelin",
+          "id": 830,
+          "name": "Rune javelin"
+        },
+        {
+          "alias": "rune_spear",
+          "id": 1247,
+          "name": "Rune spear"
+        },
+        {
+          "alias": "dragonshield_a",
+          "id": 2366,
+          "name": "Shield left half"
+        },
+        {
+          "alias": "steel_battleaxe",
+          "id": 1365,
+          "name": "Steel battleaxe"
+        },
+        {
+          "alias": "steel_platelegs",
+          "id": 1069,
+          "name": "Steel platelegs"
+        },
+        {
+          "alias": "uncut_diamond",
+          "id": 1617,
+          "name": "Uncut diamond"
+        },
+        {
+          "alias": "uncut_emerald",
+          "id": 1621,
+          "name": "Uncut emerald"
+        },
+        {
+          "alias": "uncut_ruby",
+          "id": 1619,
+          "name": "Uncut ruby"
+        },
+        {
+          "alias": "uncut_sapphire",
+          "id": 1623,
+          "name": "Uncut sapphire"
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune"
+        }
+      ],
+      "display_names": [
+        "Adamant full helm",
+        "Adamantite ore",
+        "Bass",
+        "Chaos talisman",
+        "Coins",
+        "Dragon bones",
+        "Dragon spear",
+        "Dragonhide",
+        "Fire rune",
+        "Half of a key",
+        "Herb",
+        "Law rune",
+        "Mithril axe",
+        "Mithril kiteshield",
+        "Mithril spear",
+        "Nature rune",
+        "Nature talisman",
+        "Rune dagger",
+        "Rune javelin",
+        "Rune spear",
+        "Shield left half",
+        "Steel battleaxe",
+        "Steel platelegs",
+        "Uncut diamond",
+        "Uncut emerald",
+        "Uncut ruby",
+        "Uncut sapphire",
+        "Water rune"
+      ]
     }
   ],
   "spells": [

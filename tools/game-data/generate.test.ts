@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -234,4 +234,92 @@ assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unid
 assert.equal(herbs.herbs[0].level, 3, 'guam uses identify.param default, not cost=999');
 assert.equal(herbs.herbs[1].key, 'snake weed');
 assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
+
+const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
+const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
+const npcConfigs = path.join(dropContent, 'scripts/_unpack/225');
+fs.mkdirSync(dropScripts, { recursive: true });
+fs.mkdirSync(npcConfigs, { recursive: true });
+fs.writeFileSync(path.join(npcConfigs, 'all.npc'), `[giant]
+name=Giant
+param=death_drop,big_bones
+[mossgiant]
+name=Moss giant
+param=death_drop,big_bones
+[firegiant]
+name=Fire giant
+param=death_drop,big_bones
+[green_dragon]
+name=Green dragon
+param=death_drop,dragon_bones
+`);
+fs.writeFileSync(path.join(dropScripts, 'giant.rs2'), `[ai_queue3,giant]
+obj_add(npc_coord, npc_param(death_drop), 1, 100);
+obj_add(npc_coord, coins, 1, 100);
+obj_add(npc_coord, ~outer, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'moss_giant.rs2'), `[ai_queue3,mossgiant]
+obj_add(npc_coord, npc_param(death_drop), 1, 100);
+obj_add(npc_coord, ~outer, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'fire_giant.rs2'), `[ai_queue3,firegiant]
+obj_add(npc_coord, npc_param(death_drop), 1, 100);
+obj_add(npc_coord, cert_silver_ore, 1, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'green_dragon.rs2'), `[ai_queue3,green_dragon]
+obj_add(npc_coord, npc_param(death_drop), 1, 100);
+obj_add(npc_coord, dragonhide_green, 1, 100);
+`);
+fs.writeFileSync(path.join(dropScripts, 'shared_droptables.rs2'), `[proc,outer]()(namedobj, int)
+return (~inner);
+[proc,inner]()(namedobj, int)
+def_namedobj $drop = rune_spear;
+return (keyhalf1, 1);
+return (keyhalf2, 1);
+return ($drop, 1);
+`);
+const dropItems = [
+    { id: 532, debugname: 'big_bones', name: 'Big bones', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 536, debugname: 'dragon_bones', name: 'Dragon bones', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 995, debugname: 'coins', name: 'Coins', cost: 1, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 985, debugname: 'keyhalf1', name: 'Half of a key', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 987, debugname: 'keyhalf2', name: 'Half of a key', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 1247, debugname: 'rune_spear', name: 'Rune spear', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1 },
+    { id: 1753, debugname: 'dragonhide_green', name: 'Dragonhide', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 443, debugname: 'silver_ore', name: 'Silver ore', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+];
+const dropNpcs = [
+    { id: 117, debugname: 'giant', name: 'Giant' },
+    { id: 110, debugname: 'mossgiant', name: 'Moss giant' },
+    { id: 112, debugname: 'firegiant', name: 'Fire giant' },
+    { id: 941, debugname: 'green_dragon', name: 'Green dragon' },
+];
+const drops = extractDropFacts(dropContent, dropItems, dropNpcs);
+assert.equal(drops.length, 4);
+assert.deepEqual(drops.find((row) => row.name === 'Giant')?.display_names, ['Big bones', 'Coins', 'Half of a key', 'Rune spear']);
+assert.deepEqual(
+    drops.find((row) => row.name === 'Giant')?.items.filter((item) => item.name === 'Half of a key').map((item) => [item.alias, item.id]),
+    [['keyhalf1', 985], ['keyhalf2', 987]],
+    'display names collapse aliases only at the foreign API boundary',
+);
+assert.deepEqual(drops.find((row) => row.name === 'Fire giant')?.items, [
+    { alias: 'big_bones', id: 532, name: 'Big bones' },
+    { alias: 'silver_ore', id: 443, name: 'Silver ore' },
+]);
+assert.deepEqual(drops.find((row) => row.name === 'Green dragon')?.display_names, ['Dragon bones', 'Dragonhide']);
+
+fs.rmSync(path.join(dropScripts, 'shared_droptables.rs2'));
+assert.throws(
+    () => extractDropFacts(dropContent, dropItems, dropNpcs),
+    /missing content input .*shared_droptables\.rs2/,
+    'a missing recursive source must fail closed',
+);
+fs.writeFileSync(path.join(dropScripts, 'shared_droptables.rs2'), `[proc,outer]()(namedobj, int)
+return (~missing_proc);
+`);
+assert.throws(
+    () => extractDropFacts(dropContent, dropItems, dropNpcs),
+    /missing drop block proc:missing_proc/,
+    'an unresolved recursive join must fail closed',
+);
 console.log('generate fixture passed');
