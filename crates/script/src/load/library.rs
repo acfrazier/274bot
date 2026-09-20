@@ -462,6 +462,26 @@ impl JsLibrary {
         }
     }
 
+    /// Same-dir siblings plus the registered root's `SHOP_DB` file.
+    fn complete_catalog_sources(sources: &mut HashMap<String, String>, root: &Path) {
+        let sibling_rels: Vec<String> = sources
+            .iter()
+            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
+            .collect();
+        for sib in sibling_rels {
+            if sources.contains_key(&sib) {
+                continue;
+            }
+            let Some(path) = script_file_path(root, &sib) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sources.insert(sib, text);
+            }
+        }
+        crate::rs2b0t_registry::insert_shop_db_from_root(sources, root);
+    }
+
     /// Fill the library from the `$RS2B0T` catalog: statically parse
     /// `root/src/bot/scripts/index.ts` and register each script as a card
     /// under its register name (which may differ from the folder). Sources
@@ -485,21 +505,7 @@ impl JsLibrary {
                 sources.insert(reg.rel_path.clone(), text);
             }
         }
-        let sibling_rels: Vec<String> = sources
-            .iter()
-            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
-            .collect();
-        for sib in sibling_rels {
-            if sources.contains_key(&sib) {
-                continue;
-            }
-            let Some(path) = script_file_path(root, &sib) else {
-                continue;
-            };
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                sources.insert(sib, text);
-            }
-        }
+        Self::complete_catalog_sources(&mut sources, root);
         let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut n = 0;
@@ -884,21 +890,7 @@ impl JsLibrary {
                 }
             }
         }
-        let sibling_rels: Vec<String> = sources
-            .iter()
-            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
-            .collect();
-        for sib in sibling_rels {
-            if sources.contains_key(&sib) {
-                continue;
-            }
-            let Some(path) = script_file_path(root, &sib) else {
-                continue;
-            };
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                sources.insert(sib, text);
-            }
-        }
+        Self::complete_catalog_sources(&mut sources, root);
         let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut incoming: HashMap<String, (crate::rs2b0t_registry::RegistryCard, PathBuf, String)> =

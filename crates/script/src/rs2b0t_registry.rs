@@ -38,6 +38,9 @@ pub struct ItemOptionCandidate {
 pub struct ItemOptionSpec {
     pub prefix: Vec<String>,
     pub candidates: Vec<ItemOptionCandidate>,
+    /// When true, resolved chip keys follow alphabetical label order (frozen
+    /// `[...ALCH_ITEMS].sort((a,b)=>a.label.localeCompare(b.label)).map`).
+    pub sort_keys_by_label: bool,
 }
 
 /// One setting field from a script's `settingsSchema` export.
@@ -271,7 +274,7 @@ pub fn parse_registry_with_sources(
             .and_then(|ident| {
                 let binding = imports.get(ident)?;
                 let src = settings_blob(sources, &binding.rel_path)?;
-                Some(parse_settings_export(&src, &binding.export_name))
+                Some(parse_settings_export(&src, &binding.export_name, Some(sources)))
             })
             .unwrap_or_default();
         cards.push(RegistryCard {
@@ -714,16 +717,20 @@ fn scan_new_after(block: &str, key: &str) -> Option<String> {
 /// No V8. Identifier-valued fields that the scanner cannot inline stay
 /// empty rather than aborting the walk.
 pub fn settings_schema_from_source(src: &str) -> Vec<SettingDef> {
-    parse_settings_export(src, "SETTINGS")
+    parse_settings_export(src, "SETTINGS", None)
 }
 
 /// Parse `export const NAME = { … }` into setting definitions.
 /// Catalog golds type the export (`export const SETTINGS: SettingsSchema = {`).
-fn parse_settings_export(file_src: &str, export_name: &str) -> Vec<SettingDef> {
+fn parse_settings_export(
+    file_src: &str,
+    export_name: &str,
+    sources: Option<&HashMap<String, String>>,
+) -> Vec<SettingDef> {
     let Some(obj) = settings_export_object(file_src, export_name) else {
         return Vec::new();
     };
-    parse_settings_object(obj, file_src)
+    parse_settings_object(obj, file_src, sources)
 }
 
 fn setting_object_body(file_src: &str, export_name: &str) -> Option<String> {
@@ -1469,7 +1476,11 @@ fn rewrite_any_of_elements(inner: &str, file_src: &str) -> Option<String> {
     Some(parts.join(", "))
 }
 
-fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
+fn parse_settings_object(
+    obj: &str,
+    file_src: &str,
+    sources: Option<&HashMap<String, String>>,
+) -> Vec<SettingDef> {
     let inner = obj.trim();
     let inner = inner.strip_prefix('{').unwrap_or(inner);
     let inner = inner.strip_suffix('}').unwrap_or(inner);
@@ -1483,7 +1494,7 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
         if let Some(after_dots) = rest.strip_prefix("...") {
             let expr = after_dots.trim_start();
             if let Some(body) = resolve_spread_settings(expr, file_src) {
-                out.extend(parse_settings_object(&body, file_src));
+                out.extend(parse_settings_object(&body, file_src, sources));
             }
             let Some(after_expr) = skip_expression(expr) else {
                 break;
@@ -1509,7 +1520,12 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
             let Some(end) = find_matching_bracket(after_colon, '{', '}') else {
                 break;
             };
-            out.push(parse_setting_def(&id, &after_colon[..=end], file_src));
+            out.push(parse_setting_def(
+                &id,
+                &after_colon[..=end],
+                file_src,
+                sources,
+            ));
             rest = &after_colon[end + 1..];
         } else if let Some((ident, after_ident)) = take_ident(after_colon) {
             let leftover = after_ident.trim_start();
@@ -1519,7 +1535,7 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
                 };
                 rest = after_expr;
             } else if let Some(body) = resolve_setting_ident(file_src, ident) {
-                out.push(parse_setting_def(&id, &body, file_src));
+                out.push(parse_setting_def(&id, &body, file_src, sources));
                 rest = after_ident;
             } else {
                 let Some(after_expr) = skip_expression(after_colon) else {
@@ -1622,8 +1638,13 @@ fn skip_expression(s: &str) -> Option<&str> {
     Some(rest)
 }
 
-fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
-    let options = scan_key_options(obj, "options", file_src);
+fn parse_setting_def(
+    id: &str,
+    obj: &str,
+    file_src: &str,
+    sources: Option<&HashMap<String, String>>,
+) -> SettingDef {
+    let options = scan_key_options(obj, "options", file_src, sources);
     let item_option_spec = if options.is_empty() {
         scan_item_option_spec(obj, file_src)
     } else {
@@ -1715,7 +1736,12 @@ fn inferred_options_from(
     None
 }
 
-fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
+fn scan_key_options(
+    block: &str,
+    key: &str,
+    file_src: &str,
+    sources: Option<&HashMap<String, String>>,
+) -> Vec<String> {
     let mut rest = block;
     while let Some(idx) = rest.find(key) {
         let after = &rest[idx + key.len()..];
@@ -1743,7 +1769,16 @@ fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
                     .map(|(vals, _)| vals)
                     .unwrap_or_default();
             }
-            if leftover.starts_with('.') || leftover.starts_with('(') {
+            if ident == "presetBuyableNames" {
+                if take_empty_call_expression(leftover).is_some() {
+                    return resolve_preset_buyable_names(file_src, sources).unwrap_or_default();
+                }
+                return Vec::new();
+            }
+            if leftover.starts_with('(') {
+                return Vec::new();
+            }
+            if leftover.starts_with('.') {
                 return Vec::new();
             }
             if is_revision_fact_option_ident(ident) {
@@ -1869,7 +1904,7 @@ fn scan_key_raw_value(block: &str, key: &str) -> Option<String> {
 fn scan_item_option_spec(block: &str, file_src: &str) -> Option<ItemOptionSpec> {
     let ident = options_ident(block)?;
     let rhs = const_eq_rhs(file_src, ident)?;
-    let (prefix_token, items_ident) = parse_alch_options_rhs(rhs)?;
+    let (prefix_token, items_ident, sort_keys_by_label) = parse_alch_options_rhs(rhs)?;
     let prefix = match prefix_token {
         AlchPrefix::Quoted(value) => value,
         AlchPrefix::Ident(name) => resolve_string_const_ident(file_src, &name)?,
@@ -1884,6 +1919,7 @@ fn scan_item_option_spec(block: &str, file_src: &str) -> Option<ItemOptionSpec> 
     Some(ItemOptionSpec {
         prefix: vec![prefix],
         candidates,
+        sort_keys_by_label,
     })
 }
 
@@ -1913,8 +1949,9 @@ enum AlchPrefix {
     Ident(String),
 }
 
-/// `[PREFIX, ...ITEMS.map(param => param.key)]` with optional parens on param.
-fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String)> {
+/// `[PREFIX, ...ITEMS.map(param => param.key)]` or the frozen sort-wrapper
+/// spread `[PREFIX, ...[...ITEMS].sort((a,b)=>a.label.localeCompare(b.label)).map(i=>i.key)]`.
+fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String, bool)> {
     let s = rhs.trim_start();
     if !s.starts_with('[') {
         return None;
@@ -1931,15 +1968,38 @@ fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String)> {
     };
     inner = inner.strip_prefix(',')?.trim_start();
     inner = inner.strip_prefix("...")?.trim_start();
-    let (items, after) = take_ident(inner)?;
-    inner = after.trim_start();
+    let (items, mut inner) = if inner.starts_with('[') {
+        let wrap_end = find_matching_bracket(inner, '[', ']')?;
+        let inside = inner[1..wrap_end].trim_start();
+        let inside = inside.strip_prefix("...")?.trim_start();
+        let (items, after_items) = take_ident(inside)?;
+        if !after_items.trim().is_empty() {
+            return None;
+        }
+        (items.to_string(), &inner[wrap_end + 1..])
+    } else {
+        let (items, after) = take_ident(inner)?;
+        (items.to_string(), after)
+    };
+    inner = inner.trim_start();
+    let mut sort_keys_by_label = false;
+    if let Some(after_sort) = skip_bounded_alch_label_sort(inner) {
+        sort_keys_by_label = true;
+        inner = after_sort;
+    }
     inner = inner.strip_prefix('.')?.trim_start();
     inner = inner.strip_prefix("map")?.trim_start();
     inner = inner.strip_prefix('(')?.trim_start();
-    inner = inner.strip_prefix('(').unwrap_or(inner).trim_start();
-    let (param, after) = take_ident(inner)?;
-    inner = after.trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    let (param, after) = if let Some(after_paren) = inner.strip_prefix('(') {
+        let after_paren = after_paren.trim_start();
+        let (param, after) = take_ident(after_paren)?;
+        let after = after.trim_start().strip_prefix(')')?.trim_start();
+        (param, after)
+    } else {
+        let (param, after) = take_ident(inner)?;
+        (param, after.trim_start())
+    };
+    inner = after;
     inner = inner.strip_prefix("=>")?.trim_start();
     let (recv, after) = take_ident(inner)?;
     if recv != param {
@@ -1948,12 +2008,231 @@ fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String)> {
     inner = after.trim_start();
     inner = inner.strip_prefix('.')?.trim_start();
     inner = inner.strip_prefix("key")?.trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    inner = inner.strip_prefix(')')?.trim_start();
     if !inner.is_empty() {
         return None;
     }
-    Some((prefix, items.to_string()))
+    if !value_expression_complete(&s[end + 1..]) {
+        return None;
+    }
+    Some((prefix, items, sort_keys_by_label))
+}
+
+/// Frozen high-alchemy chip order: `.sort((a,b)=>a.label.localeCompare(b.label))`.
+fn skip_bounded_alch_label_sort(after: &str) -> Option<&str> {
+    let rest = after.strip_prefix('.')?.trim_start();
+    let rest = rest.strip_prefix("sort")?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let (a, rest) = take_ident(rest)?;
+    let rest = rest.trim_start().strip_prefix(',')?.trim_start();
+    let (b, rest) = take_ident(rest)?;
+    let rest = rest.trim_start().strip_prefix(')')?.trim_start();
+    let rest = rest.strip_prefix("=>")?.trim_start();
+    let (lhs, rest) = take_ident(rest)?;
+    if lhs != a {
+        return None;
+    }
+    let rest = rest.strip_prefix('.')?.trim_start();
+    let (field, rest) = take_ident(rest)?;
+    if field != "label" {
+        return None;
+    }
+    let rest = rest.strip_prefix('.')?.trim_start();
+    let rest = rest.strip_prefix("localeCompare")?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let (cmp_recv, rest) = take_ident(rest)?;
+    let rest = rest.strip_prefix('.')?.trim_start();
+    let (cmp_field, rest) = take_ident(rest)?;
+    if cmp_recv != b || cmp_field != "label" {
+        return None;
+    }
+    let rest = rest.strip_prefix(')')?.trim_start();
+    let rest = rest.strip_prefix(')')?.trim_start();
+    Some(rest)
+}
+
+/// `presetBuyableNames()` with no args and no trailing expression suffix.
+fn take_empty_call_expression(after: &str) -> Option<&str> {
+    let rest = after.trim_start().strip_prefix('(')?.trim_start();
+    let rest = rest.strip_prefix(')')?;
+    if value_expression_complete(rest) {
+        Some(rest)
+    } else {
+        None
+    }
+}
+
+/// Remainder after a finished value: empty, terminator, or the next declaration.
+fn value_expression_complete(after: &str) -> bool {
+    let rest = after.trim_start();
+    if rest.is_empty() || rest.starts_with(';') || rest.starts_with(',') || rest.starts_with('}') {
+        return true;
+    }
+    rest.starts_with("export")
+        || rest.starts_with("const ")
+        || rest.starts_with("function ")
+        || rest.starts_with("let ")
+        || rest.starts_with("var ")
+        || rest.starts_with("import")
+}
+
+struct ShopDbRecord {
+    keepers: Vec<String>,
+    item_names: Vec<String>,
+}
+
+/// `presetBuyableNames()` from frozen `shopPresets.ts` × parsed `SHOP_DB`.
+fn resolve_preset_buyable_names(
+    file_src: &str,
+    sources: Option<&HashMap<String, String>>,
+) -> Option<Vec<String>> {
+    let presets_rhs = const_eq_rhs(file_src, "SHOP_PRESETS")?;
+    let preset_keepers = object_array_field_values(presets_rhs, "keeper", file_src)?;
+    let shop_db_src = shop_db_source_text(sources, file_src)?;
+    let records = parse_shop_db_records(&shop_db_src)?;
+    if records.is_empty() || preset_keepers.is_empty() {
+        return None;
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for keeper in preset_keepers {
+        let Some(rec) = records
+            .iter()
+            .find(|r| r.keepers.iter().any(|k| k == &keeper))
+        else {
+            continue;
+        };
+        for name in &rec.item_names {
+            names.insert(name.clone());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.into_iter().collect())
+}
+
+const SHOP_DB_SOURCE_KEYS: [&str; 2] = ["./src/bot/data/shopdb.ts", "./src/bot/data/shopdb.js"];
+
+/// Load `SHOP_DB` from the registered catalog root at the known data path.
+pub(crate) fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, root: &Path) {
+    let ts = root.join("src/bot/data/shopdb.ts");
+    let js = root.join("src/bot/data/shopdb.js");
+    let text = std::fs::read_to_string(&ts)
+        .ok()
+        .or_else(|| std::fs::read_to_string(&js).ok());
+    let Some(text) = text else {
+        return;
+    };
+    sources
+        .entry(SHOP_DB_SOURCE_KEYS[0].into())
+        .or_insert_with(|| text.clone());
+    sources.entry(SHOP_DB_SOURCE_KEYS[1].into()).or_insert(text);
+}
+
+fn shop_db_source_text(sources: Option<&HashMap<String, String>>, file_src: &str) -> Option<String> {
+    if let Some(map) = sources {
+        for key in SHOP_DB_SOURCE_KEYS {
+            if let Some(text) = lookup_source(map, key) {
+                return Some(text);
+            }
+        }
+        if const_eq_rhs(file_src, "SHOP_DB").is_some() {
+            return Some(file_src.to_string());
+        }
+        return None;
+    }
+    if const_eq_rhs(file_src, "SHOP_DB").is_some() {
+        return Some(file_src.to_string());
+    }
+    None
+}
+
+fn parse_shop_db_records(src: &str) -> Option<Vec<ShopDbRecord>> {
+    let rhs = const_eq_rhs(src, "SHOP_DB")?;
+    let s = rhs.trim_start();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '{', '}')?;
+    let mut rest = s[1..end].trim_start();
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        let Some((_, key_end)) = scan_quoted(rest) else {
+            return None;
+        };
+        let after_key = &rest[key_end..];
+        let after_colon = after_key.trim_start().strip_prefix(':')?.trim_start();
+        if !after_colon.starts_with('{') {
+            return None;
+        }
+        let obj_end = find_matching_bracket(after_colon, '{', '}')?;
+        let record_obj = &after_colon[..=obj_end];
+        out.push(parse_one_shop_db_record(record_obj)?);
+        rest = after_colon[obj_end + 1..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if !rest.is_empty() {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+fn parse_one_shop_db_record(obj: &str) -> Option<ShopDbRecord> {
+    let keepers = parse_json_string_array_field(obj, "keepers")?;
+    let item_names = parse_shop_items_names(obj)?;
+    Some(ShopDbRecord {
+        keepers,
+        item_names,
+    })
+}
+
+fn parse_json_string_array_field(obj: &str, field: &str) -> Option<Vec<String>> {
+    let needle = format!("\"{field}\":");
+    let idx = obj.find(&needle)?;
+    let after = obj[idx + needle.len()..].trim_start();
+    if !after.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(after, '[', ']')?;
+    parse_string_array(&after[..=end])
+}
+
+fn parse_shop_items_names(obj: &str) -> Option<Vec<String>> {
+    let needle = "\"items\":";
+    let idx = obj.find(needle)?;
+    let after = obj[idx + needle.len()..].trim_start();
+    if !after.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(after, '[', ']')?;
+    let mut rest = after[1..end].trim_start();
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        if !rest.starts_with('{') {
+            return None;
+        }
+        let obj_end = find_matching_bracket(rest, '{', '}')?;
+        if let Some(name) = quoted_field_in_object(&rest[..=obj_end], "name") {
+            out.push(name);
+        }
+        rest = rest[obj_end + 1..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if !rest.is_empty() {
+            return None;
+        }
+    }
+    Some(out)
 }
 
 /// `FODDER.flatMap(... ITEM_DB.find ... Math.floor(rec.cost * ALCH_RATE|0.6) ...).sort(...)`.
@@ -1976,7 +2255,7 @@ fn high_alchemy_fodder_ident<'a>(file_src: &str, rhs: &'a str) -> Option<&'a str
     if !compact.contains(".obj===") && !compact.contains(".obj==") {
         return None;
     }
-    if !compact.contains("Math.floor(") {
+    if !compact.contains("Math.floor(") && !compact.contains("alchValueOf(") {
         return None;
     }
     if !compact.contains(".sort(") {
@@ -1985,10 +2264,34 @@ fn high_alchemy_fodder_ident<'a>(file_src: &str, rhs: &'a str) -> Option<&'a str
     if !flat_map_mentions_obj(&compact) {
         return None;
     }
-    if !high_alchemy_rate_operand(file_src, &compact) {
+    if !high_alchemy_rate_operand(file_src, &compact)
+        && !high_alchemy_alch_value_of(&compact, file_src)
+    {
         return None;
     }
     Some(fodder)
+}
+
+/// Frozen `AlcherLogic.ts` uses `alchValueOf(rec.cost)` (default `HIGH_ALCH_RATE`).
+fn high_alchemy_alch_value_of(compact: &str, file_src: &str) -> bool {
+    if !compact.contains("alchValueOf(rec.cost") {
+        return false;
+    }
+    if compact.contains("alchValueOf(rec.cost,HIGH_ALCH_RATE)") {
+        let Some(rhs) = const_eq_rhs(file_src, "HIGH_ALCH_RATE") else {
+            return false;
+        };
+        return number_is_point_six(rhs.trim_start());
+    }
+    if compact.contains("alchValueOf(rec.cost)") {
+        let Some(rhs) = const_eq_rhs(file_src, "HIGH_ALCH_RATE") else {
+            return const_eq_rhs(file_src, "ALCH_RATE")
+                .map(|r| number_is_point_six(r.trim_start()))
+                .unwrap_or(false);
+        };
+        return number_is_point_six(rhs.trim_start());
+    }
+    false
 }
 
 fn flat_map_mentions_obj(compact: &str) -> bool {
@@ -2311,6 +2614,71 @@ export const SETTINGS = {
     }
 
     #[test]
+    fn preset_buyable_names_dedupes_and_sorts() {
+        let src = r#"
+export const SHOP_PRESETS = [
+    { label: 'A', keeper: 'Aemad' },
+    { label: 'B', keeper: 'Lowe' }
+];
+export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Vial of water"},{"name":"Feather"}]},
+    "archeryshop": {"keepers":["Lowe"],"items":[{"name":"Bronze arrow"},{"name":"Vial of water"}]}
+};
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let buy = setting(&schema, "buyItems");
+        assert_eq!(
+            buy.options,
+            ["Bronze arrow", "Feather", "Vial of water"],
+            "union sorted; duplicate Vial of water once"
+        );
+    }
+
+    #[test]
+    fn preset_buyable_names_malformed_shop_db_stays_empty() {
+        let src = r#"
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Nobody' }];
+export const SHOP_DB = { broken: true };
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let buy = setting(&schema, "buyItems");
+        assert!(buy.options.is_empty(), "unknown keeper must not fabricate names");
+    }
+
+    #[test]
+    fn frozen_alch_sort_wrapper_item_option_spec() {
+        let src = r#"
+const ALCH_RATE = 0.6;
+const FODDER = [{ obj: 'maple_longbow' }, { obj: 'yew_longbow', label: 'Yew longbow' }];
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = FODDER.flatMap(({ obj, label }) => {
+    const rec = ITEM_DB.find(r => r.obj === obj);
+    return rec ? [{ key: obj, id: rec.id, name: rec.name, label: label ?? rec.name, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+}).sort((a, b) => b.alchValue - a.alchValue);
+export const ALCH_OPTIONS = [
+    CUSTOM_ALCH_KEY,
+    ...[...ALCH_ITEMS].sort((a, b) => a.label.localeCompare(b.label)).map(i => i.key)
+];
+export const SETTINGS = {
+    items: { type: 'string[]', default: [], options: ALCH_OPTIONS }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let items = setting(&schema, "items");
+        assert!(items.options.is_empty());
+        let spec = items.item_option_spec.as_ref().expect("sort-wrapped spec");
+        assert_eq!(spec.prefix, vec!["custom".to_string()]);
+        assert!(spec.sort_keys_by_label);
+        assert_eq!(spec.candidates.len(), 2);
+    }
+
+    #[test]
     fn computed_alch_map_key_stays_unresolved() {
         let src = r#"
 export const CUSTOM_ALCH_KEY = 'custom';
@@ -2328,6 +2696,207 @@ export const SETTINGS = {
             items.options
         );
         assert!(items.item_option_spec.is_none());
+    }
+
+    #[test]
+    fn unsupported_alch_wrapper_shapes_stay_unresolved() {
+        let fodder = r#"
+const ALCH_RATE = 0.6;
+const FODDER = [{ obj: 'maple_longbow' }, { obj: 'yew_longbow', label: 'Yew longbow' }];
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = FODDER.flatMap(({ obj, label }) => {
+    const rec = ITEM_DB.find(r => r.obj === obj);
+    return rec ? [{ key: obj, id: rec.id, name: rec.name, label: label ?? rec.name, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+}).sort((a, b) => b.alchValue - a.alchValue);
+"#;
+        let filter = format!(
+            r#"{fodder}
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...[...ALCH_ITEMS.filter(x => true)].sort((a,b)=>a.label.localeCompare(b.label)).map(i=>i.key)];
+export const SETTINGS = {{
+    items: {{ type: 'string[]', default: [], options: ALCH_OPTIONS }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&filter);
+        let items = setting(&schema, "items");
+        assert!(items.options.is_empty());
+        assert!(
+            items.item_option_spec.is_none(),
+            "filter remainder must not parse as ALCH_ITEMS: {:?}",
+            items.item_option_spec
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+
+        let concat = format!(
+            r#"{fodder}
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...[...ALCH_ITEMS].sort((a,b)=>a.label.localeCompare(b.label)).map(i=>i.key)].concat(evil);
+export const SETTINGS = {{
+    items: {{ type: 'string[]', default: [], options: ALCH_OPTIONS }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&concat);
+        let items = setting(&schema, "items");
+        assert!(
+            items.item_option_spec.is_none(),
+            "trailing .concat must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+    }
+
+    #[test]
+    fn preset_buyable_names_requires_empty_call_and_full_expression() {
+        let db = r#"
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Vial of water"}]}
+};
+"#;
+        let args = format!(
+            r#"{db}
+export const SETTINGS = {{
+    buyItems: {{ type: 'string[]', default: [], options: presetBuyableNames(x) }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&args);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "presetBuyableNames(x) must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+
+        let concat = format!(
+            r#"{db}
+export const SETTINGS = {{
+    buyItems: {{ type: 'string[]', default: [], options: presetBuyableNames().concat(x) }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&concat);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "presetBuyableNames().concat must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+    }
+
+    #[test]
+    fn incomplete_shop_db_parse_stays_empty() {
+        let src = r#"
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Vial of water"}]},
+    junk
+};
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "partial SHOP_DB must not publish a keeper union"
+        );
+    }
+
+    #[test]
+    fn shop_db_sources_use_explicit_keys_and_never_ambient() {
+        let iso = crate::IsolatedEnv::enter("shopdb-parser-ambient");
+        let foreign = iso.dir.join("foreign-root");
+        std::fs::create_dir_all(foreign.join("src/bot/data")).unwrap();
+        std::fs::write(
+            foreign.join("src/bot/data/shopdb.ts"),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"ZZZ_FOREIGN_TONIC"}]}
+};
+"#,
+        )
+        .unwrap();
+        iso.set_rs2b0t(&foreign);
+        persist_rs2b0t_root(&foreign).expect("persist foreign root");
+
+        let shop = r#"
+import { presetBuyableNames } from './shopPresets.js';
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let isolated = settings_schema_from_source(shop);
+        assert!(
+            setting(&isolated, "buyItems").options.is_empty(),
+            "source-only parse must not read ambient shopdb: {:?}",
+            setting(&isolated, "buyItems").options
+        );
+
+        let mut empty = HashMap::new();
+        empty.insert("./ShopBuyout/ShopBuyout.js".into(), shop.to_string());
+        let cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &empty,
+        )
+        .expect("partial sources parse");
+        assert!(
+            setting(&cards[0].settings_schema, "buyItems")
+                .options
+                .is_empty(),
+            "Some(partial) must not borrow another catalog: {:?}",
+            setting(&cards[0].settings_schema, "buyItems").options
+        );
+
+        let mut decoy = empty.clone();
+        decoy.insert(
+            "./injected/shopdb-extra.ts".into(),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Wrong Name"}]}
+};
+"#
+            .into(),
+        );
+        let decoy_cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &decoy,
+        )
+        .expect("decoy sources parse");
+        assert!(
+            setting(&decoy_cards[0].settings_schema, "buyItems")
+                .options
+                .is_empty(),
+            "contains(shopdb) first-hit must not select a non-explicit key"
+        );
+
+        let mut exact = empty;
+        exact.insert(
+            "./src/bot/data/shopdb.ts".into(),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Right Name"}]}
+};
+"#
+            .into(),
+        );
+        let exact_cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &exact,
+        )
+        .expect("exact shopdb key parses");
+        assert_eq!(
+            setting(&exact_cards[0].settings_schema, "buyItems").options,
+            ["Right Name"]
+        );
     }
 
     /// Bounded frozen same-dir walk. Not UI proof. Requires `$RS2B0T`.
@@ -2377,6 +2946,15 @@ export const SETTINGS = {
                         .or_insert(text);
                 }
             }
+        }
+        let shopdb_path = root.join("src/bot/data/shopdb.ts");
+        if let Ok(text) = std::fs::read_to_string(&shopdb_path) {
+            sources
+                .entry("./src/bot/data/shopdb.ts".into())
+                .or_insert_with(|| text.clone());
+            sources
+                .entry("./src/bot/data/shopdb.js".into())
+                .or_insert(text);
         }
         let cards = parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
         let by_name: HashMap<&str, &RegistryCard> =
@@ -2492,10 +3070,22 @@ export const SETTINGS = {
 
         let alcher = setting(&by_name["Alcher"].settings_schema, "items");
         assert!(
-            alcher.options.is_empty() && alcher.item_option_spec.is_none(),
-            "Alcher.items remains later product work, got opts={:?} spec={:?}",
-            alcher.options,
-            alcher.item_option_spec
+            alcher.options.is_empty(),
+            "Alcher.items keys must not bake into options: {:?}",
+            alcher.options
+        );
+        let spec = alcher
+            .item_option_spec
+            .as_ref()
+            .expect("Alcher.items sort-wrapped item_option_spec");
+        assert_eq!(spec.prefix, vec!["custom".to_string()]);
+        assert!(
+            spec.sort_keys_by_label,
+            "frozen ALCH_OPTIONS uses label sort before .map(i => i.key)"
+        );
+        assert!(
+            !spec.candidates.is_empty(),
+            "Alcher FODDER chain must yield candidates"
         );
         let shop = setting(&by_name["ShopBuyout"].settings_schema, "shop");
         assert!(
@@ -2505,10 +3095,25 @@ export const SETTINGS = {
         );
         let buy = setting(&by_name["ShopBuyout"].settings_schema, "buyItems");
         assert!(
-            buy.options.is_empty() && buy.item_option_spec.is_none(),
-            "ShopBuyout.buyItems remains later product work, got opts={:?}",
+            !buy.options.is_empty(),
+            "ShopBuyout.buyItems presetBuyableNames join must emit options: {:?}",
             buy.options
         );
+        assert!(buy.item_option_spec.is_none());
+        let buy_sorted = buy.options.clone();
+        let mut sorted = buy_sorted.clone();
+        sorted.sort();
+        assert_eq!(
+            buy_sorted, sorted,
+            "presetBuyableNames must be alphabetically sorted: first={:?} last={:?}",
+            buy_sorted.first(),
+            buy_sorted.last()
+        );
+        let buy_lower: Vec<String> = buy.options.iter().map(|s| s.to_ascii_lowercase()).collect();
+        assert!(buy_lower.iter().any(|n| n.contains("rune")));
+        assert!(buy_lower.iter().any(|n| n.contains("arrow")));
+        assert!(buy_lower.contains(&"feather".to_string()));
+        assert!(buy_lower.contains(&"vial of water".to_string()));
 
         eprintln!(
             "AUDIT summary recovered={recovered} empty={empty} of {}",
@@ -2519,10 +3124,7 @@ export const SETTINGS = {
             want.len(),
             "row accounting {recovered}+{empty}"
         );
-        assert_eq!(
-            empty, 2,
-            "only Alcher.items and ShopBuyout.buyItems stay empty; other empties are parser defects"
-        );
-        assert_eq!(recovered, 22);
+        assert_eq!(empty, 0, "all 24 audited option rows must recover");
+        assert_eq!(recovered, 24);
     }
 }
