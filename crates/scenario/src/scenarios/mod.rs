@@ -62,7 +62,8 @@ pub(crate) use production::{
     wildy_agility_scenario,
 };
 pub(crate) use ranging_guild::{
-    ranging_guild_bank_scenario, ranging_guild_redeem_scenario, ranging_guild_round_scenario,
+    ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,
+    ranging_guild_round_scenario,
 };
 pub(crate) use render::render_smoke_scenario;
 pub(crate) use script_basics::{

@@ -1594,6 +1594,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "ranging_guild_round",
             "ranging_guild_redeem",
             "ranging_guild_bank",
+            "ranging_guild_full",
             "script_trade",
             "nature_crafter_air",
             "mule_crafter_air",
@@ -12149,4 +12150,155 @@ fn ranging_guild_bank_orders_keep_deposit_coin_withdraw_close_return_and_fee() {
         }
     );
     assert!(names().contains(&"ranging_guild_bank"));
+}
+
+#[test]
+fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
+    // Frozen rangingguild-live.ts --phase full: 15-minute wall budget,
+    // coinsPerTrip 400, seeded 1999 tickets, no seeded rune arrows. Modal
+    // 446 and ScriptRunner.stop are Core witnesses, not scenario Proofs.
+    const COINS: i32 = 995;
+    const MAGIC_SHORTBOW: i32 = 861;
+    const ARCHERY_TICKET: i32 = 1464;
+    const RUNE_ARROW: i32 = 892;
+    const TARGET_COUNT: i32 = 156;
+    const RANGED_STAT: i32 = 4;
+    const SEERS_X: i32 = 2725;
+    const SEERS_Z: i32 = 3491;
+    const STAND_X: i32 = 2672;
+    const STAND_Z: i32 = 3419;
+
+    let full = get("ranging_guild_full").expect("ranging_guild_full");
+    assert_eq!(full.settings.start_script, Some("RangingGuild"));
+    assert_eq!(full.settings.deadline, Duration::from_secs(15 * 60));
+    let inject = settings_inject_map(full.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        inject.get("coinsPerTrip").and_then(Value::as_f64),
+        Some(400.0)
+    );
+
+    let start = full
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("StartScript");
+    let seed = full.steps[..start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(seed.contains(&Proof::Stat {
+        id: RANGED_STAT,
+        min: 70
+    }));
+    assert!(seed.contains(&Proof::ArrivedNear {
+        x: SEERS_X,
+        z: SEERS_Z,
+        level: 0,
+        radius: 6,
+    }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: ARCHERY_TICKET,
+        count: 1999
+    }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: RUNE_ARROW,
+        count: 0
+    }));
+    assert!(seed.contains(&Proof::ItemIdAtMost { id: COINS, count: 0 }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: MAGIC_SHORTBOW,
+        count: 0
+    }));
+    assert!(
+        !seed
+            .iter()
+            .any(|proof| matches!(proof, Proof::ItemId { id: RUNE_ARROW, .. })),
+        "full must not seed pack rune arrows"
+    );
+    assert!(
+        !seed
+            .iter()
+            .any(|proof| matches!(proof, Proof::ItemId { id: ARCHERY_TICKET, count: 2000 })),
+        "full must not seed a redeem stack"
+    );
+    assert!(
+        full.steps[..start]
+            .iter()
+            .any(|step| step.name.contains("seeded") || step.name.contains("KEEP")),
+        "KEEP tickets must be named as seeded, not earned"
+    );
+
+    let watch = full.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        watch,
+        vec![
+            Proof::ItemId {
+                id: COINS,
+                count: 400
+            },
+            Proof::BankClosed,
+            Proof::ArrivedNear {
+                x: STAND_X,
+                z: STAND_Z,
+                level: 0,
+                radius: 2,
+            },
+            Proof::ItemIdAtMost {
+                id: COINS,
+                count: 200
+            },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 1
+            },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 2
+            },
+            Proof::VarpExact {
+                id: TARGET_COUNT,
+                value: 0
+            },
+            Proof::ItemId {
+                id: ARCHERY_TICKET,
+                count: 2000
+            },
+            Proof::ItemIdAtMost {
+                id: ARCHERY_TICKET,
+                count: 1999
+            },
+            Proof::ItemId {
+                id: RUNE_ARROW,
+                count: 50
+            },
+            Proof::ItemIdAtMost { id: COINS, count: 0 },
+            Proof::Varp {
+                id: TARGET_COUNT,
+                min: 1
+            },
+            Proof::BankItemId {
+                id: RUNE_ARROW,
+                count: 50
+            },
+            Proof::ItemIdAtMost {
+                id: RUNE_ARROW,
+                count: 0
+            },
+            Proof::ItemIdAtMost {
+                id: COINS,
+                count: 199
+            },
+        ]
+    );
+    assert_eq!(
+        full.proof,
+        Proof::ItemIdAtMost {
+            id: COINS,
+            count: 199
+        }
+    );
+    assert!(names().contains(&"ranging_guild_full"));
 }

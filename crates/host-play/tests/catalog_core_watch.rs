@@ -382,9 +382,10 @@ fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
 }
 
 use host_play::catalog_core::{
-    ARCHERY_TICKET_ID, COINS_PER_TRIP, ENTRY_FEE, MAGIC_SHORTBOW_ID, RANGING_GUILD_MERCHANT_STAND,
-    RANGING_GUILD_SEERS_BANK, RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID,
-    SEED_KEEP_TICKETS, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_SCORE,
+    ARCHERY_TICKET_ID, BRONZE_ARROW_ID, COINS_PER_TRIP, ENTRY_FEE, MAGIC_SHORTBOW_ID,
+    RANGING_GUILD_FULL_STOP_NEEDLE, RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK,
+    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID, SEED_KEEP_TICKETS,
+    TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_SCORE,
 };
 
 fn ranging_round_baseline() -> Observation {
@@ -753,4 +754,254 @@ fn ranging_guild_bank_rejects_redeem_stack_and_already_funded_pack() {
         funded.begin_start("catalogtest").is_err(),
         "pack coins at Start are not a Seers withdraw baseline"
     );
+}
+
+fn ranging_full_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_SEERS_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, SEED_KEEP_TICKETS);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation
+}
+
+fn ranging_full_stop(reason: &str) -> script::ScriptLifecycleReceipt {
+    script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: 400,
+        reason: reason.into(),
+    }
+}
+
+fn ranging_full_start(observation: Observation) -> CoreWatch {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildFull, "catalogtest");
+    watch.observe("catalogtest", observation, false);
+    watch.begin_start("catalogtest").unwrap();
+    watch
+}
+
+fn ranging_full_earned_tickets(baseline: &Observation) -> Observation {
+    let mut now = baseline.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_STAND);
+    now.item_ids
+        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now
+}
+
+fn ranging_full_bought(from: &Observation) -> Observation {
+    let mut now = from.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_MERCHANT_STAND);
+    now.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    now.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now
+}
+
+fn ranging_full_result_then_continue(from: &Observation) -> (Observation, Observation) {
+    let mut opened = from.clone();
+    opened.tick += 1;
+    opened.tile = Some(RANGING_GUILD_STAND);
+    opened.main_modal = TARGET_RESULT_MODAL;
+    opened.varps.insert(VARP_TARGET_COUNT, 2);
+    let mut closed = opened.clone();
+    closed.tick += 1;
+    closed.main_modal = -1;
+    closed.varps.insert(VARP_TARGET_COUNT, 3);
+    (opened, closed)
+}
+
+fn ranging_full_bank_bought(from: &Observation, arrows: i32, item: i32) -> Observation {
+    let mut now = from.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_SEERS_BANK);
+    now.bank_open = true;
+    now.bank_loaded = true;
+    now.bank_generation = from.bank_generation + 1;
+    now.item_ids.insert(RUNE_ARROW_ID, 0);
+    now.bank_ids.insert(item, arrows);
+    now.item_ids.insert(COINS_ID, 0);
+    now.item_ids.insert(ARCHERY_TICKET_ID, 50);
+    now
+}
+
+#[test]
+fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_deadline_only_stop() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_full").unwrap(),
+        CoreCase::RangingGuildFull
+    );
+    assert_eq!(CoreCase::RangingGuildFull.card_name(), "RangingGuild");
+
+    let baseline = ranging_full_baseline();
+    let preseed = ranging_full_start(baseline.clone());
+    preseed.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        preseed.qualify().unwrap_err().contains("incomplete"),
+        "preseeded Seers KEEP tickets alone must not qualify"
+    );
+
+    let seeded_arrows = CoreWatch::default();
+    seeded_arrows.configure(CoreCase::RangingGuildFull, "catalogtest");
+    let mut packed = baseline.clone();
+    packed.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    seeded_arrows.observe("catalogtest", packed, false);
+    assert!(
+        seeded_arrows.begin_start("catalogtest").is_err(),
+        "seeded pack rune arrows are the bank cell, not fullflow"
+    );
+
+    let no_buy = ranging_full_start(baseline.clone());
+    let mut gifted = baseline.clone();
+    gifted.tick += 1;
+    gifted.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    no_buy.observe("catalogtest", gifted.clone(), false);
+    let deposited = ranging_full_bank_bought(&gifted, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    no_buy.observe("catalogtest", deposited, false);
+    assert!(
+        no_buy.qualify().is_err(),
+        "arrow gift plus bank without a 2000-ticket shop spend is not bought-then-banked"
+    );
+
+    let earned = ranging_full_earned_tickets(&baseline);
+    let bought = ranging_full_bought(&earned);
+    let wrong_item = ranging_full_start(baseline.clone());
+    wrong_item.observe("catalogtest", earned.clone(), false);
+    wrong_item.observe("catalogtest", bought.clone(), false);
+    let bronze = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, BRONZE_ARROW_ID);
+    wrong_item.observe("catalogtest", bronze, false);
+    assert!(
+        wrong_item.qualify().is_err(),
+        "banking bronze arrows is not the shop-bought rune-arrow deposit"
+    );
+
+    let no_modal = ranging_full_start(baseline.clone());
+    no_modal.observe("catalogtest", earned.clone(), false);
+    let mut shop_modal = bought.clone();
+    shop_modal.main_modal = 4461;
+    no_modal.observe("catalogtest", shop_modal, false);
+    let banked = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    no_modal.observe("catalogtest", banked.clone(), false);
+    let mut empty = banked.clone();
+    empty.bank_open = false;
+    empty.bank_loaded = false;
+    empty.bank_generation += 1;
+    empty.item_ids.insert(COINS_ID, 0);
+    empty.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
+    )));
+    no_modal.observe("catalogtest", empty, false);
+    assert!(
+        no_modal.qualify().is_err(),
+        "ticket-shop 4461 or never opening result modal 446 cannot qualify"
+    );
+
+    let bank_close_only = ranging_full_start(baseline.clone());
+    bank_close_only.observe("catalogtest", earned.clone(), false);
+    bank_close_only.observe("catalogtest", bought.clone(), false);
+    let mut opened_only = bought.clone();
+    opened_only.tick += 1;
+    opened_only.main_modal = TARGET_RESULT_MODAL;
+    opened_only.varps.insert(VARP_TARGET_COUNT, 2);
+    bank_close_only.observe("catalogtest", opened_only.clone(), false);
+    let mut closed_bank = opened_only;
+    closed_bank.tick += 1;
+    closed_bank.main_modal = -1;
+    closed_bank.bank_open = false;
+    closed_bank.bank_loaded = false;
+    closed_bank.bank_generation += 1;
+    bank_close_only.observe("catalogtest", closed_bank.clone(), false);
+    let banked_after_close = ranging_full_bank_bought(&closed_bank, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    bank_close_only.observe("catalogtest", banked_after_close.clone(), false);
+    let mut stopped_without_continue = banked_after_close;
+    stopped_without_continue.bank_open = false;
+    stopped_without_continue.bank_loaded = false;
+    stopped_without_continue.bank_generation += 1;
+    stopped_without_continue.item_ids.insert(COINS_ID, 0);
+    stopped_without_continue.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 0 tickets held, 50 rune arrows bought"
+    )));
+    bank_close_only.observe("catalogtest", stopped_without_continue, false);
+    assert!(
+        bank_close_only.qualify().is_err(),
+        "closing the bank after modal 446 is not script continuation"
+    );
+
+    let deadline = ranging_full_start(baseline);
+    deadline.observe("catalogtest", earned, false);
+    deadline.observe("catalogtest", bought.clone(), false);
+    let (opened, continued) = ranging_full_result_then_continue(&bought);
+    deadline.observe("catalogtest", opened, false);
+    deadline.observe("catalogtest", continued.clone(), false);
+    deadline.observe("catalogtest", banked.clone(), false);
+    let mut empty_only = banked;
+    empty_only.bank_open = false;
+    empty_only.bank_loaded = false;
+    empty_only.bank_generation += 1;
+    empty_only.item_ids.insert(COINS_ID, 0);
+    empty_only.script_lifecycle = Some(ranging_full_stop("harness deadline"));
+    deadline.observe("catalogtest", empty_only, false);
+    assert!(
+        deadline.qualify().is_err(),
+        "a deadline/timeout stop is not the source out-of-coins receipt"
+    );
+}
+
+#[test]
+fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_continue_and_honest_stop()
+{
+    let baseline = ranging_full_baseline();
+    let watch = ranging_full_start(baseline.clone());
+    let earned = ranging_full_earned_tickets(&baseline);
+    let bought = ranging_full_bought(&earned);
+    watch.observe("catalogtest", earned, false);
+    watch.observe("catalogtest", bought.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "shop buy without bank, modal, and stop is incomplete"
+    );
+
+    let (opened, continued) = ranging_full_result_then_continue(&bought);
+    watch.observe("catalogtest", opened, false);
+    assert!(
+        watch.qualify().is_err(),
+        "an open result modal without close and continuation is incomplete"
+    );
+    watch.observe("catalogtest", continued.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "modal close plus continuation without bought-then-banked stop is incomplete"
+    );
+
+    let banked = ranging_full_bank_bought(&continued, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    watch.observe("catalogtest", banked.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "bought-then-banked without the script stop is incomplete"
+    );
+
+    let mut stopped = banked;
+    stopped.bank_open = false;
+    stopped.bank_loaded = false;
+    stopped.bank_generation += 1;
+    stopped.item_ids.insert(COINS_ID, 0);
+    stopped.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
+    )));
+    watch.observe("catalogtest", stopped, false);
+    watch
+        .qualify()
+        .expect("shop buy, same-arrow bank, modal close+continue, and out-of-coins stop");
 }

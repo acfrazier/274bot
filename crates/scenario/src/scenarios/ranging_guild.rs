@@ -1,10 +1,10 @@
 //! Bounded RangingGuild gold: on-stand round/repeat, seeded-ticket redeem,
-//! and a Seers KEEP/coin-withdraw/return cycle.
+//! a Seers KEEP/coin-withdraw/return cycle, and the live `--phase full`
+//! bought-then-banked / result-modal / empty-coin cell.
 //!
 //! Facts are pinned to frozen `e2e/rangingguild-live.ts`, `RangingGuildLogic.ts`,
 //! selected-289 `obj`/`interface`/`varp.pack`, and `competition_judge.rs2` /
-//! `ticket_merchant.rs2`. Empty-coin honest stop and bought-then-banked
-//! arrows remain later full-phase work.
+//! `ticket_merchant.rs2`.
 
 use crate::*;
 
@@ -490,6 +490,238 @@ pub(crate) fn ranging_guild_bank_scenario() -> Scenario {
             start_script: Some("RangingGuild"),
             script_settings_inject: Some(ROUND_INJECT),
             terminal_shot: Some("ranging_guild_bank"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Frozen live `--phase full` wall budget (`minutes: 15`). Dirty-snapshot
+/// arm ticks stay the existing family 150/300 constants — not a converted
+/// 15-minute tick soak.
+pub(crate) const RANGING_GUILD_FULL_DEADLINE: Duration = Duration::from_secs(15 * 60);
+
+/// Live `--phase full`: Seers kit restock, earned-ticket shop buy, same
+/// rune-arrow bank deposit, then empty-coin rails. Modal 446 open/close
+/// and the `out of coins` lifecycle receipt are Core witnesses — scenario
+/// Proof has no main-modal or ScriptRunner.stop arm.
+pub(crate) fn ranging_guild_full_scenario() -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name:
+            "seed Ranged 70, seeded KEEP tickets one short of a trade, bank bow and coins at Seers",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, &format!("advancestat ranged {RANGED_LIVE}"));
+                cheat(c, "~clearinv");
+                cheat(c, "~clearbank");
+                cheat(c, &format!("give archery_ticket {SEED_KEEP_TICKETS}"));
+                cheat(c, "givebank magic_shortbow");
+                cheat(c, &format!("givebank coins {COINS_FOR_TWO_ROUNDS}"));
+                cheat(
+                    c,
+                    &tele_args(
+                        RANGING_GUILD_SEERS_BANK.level,
+                        RANGING_GUILD_SEERS_BANK.x,
+                        RANGING_GUILD_SEERS_BANK.z,
+                    ),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: RANGING_GUILD_SEERS_BANK.x,
+                z: RANGING_GUILD_SEERS_BANK.z,
+                level: RANGING_GUILD_SEERS_BANK.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(drain_advancestat());
+    for (name, arm) in [
+        (
+            "confirm Ranged 70 before Start",
+            Proof::Stat {
+                id: RANGED_STAT,
+                min: RANGED_LIVE,
+            },
+        ),
+        (
+            "confirm seeded KEEP archery tickets before Start, not a redeem stack",
+            Proof::ItemId {
+                id: ARCHERY_TICKET_ID,
+                count: SEED_KEEP_TICKETS,
+            },
+        ),
+        (
+            "confirm no seeded rune arrows before Start so the shop buy is real",
+            Proof::ItemIdAtMost {
+                id: RUNE_ARROW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no pack coins before Start so the first withdraw is real",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no pack Magic shortbow before Start so the bank must supply it",
+            Proof::ItemIdAtMost {
+                id: MAGIC_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(watch(name, arm, 60));
+    }
+    steps.push(start_catalog_step());
+    for (name, arm, ticks) in [
+        (
+            "watch coin withdraw-X of coinsPerTrip 400 after Start",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: COINS_FOR_TWO_ROUNDS,
+            },
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+        (
+            "watch the Seers bank close after the first restock",
+            Proof::BankClosed,
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+        (
+            "watch return to the range STAND after banking",
+            Proof::ArrivedNear {
+                x: RANGING_GUILD_STAND.x,
+                z: RANGING_GUILD_STAND.z,
+                level: RANGING_GUILD_STAND.level,
+                radius: 2,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the first 200-coin judge fee after return",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: ENTRY_FEE,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the judge start a real targetcount round",
+            Proof::Varp {
+                id: VARP_TARGET_COUNT,
+                min: 1,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch a shot increment targetcount past the paid 1",
+            Proof::Varp {
+                id: VARP_TARGET_COUNT,
+                min: 2,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the judge reset targetcount on payout",
+            Proof::VarpExact {
+                id: VARP_TARGET_COUNT,
+                value: 0,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch earned tickets cross the 2000-ticket shop threshold",
+            Proof::ItemId {
+                id: ARCHERY_TICKET_ID,
+                count: TICKETS_PER_TRADE,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the shop spend drop tickets below a further trade",
+            Proof::ItemIdAtMost {
+                id: ARCHERY_TICKET_ID,
+                count: SEED_KEEP_TICKETS,
+            },
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+        (
+            "watch the ticket shop hand over 50 rune arrows after Start",
+            Proof::ItemId {
+                id: RUNE_ARROW_ID,
+                count: RUNE_ARROWS_PER_TRADE,
+            },
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+        (
+            "watch the second 200-coin judge fee after the shop buy",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the further round start after the shop buy",
+            Proof::Varp {
+                id: VARP_TARGET_COUNT,
+                min: 1,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the same shop-bought rune arrows enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: RUNE_ARROW_ID,
+                count: RUNE_ARROWS_PER_TRADE,
+            },
+            RANGING_GUILD_ROUND_WATCH_TICKS,
+        ),
+        (
+            "watch the pack empty of rune arrows after the bought deposit",
+            Proof::ItemIdAtMost {
+                id: RUNE_ARROW_ID,
+                count: 0,
+            },
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+        (
+            "watch pack coins below the 200-coin fee so bank() can honest-stop",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: ENTRY_FEE - 1,
+            },
+            SCRIPT_GOLD_WATCH_TICKS,
+        ),
+    ] {
+        steps.push(watch(name, arm, ticks));
+    }
+    Scenario {
+        name: "ranging_guild_full",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: ENTRY_FEE - 1,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: RANGING_GUILD_FULL_DEADLINE,
+            start_script: Some("RangingGuild"),
+            script_settings_inject: Some(ROUND_INJECT),
+            terminal_shot: Some("ranging_guild_full"),
             nav: gold_script_nav(),
             ..Default::default()
         },
