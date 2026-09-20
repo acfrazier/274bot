@@ -28,16 +28,23 @@ function tools(kind) {
     return posted(kind).map(asTool).filter(Boolean);
 }
 
-function asTier(row) {
-    if (!row || typeof row !== 'object') return null;
-    if (typeof row.name !== 'string' || !row.name.trim()) return null;
-    if (typeof row.level !== 'number' || !Number.isFinite(row.level)) return null;
-    return { name: row.name, level: row.level };
+/** Non-array tiers throw the same TypeError as `for (const t of tiers)`. */
+function tierRows(tiers) {
+    if (!Array.isArray(tiers)) {
+        tiers.every(() => true);
+    }
+    return tiers;
 }
 
-function tierSnapshot(tiers) {
-    if (!Array.isArray(tiers)) return [];
-    return tiers.map(asTier).filter(Boolean);
+function tierRow(pending) {
+    if (!pending || typeof pending !== 'object') {
+        return { name: '', level: Number.NaN };
+    }
+    const name = pending.name;
+    return {
+        name: typeof name === 'string' ? name : String(name ?? ''),
+        level: Number(pending.level),
+    };
 }
 
 export const AXES = tools('axes').map((t) => ({ name: t.name, id: t.id }));
@@ -345,36 +352,39 @@ export function bestPickaxe(level, available) {
     return bestFrom('pickaxes', level, available);
 }
 
-function bestFromTierList(level, snapshot, available) {
-    if (typeof available !== 'function') return null;
+function bestFromTierList(level, tiers, available) {
     let index = -1;
     let accepted = false;
     let row = null;
     let rowIndex = null;
-    let levelOk = undefined;
+    let hasPlayerLevel = false;
     let pending = null;
     for (;;) {
         const payload = {
             op: 'best_tiers',
             index,
             accepted,
-            has_next: index + 1 < snapshot.length,
+            has_next: index + 1 < tiers.length,
         };
         if (row) {
             payload.row = row;
             payload.row_index = rowIndex;
         }
-        if (levelOk !== undefined) payload.level_ok = levelOk;
+        if (hasPlayerLevel) {
+            payload.has_player_level = true;
+            const n = Number(level);
+            if (!Number.isNaN(n)) payload.player_level = n;
+        }
         const step = call(payload);
         if (step.kind === 'need_row') {
-            pending = snapshot[step.index];
-            row = pending ? { name: pending.name, level: pending.level } : null;
+            pending = tiers[step.index];
+            row = tierRow(pending);
             rowIndex = step.index;
-            levelOk = undefined;
+            hasPlayerLevel = false;
             continue;
         }
         if (step.kind === 'need_level') {
-            levelOk = Number(level) >= (pending.level ?? 0);
+            hasPlayerLevel = true;
             continue;
         }
         if (step.kind === 'skip') {
@@ -382,25 +392,25 @@ function bestFromTierList(level, snapshot, available) {
             accepted = false;
             row = null;
             rowIndex = null;
-            levelOk = undefined;
+            hasPlayerLevel = false;
             pending = null;
             continue;
         }
         if (step.kind === 'done') return step.name;
         if (step.kind !== 'probe') return null;
         index = step.index;
-        accepted = available(step.name) === true;
+        accepted = !!available(step.name);
         if (!accepted) {
             row = null;
             rowIndex = null;
-            levelOk = undefined;
+            hasPlayerLevel = false;
             pending = null;
         }
     }
 }
 
 export function bestFromTiers(level, tiers, available) {
-    return bestFromTierList(level, tierSnapshot(tiers), available);
+    return bestFromTierList(level, tierRows(tiers), available);
 }
 
 export function bankHasBetterGatherTool() {

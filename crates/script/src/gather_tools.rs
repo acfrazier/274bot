@@ -44,17 +44,6 @@ pub fn best_axe(_level: i32, mut available: impl FnMut(&str) -> bool) -> Option<
         .find_map(|tool| available(tool.name).then_some(tool.name))
 }
 
-/// First best-first tier whose use level is met and `available` accepts.
-pub fn best_from_tiers<'a>(
-    level: i32,
-    tiers: &'a [(&'a str, i32)],
-    mut available: impl FnMut(&str) -> bool,
-) -> Option<&'a str> {
-    tiers
-        .iter()
-        .find_map(|(name, need)| (level >= *need && available(name)).then_some(*name))
-}
-
 fn named(name: &str) -> Option<&'static GatherTool> {
     let name = name.trim();
     AXES.iter().chain(PICKAXES).find(|tool| tool.name == name)
@@ -79,6 +68,23 @@ fn i64_field(payload: &Value, key: &str, default: i64) -> i64 {
 
 fn bool_field(payload: &Value, key: &str) -> Option<bool> {
     payload.get(key).and_then(Value::as_bool)
+}
+
+fn f64_field(payload: &Value, key: &str) -> Option<f64> {
+    payload.get(key).and_then(|v| v.as_f64())
+}
+
+fn row_tier_level(payload: &Value) -> f64 {
+    payload
+        .get("row")
+        .and_then(|row| row.get("level"))
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::NAN)
+}
+
+/// JS `Number(player) >= Number(tierLevel)` at a reached tier gate.
+fn tier_player_meets(player: f64, tier_level: f64) -> bool {
+    !player.is_nan() && !tier_level.is_nan() && player >= tier_level
 }
 
 fn has_key(payload: &Value, key: &str) -> bool {
@@ -178,8 +184,8 @@ pub fn dispatch(payload: &Value) -> Value {
 /// `bestAxe` / `bestPickaxe`: walk the shim's `tools(kind)` snapshot in order.
 /// Mining rows ask for a fresh JS `Number(level) >= (use_level ?? 0)` at each
 /// reached gate; axes never request that conversion.
-/// `bestFromTiers`: walk caller tiers in order; every row asks for a fresh
-/// JS `Number(level) >= tier.level` before probing availability.
+/// `bestFromTiers`: walk caller tiers in order; marshalled `player_level` is
+/// compared to the row tier level here before any availability probe.
 fn best_tiers_step(payload: &Value) -> Value {
     let index = i64_field(payload, "index", -1);
     let accepted = bool_field(payload, "accepted").unwrap_or(false);
@@ -197,10 +203,12 @@ fn best_tiers_step(payload: &Value) -> Value {
         }
         return json!({"kind": "none"});
     }
-    match bool_field(payload, "level_ok") {
-        None => return need_level(next),
-        Some(false) => return skip(next),
-        Some(true) => {}
+    if !has_key(payload, "has_player_level") {
+        return need_level(next);
+    }
+    let player = f64_field(payload, "player_level").unwrap_or(f64::NAN);
+    if !tier_player_meets(player, row_tier_level(payload)) {
+        return skip(next);
     }
     match row_name(payload) {
         Some(name) => json!({"kind": "probe", "index": next, "name": name}),
@@ -424,39 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn best_from_tiers_keeps_order_level_gate_and_short_circuit() {
-        let bows = [
-            ("Magic shortbow", 50),
-            ("Yew shortbow", 40),
-            ("Shortbow", 1),
-        ];
-        assert_eq!(
-            best_from_tiers(40, &bows, |n| n == "Yew shortbow"),
-            Some("Yew shortbow")
-        );
-        assert_eq!(best_from_tiers(39, &bows, |_| true), Some("Shortbow"));
-        assert_eq!(best_from_tiers(0, &bows, |_| true), None);
-        let mut calls = Vec::new();
-        assert_eq!(
-            best_from_tiers(99, &bows, |n| {
-                calls.push(n.to_string());
-                false
-            }),
-            None
-        );
-        assert_eq!(calls, ["Magic shortbow", "Yew shortbow", "Shortbow"]);
-        let mut hit_calls = Vec::new();
-        assert_eq!(
-            best_from_tiers(50, &bows, |n| {
-                hit_calls.push(n.to_string());
-                n == "Yew shortbow"
-            }),
-            Some("Yew shortbow")
-        );
-        assert_eq!(hit_calls, ["Magic shortbow", "Yew shortbow"]);
-    }
-
-    #[test]
     fn best_axe_has_no_woodcutting_gate_and_keeps_black() {
         assert_eq!(
             best_axe(1, |name| name == "Rune axe" || name == "Steel axe"),
@@ -519,19 +494,29 @@ mod tests {
         assert_eq!(
             dispatch(&json!({
                 "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
-                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
-                "level_ok": false,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40.0},
+                "has_player_level": true, "player_level": 39.0,
             })),
             json!({"kind": "skip", "index": 0}),
-            "a failed level gate never probes"
+            "native level gate never probes"
         );
         assert_eq!(
             dispatch(&json!({
                 "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
-                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
-                "level_ok": true,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40.0},
+                "has_player_level": true, "player_level": 40.0,
             })),
-            json!({"kind": "probe", "index": 0, "name": "Yew shortbow"})
+            json!({"kind": "probe", "index": 0, "name": "Yew shortbow"}),
+            "exact tier boundary is eligible"
+        );
+        assert_eq!(
+            dispatch(&json!({
+                "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
+                "row_index": 0, "row": {"name": "Shortbow", "level": 1.0},
+                "has_player_level": true,
+            })),
+            json!({"kind": "skip", "index": 0}),
+            "marshalled NaN player level skips without re-asking"
         );
         assert_eq!(
             dispatch(&json!({

@@ -40,8 +40,43 @@ globalThis.__exhaust = bestFromTiers(50, BOWS, (n) => {
 });
 globalThis.__exhaustCalls = exhaustCalls;
 
-globalThis.__nonFn = bestFromTiers(40, BOWS, null);
 globalThis.__truthy = bestFromTiers(50, BOWS, (n) => (n === 'Magic shortbow' ? 1 : false));
+
+globalThis.__boundary = bestFromTiers(40, BOWS, () => true);
+
+const nanCalls = [];
+globalThis.__levelNan = bestFromTiers(NaN, BOWS, (n) => {
+    nanCalls.push(n);
+    return true;
+});
+globalThis.__levelNanCalls = nanCalls;
+
+try {
+    bestFromTiers(40, BOWS, null);
+    globalThis.__nonFnReached = 'called';
+} catch (e) {
+    globalThis.__nonFnReached = String(e && e.name ? e.name : e);
+}
+
+globalThis.__nonFnIneligible = bestFromTiers(0, BOWS, null);
+
+try {
+    bestFromTiers(40, BOWS, (n) => {
+        if (n === 'Yew shortbow') throw new Error('avail boom');
+        return false;
+    });
+    globalThis.__availBoom = 'called';
+} catch (e) {
+    globalThis.__availBoom = String(e && e.message ? e.message : e);
+}
+
+const orderTiers = [{ name: 'A', level: 1 }, null, { name: 'B', level: 1 }];
+const orderCalls = [];
+globalThis.__orderHit = bestFromTiers(5, orderTiers, (n) => {
+    orderCalls.push(n);
+    return n === 'B';
+});
+globalThis.__orderCalls = orderCalls;
 
 export default class T extends LoopingBot {
     loop() {}
@@ -78,8 +113,35 @@ fn best_from_tiers_export_orders_level_before_available_and_short_circuits() {
         iso.probe("__exhaustCalls").unwrap(),
         serde_json::json!(["Magic shortbow", "Yew shortbow", "Shortbow"])
     );
-    assert_eq!(iso.probe("__nonFn").unwrap(), serde_json::Value::Null);
-    assert_eq!(iso.probe("__truthy").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__truthy").unwrap(),
+        "Magic shortbow",
+        "truthy non-true callback results still select the tier"
+    );
+    assert_eq!(iso.probe("__boundary").unwrap(), "Yew shortbow");
+    assert_eq!(iso.probe("__levelNan").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__levelNanCalls").unwrap(),
+        serde_json::json!([]),
+        "NaN player level never reaches availability"
+    );
+    assert_eq!(
+        iso.probe("__nonFnReached").unwrap(),
+        "TypeError",
+        "null available throws once an eligible tier is reached"
+    );
+    assert_eq!(
+        iso.probe("__nonFnIneligible").unwrap(),
+        serde_json::Value::Null,
+        "null available is not invoked when no tier is eligible"
+    );
+    assert_eq!(iso.probe("__availBoom").unwrap(), "avail boom");
+    assert_eq!(iso.probe("__orderHit").unwrap(), "B");
+    assert_eq!(
+        iso.probe("__orderCalls").unwrap(),
+        serde_json::json!(["A", "B"]),
+        "sparse tiers keep source index order without dropping holes"
+    );
     iso.join();
 }
 
