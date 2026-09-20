@@ -13,10 +13,10 @@ pub(crate) use combat::{
     chaos_druid_yanille_scenario, fire_giant_approach_scenario, fire_giant_bank_scenario,
     fire_giant_prepared_scenario, fire_giant_scenario, green_dragon_bank_scenario,
     green_dragon_potions_scenario, green_dragon_prepared_scenario, green_dragon_scenario,
-    green_dragon_special_scenario, green_dragon_tele_scenario, hill_giant_bank_scenario,
-    hill_giant_loot_deposit_scenario, hill_giant_scenario, moss_giant_bank_scenario,
-    moss_giant_bank_start_scenario, moss_giant_scenario, rock_crab_bank_scenario,
-    rock_crab_range_scenario, rock_crab_scenario,
+    green_dragon_special_prepared_scenario, green_dragon_special_scenario,
+    green_dragon_tele_scenario, hill_giant_bank_scenario, hill_giant_loot_deposit_scenario,
+    hill_giant_scenario, moss_giant_bank_scenario, moss_giant_bank_start_scenario,
+    moss_giant_scenario, rock_crab_bank_scenario, rock_crab_range_scenario, rock_crab_scenario,
 };
 pub(crate) use navigation::{
     nav_cart_scenario, nav_door_scenario, nav_elkoy_scenario, nav_essence_scenario,

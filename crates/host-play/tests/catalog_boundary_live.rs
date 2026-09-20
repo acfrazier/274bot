@@ -7916,6 +7916,32 @@ export default class NativeStop extends LoopingBot {{
         (case, baseline)
     }
 
+    fn prepared_special_baseline() -> Observation {
+        branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[
+                (DRAGONFIRE_SHIELD_ID, 1),
+                (DRAGON_DAGGER_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &[
+                ("attack", 60),
+                ("strength", 40),
+                ("defence", 40),
+                ("hitpoints", 40),
+            ],
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 1000)],
+            &[],
+            false,
+            false,
+        )
+    }
+
     #[test]
     fn prepared_combat_baselines_fail_closed_on_defence_food_weapon_and_armour() {
         for name in ["green_dragon_prepared", "fire_giant_prepared"] {
@@ -7979,6 +8005,164 @@ export default class NativeStop extends LoopingBot {{
                 "{name} retains the empty-loot guard"
             );
         }
+    }
+
+    #[test]
+    fn prepared_special_baseline_is_exact_and_preserves_original_special_profile() {
+        let case = CoreCase::GreenDragonSpecialPrepared;
+        assert_eq!(
+            CoreCase::parse("green_dragon_special_prepared").unwrap(),
+            case
+        );
+        assert_eq!(case.scenario_name(), "green_dragon_special_prepared");
+        assert_eq!(case.card_name(), "GreenDragon");
+        validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
+        validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
+
+        let baseline = prepared_special_baseline();
+        validate_case_baseline(case, &baseline).unwrap();
+
+        for (stat, expected) in [
+            ("attack", 60),
+            ("strength", 40),
+            ("defence", 40),
+            ("hitpoints", 40),
+        ] {
+            for actual in [expected - 1, expected + 1] {
+                let mut wrong = baseline.clone();
+                wrong.levels.insert(stat.into(), actual);
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "prepared special rejects {stat}={actual}"
+                );
+            }
+        }
+        for count in [GREEN_DRAGON_FOOD - 1, GREEN_DRAGON_FOOD + 1] {
+            let mut wrong = baseline.clone();
+            wrong.item_ids.insert(LOBSTER_ID, count);
+            assert!(
+                validate_case_baseline(case, &wrong).is_err(),
+                "prepared special rejects Lobster count {count}"
+            );
+        }
+        for id in [
+            RUNE_CHAINBODY_ID,
+            RUNE_PLATELEGS_ID,
+            RUNE_FULL_HELM_ID,
+            DRAGON_DAGGER_ID,
+            DRAGONFIRE_SHIELD_ID,
+        ] {
+            let mut missing = baseline.clone();
+            missing.equipment_ids.remove(&id);
+            assert!(
+                validate_case_baseline(case, &missing).is_err(),
+                "prepared special rejects missing worn gear {id}"
+            );
+        }
+        let mut underfunded = baseline.clone();
+        underfunded
+            .varps
+            .insert(SA_ENERGY_VARP, DRAGON_DAGGER_SPECIAL_COST - 1);
+        assert!(validate_case_baseline(case, &underfunded).is_err());
+        let mut armed = baseline.clone();
+        armed.varps.insert(SA_ARMED_VARP, SA_ARMED_VALUE);
+        assert!(validate_case_baseline(case, &armed).is_err());
+
+        let mut original = baseline.clone();
+        original.levels.insert("defence".into(), 1);
+        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+            original.equipment_ids.remove(&id);
+        }
+        validate_case_baseline(CoreCase::GreenDragonSpecial, &original).unwrap();
+    }
+
+    #[test]
+    fn prepared_special_reuses_paid_special_defeat_further_work_and_style_gates() {
+        let case = CoreCase::GreenDragonSpecialPrepared;
+        let baseline = prepared_special_baseline();
+        let gear = [
+            (DRAGONFIRE_SHIELD_ID, 1),
+            (DRAGON_DAGGER_ID, 1),
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+        ];
+        let levels = [
+            ("attack", 60),
+            ("strength", 40),
+            ("defence", 40),
+            ("hitpoints", 40),
+        ];
+        let engaged = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &gear,
+            &[("strength", 60)],
+            &levels,
+            &[],
+            &[(SA_ARMED_VARP, SA_ARMED_VALUE), (SA_ENERGY_VARP, 1000)],
+            &[combat_npc(4, "Green dragon", 30, true, GREEN_DRAGON_FIELD)],
+            true,
+            false,
+        );
+        let spent = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &gear,
+            &[("strength", 120)],
+            &levels,
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 750)],
+            &[
+                combat_npc(4, "Green dragon", 0, false, GREEN_DRAGON_FIELD),
+                combat_npc(8, "Green dragon", 30, true, GREEN_DRAGON_FIELD),
+            ],
+            true,
+            false,
+        );
+        let mut further = spent.clone();
+        further.npc_facts = vec![combat_npc(8, "Green dragon", 25, true, GREEN_DRAGON_FIELD)];
+
+        assert!(
+            witness(case, &baseline, [&engaged, &spent, &further])
+                .qualify()
+                .is_ok(),
+            "prepared special keeps the no-loot option contract"
+        );
+        assert!(
+            witness(case, &baseline, [&engaged, &spent])
+                .qualify()
+                .is_err(),
+            "defeat without further selected work must fail"
+        );
+
+        let mut unpaid_engaged = engaged.clone();
+        unpaid_engaged.varps.insert(SA_ENERGY_VARP, 1000);
+        let mut unpaid_spent = spent.clone();
+        unpaid_spent.varps.insert(SA_ENERGY_VARP, 1000);
+        let mut unpaid_further = further.clone();
+        unpaid_further.varps.insert(SA_ENERGY_VARP, 1000);
+        assert!(witness(
+            case,
+            &baseline,
+            [&unpaid_engaged, &unpaid_spent, &unpaid_further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut unarmed_engaged = engaged.clone();
+        unarmed_engaged.varps.insert(SA_ARMED_VARP, 0);
+        let mut unarmed_spent = spent.clone();
+        unarmed_spent.varps.insert(SA_ARMED_VARP, 0);
+        let mut unarmed_further = further.clone();
+        unarmed_further.varps.insert(SA_ARMED_VARP, 0);
+        assert!(witness(
+            case,
+            &baseline,
+            [&unarmed_engaged, &unarmed_spent, &unarmed_further]
+        )
+        .qualify()
+        .is_err());
     }
 
     #[test]

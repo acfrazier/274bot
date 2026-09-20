@@ -1900,9 +1900,12 @@ pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
     )
 }
 
-pub(crate) fn green_dragon_special_scenario() -> Scenario {
-    let mut scenario = combat_core_scenario(CombatCorePlan {
-        name: "green_dragon_special",
+fn green_dragon_special_scenario_with_preparation(
+    name: &'static str,
+    preparation: Option<PreparedCombatPlan>,
+) -> Scenario {
+    let plan = CombatCorePlan {
+        name,
         card: "GreenDragon",
         tele: GREEN_DRAGON_FIELD,
         radius: 22,
@@ -1921,7 +1924,12 @@ pub(crate) fn green_dragon_special_scenario() -> Scenario {
         complete_quest: Some(LOST_CITY_PREREQ),
         thieving: 0,
         agility: 0,
-    });
+    };
+    let mut scenario = if let Some(preparation) = preparation {
+        prepared_combat_core_scenario(plan, preparation)
+    } else {
+        combat_core_scenario(plan)
+    };
     let hostile_teleport = scenario
         .steps
         .iter()
@@ -1965,6 +1973,21 @@ pub(crate) fn green_dragon_special_scenario() -> Scenario {
         ],
     );
     scenario
+}
+
+pub(crate) fn green_dragon_special_scenario() -> Scenario {
+    green_dragon_special_scenario_with_preparation("green_dragon_special", None)
+}
+
+pub(crate) fn green_dragon_special_prepared_scenario() -> Scenario {
+    green_dragon_special_scenario_with_preparation(
+        "green_dragon_special_prepared",
+        Some(PreparedCombatPlan {
+            defence: COMBAT_ATTACK_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        }),
+    )
 }
 
 pub(crate) fn green_dragon_potions_scenario() -> Scenario {

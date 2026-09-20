@@ -1536,6 +1536,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "green_dragon",
             "green_dragon_prepared",
             "green_dragon_special",
+            "green_dragon_special_prepared",
             "green_dragon_potions",
             "fire_giant",
             "fire_giant_prepared",
@@ -7492,6 +7493,155 @@ fn original_dragon_and_fire_fixtures_remain_defence1_profiles() {
         assert!(!written.contains("setstat defence"));
         assert!(!written.contains("give rune_chainbody"));
     }
+}
+
+#[test]
+fn prepared_green_special_composes_exact_armour_stats_and_special_prerequisites() {
+    const ATTACK_STAT: i32 = 0;
+    const DEFENCE_STAT: i32 = 1;
+    const HITPOINTS_STAT: i32 = 3;
+    const DRAGON_DAGGER: i32 = 1215;
+    const RUNE_ARMOUR: [i32; 3] = [1113, 1079, 1163];
+
+    let prepared =
+        get("green_dragon_special_prepared").expect("prepared Green special is registered");
+    let original = get("green_dragon_special").expect("original Green special is registered");
+    assert_eq!(
+        prepared.settings.script_settings_inject,
+        original.settings.script_settings_inject
+    );
+    assert_eq!(prepared.settings.start_script, Some("GreenDragon"));
+    assert_eq!(prepared.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(
+        prepared.proof,
+        Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1,
+        }
+    );
+
+    let start = prepared
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("prepared Green special Start");
+    let before = &prepared.steps[..start];
+    let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
+    for (id, level) in [
+        (ATTACK_STAT, 60),
+        (STRENGTH_STAT, 40),
+        (DEFENCE_STAT, 40),
+        (HITPOINTS_STAT, 40),
+    ] {
+        assert!(
+            arms.contains(&Proof::Stat { id, min: level }),
+            "prepared Green special acknowledges exact base stat {id}={level}"
+        );
+    }
+    assert!(arms.contains(&Proof::QuestDone { name: "Lost City" }));
+    assert!(arms.contains(&Proof::ItemId {
+        id: LOBSTER_ID,
+        count: 12,
+    }));
+    assert!(arms.contains(&Proof::EquipmentId { id: DRAGON_DAGGER }));
+    assert!(arms.contains(&Proof::EquipmentId {
+        id: DRAGONFIRE_SHIELD_ID,
+    }));
+    for id in RUNE_ARMOUR {
+        assert!(
+            arms.contains(&Proof::EquipmentId { id }),
+            "prepared Green special acknowledges worn armour {id}"
+        );
+    }
+    assert!(arms.contains(&Proof::Varp { id: 300, min: 250 }));
+
+    let position = |name: &str| {
+        before
+            .iter()
+            .position(|step| step.name == name)
+            .unwrap_or_else(|| panic!("missing preparation step {name}"))
+    };
+    let quest = before
+        .iter()
+        .position(|step| step.name.starts_with("open the native quest-journal"))
+        .expect("Lost City preparation");
+    let armour = before
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| {
+            matches!(
+                step.wait.arm,
+                Proof::EquipmentId {
+                    id: 1113 | 1079 | 1163
+                }
+            )
+        })
+        .map(|(index, _)| index)
+        .max()
+        .expect("tier-40 armour acknowledgement");
+    let drain = position("drain setstat level-up dialogs before the hostile-field teleport");
+    let dagger = position("wield and acknowledge Dragon dagger before hostile-field teleport");
+    let energy = position("acknowledge the worn dagger's special cost is covered before Start");
+    let teleport =
+        position("teleport into the hostile field only after preparation is acknowledged");
+    assert!(
+        quest < armour && armour < drain && drain < dagger && dagger < energy && energy < teleport,
+        "Lost City, armour, drain, dagger, special pool, hostile teleport, Start"
+    );
+
+    let attack_step =
+        &before[position("prepare and acknowledge Attack 60 for the Dragon dagger before Start")];
+    let StepKind::Perform { send } = &attack_step.kind else {
+        panic!("Attack 60 preparation is a native fixture operation");
+    };
+    let mut attack_client = native_seed_client();
+    let snapshot = GameSnapshot::new();
+    let before_write = attack_client.out.pos;
+    assert!(send(&mut attack_client, &snapshot));
+    let attack_written =
+        String::from_utf8_lossy(&attack_client.out.data()[before_write..attack_client.out.pos]);
+    assert!(attack_written.contains("setstat attack 60"));
+
+    let mut client = native_seed_client();
+    let (_, written) = send_combat_seed("green_dragon_special_prepared", &mut client);
+    for command in [
+        "setstat attack 40",
+        "setstat strength 40",
+        "setstat defence 40",
+        "setstat hitpoints 40",
+        "give lobster 12",
+        "give dragon_dagger 1",
+        "give antidragonbreathshield 1",
+        "give rune_chainbody 1",
+        "give rune_platelegs 1",
+        "give rune_full_helm 1",
+    ] {
+        assert!(
+            written.contains(command),
+            "prepared Green special seeds {command}: {written}"
+        );
+    }
+
+    let original_start = original
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let original_arms = original.steps[..original_start]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(!original_arms.contains(&Proof::Stat {
+        id: DEFENCE_STAT,
+        min: 40,
+    }));
+    assert!(RUNE_ARMOUR
+        .into_iter()
+        .all(|id| !original_arms.contains(&Proof::EquipmentId { id })));
+    let mut client = native_seed_client();
+    let (_, original_written) = send_combat_seed("green_dragon_special", &mut client);
+    assert!(!original_written.contains("setstat defence"));
+    assert!(!original_written.contains("give rune_chainbody"));
 }
 
 #[test]

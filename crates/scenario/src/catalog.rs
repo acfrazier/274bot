@@ -207,6 +207,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::green_dragon_special_scenario,
     ),
     Entry::new(
+        "green_dragon_special_prepared",
+        scenarios::green_dragon_special_prepared_scenario,
+    ),
+    Entry::new(
         "green_dragon_potions",
         scenarios::green_dragon_potions_scenario,
     ),

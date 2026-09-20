@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_potions|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -517,6 +517,7 @@ pub enum CoreCase {
     GreenDragon,
     GreenDragonPrepared,
     GreenDragonSpecial,
+    GreenDragonSpecialPrepared,
     GreenDragonPotions,
     FireGiant,
     FireGiantPrepared,
@@ -632,6 +633,7 @@ impl CoreCase {
             "green_dragon" => Ok(Self::GreenDragon),
             "green_dragon_prepared" => Ok(Self::GreenDragonPrepared),
             "green_dragon_special" => Ok(Self::GreenDragonSpecial),
+            "green_dragon_special_prepared" => Ok(Self::GreenDragonSpecialPrepared),
             "green_dragon_potions" => Ok(Self::GreenDragonPotions),
             "fire_giant" => Ok(Self::FireGiant),
             "fire_giant_prepared" => Ok(Self::FireGiantPrepared),
@@ -750,6 +752,7 @@ impl CoreCase {
             Self::GreenDragon => "green_dragon",
             Self::GreenDragonPrepared => "green_dragon_prepared",
             Self::GreenDragonSpecial => "green_dragon_special",
+            Self::GreenDragonSpecialPrepared => "green_dragon_special_prepared",
             Self::GreenDragonPotions => "green_dragon_potions",
             Self::FireGiant => "fire_giant",
             Self::FireGiantPrepared => "fire_giant_prepared",
@@ -846,6 +849,7 @@ impl CoreCase {
             Self::GreenDragon
             | Self::GreenDragonPrepared
             | Self::GreenDragonSpecial
+            | Self::GreenDragonSpecialPrepared
             | Self::GreenDragonPotions
             | Self::GreenDragonBank
             | Self::GreenDragonTele => "GreenDragon",
@@ -2302,6 +2306,7 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::GreenDragon
         | CoreCase::GreenDragonPrepared
         | CoreCase::GreenDragonSpecial
+        | CoreCase::GreenDragonSpecialPrepared
         | CoreCase::GreenDragonPotions
         | CoreCase::FireGiant
         | CoreCase::FireGiantPrepared
@@ -2355,9 +2360,9 @@ pub fn validate_case_baseline_with_preparation(
                     // fixture, so the cell has to arrive already wearing 1331
                     // (the fixture's own pre-Start wear is the native proof).
                     CoreCase::RockCrab => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
-                    CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
-                        prepared_combat_baseline_ready(case, baseline)
-                    }
+                    CoreCase::GreenDragonPrepared
+                    | CoreCase::GreenDragonSpecialPrepared
+                    | CoreCase::FireGiantPrepared => prepared_combat_baseline_ready(case, baseline),
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
                     CoreCase::GreenDragonTele => {
                         baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
@@ -2697,6 +2702,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::GreenDragonSpecial => {
             "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
+        }
+        CoreCase::GreenDragonSpecialPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack 60/Strength 40/Defence 40/Hitpoints 40, exact lobster 12, worn dragon dagger 1215, shield 1540 and 1113/1079/1163, unarmed spec bar with at least 250 energy"
         }
         CoreCase::GreenDragonPotions => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn shield 1540, super attack(3) 145 and super strength(3) 157 with no two-dose flask and no live boost, lobster 12"
@@ -4526,7 +4534,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         }),
         // `useSpecial=true` with the dragon dagger: the bar arms and `%sa_energy`
         // pays the 250 cost, so a queued-but-unspent arming cannot qualify.
-        CoreCase::GreenDragonSpecial => Some(CombatSpec {
+        CoreCase::GreenDragonSpecial | CoreCase::GreenDragonSpecialPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
@@ -5055,11 +5063,24 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
     let armour_ready = [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
         .into_iter()
         .all(|id| baseline.equipment_id(id) == 1);
-    let exact_profile = baseline.level("defence") == COMBAT_ATTACK_LEVEL
+    let exact_stats = match case {
+        CoreCase::GreenDragonSpecialPrepared => {
+            baseline.level("attack") == 60
+                && baseline.level("strength") == COMBAT_ATTACK_LEVEL
+                && baseline.level("defence") == COMBAT_ATTACK_LEVEL
+                && baseline.level("hitpoints") == COMBAT_ATTACK_LEVEL
+        }
+        CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
+            baseline.level("defence") == COMBAT_ATTACK_LEVEL
+        }
+        _ => return false,
+    };
+    let exact_profile = exact_stats
         && armour_ready
         && baseline.item_id(LOBSTER_ID)
             == match case {
                 CoreCase::GreenDragonPrepared => GREEN_DRAGON_BASE_FOOD,
+                CoreCase::GreenDragonSpecialPrepared => GREEN_DRAGON_FOOD,
                 CoreCase::FireGiantPrepared => FIRE_GIANT_FOOD,
                 _ => return false,
             };
@@ -5068,6 +5089,12 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
             CoreCase::GreenDragonPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 1
                     && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            }
+            CoreCase::GreenDragonSpecialPrepared => {
+                baseline.item_id(DRAGON_DAGGER_ID) == 0
+                    && baseline.equipment_id(DRAGON_DAGGER_ID) == 1
+                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+                    && baseline.varp(SA_ENERGY_VARP) >= DRAGON_DAGGER_SPECIAL_COST
             }
             CoreCase::FireGiantPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
@@ -8403,6 +8430,7 @@ impl CoreWitness {
             | CoreCase::GreenDragon
             | CoreCase::GreenDragonPrepared
             | CoreCase::GreenDragonSpecial
+            | CoreCase::GreenDragonSpecialPrepared
             | CoreCase::GreenDragonPotions
             | CoreCase::FireGiant
             | CoreCase::FireGiantPrepared
