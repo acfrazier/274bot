@@ -1239,8 +1239,13 @@ fn object_array_field_values(rhs: &str, field: &str, file_src: &str) -> Option<V
 }
 
 fn quoted_field_in_object(obj: &str, field: &str) -> Option<String> {
-    let inner = obj.trim().strip_prefix('{')?.strip_suffix('}')?;
-    let mut rest = inner.trim();
+    let s = obj.trim_start();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '{', '}')?;
+    let inner = s[1..end].trim();
+    let mut rest = inner;
     while !rest.is_empty() {
         if rest.starts_with(',') {
             rest = rest[1..].trim_start();
@@ -1732,7 +1737,13 @@ fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
             return keys;
         }
         if let Some((ident, leftover)) = take_ident(after) {
-            if leftover.trim_start().starts_with('.') || leftover.trim_start().starts_with('(') {
+            let leftover = leftover.trim_start();
+            if leftover.starts_with(".map") {
+                return take_map_call(ident, leftover, file_src)
+                    .map(|(vals, _)| vals)
+                    .unwrap_or_default();
+            }
+            if leftover.starts_with('.') || leftover.starts_with('(') {
                 return Vec::new();
             }
             if is_revision_fact_option_ident(ident) {
@@ -2226,7 +2237,7 @@ const LEATHERS = {
     'Hard leather': { leatherId: 1743 }
 };
 export const SHOP_PRESETS = [
-    { label: "Aemad's vials — East Ardougne (Ardougne East bank)", keeper: 'Aemad' },
+    { label: "Aemad's vials — East Ardougne (Ardougne East bank)", keeper: 'Aemad', shopStand: new Tile(2613, 3294, 0) },
     { label: 'Wizard Guild runes — Yanille (Yanille bank)', keeper: 'Magic Store owner' }
 ];
 export const NEAREST_BANK = 'Nearest';
@@ -2239,7 +2250,7 @@ export const SETTINGS = {
     gems: { type: 'string[]', options: GEM_OPTIONS },
     rune: { type: 'string', options: RUNE_OPTIONS },
     leatherType: { type: 'string', options: Object.keys(LEATHERS) },
-    shop: { type: 'string', options: SHOP_PRESETS },
+    shop: { type: 'string', options: SHOP_PRESETS.map(p => p.label) },
     jiveProduct: { type: 'string', options: PRODUCT_OPTIONS },
     staff: { type: 'string', default: 'Staff of air', options: STAFFS }
 };
@@ -2471,12 +2482,26 @@ export const SETTINGS = {
             .options
             .is_empty());
 
+        let potion_herbs = &setting(&by_name["PotionMaker"].settings_schema, "herb").options;
+        assert_eq!(
+            potion_herbs.len(),
+            15,
+            "PotionMaker HERBS is 14 through Torstol plus CUSTOM: {potion_herbs:?}"
+        );
+        assert_eq!(potion_herbs.last().map(String::as_str), Some("Custom"));
+
         let alcher = setting(&by_name["Alcher"].settings_schema, "items");
         assert!(
             alcher.options.is_empty() && alcher.item_option_spec.is_none(),
             "Alcher.items remains later product work, got opts={:?} spec={:?}",
             alcher.options,
             alcher.item_option_spec
+        );
+        let shop = setting(&by_name["ShopBuyout"].settings_schema, "shop");
+        assert!(
+            shop.options.iter().any(|s| s.contains("Aemad")),
+            "ShopBuyout.shop SHOP_PRESETS.map(p => p.label) must emit frozen labels: {:?}",
+            shop.options
         );
         let buy = setting(&by_name["ShopBuyout"].settings_schema, "buyItems");
         assert!(
@@ -2496,7 +2521,7 @@ export const SETTINGS = {
         );
         assert_eq!(
             empty, 2,
-            "only Alcher.items and ShopBuyout.buyItems stay empty"
+            "only Alcher.items and ShopBuyout.buyItems stay empty; other empties are parser defects"
         );
         assert_eq!(recovered, 22);
     }
