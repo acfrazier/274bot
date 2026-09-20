@@ -7997,6 +7997,72 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
 }
 
 #[test]
+fn green_dragon_potions_super_attack_boost_arm_tracks_acknowledged_base_level() {
+    const ATTACK_STAT: i32 = 0;
+    const PREPARED_ATTACK: i32 = 70;
+    const NATIVE_SUPER_ATTACK_BOOST: i32 = 47;
+
+    fn super_attack_boost_arm(scenario: &Scenario) -> Proof {
+        scenario
+            .steps
+            .iter()
+            .find(|step| {
+                step.name == "watch the native Super attack boost before further combat"
+            })
+            .map(|step| step.wait.arm)
+            .unwrap_or_else(|| panic!("missing Super attack boost arm on {}", scenario.name))
+    }
+
+    fn attack_effective_snapshot(level: i32) -> GameSnapshot {
+        use client::io::ServerProt;
+        let mut client = native_seed_client();
+        client.stat_effective_level[ATTACK_STAT as usize] = level;
+        client.bump_gens(ServerProt::UPDATE_STAT);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot
+    }
+
+    let original = get("green_dragon_potions").expect("green dragon potions");
+    let prepared =
+        get("green_dragon_potions_prepared").expect("prepared green dragon potions");
+    let original_arm = super_attack_boost_arm(&original);
+    let prepared_arm = super_attack_boost_arm(&prepared);
+
+    assert_eq!(
+        original_arm,
+        Proof::Stat {
+            id: ATTACK_STAT,
+            min: COMBAT_ATTACK_LEVEL + 1,
+        }
+    );
+    assert_eq!(
+        prepared_arm,
+        Proof::Stat {
+            id: ATTACK_STAT,
+            min: PREPARED_ATTACK + 1,
+        }
+    );
+
+    assert!(
+        !original_arm.check(&attack_effective_snapshot(COMBAT_ATTACK_LEVEL), None),
+        "unboosted Attack {COMBAT_ATTACK_LEVEL} must not satisfy the original boost arm"
+    );
+    assert!(
+        original_arm.check(&attack_effective_snapshot(NATIVE_SUPER_ATTACK_BOOST), None),
+        "native Super attack boost must satisfy the original arm"
+    );
+    assert!(
+        !prepared_arm.check(&attack_effective_snapshot(PREPARED_ATTACK), None),
+        "unboosted Attack {PREPARED_ATTACK} must not satisfy the prepared boost arm"
+    );
+    assert!(
+        prepared_arm.check(&attack_effective_snapshot(PREPARED_ATTACK + 1), None),
+        "a native Super attack boost above the prepared base must satisfy the prepared arm"
+    );
+}
+
+#[test]
 fn bone_burier_requires_banking_between_burial_cycles() {
     let s = get("bone_burier").unwrap();
     assert_eq!(s.settings.start_script, Some("BoneBurier"));

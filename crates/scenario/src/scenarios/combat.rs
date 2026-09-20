@@ -2125,6 +2125,10 @@ fn green_dragon_potions_scenario_with_preparation(
         thieving: 0,
         agility: 0,
     };
+    let attack_boost_min = preparation
+        .as_ref()
+        .map(|prep| prep.level + 1)
+        .unwrap_or(COMBAT_ATTACK_LEVEL + 1);
     let mut scenario = if let Some(preparation) = preparation {
         prepared_combat_core_scenario(plan, preparation)
     } else {
@@ -2180,7 +2184,10 @@ fn green_dragon_potions_scenario_with_preparation(
             ),
             bank_fletcher_watch(
                 "watch the native Super attack boost before further combat",
-                Proof::Stat { id: 0, min: 41 },
+                Proof::Stat {
+                    id: 0,
+                    min: attack_boost_min,
+                },
             ),
         ],
     );
