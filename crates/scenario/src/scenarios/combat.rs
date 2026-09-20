@@ -253,6 +253,10 @@ const FIRE_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Fire Giant food",
     carry: &[("Lobster", FIRE_GIANT_FOOD as u32)],
 }];
+const ROCK_CRAB_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Rock Crab food",
+    carry: &[("Lobster", ROCK_CRAB_FOOD as u32)],
+}];
 
 fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
     match card {
@@ -526,6 +530,10 @@ const ROCK_CRAB_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const ROCK_CRAB_RANGE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Rock Crab food"),
+    },
     ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("range"),
@@ -2375,6 +2383,7 @@ pub(crate) fn rock_crab_range_scenario() -> Scenario {
         COMBAT_QUALIFICATION_DEADLINE,
         COMBAT_QUALIFICATION_WATCH_TICKS,
     );
+    scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
     scenario
 }
 

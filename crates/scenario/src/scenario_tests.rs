@@ -8229,6 +8229,16 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
     let rock = get("rock_crab_range").expect("rock crab range");
     let rock_inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
     assert_eq!(
+        rock_inject.get("loadout"),
+        Some(&Value::String("Scenario Rock Crab food".into()))
+    );
+    let rock_loadouts = rock
+        .settings
+        .fixture_loadouts
+        .expect("rock_crab_range pins scriptFood via fixture loadout");
+    assert_eq!(rock_loadouts[0].name, "Scenario Rock Crab food");
+    assert_eq!(rock_loadouts[0].carry, &[("Lobster", 8)]);
+    assert_eq!(
         rock_inject.get("bow"),
         Some(&Value::String("Maple shortbow".into()))
     );
