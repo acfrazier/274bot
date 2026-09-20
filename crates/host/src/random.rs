@@ -5,7 +5,7 @@
 //! 45 s cooldown writes, the trapped-kind hold and the rising-edge
 //! `on_random` knock live in [`Guardian`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod maze;
 
@@ -151,6 +151,7 @@ const SACRIFICIAL_DROP: &[&str] = &[
 ];
 
 /// Fishing gear the macro randoms can knock off (rs2b0t `FISHING_GEAR`).
+/// Consumables (bait/feather) are not stolen tools and are not tracked.
 const FISHING_GEAR: &[&str] = &[
     "small fishing net",
     "big fishing net",
@@ -159,20 +160,23 @@ const FISHING_GEAR: &[&str] = &[
     "fly fishing rod",
     "harpoon",
     "lobster pot",
-    "fishing bait",
-    "feather",
 ];
+
+/// How long a proved fishing-gear loss stays recoverable (rs2b0t 90 s).
+const GEAR_LOSS_WINDOW_MS: u64 = 90_000;
+
+/// Macro whirlpool fishing-spot type ids (rs2b0t `WHIRLPOOL_NPC_IDS`).
+const WHIRLPOOL_NPC_IDS: &[usize] = &[403, 404, 405, 406];
 
 /// Detect the first random event the snapshot shows, in rs2b0t
 /// `detectRaw` order: maze/mime by map square, then scene NPCs/locs,
 /// then inv-held box/lamp, then lost-gear / lost-tool. Returns `None`
 /// when nothing applies. NPC kinds are owner-gated (except `pick`, which
-/// the TUI may show as not ours). The rs2b0t gear-loss 90 s window (the
-/// caller-state half of `lost-gear`) is not needed here: gear on the
-/// ground and out of the inventory detects. Box/lamp must beat lost-gear
-/// so a trapped hold is not hidden by ground fishing gear.
+/// the TUI may show as not ours). Stateless `detect` cannot prove gear
+/// ownership, so unowned ground fishing gear fails closed. Box/lamp must
+/// beat lost-gear so a trapped hold is not hidden by ground fishing gear.
 pub fn detect(snap: &GameSnapshot, now_ms: u64, cooldown: &CooldownMap) -> Option<DetectedRandom> {
-    detect_ignoring_plants(snap, now_ms, cooldown, &[])
+    detect_ignoring_plants(snap, now_ms, cooldown, &[], None)
 }
 
 fn detect_ignoring_plants(
@@ -180,6 +184,7 @@ fn detect_ignoring_plants(
     now_ms: u64,
     cooldown: &CooldownMap,
     ignored_plants: &[PlantActor],
+    gear_loss: Option<&GearLoss>,
 ) -> Option<DetectedRandom> {
     if let Some((x, z, level)) = snap.tile() {
         if level == 0 {
@@ -200,7 +205,7 @@ fn detect_ignoring_plants(
     if snap.inv().iter().any(|(id, _)| *id == LAMP_OBJ) {
         return Some(no_npc_event(RandomKind::Lamp, "lamp"));
     }
-    if let Some(gear) = lost_gear(snap) {
+    if let Some(gear) = lost_gear(snap, now_ms, gear_loss) {
         return Some(no_npc_event(RandomKind::LostGear, &gear));
     }
     if has_lost_tool(snap) {
@@ -585,10 +590,83 @@ fn sacrificial_item(snap: &GameSnapshot) -> Option<&ItemView> {
     })
 }
 
-/// A fishing-gear item on the ground near us that we are not holding
-/// (rs2b0t `GearLossTracker` ground search, minus the 90 s window).
-fn lost_gear(snap: &GameSnapshot) -> Option<String> {
+/// Per-slot fishing-gear ownership and recent-loss history. Stateless
+/// public detect has none of this, so unowned ground gear fails closed.
+#[derive(Clone, Debug)]
+struct GearLoss {
+    held: HashSet<String>,
+    lost: HashMap<String, u64>,
+    was_suppressed: bool,
+    last_fishing_tick: Option<u32>,
+    can_recover: bool,
+}
+
+impl GearLoss {
+    fn new() -> Self {
+        Self {
+            held: HashSet::new(),
+            lost: HashMap::new(),
+            was_suppressed: false,
+            last_fishing_tick: None,
+            can_recover: false,
+        }
+    }
+
+    fn observe(&mut self, snap: &GameSnapshot, now_ms: u64) {
+        let fishing_nearby = snap.npcs().iter().any(|npc| {
+            npc.distance <= LOST_GEAR_RADIUS
+                && (item_named(npc.name.as_deref(), "fishing spot")
+                    || npc.r#type.is_some_and(|id| WHIRLPOOL_NPC_IDS.contains(&id)))
+        });
+        let suppressed = snap.bank_component_id() >= 0 || snap.shop().open;
+        let tick = snap.tick();
+        if fishing_nearby {
+            self.last_fishing_tick = Some(tick);
+        }
+        self.can_recover = self
+            .last_fishing_tick
+            .is_some_and(|seen| tick >= seen && tick - seen <= 1)
+            && !suppressed
+            && !self.was_suppressed;
+        let now: HashSet<String> = snap
+            .inventory()
+            .iter()
+            .filter_map(|item| {
+                let name = item.def.name.as_deref()?.to_ascii_lowercase();
+                FISHING_GEAR.contains(&name.as_str()).then_some(name)
+            })
+            .collect();
+        for gear in &now {
+            self.lost.remove(gear);
+        }
+        if self.can_recover {
+            for gear in &self.held {
+                if !now.contains(gear) {
+                    self.lost.insert(gear.clone(), now_ms);
+                }
+            }
+        }
+        self.held = now;
+        self.was_suppressed = suppressed;
+    }
+
+    fn recently_lost(&self, gear: &str, now_ms: u64) -> bool {
+        let Some(at) = self.lost.get(&gear.to_ascii_lowercase()) else {
+            return false;
+        };
+        self.can_recover && now_ms.saturating_sub(*at) <= GEAR_LOSS_WINDOW_MS
+    }
+}
+
+/// A fishing-gear item on the ground near us that this slot recently held
+/// and then lost while the fishing-nearby latch was live. Without that
+/// per-slot history, detection fails closed.
+fn lost_gear(snap: &GameSnapshot, now_ms: u64, loss: Option<&GearLoss>) -> Option<String> {
+    let loss = loss?;
     for gear in FISHING_GEAR {
+        if !loss.recently_lost(gear, now_ms) {
+            continue;
+        }
         let in_inv = snap
             .inventory()
             .iter()
@@ -825,6 +903,8 @@ pub struct Guardian {
     plant: PlantProbe,
     /// Exact foreign/refused/timed-out identities still present in the scene.
     plant_ignored: Vec<PlantActor>,
+    /// Per-slot fishing-gear held/lost history used to prove `LostGear`.
+    gear_loss: GearLoss,
 }
 
 impl Default for Guardian {
@@ -863,6 +943,7 @@ impl Guardian {
             maze: None,
             plant: PlantProbe::Idle,
             plant_ignored: Vec::new(),
+            gear_loss: GearLoss::new(),
         }
     }
 
@@ -897,7 +978,14 @@ impl Guardian {
             self.clear_plant();
             self.plant_ignored.clear();
         }
-        let mut ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+        self.gear_loss.observe(snap, now_ms);
+        let mut ev = detect_ignoring_plants(
+            snap,
+            now_ms,
+            &self.cooldown,
+            &self.plant_ignored,
+            Some(&self.gear_loss),
+        );
         self.pin_plant_event(snap, &mut ev);
 
         if fresh && active {
@@ -949,7 +1037,13 @@ impl Guardian {
                 self.clear_handle();
             }
             if self.plant != plant_before_chat {
-                ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+                ev = detect_ignoring_plants(
+                    snap,
+                    now_ms,
+                    &self.cooldown,
+                    &self.plant_ignored,
+                    Some(&self.gear_loss),
+                );
             }
             self.pin_plant_event(snap, &mut ev);
             // Rising-edge knock: ask the running script once per detected
@@ -999,7 +1093,13 @@ impl Guardian {
             let ignored_before_act = self.plant_ignored.len();
             self.act(driver, snap, ev.as_ref(), settings, now_ms);
             if self.plant != plant_before_act || self.plant_ignored.len() != ignored_before_act {
-                ev = detect_ignoring_plants(snap, now_ms, &self.cooldown, &self.plant_ignored);
+                ev = detect_ignoring_plants(
+                    snap,
+                    now_ms,
+                    &self.cooldown,
+                    &self.plant_ignored,
+                    Some(&self.gear_loss),
+                );
             }
         }
         // `step_pick` may have timed out or seen a refused send. Reflect
@@ -2287,6 +2387,75 @@ mod tests {
         plant_npc_with_op(c, slot, name, face_entity, overhead, "Talk-to");
     }
 
+    fn plant_npc_typed(
+        c: &mut Client,
+        slot: usize,
+        type_id: usize,
+        name: &str,
+        face_entity: i32,
+        overhead: Option<&str>,
+    ) {
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.npcs.len() <= type_id {
+                cache.npcs.push(NpcType::default());
+            }
+            cache.npcs[type_id] = NpcType {
+                id: type_id as i32,
+                name: name.to_string(),
+                op: vec![Some("Talk-to".to_string())],
+                ..Default::default()
+            };
+        }
+        let mut npc = ClientNpc::at(0, 0);
+        npc.r#type = Some(type_id);
+        npc.entity.face_entity = face_entity;
+        npc.entity.chat_message = overhead.map(str::to_string);
+        while c.npc.len() <= slot {
+            c.npc.push(None);
+        }
+        c.npc[slot] = Some(Box::new(npc));
+        c.npc_ids[c.npc_count as usize] = slot as i32;
+        c.npc_count += 1;
+    }
+
+    fn clear_npcs(c: &mut Client) {
+        c.npc_count = 0;
+        for npc in &mut c.npc {
+            *npc = None;
+        }
+    }
+
+    fn plant_bank_open(c: &mut Client) {
+        c.set_iface(
+            600,
+            IfType {
+                id: 600,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![601]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            601,
+            IfType {
+                id: 601,
+                layer_id: 600,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..Default::default()
+            },
+        );
+        c.main_modal_id = 600;
+        c.gens.iface += 1;
+    }
+
+    fn plant_shop_open(c: &mut Client) {
+        c.main_modal_id = 3824;
+        c.gens.iface += 1;
+    }
+
     /// Like [`plant_npc`] but with a chosen first menu op (the growing
     /// plant's `Pick`).
     fn plant_npc_with_op(
@@ -2626,16 +2795,16 @@ mod tests {
     }
 
     #[test]
-    fn ground_fishing_gear_not_in_inv_is_lost_gear() {
+    fn bare_ground_fishing_gear_is_not_lost_gear_without_ownership() {
         let mut c = new_client();
         plant_player(&mut c, "Test", 0, 0);
         plant_ground_obj(&mut c, 0, 0, 501, Some("Fishing rod"));
         let snap = snap_at(&mut c);
-        let ev = detect(&snap, 0, &no_cooldown()).expect("lost-gear detected");
-        assert_eq!(ev.kind, RandomKind::LostGear);
-        assert_eq!(ev.name, "fishing rod");
-        assert!(ev.ours);
-        assert_eq!(ev.npc_index, None);
+        assert_eq!(
+            detect(&snap, 0, &no_cooldown()),
+            None,
+            "stateless detect must fail closed on unowned ground gear"
+        );
     }
 
     #[test]
@@ -4280,22 +4449,66 @@ mod tests {
     }
 
     #[test]
-    fn ground_harpoon_not_in_inv_takes_within_reach() {
+    fn guild_ground_gear_never_held_does_not_hold_or_take() {
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
-        plant_inv_obj(&mut c, 999); // a free pack slot
-        plant_ground_obj(&mut c, 3, 0, 502, Some("Harpoon"));
+        plant_npc(&mut c, 0, "Fishing spot", -1, None);
+        plant_inv_obj(&mut c, 999);
+        plant_ground_obj(&mut c, 3, 0, 305, Some("Big fishing net"));
         let mut g = Guardian::new();
         let mut drv = FakeDriver::default();
         let settings = ProfileSettings::default();
         let mut snap = GameSnapshot::new();
 
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        let status = g.tick(&mut drv, &snap, &settings, 1_500, None);
+        assert_ne!(status.kind, Some(RandomKind::LostGear));
+        assert!(!status.hold, "guild display gear must not hold the slot");
+        assert!(
+            drv.menus.is_empty() && drv.actions.is_empty(),
+            "never-held ground gear must not Take"
+        );
+    }
+
+    fn lost_gear_harpoon_fixture() -> (Client, Guardian, FakeDriver, ProfileSettings, GameSnapshot)
+    {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Fishing spot", -1, None);
+        plant_inv_named(&mut c, 311, Some("Harpoon"));
+        (
+            c,
+            Guardian::new(),
+            FakeDriver::default(),
+            ProfileSettings::default(),
+            GameSnapshot::new(),
+        )
+    }
+
+    fn drop_harpoon_to_ground(c: &mut Client) {
+        clear_inv(c);
+        plant_ground_obj(c, 3, 0, 311, Some("Harpoon"));
+    }
+
+    #[test]
+    fn held_then_lost_near_fishing_spot_takes_within_window() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        let held = g.tick(&mut drv, &snap, &settings, 1_000, None);
+        assert_ne!(held.kind, Some(RandomKind::LostGear));
+        assert!(drv.menus.is_empty());
+
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        drv.menus.clear();
+        drv.actions.clear();
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
         assert_eq!(status.kind, Some(RandomKind::LostGear));
         assert_eq!(status.name.as_deref(), Some("harpoon"));
-        assert!(status.hold, "a take in flight holds the slot");
+        assert!(status.hold, "a proved loss holds while Take is in flight");
         assert_eq!(drv.menus.len(), 1);
         assert_eq!(
             drv.menus[0].1,
@@ -4303,6 +4516,213 @@ mod tests {
             "Take is the ground item's 3rd op"
         );
         assert_eq!(drv.actions, vec![0]);
+    }
+
+    #[test]
+    fn tools_dropped_away_from_fishing_spots_are_not_recovered() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_named(&mut c, 311, Some("Harpoon"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        drv.menus.clear();
+        let status = g.tick(&mut drv, &snap, &settings, 600, None);
+        assert_ne!(status.kind, Some(RandomKind::LostGear));
+        assert!(!status.hold);
+        assert!(drv.menus.is_empty());
+    }
+
+    #[test]
+    fn fishing_latch_covers_current_or_prior_tick_and_repeated_same_tick_scans() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+
+        clear_npcs(&mut c);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        let lost = g.tick(&mut drv, &snap, &settings, 600, None);
+        assert_eq!(lost.kind, Some(RandomKind::LostGear));
+
+        drv.menus.clear();
+        let same_tick = g.tick(&mut drv, &snap, &settings, 650, None);
+        assert_eq!(
+            same_tick.kind,
+            Some(RandomKind::LostGear),
+            "repeated same-tick scans stay latched"
+        );
+
+        tick_at(&mut c, &mut snap);
+        let expired_latch = g.tick(&mut drv, &snap, &settings, 1_200, None);
+        assert_ne!(
+            expired_latch.kind,
+            Some(RandomKind::LostGear),
+            "latch is only current or prior game tick"
+        );
+    }
+
+    #[test]
+    fn whirlpool_type_id_latches_the_same_as_a_named_fishing_spot() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc_typed(&mut c, 0, 403, "Whirlpool", -1, None);
+        plant_inv_named(&mut c, 311, Some("Harpoon"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 600, None);
+        assert_eq!(status.kind, Some(RandomKind::LostGear));
+        assert_eq!(drv.menus.len(), 1);
+    }
+
+    #[test]
+    fn expired_losses_are_ignored_after_the_90s_window() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        assert_eq!(
+            g.tick(&mut drv, &snap, &settings, 1_000, None).kind,
+            Some(RandomKind::LostGear)
+        );
+        drv.menus.clear();
+        let expired = g.tick(&mut drv, &snap, &settings, 91_001, None);
+        assert_ne!(expired.kind, Some(RandomKind::LostGear));
+        assert!(drv.menus.is_empty() || expired.kind != Some(RandomKind::LostGear));
+    }
+
+    #[test]
+    fn bank_suppression_covers_the_open_and_the_following_update() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+
+        plant_bank_open(&mut c);
+        tick_at(&mut c, &mut snap);
+        assert!(
+            snap.bank_component_id() >= 0,
+            "bank fact must be on the snapshot"
+        );
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+
+        close_main_modal(&mut c);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        drv.menus.clear();
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_ne!(status.kind, Some(RandomKind::LostGear));
+        assert!(drv.menus.is_empty());
+    }
+
+    #[test]
+    fn shop_suppression_covers_the_open_and_the_following_update() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+
+        plant_shop_open(&mut c);
+        tick_at(&mut c, &mut snap);
+        assert!(snap.shop().open, "shop fact must be on the snapshot");
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+
+        close_main_modal(&mut c);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        drv.menus.clear();
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_ne!(status.kind, Some(RandomKind::LostGear));
+        assert!(drv.menus.is_empty());
+    }
+
+    #[test]
+    fn reacquisition_clears_a_recorded_loss() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        assert_eq!(
+            g.tick(&mut drv, &snap, &settings, 2_000, None).kind,
+            Some(RandomKind::LostGear)
+        );
+
+        plant_inv_named(&mut c, 311, Some("Harpoon"));
+        tick_at(&mut c, &mut snap);
+        drv.menus.clear();
+        let status = g.tick(&mut drv, &snap, &settings, 2_500, None);
+        assert_ne!(status.kind, Some(RandomKind::LostGear));
+    }
+
+    #[test]
+    fn lifecycle_reset_and_slot_isolation_drop_foreign_loss() {
+        let (mut c, mut g, mut drv, settings, mut snap) = lost_gear_harpoon_fixture();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        drop_harpoon_to_ground(&mut c);
+        tick_at(&mut c, &mut snap);
+        assert_eq!(
+            g.tick(&mut drv, &snap, &settings, 2_000, None).kind,
+            Some(RandomKind::LostGear)
+        );
+
+        let mut other = Guardian::new();
+        drv.menus.clear();
+        let isolated = other.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_ne!(
+            isolated.kind,
+            Some(RandomKind::LostGear),
+            "a fresh slot has no ownership history"
+        );
+        assert!(drv.menus.is_empty());
+
+        g = Guardian::new();
+        let reset = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_ne!(reset.kind, Some(RandomKind::LostGear));
+    }
+
+    #[test]
+    fn inv_box_still_beats_a_proved_lost_net() {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_npc(&mut c, 0, "Fishing spot", -1, None);
+        plant_inv_named(&mut c, 303, Some("Small fishing net"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 1_000, None);
+        clear_inv(&mut c);
+        plant_ground_obj(&mut c, 0, 0, 303, Some("Small fishing net"));
+        plant_inv_box(&mut c, 1);
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 2_000, None);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        assert_eq!(status.name.as_deref(), Some("strange box"));
     }
 
     #[test]
