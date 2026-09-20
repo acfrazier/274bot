@@ -1690,6 +1690,47 @@ pub(crate) fn moss_giant_scenario() -> Scenario {
     })
 }
 
+/// Prepared MossGiant melee core. Original Defence-1 `moss_giant` stays
+/// unchanged; this sibling uses the directed 70-stat Rune kit and the same
+/// empty Big-bones guard plus source melee/strength inject. Fight-first
+/// banking policy is not this cell.
+pub(crate) fn moss_giant_prepared_scenario() -> Scenario {
+    let mut scenario = prepared_combat_core_scenario(
+        CombatCorePlan {
+            name: "moss_giant_prepared",
+            card: "MossGiant",
+            tele: MOSS_GIANT_SAFESPOT,
+            radius: 10,
+            food_alias: "lobster",
+            food_id: LOBSTER_ID,
+            food_count: MOSS_GIANT_FOOD,
+            weapon_alias: "rune_scimitar",
+            weapon_id: RUNE_SCIMITAR_ID,
+            extra_give: &[],
+            wear: Some((
+                "wield and acknowledge the prepared Rune scimitar before the hostile-field teleport",
+                RUNE_SCIMITAR_ID,
+            )),
+            loot_empty: MOSS_GIANT_LOOT_EMPTY,
+            inject: MOSS_GIANT_INJECT,
+            complete_quest: None,
+            thieving: 0,
+            agility: 0,
+        },
+        PreparedCombatPlan {
+            level: REMAINING_COMBAT_PREPARED_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        },
+    );
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
+}
+
 /// HillGiant default melee in the pit. Target display is Giant. The Brass key
 /// is prepared because this inside-pit cell does not qualify the key-fetch or
 /// entrance branch. Blank weapon. DeathRecovery and banking stay idle.
@@ -2494,6 +2535,60 @@ const GREEN_DRAGON_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::StrList(&["Dragon bones", "Dragonhide"]),
     },
 ];
+/// Same prepared inventory-pressure loadout as `green_dragon_bank_prepared`,
+/// but the `loot` setting is omitted so the generated Green default
+/// (`DROP_DB["Green dragon"]` minus `Bass`) is the catalog that must earn
+/// both guaranteed drops. Existing accepted inject stays untouched.
+const GREEN_DRAGON_BANK_DEFAULT_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "foodReserve",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_PREPARED_FOOD as f64),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_PREPARED_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
 
 /// HillGiant's always-on trip end, reached on the first loot slot so the cell
 /// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
@@ -3107,6 +3202,70 @@ pub(crate) fn hill_giant_bank_scenario() -> Scenario {
     )
 }
 
+/// Prepared HillGiant earned-kill full bank. Same source strength/`lootSlots=1`
+/// inject as `hill_giant_bank`, but 70-stat Rune armour and no seeded bones or
+/// limpwurt. Restock is the card's declared `foodWithdraw` 12. Seeded-cargo
+/// upstream bank proof is not this cell.
+pub(crate) fn hill_giant_bank_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "hill_giant_bank_prepared",
+        "HillGiant",
+        HILL_GIANT_PIT,
+        16,
+        "trout",
+        TROUT_ID,
+        HILL_GIANT_FOOD,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
+        HILL_GIANT_LOOT_EMPTY,
+        HILL_GIANT_BANK_INJECT,
+        "trout",
+        12,
+        REMAINING_COMBAT_PREPARED_LEVEL,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+        &[
+            (
+                "watch earned Giant loot enter a fresh Varrock West bank",
+                Proof::BankItemIdAny {
+                    ids: &HILL_GIANT_BANK_DEPOSIT,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the prepared restock of Trout to the card's declared twelve",
+                Proof::ItemId {
+                    id: TROUT_ID,
+                    count: HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
+                },
+            ),
+            (
+                "watch prepared HillGiant close its bank",
+                Proof::BankClosed,
+            ),
+            (
+                "watch prepared return to the giant pit after banking",
+                Proof::ArrivedNear {
+                    x: HILL_GIANT_PIT.x,
+                    z: HILL_GIANT_PIT.z,
+                    level: HILL_GIANT_PIT.level,
+                    radius: 16,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
+}
+
 /// Deposit-only HillGiant qualification: same pit prep, inject and combat-first
 /// Strength XP as `hill_giant_bank`, then a script-looted Big bones in pack,
 /// then a fresh Varrock West deposit under the ordinary 150-dirty bank watch.
@@ -3257,6 +3416,7 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
 
 pub(crate) const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_ID];
 pub(crate) const GREEN_DRAGON_BANK_DEPOSIT: [i32; 2] = [DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID];
+pub(crate) const HILL_GIANT_BANK_DEPOSIT: [i32; 2] = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
 
 /// FireGiant's Waterfall Quest prerequisite via the native individual-quest
 /// path, ahead of the stat/inventory reset — the same targeted completion
@@ -3522,6 +3682,85 @@ pub(crate) fn green_dragon_bank_prepared_scenario() -> Scenario {
             ),
             (
                 "watch prepared GreenDragon close its bank",
+                Proof::BankClosed,
+            ),
+            (
+                "watch prepared return to the dragon field after banking",
+                Proof::ArrivedNear {
+                    x: GREEN_DRAGON_FIELD.x,
+                    z: GREEN_DRAGON_FIELD.z,
+                    level: GREEN_DRAGON_FIELD.level,
+                    radius: 22,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    wear_shield_before_hostile_teleport(&mut scenario);
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
+}
+
+/// Default-loot Green full cycle. Same prepared bank loadout as
+/// `green_dragon_bank_prepared` (99/Rune/26+40 Lobster, no potions/clues/
+/// burial/special/teleport) but the `loot` inject is omitted so the generated
+/// source default must earn both guaranteed drops. No seeded cargo counts.
+pub(crate) fn green_dragon_bank_default_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "green_dragon_bank_default_prepared",
+        "GreenDragon",
+        GREEN_DRAGON_FIELD,
+        22,
+        "lobster",
+        LOBSTER_ID,
+        GREEN_DRAGON_BANK_PREPARED_FOOD,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
+        &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        GREEN_DRAGON_LOOT_EMPTY,
+        GREEN_DRAGON_BANK_DEFAULT_PREPARED_INJECT,
+        "lobster",
+        40,
+        BANK_PRESSURE_PREPARED_LEVEL,
+        GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE,
+        BANK_QUALIFICATION_WATCH_TICKS,
+        &[
+            (
+                "watch earned Dragon bones in pack after the selected defeat",
+                Proof::ItemId {
+                    id: DRAGON_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch earned Dragonhide in pack after the selected defeat",
+                Proof::ItemId {
+                    id: GREEN_DRAGONHIDE_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch earned Dragonhide enter a fresh Edgeville bank",
+                Proof::BankItemId {
+                    id: GREEN_DRAGONHIDE_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the inventory-pressure trip draw Lobster to 27",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: GREEN_DRAGON_BANK_PREPARED_RESTOCK,
+                },
+            ),
+            (
+                "watch default-loot GreenDragon close its bank",
                 Proof::BankClosed,
             ),
             (

@@ -13,7 +13,7 @@ use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldT
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -246,12 +246,14 @@ pub const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
 /// `foodWithdraw` default 20 and HillGiant's 12 (8 carried + 4 withdrawn).
 pub const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
 pub const HILL_GIANT_BANK_RESTOCK: i32 = 4;
+pub const HILL_GIANT_BANK_PREPARED_RESTOCK: i32 = 12;
 pub const ROCK_CRAB_FOOD: i32 = 8;
 /// Base GreenDragon's ordinary trip withdraws twenty Lobsters.
 /// Special, potion, bank, and teleport cells retain their twelve-food inputs.
 pub const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
 pub const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
+pub const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 pub const FIRE_GIANT_FOOD: i32 = 12;
 pub const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
 pub const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
@@ -515,6 +517,7 @@ pub enum CoreCase {
     ChaosDruidTower,
     ChaosDruidYanille,
     MossGiant,
+    MossGiantPrepared,
     HillGiant,
     AutoFighter,
     AutoFighterMage,
@@ -533,11 +536,13 @@ pub enum CoreCase {
     AutoFighterBank,
     MossGiantBank,
     HillGiantBank,
+    HillGiantBankPrepared,
     ChaosDruidBank,
     ArdyFighterBank,
     RockCrabBank,
     GreenDragonBank,
     GreenDragonBankPrepared,
+    GreenDragonBankDefaultPrepared,
     GreenDragonTele,
     GreenDragonTelePrepared,
     FireGiantApproach,
@@ -635,6 +640,7 @@ impl CoreCase {
             "chaos_druid_tower" => Ok(Self::ChaosDruidTower),
             "chaos_druid_yanille" => Ok(Self::ChaosDruidYanille),
             "moss_giant" => Ok(Self::MossGiant),
+            "moss_giant_prepared" => Ok(Self::MossGiantPrepared),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
             "auto_fighter_mage" => Ok(Self::AutoFighterMage),
@@ -653,11 +659,13 @@ impl CoreCase {
             "auto_fighter_bank" => Ok(Self::AutoFighterBank),
             "moss_giant_bank" => Ok(Self::MossGiantBank),
             "hill_giant_bank" => Ok(Self::HillGiantBank),
+            "hill_giant_bank_prepared" => Ok(Self::HillGiantBankPrepared),
             "chaos_druid_bank" => Ok(Self::ChaosDruidBank),
             "ardy_fighter_bank" => Ok(Self::ArdyFighterBank),
             "rock_crab_bank" => Ok(Self::RockCrabBank),
             "green_dragon_bank" => Ok(Self::GreenDragonBank),
             "green_dragon_bank_prepared" => Ok(Self::GreenDragonBankPrepared),
+            "green_dragon_bank_default_prepared" => Ok(Self::GreenDragonBankDefaultPrepared),
             "green_dragon_tele" => Ok(Self::GreenDragonTele),
             "green_dragon_tele_prepared" => Ok(Self::GreenDragonTelePrepared),
             "fire_giant_approach" => Ok(Self::FireGiantApproach),
@@ -758,6 +766,7 @@ impl CoreCase {
             Self::ChaosDruidTower => "chaos_druid_tower",
             Self::ChaosDruidYanille => "chaos_druid_yanille",
             Self::MossGiant => "moss_giant",
+            Self::MossGiantPrepared => "moss_giant_prepared",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
             Self::AutoFighterMage => "auto_fighter_mage",
@@ -776,11 +785,13 @@ impl CoreCase {
             Self::AutoFighterBank => "auto_fighter_bank",
             Self::MossGiantBank => "moss_giant_bank",
             Self::HillGiantBank => "hill_giant_bank",
+            Self::HillGiantBankPrepared => "hill_giant_bank_prepared",
             Self::ChaosDruidBank => "chaos_druid_bank",
             Self::ArdyFighterBank => "ardy_fighter_bank",
             Self::RockCrabBank => "rock_crab_bank",
             Self::GreenDragonBank => "green_dragon_bank",
             Self::GreenDragonBankPrepared => "green_dragon_bank_prepared",
+            Self::GreenDragonBankDefaultPrepared => "green_dragon_bank_default_prepared",
             Self::GreenDragonTele => "green_dragon_tele",
             Self::GreenDragonTelePrepared => "green_dragon_tele_prepared",
             Self::FireGiantApproach => "fire_giant_approach",
@@ -858,8 +869,8 @@ impl CoreCase {
             | Self::ChaosDruidTower
             | Self::ChaosDruidYanille
             | Self::ChaosDruidBank => "ChaosDruidKiller",
-            Self::MossGiant | Self::MossGiantBank => "MossGiant",
-            Self::HillGiant | Self::HillGiantBank => "HillGiant",
+            Self::MossGiant | Self::MossGiantPrepared | Self::MossGiantBank => "MossGiant",
+            Self::HillGiant | Self::HillGiantBank | Self::HillGiantBankPrepared => "HillGiant",
             Self::AutoFighter
             | Self::AutoFighterMage
             | Self::AutoFighterRange
@@ -873,6 +884,7 @@ impl CoreCase {
             | Self::GreenDragonPotionsPrepared
             | Self::GreenDragonBank
             | Self::GreenDragonBankPrepared
+            | Self::GreenDragonBankDefaultPrepared
             | Self::GreenDragonTele
             | Self::GreenDragonTelePrepared => "GreenDragon",
             Self::FireGiant
@@ -2320,6 +2332,7 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::ChaosDruidTower
         | CoreCase::ChaosDruidYanille
         | CoreCase::MossGiant
+        | CoreCase::MossGiantPrepared
         | CoreCase::HillGiant
         | CoreCase::AutoFighter
         | CoreCase::AutoFighterMage
@@ -2338,11 +2351,13 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::AutoFighterBank
         | CoreCase::MossGiantBank
         | CoreCase::HillGiantBank
+        | CoreCase::HillGiantBankPrepared
         | CoreCase::ChaosDruidBank
         | CoreCase::ArdyFighterBank
         | CoreCase::RockCrabBank
         | CoreCase::GreenDragonBank
         | CoreCase::GreenDragonBankPrepared
+        | CoreCase::GreenDragonBankDefaultPrepared
         | CoreCase::GreenDragonTele
         | CoreCase::GreenDragonTelePrepared
         | CoreCase::FireGiantApproach
@@ -2391,9 +2406,12 @@ pub fn validate_case_baseline_with_preparation(
                     | CoreCase::GreenDragonSpecialPrepared
                     | CoreCase::GreenDragonPotionsPrepared
                     | CoreCase::GreenDragonBankPrepared
+                    | CoreCase::GreenDragonBankDefaultPrepared
                     | CoreCase::GreenDragonTelePrepared
                     | CoreCase::FireGiantPrepared
-                    | CoreCase::FireGiantBankPrepared => {
+                    | CoreCase::FireGiantBankPrepared
+                    | CoreCase::MossGiantPrepared
+                    | CoreCase::HillGiantBankPrepared => {
                         prepared_combat_baseline_ready(case, baseline)
                     }
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
@@ -2712,6 +2730,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::MossGiant => {
             "Moss safespot (2553,3406,0), Attack/Strength/Hitpoints 40, lobster 10, scimitar 1331, empty big bones 532"
         }
+        CoreCase::MossGiantPrepared => {
+            "Moss safespot (2553,3406,0), exact Attack/Strength/Defence/Hitpoints 70, exact lobster 10, worn rune scimitar 1333 and 1113/1079/1163, empty big bones 532"
+        }
         CoreCase::HillGiant => {
             "Giant pit (3110,9832,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, empty 532/225"
         }
@@ -2766,6 +2787,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::HillGiantBank => {
             "Giant pit (3110,9832,0) r16, Attack/Strength/Hitpoints 40, worn scimitar 1331, trout 8, brass key 983, lootSlots 1, empty 532/225"
         }
+        CoreCase::HillGiantBankPrepared => {
+            "Giant pit (3110,9832,0) r16, exact Attack/Strength/Defence/Hitpoints 70, exact trout 8, worn adamant scimitar 1331 and 1113/1079/1163, brass key 983, lootSlots 1, empty 532/225"
+        }
         CoreCase::ChaosDruidBank => {
             "Edgeville dungeon (3110,9936,0) r14, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8 (under foodWithdraw 12)"
         }
@@ -2780,6 +2804,9 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::GreenDragonBankPrepared => {
             "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, stock-selected inventory-pressure Flee to bank"
+        }
+        CoreCase::GreenDragonBankDefaultPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, source-default loot inventory-pressure Flee to bank"
         }
         CoreCase::GreenDragonTele => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
@@ -4402,6 +4429,9 @@ pub enum CombatLoot {
     BigBones,
     BigBonesOrLimpwurt,
     DragonBonesOrHide,
+    /// Both guaranteed Green dragon drops must increase after Start.
+    /// `DragonBonesOrHide` cannot distinguish that pair from two of one id.
+    DragonBonesAndHide,
     /// Guard-drop pack stock: any one of the six verifiable Guard drops
     /// ([`GUARD_DROP_IDS`]) landing in the pack. AutoFighter bank injects that
     /// list; ArdyFighter already lists the same names in `DEFAULT_LOOT`.
@@ -4475,6 +4505,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_id: LOBSTER_ID,
             food_count: MOSS_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::MossGiantPrepared => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: MOSS_GIANT_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
@@ -4680,7 +4723,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
-        CoreCase::HillGiantBank => Some(CombatSpec {
+        CoreCase::HillGiantBank | CoreCase::HillGiantBankPrepared => Some(CombatSpec {
             target: "Giant",
             stand: HILL_GIANT_PIT,
             radius: 16,
@@ -4759,6 +4802,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::DragonBonesOrHide,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::GreenDragonBankDefaultPrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_BANK_PREPARED_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::DragonBonesAndHide,
             extra: CombatExtra::WornShield,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -4920,6 +4976,20 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             require_combat: true,
             forbid_death: false,
         }),
+        CoreCase::HillGiantBankPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            stand: HILL_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(TROUT_ID),
+            restock_count: Some(HILL_GIANT_BANK_PREPARED_RESTOCK),
+            ret: HILL_GIANT_PIT,
+            ret_radius: 16,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+            forbid_death: false,
+        }),
         // Edgeville trip end: `depositInventory` empties the pack, then the
         // card withdraws exactly its food back and returns through the trapdoor.
         CoreCase::ChaosDruidBank => Some(CombatBankSpec {
@@ -4979,6 +5049,20 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand_radius: 8,
             restock: Some(LOBSTER_ID),
             restock_count: None,
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+            forbid_death: false,
+        }),
+        CoreCase::GreenDragonBankDefaultPrepared => Some(CombatBankSpec {
+            deposit: &[GREEN_DRAGONHIDE_ID],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK),
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
             via: None,
@@ -5096,7 +5180,7 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
         CombatLoot::BigBonesOrLimpwurt => {
             observation.item_id(BIG_BONES_ID) + observation.item_id(LIMPWURT_ROOT_ID)
         }
-        CombatLoot::DragonBonesOrHide => {
+        CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
             observation.item_id(DRAGON_BONES_ID) + observation.item_id(GREEN_DRAGONHIDE_ID)
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS
@@ -5211,26 +5295,38 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
         CoreCase::GreenDragonTelePrepared => ["attack", "strength", "defence", "hitpoints"]
             .into_iter()
             .all(|stat| baseline.level(stat) == GREEN_DRAGON_TELE_PREPARED_LEVEL),
-        CoreCase::GreenDragonBankPrepared | CoreCase::FireGiantBankPrepared => {
+        CoreCase::GreenDragonBankPrepared
+        | CoreCase::GreenDragonBankDefaultPrepared
+        | CoreCase::FireGiantBankPrepared => {
             ["attack", "strength", "defence", "hitpoints"]
                 .into_iter()
                 .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL)
         }
+        CoreCase::MossGiantPrepared | CoreCase::HillGiantBankPrepared => {
+            ["attack", "strength", "defence", "hitpoints"]
+                .into_iter()
+                .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
+        }
         _ => return false,
     };
-    let exact_profile = exact_stats
-        && armour_ready
-        && baseline.item_id(LOBSTER_ID)
-            == match case {
-                CoreCase::GreenDragonPrepared => GREEN_DRAGON_BASE_FOOD,
-                CoreCase::GreenDragonSpecialPrepared => GREEN_DRAGON_FOOD,
-                CoreCase::GreenDragonPotionsPrepared => GREEN_DRAGON_FOOD,
-                CoreCase::GreenDragonBankPrepared => GREEN_DRAGON_BANK_PREPARED_FOOD,
-                CoreCase::GreenDragonTelePrepared => 0,
-                CoreCase::FireGiantPrepared => FIRE_GIANT_FOOD,
-                CoreCase::FireGiantBankPrepared => FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
-                _ => return false,
-            };
+    let exact_food = match case {
+        CoreCase::GreenDragonPrepared => baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BASE_FOOD,
+        CoreCase::GreenDragonSpecialPrepared | CoreCase::GreenDragonPotionsPrepared => {
+            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
+        }
+        CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
+            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BANK_PREPARED_FOOD
+        }
+        CoreCase::GreenDragonTelePrepared => baseline.item_id(LOBSTER_ID) == 0,
+        CoreCase::FireGiantPrepared => baseline.item_id(LOBSTER_ID) == FIRE_GIANT_FOOD,
+        CoreCase::FireGiantBankPrepared => {
+            baseline.item_id(LOBSTER_ID) == FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
+        }
+        CoreCase::MossGiantPrepared => baseline.item_id(LOBSTER_ID) == MOSS_GIANT_FOOD,
+        CoreCase::HillGiantBankPrepared => baseline.item_id(TROUT_ID) == HILL_GIANT_FOOD,
+        _ => return false,
+    };
+    let exact_profile = exact_stats && armour_ready && exact_food;
     exact_profile
         && match case {
             CoreCase::GreenDragonPrepared => {
@@ -5247,7 +5343,7 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
                 baseline.item_id(RUNE_SCIMITAR_ID) == 1
                     && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
             }
-            CoreCase::GreenDragonBankPrepared => {
+            CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
                     && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
                     && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
@@ -5271,6 +5367,15 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
             CoreCase::FireGiantBankPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
                     && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::MossGiantPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::HillGiantBankPrepared => {
+                baseline.item_id(ADAMANT_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                    && baseline.item_id(BRASS_KEY_ID) == 1
             }
             _ => false,
         }
@@ -5394,7 +5499,13 @@ impl CombatCoreCycle {
                 }
             }
         }
-        self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
+        self.looted |= match spec.loot {
+            CombatLoot::DragonBonesAndHide => {
+                now.item_id(DRAGON_BONES_ID) > baseline.item_id(DRAGON_BONES_ID)
+                    && now.item_id(GREEN_DRAGONHIDE_ID) > baseline.item_id(GREEN_DRAGONHIDE_ID)
+            }
+            _ => combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot),
+        };
         self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
             || now.item_id(RED_DRAGONHIDE_ID) > 0
             || now.item_id(BLUE_DRAGONHIDE_ID) > 0
@@ -5646,7 +5757,9 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         }
         CombatLoot::BigBones => id == BIG_BONES_ID,
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
-        CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
+        CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
+            id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID
+        }
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
         CombatLoot::SapphireOrCasket => id == UNCUT_SAPPHIRE_ID || id == CASKET_ID,
         CombatLoot::None => false,
@@ -8566,11 +8679,13 @@ impl CoreWitness {
             CoreCase::AutoFighterBank
             | CoreCase::MossGiantBank
             | CoreCase::HillGiantBank
+            | CoreCase::HillGiantBankPrepared
             | CoreCase::ChaosDruidBank
             | CoreCase::ArdyFighterBank
             | CoreCase::RockCrabBank
             | CoreCase::GreenDragonBank
             | CoreCase::GreenDragonBankPrepared
+            | CoreCase::GreenDragonBankDefaultPrepared
             | CoreCase::GreenDragonTele
             | CoreCase::GreenDragonTelePrepared
             | CoreCase::FireGiantBank
@@ -8608,6 +8723,7 @@ impl CoreWitness {
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
             | CoreCase::MossGiant
+            | CoreCase::MossGiantPrepared
             | CoreCase::HillGiant
             | CoreCase::AutoFighter
             | CoreCase::AutoFighterMage

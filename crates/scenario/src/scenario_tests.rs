@@ -1527,6 +1527,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "chaos_druid_tower",
             "chaos_druid_yanille",
             "moss_giant",
+            "moss_giant_prepared",
             "hill_giant",
             "auto_fighter",
             "auto_fighter_mage",
@@ -1546,12 +1547,14 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "moss_giant_bank",
             "moss_giant_bank_start",
             "hill_giant_bank",
+            "hill_giant_bank_prepared",
             "hill_giant_loot_deposit",
             "chaos_druid_bank",
             "ardy_fighter_bank",
             "rock_crab_bank",
             "green_dragon_bank",
             "green_dragon_bank_prepared",
+            "green_dragon_bank_default_prepared",
             "green_dragon_tele",
             "green_dragon_tele_prepared",
             "fire_giant_approach",
@@ -2642,14 +2645,17 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         ("green_dragon_special_prepared", "GreenDragon", 70),
         ("green_dragon_potions_prepared", "GreenDragon", 70),
         ("green_dragon_bank_prepared", "GreenDragon", 99),
+        ("green_dragon_bank_default_prepared", "GreenDragon", 99),
         ("green_dragon_tele_prepared", "GreenDragon", 99),
         ("fire_giant_bank_prepared", "FireGiant", 99),
+        ("moss_giant_prepared", "MossGiant", 70),
+        ("hill_giant_bank_prepared", "HillGiant", 70),
     ];
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
         let (deadline_secs, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" => (600, 1500),
+            "green_dragon_bank_prepared" | "green_dragon_bank_default_prepared" => (600, 1500),
             "green_dragon_tele_prepared" => (480, 1200),
             "fire_giant_bank_prepared" => (600, 1500),
             _ => (300, 750),
@@ -2742,6 +2748,139 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             .iter()
             .any(|step| { step.wait.arm == Proof::ItemIdAtMost { id, count: 0 } }));
     }
+
+    let green_default = get("green_dragon_bank_default_prepared").unwrap();
+    let green_default_inject =
+        settings_inject_map(green_default.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        green_default_inject.get("foodReserve"),
+        Some(&Value::from(26.0))
+    );
+    assert_eq!(
+        green_default_inject.get("foodWithdraw"),
+        Some(&Value::from(27.0))
+    );
+    assert!(
+        !green_default_inject.contains_key("loot"),
+        "default-loot Green must omit loot injection so the generated catalog is exercised"
+    );
+    let green_default_start = start_idx(&green_default);
+    let green_default_watch: Vec<_> = green_default.steps[green_default_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert!(green_default_watch.contains(&Proof::ItemId {
+        id: DRAGON_BONES_ID,
+        count: 1,
+    }));
+    assert!(green_default_watch.contains(&Proof::ItemId {
+        id: GREEN_DRAGONHIDE_ID,
+        count: 1,
+    }));
+    assert!(green_default_watch.contains(&Proof::BankItemId {
+        id: GREEN_DRAGONHIDE_ID,
+        count: 1,
+    }));
+    assert!(
+        !green_default_watch.contains(&Proof::BankItemIdAny {
+            ids: &GREEN_DRAGON_BANK_DEPOSIT,
+            count: 1,
+        }),
+        "hide-only deposit must not equate bones-or-hide"
+    );
+    assert!(green_default_watch.contains(&Proof::ItemId {
+        id: LOBSTER_ID,
+        count: 27,
+    }));
+    for id in [DRAGON_BONES_ID, 537, GREEN_DRAGONHIDE_ID, 1754] {
+        assert!(green_default.steps[..green_default_start]
+            .iter()
+            .any(|step| { step.wait.arm == Proof::ItemIdAtMost { id, count: 0 } }));
+    }
+
+    let moss_prepared = get("moss_giant_prepared").unwrap();
+    let moss_inject = settings_inject_map(moss_prepared.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        moss_inject.get("combatStyle"),
+        Some(&Value::String("melee".into()))
+    );
+    assert_eq!(
+        moss_inject.get("meleeStyle"),
+        Some(&Value::String("strength".into()))
+    );
+    assert_eq!(moss_inject.get("buryBones"), Some(&Value::Bool(false)));
+    let moss_start = start_idx(&moss_prepared);
+    assert!(moss_prepared.steps[..moss_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: MOSS_GIANT_FOOD,
+            }
+    }));
+    assert!(moss_prepared.steps[..moss_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::EquipmentId { id: RUNE_SCIMITAR_ID }));
+    for id in [BIG_BONES_ID, 533] {
+        assert!(moss_prepared.steps[..moss_start]
+            .iter()
+            .any(|step| step.wait.arm == Proof::ItemIdAtMost { id, count: 0 }));
+    }
+    assert!(
+        !moss_prepared.steps[moss_start + 1..]
+            .iter()
+            .any(|step| matches!(
+                step.wait.arm,
+                Proof::BankClosed | Proof::BankItemId { .. } | Proof::BankItemIdAny { .. }
+            )),
+        "moss_giant_prepared is the fight-first core, not a bank cell"
+    );
+
+    let hill_prepared = get("hill_giant_bank_prepared").unwrap();
+    let hill_inject = settings_inject_map(hill_prepared.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        hill_inject.get("meleeStyle"),
+        Some(&Value::String("strength".into()))
+    );
+    assert_eq!(hill_inject.get("buryBones"), Some(&Value::Bool(false)));
+    assert_eq!(hill_inject.get("lootSlots"), Some(&Value::from(1.0)));
+    let hill_start = start_idx(&hill_prepared);
+    assert!(hill_prepared.steps[..hill_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: TROUT_ID,
+                count: HILL_GIANT_FOOD,
+            }
+    }));
+    assert!(hill_prepared.steps[..hill_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::EquipmentId { id: COMBAT_SCIMITAR_ID }));
+    assert!(hill_prepared.steps[..hill_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::ItemId { id: BRASS_KEY_ID, count: 1 }));
+    for id in [BIG_BONES_ID, 533, LIMPWURT_ROOT_ID, 226] {
+        assert!(hill_prepared.steps[..hill_start]
+            .iter()
+            .any(|step| step.wait.arm == Proof::ItemIdAtMost { id, count: 0 }));
+    }
+    let hill_watch: Vec<_> = hill_prepared.steps[hill_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert!(hill_watch.contains(&Proof::BankItemIdAny {
+        ids: &HILL_GIANT_BANK_DEPOSIT,
+        count: 1,
+    }));
+    assert!(hill_watch.contains(&Proof::ItemId {
+        id: TROUT_ID,
+        count: 12,
+    }));
+    assert!(
+        !hill_watch.contains(&Proof::BankItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        }),
+        "prepared Hill must accept either earned deposit class, not bones-only"
+    );
 
     let green_tele = get("green_dragon_tele_prepared").unwrap();
     let green_tele_start = start_idx(&green_tele);
@@ -2940,11 +3079,13 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("moss_giant_bank", "adamant_scimitar"),
         ("moss_giant_bank_start", "adamant_scimitar"),
         ("hill_giant_bank", "adamant_scimitar"),
+        ("hill_giant_bank_prepared", "adamant_scimitar"),
         ("hill_giant_loot_deposit", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
+        ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
         ("fire_giant_bank", "adamant_scimitar"),
     ] {
@@ -2970,6 +3111,30 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         dragon.contains("givebank lobster 24"),
         "green_dragon_bank keeps its withdraw window: {dragon}"
+    );
+    let green_default = seed("green_dragon_bank_default_prepared");
+    assert!(
+        green_default.contains("givebank lobster 40"),
+        "default-loot Green keeps the prepared withdraw window: {green_default}"
+    );
+    assert!(
+        !green_default.contains("give dragon")
+            && !green_default.contains("give green_dragonhide")
+            && !green_default.contains("givebank dragon")
+            && !green_default.contains("givebank green_dragonhide"),
+        "default-loot Green must not seed bones or hide: {green_default}"
+    );
+    let hill_prepared = seed("hill_giant_bank_prepared");
+    assert!(
+        hill_prepared.contains("givebank trout 12"),
+        "prepared Hill keeps the card's foodWithdraw window: {hill_prepared}"
+    );
+    assert!(
+        !hill_prepared.contains("give big_bones")
+            && !hill_prepared.contains("give limpwurt")
+            && !hill_prepared.contains("givebank big_bones")
+            && !hill_prepared.contains("givebank limpwurt"),
+        "prepared Hill must not seed earned-kill cargo: {hill_prepared}"
     );
     let moss_start = seed("moss_giant_bank_start");
     assert!(
@@ -9212,6 +9377,13 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
             MOSS_GIANT_FOOD as u32,
         ),
         (
+            "moss_giant_prepared",
+            "MossGiant",
+            "Scenario Moss Giant food",
+            "Lobster",
+            MOSS_GIANT_FOOD as u32,
+        ),
+        (
             "moss_giant_bank",
             "MossGiant",
             "Scenario Moss Giant food",
@@ -9234,6 +9406,13 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
         ),
         (
             "hill_giant_bank",
+            "HillGiant",
+            "Scenario Hill Giant food",
+            "Trout",
+            HILL_GIANT_FOOD as u32,
+        ),
+        (
+            "hill_giant_bank_prepared",
             "HillGiant",
             "Scenario Hill Giant food",
             "Trout",

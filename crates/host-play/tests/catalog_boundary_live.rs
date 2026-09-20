@@ -6413,6 +6413,42 @@ export default class NativeStop extends LoopingBot {{
         let green_trip = combat_bank_spec(green_bank).unwrap();
         assert!(green_trip.require_combat);
         assert_eq!(green_trip.deposit, &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID]);
+        assert_eq!(green_trip.restock_count, None);
+
+        let green_default = CoreCase::parse("green_dragon_bank_default_prepared").unwrap();
+        assert_eq!(green_default.card_name(), "GreenDragon");
+        let green_default_spec = combat_spec(green_default).unwrap();
+        assert_eq!(green_default_spec.food_count, 26);
+        assert_eq!(green_default_spec.loot, CombatLoot::DragonBonesAndHide);
+        let green_default_trip = combat_bank_spec(green_default).unwrap();
+        assert!(green_default_trip.require_combat);
+        assert_eq!(green_default_trip.deposit, &[GREEN_DRAGONHIDE_ID]);
+        assert_eq!(
+            green_default_trip.restock_count,
+            Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK)
+        );
+
+        let moss_prepared = CoreCase::parse("moss_giant_prepared").unwrap();
+        assert_eq!(moss_prepared.card_name(), "MossGiant");
+        let moss_spec = combat_spec(moss_prepared).unwrap();
+        assert_eq!(moss_spec.food_count, MOSS_GIANT_FOOD);
+        assert_eq!(moss_spec.weapon_id, RUNE_SCIMITAR_ID);
+        assert_eq!(moss_spec.loot, CombatLoot::BigBones);
+        assert!(combat_bank_spec(moss_prepared).is_none());
+
+        let hill_prepared = CoreCase::parse("hill_giant_bank_prepared").unwrap();
+        assert_eq!(hill_prepared.card_name(), "HillGiant");
+        let hill_spec = combat_spec(hill_prepared).unwrap();
+        assert_eq!(hill_spec.food_count, HILL_GIANT_FOOD);
+        assert_eq!(hill_spec.weapon_id, ADAMANT_SCIMITAR_ID);
+        assert_eq!(hill_spec.loot, CombatLoot::BigBonesOrLimpwurt);
+        let hill_trip = combat_bank_spec(hill_prepared).unwrap();
+        assert!(hill_trip.require_combat);
+        assert_eq!(hill_trip.deposit, &[BIG_BONES_ID, LIMPWURT_ROOT_ID]);
+        assert_eq!(
+            hill_trip.restock_count,
+            Some(HILL_GIANT_BANK_PREPARED_RESTOCK)
+        );
 
         let tele = CoreCase::parse("green_dragon_tele_prepared").unwrap();
         let tele_spec = combat_spec(tele).unwrap();
@@ -6495,10 +6531,22 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         validate_case_baseline(CoreCase::GreenDragonBankPrepared, &green_bank).unwrap();
+        validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &green_bank).unwrap();
         let mut seeded_dragon_loot = green_bank.clone();
         seeded_dragon_loot.item_ids.insert(DRAGON_BONES_ID, 1);
         assert!(
             validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
+        );
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &seeded_dragon_loot)
+                .is_err(),
+            "default-loot Green rejects seeded bones as earned hide"
+        );
+        let mut seeded_hide = green_bank.clone();
+        seeded_hide.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &seeded_hide).is_err(),
+            "default-loot Green rejects seeded hide"
         );
 
         let mut tele_levels = bank_levels.to_vec();
@@ -6580,11 +6628,73 @@ export default class NativeStop extends LoopingBot {{
             "prepared FireGiant still requires rope"
         );
 
+        let moss_levels = [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ];
+        let moss = branch_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &moss_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::MossGiantPrepared, &moss).unwrap();
+        let mut moss_defence1 = moss.clone();
+        moss_defence1.levels.insert("defence".into(), 1);
+        assert!(
+            validate_case_baseline(CoreCase::MossGiantPrepared, &moss_defence1).is_err(),
+            "prepared Moss does not reuse the original Defence-1 fixture"
+        );
+        let mut moss_seeded = moss.clone();
+        moss_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(CoreCase::MossGiantPrepared, &moss_seeded).is_err());
+
+        let hill = branch_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[
+                (ADAMANT_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &moss_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill).unwrap();
+        let mut hill_seeded = hill.clone();
+        hill_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_seeded).is_err());
+        let mut hill_limpwurt = hill.clone();
+        hill_limpwurt.item_ids.insert(LIMPWURT_ROOT_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_limpwurt).is_err());
+
         for (case, baseline) in [
             (CoreCase::GreenDragonPotionsPrepared, potions),
-            (CoreCase::GreenDragonBankPrepared, green_bank),
+            (CoreCase::GreenDragonBankPrepared, green_bank.clone()),
+            (CoreCase::GreenDragonBankDefaultPrepared, green_bank),
             (CoreCase::GreenDragonTelePrepared, tele),
             (CoreCase::FireGiantBankPrepared, fire_bank),
+            (CoreCase::MossGiantPrepared, moss),
+            (CoreCase::HillGiantBankPrepared, hill),
         ] {
             let mut wrong_level = baseline.clone();
             wrong_level.levels.insert("defence".into(), 69);
@@ -6593,6 +6703,59 @@ export default class NativeStop extends LoopingBot {{
             missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
             assert!(validate_case_baseline(case, &missing_armour).is_err());
         }
+    }
+
+    #[test]
+    fn default_green_loot_requires_both_earned_drops_not_bones_or_hide() {
+        let or_spec = combat_spec(CoreCase::GreenDragonBankPrepared).unwrap();
+        let and_spec = combat_spec(CoreCase::GreenDragonBankDefaultPrepared).unwrap();
+        assert_eq!(or_spec.loot, CombatLoot::DragonBonesOrHide);
+        assert_eq!(and_spec.loot, CombatLoot::DragonBonesAndHide);
+
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (DRAGONFIRE_SHIELD_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &[
+                ("attack", 99),
+                ("strength", 99),
+                ("defence", 99),
+                ("hitpoints", 99),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        let mut bones_only = baseline.clone();
+        bones_only.item_ids.insert(DRAGON_BONES_ID, 1);
+        let mut both = bones_only.clone();
+        both.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+
+        let mut or_cycle = CombatCoreCycle::default();
+        or_cycle.observe(or_spec, &baseline, &bones_only);
+        assert!(or_cycle.looted, "accepted bank cell still qualifies on bones");
+
+        let mut and_bones = CombatCoreCycle::default();
+        and_bones.observe(and_spec, &baseline, &bones_only);
+        assert!(
+            !and_bones.looted,
+            "default-loot Green must not treat bones-only as the guaranteed pair"
+        );
+
+        let mut and_both = CombatCoreCycle::default();
+        and_both.observe(and_spec, &baseline, &both);
+        assert!(and_both.looted, "both earned drops satisfy the default pair");
+        assert_eq!(combat_loot_count(&bones_only, CombatLoot::DragonBonesAndHide), 1);
+        assert_eq!(combat_loot_count(&both, CombatLoot::DragonBonesAndHide), 2);
     }
 
     #[test]

@@ -191,6 +191,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::chaos_druid_yanille_scenario,
     ),
     Entry::new("moss_giant", scenarios::moss_giant_scenario),
+    Entry::new(
+        "moss_giant_prepared",
+        scenarios::moss_giant_prepared_scenario,
+    ),
     Entry::new("hill_giant", scenarios::hill_giant_scenario),
     Entry::new("auto_fighter", scenarios::auto_fighter_scenario),
     Entry::new("auto_fighter_mage", scenarios::auto_fighter_mage_scenario),
@@ -232,6 +236,10 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("hill_giant_bank", scenarios::hill_giant_bank_scenario),
     Entry::new(
+        "hill_giant_bank_prepared",
+        scenarios::hill_giant_bank_prepared_scenario,
+    ),
+    Entry::new(
         "hill_giant_loot_deposit",
         scenarios::hill_giant_loot_deposit_scenario,
     ),
@@ -242,6 +250,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new(
         "green_dragon_bank_prepared",
         scenarios::green_dragon_bank_prepared_scenario,
+    ),
+    Entry::new(
+        "green_dragon_bank_default_prepared",
+        scenarios::green_dragon_bank_default_prepared_scenario,
     ),
     Entry::new("green_dragon_tele", scenarios::green_dragon_tele_scenario),
     Entry::new(
