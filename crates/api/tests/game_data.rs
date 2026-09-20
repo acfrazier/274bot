@@ -395,6 +395,6 @@ fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
         assert_eq!(burst.button_com, 5610);
         assert_eq!(burst.varp, 84);
         assert_eq!(burst.level, 4);
-        assert_eq!(data.prayer_by_name("Not a prayer"), None);
+        assert!(data.prayer_by_name("Not a prayer").is_none());
     }
 }
