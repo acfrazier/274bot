@@ -410,7 +410,9 @@ impl ResolvedSettingOptions {
 
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
 /// pulls names from the store; a high-alchemy item spec is resolved from
-/// borrowed selected facts without mutating the schema.
+/// borrowed selected facts without mutating the schema. Recognized imported
+/// catalog tables are a last-resort host metadata lookup. Revision-fact
+/// equipment idents stay empty until W1 publishes them.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
@@ -433,6 +435,16 @@ pub fn resolve_setting_options_with_labels(
     }
     if let Some(spec) = def.item_option_spec.as_ref() {
         return resolve_item_option_spec(spec, game_data);
+    }
+    if let Some(from) = def.options_from.as_deref() {
+        if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
+            return ResolvedSettingOptions::default();
+        }
+        if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
+            return ResolvedSettingOptions::from_values(
+                table.iter().map(|s| (*s).to_string()).collect(),
+            );
+        }
     }
     ResolvedSettingOptions::default()
 }
@@ -715,6 +727,88 @@ mod tests {
         );
         assert_eq!(loadout.unassigned, vec!["Mystery hat"]);
         assert_eq!(loadout.carry, vec![CarryEntry::new("Lobster", 8)]);
+    }
+
+    #[test]
+    fn catalog_metadata_options_when_schema_empty() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = SettingDef {
+            id: "location".into(),
+            ty: "string".into(),
+            default: Some("Catherby".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("COOK_LOCATION_OPTIONS".into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        let opts = resolve_setting_options(&def, &store, None);
+        assert!(opts.contains(&"Catherby".into()), "{opts:?}");
+        assert!(opts.contains(&"Auto".into()), "{opts:?}");
+        assert!(opts.contains(&"Custom".into()), "{opts:?}");
+    }
+
+    #[test]
+    fn revision_fact_equipment_options_stay_empty() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = SettingDef {
+            id: "staff".into(),
+            ty: "string".into(),
+            default: Some("Staff of air".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("STAFFS".into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        let opts = resolve_setting_options(&def, &store, None);
+        assert!(
+            opts.is_empty(),
+            "W1 equipment arrays must not invent names: {opts:?}"
+        );
+    }
+
+    #[test]
+    fn recovered_inline_options_still_win_over_metadata() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = SettingDef {
+            id: "surface".into(),
+            ty: "string".into(),
+            default: Some("Range".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: vec!["Range".into(), "Fire".into()],
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("COOK_LOCATION_OPTIONS".into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        assert_eq!(
+            resolve_setting_options(&def, &store, None),
+            vec!["Range".to_string(), "Fire".to_string()]
+        );
     }
 
     #[test]

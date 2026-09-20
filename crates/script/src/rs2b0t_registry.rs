@@ -789,6 +789,189 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
     setting_object_body(file_src, ident)
 }
 
+/// Frozen-source equipment / drop tables that W1 must publish. The host
+/// must not invent names here; empty options are the honest schema.
+pub(crate) fn is_revision_fact_option_ident(ident: &str) -> bool {
+    matches!(
+        ident,
+        "STAFFS"
+            | "BOWS"
+            | "CROSSBOWS"
+            | "DARTS"
+            | "ARROWS"
+            | "BOLTS"
+            | "AXES"
+            | "MELEE_WEAPONS"
+            | "RANGED_WEAPONS"
+            | "ROCK_CRAB_RANGED_WEAPONS"
+            | "DROP_DB"
+    )
+}
+
+/// Host-owned finite option tables for imported / parent-dir identifiers
+/// whose bodies are not in the same-directory settings blob. Values are
+/// copied from the frozen rs2b0t pin; this is not a JS evaluator.
+pub(crate) fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
+    Some(match ident {
+        "COOK_LOCATION_OPTIONS" => &[
+            "Auto",
+            "Varrock East",
+            "Varrock West",
+            "Al Kharid",
+            "Draynor",
+            "Falador East",
+            "Falador West",
+            "Edgeville",
+            "Seers",
+            "Catherby",
+            "Yanille",
+            "Ardougne West",
+            "Ardougne East",
+            "Canifis",
+            "Shilo Village",
+            "Fishing Guild",
+            "Shantay Pass",
+            "Mage Arena",
+            "Grand Tree",
+            "Duel Arena",
+            "Custom",
+        ],
+        "LOG_LEVELS" => &[
+            "Logs",
+            "Oak logs",
+            "Willow logs",
+            "Maple logs",
+            "Yew logs",
+            "Magic logs",
+        ],
+        "FIRE_SPOTS" => &["Varrock East", "Varrock West", "Draynor", "Seers"],
+        "HERB_OPTIONS" => &[
+            "Guam leaf",
+            "Marrentill",
+            "Tarromin",
+            "Harralander",
+            "Ranarr weed",
+            "Toadflax",
+            "Irit leaf",
+            "Avantoe",
+            "Kwuarm",
+            "Snapdragon",
+            "Cadantine",
+            "Lantadyme",
+            "Dwarf weed",
+            "Torstol",
+            "Snake weed",
+            "Ardrigal",
+            "Sito foil",
+            "Volencia moss",
+            "Rogues purse",
+        ],
+        "RUNE_OPTIONS" => &[
+            "Air rune",
+            "Mind rune",
+            "Water rune",
+            "Earth rune",
+            "Fire rune",
+            "Body rune",
+            "Cosmic rune",
+            "Chaos rune",
+            "Nature rune",
+            "Law rune",
+            "Death rune",
+        ],
+        "BANK_LOCATIONS" | "BANK_LOCATION_OPTIONS" => bank_location_names(ident),
+        "PRODUCT_OPTIONS" => &[
+            "Gold ring",
+            "Sapphire ring",
+            "Emerald ring",
+            "Ruby ring",
+            "Diamond ring",
+            "Dragonstone ring",
+            "Gold necklace",
+            "Sapphire necklace",
+            "Emerald necklace",
+            "Ruby necklace",
+            "Diamond necklace",
+            "Dragonstone necklace",
+            "Gold amulet",
+            "Sapphire amulet",
+            "Emerald amulet",
+            "Ruby amulet",
+            "Diamond amulet",
+            "Dragonstone amulet",
+        ],
+        "JEWEL_OPTIONS" => &[
+            "Sapphire ring",
+            "Sapphire necklace",
+            "Sapphire amulet",
+            "Emerald ring",
+            "Emerald amulet",
+            "Ruby ring",
+            "Ruby amulet",
+            "Diamond ring",
+            "Diamond amulet",
+            "Dragonstone ring",
+            "Dragonstone amulet",
+        ],
+        _ => return None,
+    })
+}
+
+fn bank_location_names(ident: &str) -> &'static [&'static str] {
+    const BANKS: &[&str] = &[
+        "Varrock East",
+        "Varrock West",
+        "Al Kharid",
+        "Draynor",
+        "Falador East",
+        "Falador West",
+        "Edgeville",
+        "Seers",
+        "Catherby",
+        "Yanille",
+        "Ardougne West",
+        "Ardougne East",
+        "Canifis",
+        "Shilo Village",
+        "Fishing Guild",
+        "Shantay Pass",
+        "Mage Arena",
+        "Grand Tree",
+        "Duel Arena",
+    ];
+    const WITH_NEAREST: &[&str] = &[
+        "Nearest",
+        "Varrock East",
+        "Varrock West",
+        "Al Kharid",
+        "Draynor",
+        "Falador East",
+        "Falador West",
+        "Edgeville",
+        "Seers",
+        "Catherby",
+        "Yanille",
+        "Ardougne West",
+        "Ardougne East",
+        "Canifis",
+        "Shilo Village",
+        "Fishing Guild",
+        "Shantay Pass",
+        "Mage Arena",
+        "Grand Tree",
+        "Duel Arena",
+    ];
+    if ident == "BANK_LOCATION_OPTIONS" {
+        WITH_NEAREST
+    } else {
+        BANKS
+    }
+}
+
+fn catalog_option_values(ident: &str) -> Option<Vec<String>> {
+    catalog_option_table(ident).map(|rows| rows.iter().map(|s| (*s).to_string()).collect())
+}
+
 /// Static `const NAME = ['a', 'b']` (or a same-file / shim alias of one).
 /// Does not evaluate `Object.keys(...)` or other TypeScript.
 fn resolve_string_array_ident(file_src: &str, ident: &str) -> Option<Vec<String>> {
@@ -822,6 +1005,29 @@ fn resolve_string_array_ident_visited(
         }
         if let Some(alias) = string_array_alias_in(shim, ident) {
             return resolve_string_array_ident_visited(shim, &alias, stack);
+        }
+    }
+    if let Some(rhs) = const_eq_rhs(file_src, ident) {
+        let trimmed = rhs.trim_start();
+        if let Some(arr) = parse_mapped_or_keys_rhs(trimmed, file_src) {
+            return Some(arr);
+        }
+        if let Some(labels) = object_array_field_values(trimmed, "label", file_src) {
+            return Some(labels);
+        }
+    }
+    catalog_option_values(ident)
+}
+
+fn parse_mapped_or_keys_rhs(rhs: &str, file_src: &str) -> Option<Vec<String>> {
+    if let Some(keys) = object_keys_call(rhs, file_src) {
+        return Some(keys);
+    }
+    if let Some((base, after)) = take_ident(rhs) {
+        if after.trim_start().starts_with(".map") {
+            if let Some((vals, _)) = take_map_call(base, after.trim_start(), file_src) {
+                return Some(vals);
+            }
         }
     }
     None
@@ -905,8 +1111,10 @@ fn string_array_literal_in(src: &str, ident: &str) -> Option<Vec<String>> {
     parse_string_array_with_consts(rhs, src)
 }
 
-/// Parse a string array whose elements are either literals or string consts
-/// declared in the same source blob.  Anything dynamic remains unresolved.
+/// Parse a string array whose elements are literals, string consts, or a
+/// recognized finite `...IDENT` / `...IDENT.map(p => p.field)` spread.
+/// `.map(... .key)` stays unresolved so high-alchemy `item_option_spec`
+/// keeps ownership. Anything else dynamic remains unresolved.
 fn parse_string_array_with_consts(rhs: &str, file_src: &str) -> Option<Vec<String>> {
     let s = rhs.trim_start();
     if !s.starts_with('[') {
@@ -916,12 +1124,34 @@ fn parse_string_array_with_consts(rhs: &str, file_src: &str) -> Option<Vec<Strin
     let mut rest = s[1..end].trim_start();
     let mut out = Vec::new();
     while !rest.is_empty() {
-        if let Some((value, n)) = scan_quoted(rest) {
+        if rest.starts_with("...") {
+            rest = rest[3..].trim_start();
+            let (ident, after) = take_ident(rest)?;
+            rest = after.trim_start();
+            if rest.starts_with(".map") {
+                let (vals, after_map) = take_map_call(ident, rest, file_src)?;
+                out.extend(vals);
+                rest = after_map.trim_start();
+            } else {
+                out.extend(resolve_string_array_ident(file_src, ident)?);
+            }
+        } else if let Some((value, n)) = scan_quoted(rest) {
             out.push(value);
             rest = rest[n..].trim_start();
         } else if let Some((ident, after)) = take_ident(rest) {
-            out.push(resolve_string_const_ident(file_src, ident)?);
             rest = after.trim_start();
+            if rest.starts_with(".map") {
+                let (vals, after_map) = take_map_call(ident, rest, file_src)?;
+                out.extend(vals);
+                rest = after_map.trim_start();
+            } else if let Some(after_dot) = rest.strip_prefix('.') {
+                let after_dot = after_dot.trim_start();
+                let (field, after_field) = take_ident(after_dot)?;
+                out.push(quoted_object_const_field(file_src, ident, field)?);
+                rest = after_field.trim_start();
+            } else {
+                out.push(resolve_string_const_ident(file_src, ident)?);
+            }
         } else {
             return None;
         }
@@ -932,6 +1162,119 @@ fn parse_string_array_with_consts(rhs: &str, file_src: &str) -> Option<Vec<Strin
         }
     }
     Some(out)
+}
+
+/// `IDENT.map(param => param.field)` of a same-file object-literal array.
+/// Field `key` is reserved for the high-alchemy item-option walker.
+fn take_map_call<'a>(
+    ident: &str,
+    after_ident: &'a str,
+    file_src: &str,
+) -> Option<(Vec<String>, &'a str)> {
+    let rest = after_ident.trim_start().strip_prefix('.')?.trim_start();
+    let rest = rest.strip_prefix("map")?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let rest = rest.strip_prefix('(').unwrap_or(rest).trim_start();
+    let (param, after_param) = take_ident(rest)?;
+    let rest = after_param.trim_start();
+    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
+    let rest = rest.strip_prefix("=>")?.trim_start();
+    let (recv, after_recv) = take_ident(rest)?;
+    if recv != param {
+        return None;
+    }
+    let rest = after_recv.trim_start().strip_prefix('.')?.trim_start();
+    let (field, after_field) = take_ident(rest)?;
+    if field == "key" {
+        return None;
+    }
+    let rest = after_field.trim_start();
+    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
+    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
+    let vals = if let Some(rhs) = const_eq_rhs(file_src, ident) {
+        object_array_field_values(rhs, field, file_src)?
+    } else {
+        catalog_option_values(ident)?
+    };
+    Some((vals, rest))
+}
+
+fn quoted_object_const_field(file_src: &str, ident: &str, field: &str) -> Option<String> {
+    let rhs = const_eq_rhs(file_src, ident)?.trim_start();
+    if !rhs.starts_with('{') {
+        return None;
+    }
+    quoted_field_in_object(rhs, field)
+}
+
+/// Quoted `field:` values from a same-file `[ { … }, … ]`. Constructor
+/// elements (`row(...)`) fail closed so metadata can own those tables.
+fn object_array_field_values(rhs: &str, field: &str, file_src: &str) -> Option<Vec<String>> {
+    let _ = file_src;
+    let s = rhs.trim_start();
+    if !s.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '[', ']')?;
+    let mut rest = s[1..end].trim_start();
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        if !rest.starts_with('{') {
+            return None;
+        }
+        let obj_end = find_matching_bracket(rest, '{', '}')?;
+        out.push(quoted_field_in_object(&rest[..=obj_end], field)?);
+        rest = rest[obj_end + 1..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if !rest.is_empty() {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+fn quoted_field_in_object(obj: &str, field: &str) -> Option<String> {
+    let inner = obj.trim().strip_prefix('{')?.strip_suffix('}')?;
+    let mut rest = inner.trim();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        if rest.starts_with('[') {
+            let e = find_matching_bracket(rest, '[', ']')?;
+            rest = skip_object_value(rest[e + 1..].trim_start())?;
+            continue;
+        }
+        let (key, after_key) = if let Some((quoted, n)) = scan_quoted(rest) {
+            (quoted, rest[n..].trim_start())
+        } else {
+            let (ident, after) = take_ident(rest)?;
+            (ident.to_string(), after.trim_start())
+        };
+        let after_colon = after_key.strip_prefix(':')?.trim_start();
+        if key == field {
+            let (value, _) = scan_quoted(after_colon)?;
+            return Some(value);
+        }
+        rest = skip_object_value(after_colon)?;
+    }
+    None
+}
+
+fn skip_object_value(after_colon: &str) -> Option<&str> {
+    let rest = skip_expression(after_colon)?;
+    let rest = rest.trim_start();
+    if rest.starts_with(',') {
+        Some(rest[1..].trim_start())
+    } else {
+        Some(rest)
+    }
 }
 
 fn string_array_alias_in(src: &str, ident: &str) -> Option<String> {
@@ -993,9 +1336,16 @@ fn object_keys_call(after: &str, file_src: &str) -> Option<Vec<String>> {
     let rest = after.strip_prefix("Object.keys(")?.trim_start();
     let (ident, _) = take_ident(rest)?;
     if let Some(keys) = object_keys_in(file_src, ident) {
-        return Some(keys);
+        if !keys.is_empty() {
+            return Some(keys);
+        }
     }
-    object_keys_in(include_str!("shim/data/spelldb.js"), ident)
+    if let Some(keys) = object_keys_in(include_str!("shim/data/spelldb.js"), ident) {
+        if !keys.is_empty() {
+            return Some(keys);
+        }
+    }
+    catalog_option_values(ident)
 }
 
 fn object_keys_in(src: &str, ident: &str) -> Option<Vec<String>> {
@@ -1011,28 +1361,29 @@ fn quoted_keys_in_object(rhs: &str) -> Option<Vec<String>> {
     let mut rest = rhs[1..end].trim_start();
     let mut keys = Vec::new();
     while !rest.is_empty() {
-        let Some((k, n)) = scan_quoted(rest) else {
-            break;
-        };
-        keys.push(k);
-        rest = rest[n..].trim_start();
-        if !rest.starts_with(':') {
-            break;
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
         }
-        rest = rest[1..].trim_start();
-        if rest.starts_with('{') {
-            let e = find_matching_bracket(rest, '{', '}')?;
-            rest = rest[e + 1..].trim_start();
-        } else if rest.starts_with('[') {
+        if rest.starts_with('[') {
             let e = find_matching_bracket(rest, '[', ']')?;
-            rest = rest[e + 1..].trim_start();
-        } else if let Some((_, n)) = scan_quoted(rest) {
-            rest = rest[n..].trim_start();
-        } else if let Some(comma) = rest.find(',') {
-            rest = rest[comma..].trim_start();
+            rest = rest[e + 1..].trim_start().strip_prefix(':')?.trim_start();
+            rest = skip_expression(rest)?.trim_start();
+            if rest.starts_with(',') {
+                rest = rest[1..].trim_start();
+            }
+            continue;
+        }
+        let (k, after_key) = if let Some((quoted, n)) = scan_quoted(rest) {
+            (quoted, rest[n..].trim_start())
+        } else if let Some((ident, after)) = take_ident(rest) {
+            (ident.to_string(), after.trim_start())
         } else {
             break;
-        }
+        };
+        let after_colon = after_key.strip_prefix(':')?.trim_start();
+        keys.push(k);
+        rest = skip_expression(after_colon)?.trim_start();
         if rest.starts_with(',') {
             rest = rest[1..].trim_start();
         }
@@ -1125,17 +1476,18 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
             break;
         }
         if let Some(after_dots) = rest.strip_prefix("...") {
-            if let Some((ident, after_ident)) = take_ident(after_dots.trim_start()) {
-                if let Some(body) = resolve_setting_ident(file_src, ident) {
-                    out.extend(parse_settings_object(&body, file_src));
-                }
-                rest = after_ident;
-                rest = rest.trim_start();
-                if rest.starts_with(',') {
-                    rest = &rest[1..];
-                }
-                continue;
+            let expr = after_dots.trim_start();
+            if let Some(body) = resolve_spread_settings(expr, file_src) {
+                out.extend(parse_settings_object(&body, file_src));
             }
+            let Some(after_expr) = skip_expression(expr) else {
+                break;
+            };
+            rest = after_expr.trim_start();
+            if rest.starts_with(',') {
+                rest = &rest[1..];
+            }
+            continue;
         }
         let Some(colon) = rest.find(':') else {
             break;
@@ -1155,12 +1507,26 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
             out.push(parse_setting_def(&id, &after_colon[..=end], file_src));
             rest = &after_colon[end + 1..];
         } else if let Some((ident, after_ident)) = take_ident(after_colon) {
-            if let Some(body) = resolve_setting_ident(file_src, ident) {
+            let leftover = after_ident.trim_start();
+            if leftover.starts_with('.') || leftover.starts_with('(') {
+                let Some(after_expr) = skip_expression(after_colon) else {
+                    break;
+                };
+                rest = after_expr;
+            } else if let Some(body) = resolve_setting_ident(file_src, ident) {
                 out.push(parse_setting_def(&id, &body, file_src));
+                rest = after_ident;
+            } else {
+                let Some(after_expr) = skip_expression(after_colon) else {
+                    break;
+                };
+                rest = after_expr;
             }
-            rest = after_ident;
         } else {
-            break;
+            let Some(after_expr) = skip_expression(after_colon) else {
+                break;
+            };
+            rest = after_expr;
         }
         rest = rest.trim_start();
         if rest.starts_with(',') {
@@ -1168,6 +1534,87 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
         }
     }
     out
+}
+
+/// Bare `...IDENT` or `...Object.fromEntries(Object.entries(IDENT)…)`.
+/// Unknown call expressions stay unresolved; the caller still skips them.
+fn resolve_spread_settings(expr: &str, file_src: &str) -> Option<String> {
+    let expr = expr.trim_start();
+    if let Some((ident, after)) = take_ident(expr) {
+        let after = after.trim_start();
+        if !after.starts_with('.') && !after.starts_with('(') {
+            return resolve_setting_ident(file_src, ident);
+        }
+    }
+    resolve_from_entries_settings(expr, file_src)
+}
+
+fn resolve_from_entries_settings(expr: &str, file_src: &str) -> Option<String> {
+    let rest = expr.strip_prefix("Object")?.trim_start();
+    let rest = rest.strip_prefix('.')?.trim_start();
+    let rest = rest.strip_prefix("fromEntries")?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let rest = rest.strip_prefix("Object")?.trim_start();
+    let rest = rest.strip_prefix('.')?.trim_start();
+    let rest = rest.strip_prefix("entries")?.trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+    let (ident, _) = take_ident(rest)?;
+    resolve_setting_ident(file_src, ident)
+}
+
+/// Advance past one primary expression and its `.ident` / `(…)` / `[…]`
+/// postfix so an unsupported spread cannot swallow the next field.
+fn skip_expression(s: &str) -> Option<&str> {
+    let mut rest = s.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    if let Some(after_new) = rest.strip_prefix("new ") {
+        rest = after_new.trim_start();
+    }
+    if rest.starts_with('{') {
+        let end = find_matching_bracket(rest, '{', '}')?;
+        rest = &rest[end + 1..];
+    } else if rest.starts_with('[') {
+        let end = find_matching_bracket(rest, '[', ']')?;
+        rest = &rest[end + 1..];
+    } else if rest.starts_with('(') {
+        let end = find_matching_bracket(rest, '(', ')')?;
+        rest = &rest[end + 1..];
+    } else if let Some((_, n)) = scan_quoted(rest) {
+        rest = &rest[n..];
+    } else if let Some((_, after)) = take_ident(rest) {
+        rest = after;
+    } else if rest.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
+        rest = rest.trim_start_matches(|c: char| {
+            c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E'
+        });
+    } else {
+        return None;
+    }
+    loop {
+        rest = rest.trim_start();
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let after_dot = after_dot.trim_start();
+            let Some((_, after_ident)) = take_ident(after_dot) else {
+                break;
+            };
+            rest = after_ident;
+            continue;
+        }
+        if rest.starts_with('(') {
+            let end = find_matching_bracket(rest, '(', ')')?;
+            rest = &rest[end + 1..];
+            continue;
+        }
+        if rest.starts_with('[') {
+            let end = find_matching_bracket(rest, '[', ']')?;
+            rest = &rest[end + 1..];
+            continue;
+        }
+        break;
+    }
+    Some(rest)
 }
 
 fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
@@ -1190,7 +1637,8 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
         group: scan_key_quoted(obj, "group"),
         show_if: scan_key_show_if(obj, file_src),
         options_from: scan_key_quoted(obj, "optionsFrom")
-            .or_else(|| scan_key_ident(obj, "optionsFrom")),
+            .or_else(|| scan_key_ident(obj, "optionsFrom"))
+            .or_else(|| inferred_options_from(obj, &options, item_option_spec.as_ref())),
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
         help: scan_key_quoted(obj, "help"),
         item_option_spec,
@@ -1246,6 +1694,21 @@ fn scan_key_number(block: &str, key: &str) -> Option<String> {
     scan_key_literal(block, key, None)
 }
 
+fn inferred_options_from(
+    obj: &str,
+    options: &[String],
+    item_option_spec: Option<&ItemOptionSpec>,
+) -> Option<String> {
+    if !options.is_empty() || item_option_spec.is_some() {
+        return None;
+    }
+    let ident = options_ident(obj)?;
+    if is_revision_fact_option_ident(ident) || catalog_option_table(ident).is_some() {
+        return Some(ident.to_string());
+    }
+    None
+}
+
 fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
     let mut rest = block;
     while let Some(idx) = rest.find(key) {
@@ -1258,13 +1721,22 @@ fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {
                 continue;
             }
         };
+        if let Some(arr) = parse_string_array_with_consts(after, file_src) {
+            return arr;
+        }
         if let Some(arr) = parse_string_array(after) {
             return arr;
         }
         if let Some(keys) = object_keys_call(after, file_src) {
             return keys;
         }
-        if let Some((ident, _)) = take_ident(after) {
+        if let Some((ident, leftover)) = take_ident(after) {
+            if leftover.trim_start().starts_with('.') || leftover.trim_start().starts_with('(') {
+                return Vec::new();
+            }
+            if is_revision_fact_option_ident(ident) {
+                return Vec::new();
+            }
             return resolve_string_array_ident(file_src, ident).unwrap_or_default();
         }
         return Vec::new();
@@ -1602,4 +2074,246 @@ fn parse_fodder_object(obj: &str) -> Option<ItemOptionCandidate> {
         key: key.filter(|k| !k.is_empty())?,
         label,
     })
+}
+
+#[cfg(test)]
+mod settings_extraction_tests {
+    use super::*;
+
+    fn ids(schema: &[SettingDef]) -> Vec<&str> {
+        schema.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    fn setting<'a>(schema: &'a [SettingDef], id: &str) -> &'a SettingDef {
+        schema
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("missing setting {id} in {:?}", ids(schema)))
+    }
+
+    #[test]
+    fn rockcrab_from_entries_keeps_bank_keys_and_trailing_solve_clues() {
+        let src = r#"
+export const SETTINGS = {
+    combatStyle: { type: 'string', default: 'melee', options: ['melee', 'mage', 'range'] },
+    loadout: LOADOUT_SETTING,
+    ...Object.fromEntries(Object.entries(PERIODIC_BANK_SETTINGS).map(([key, def]) => [key, { ...def, group: 'Banking & loot' }])),
+    solveClues: { type: 'boolean', default: true, label: 'Solve easy clues', group: 'Clues' }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let found = ids(&schema);
+        for id in [
+            "combatStyle",
+            "loadout",
+            "bankStrategy",
+            "bankEveryItems",
+            "bankEveryMinutes",
+            "bankCommonJunk",
+            "solveClues",
+        ] {
+            assert!(found.contains(&id), "lost {id}: {found:?}");
+        }
+        assert!(
+            !found.contains(&"group"),
+            "fromEntries leftover must not invent group: {found:?}"
+        );
+        let bank = setting(&schema, "bankStrategy");
+        assert_eq!(bank.options, ["Off", "Loot count", "Time", "Either"]);
+        assert_eq!(
+            setting(&schema, "solveClues").default.as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            setting(&schema, "loadout").options_from.as_deref(),
+            Some("loadouts")
+        );
+    }
+
+    #[test]
+    fn unknown_or_malformed_spread_skips_one_expression() {
+        let src = r#"
+export const SETTINGS = {
+    before: { type: 'boolean', default: true },
+    ...Unknown.fromEntries({ group: 'poison', later: { type: 'string' } }),
+    ...NOT_A_REAL_SETTINGS,
+    after: { type: 'boolean', default: false, label: 'survives' }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let found = ids(&schema);
+        assert_eq!(
+            found,
+            ["before", "after"],
+            "spread must not swallow later fields or invent ids: {found:?}"
+        );
+        assert_eq!(setting(&schema, "after").default.as_deref(), Some("false"));
+    }
+
+    #[test]
+    fn cookbot_location_surface_and_log_options_are_usable() {
+        let src = r#"
+export const SURFACE_OPTIONS = ['Range', 'Fire'] as const;
+export const SETTINGS = {
+    location: { type: 'string', default: 'Catherby', options: [...COOK_LOCATION_OPTIONS] },
+    surface: { type: 'string', default: 'Range', options: [...SURFACE_OPTIONS] },
+    logType: { type: 'string', default: 'Logs', options: Object.keys(LOG_LEVELS) },
+    fireSpot: { type: 'string', default: 'Varrock East', options: Object.keys(FIRE_SPOTS) }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let location = setting(&schema, "location");
+        assert!(location.options.contains(&"Auto".into()));
+        assert!(location.options.contains(&"Catherby".into()));
+        assert!(location.options.contains(&"Custom".into()));
+        assert_eq!(setting(&schema, "surface").options, ["Range", "Fire"]);
+        assert_eq!(
+            setting(&schema, "logType").options,
+            [
+                "Logs",
+                "Oak logs",
+                "Willow logs",
+                "Maple logs",
+                "Yew logs",
+                "Magic logs"
+            ]
+        );
+        assert_eq!(
+            setting(&schema, "fireSpot").options,
+            ["Varrock East", "Varrock West", "Draynor", "Seers"]
+        );
+    }
+
+    #[test]
+    fn source_backed_mapped_keys_spreads_and_labels() {
+        let src = r#"
+export const BEST_AVAILABLE = 'Best available';
+export const CUSTOM = 'Custom';
+export const PICK_TIERS = [
+    { tier: 'Rune', item: 'Rune pickaxe', level: 41 },
+    { tier: 'Bronze', item: 'Bronze pickaxe', level: 1 }
+];
+export const PICK_OPTIONS = [BEST_AVAILABLE, ...PICK_TIERS.map(t => t.tier)];
+export const HERBS = [
+    { key: 'guam', name: 'Guam leaf', id: 249 },
+    { key: 'ranarr', name: 'Ranarr weed', id: 257 }
+];
+export const HERB_OPTIONS = HERBS.map(h => h.name);
+export const SECONDARIES = [
+    { id: 'eggs', name: "Red spiders' eggs" },
+    { id: 'newt', name: 'Eye of newt' }
+];
+export const SECONDARY_OPTIONS = SECONDARIES.map(s => s.name);
+export const RECIPES = [
+    { bar: 'Bronze', level: 1 },
+    { bar: 'Iron', level: 15 }
+];
+const BLURITE = { bar: 'Blurite', level: 13 };
+export const BAR_OPTIONS = [...RECIPES.map(r => r.bar), BLURITE.bar];
+export const GEMS = [
+    { key: 'sapphire', name: 'Sapphire' },
+    { key: 'ruby', name: 'Ruby' }
+];
+export const GEM_OPTIONS = GEMS.map(g => g.name);
+export const RUNES = {
+    'Nature runes': { rune: 'Nature rune' },
+    'Air runes': { rune: 'Air rune' }
+};
+export const RUNE_OPTIONS = Object.keys(RUNES);
+const LEATHERS = {
+    Leather: { leatherId: 1741 },
+    'Hard leather': { leatherId: 1743 }
+};
+export const SHOP_PRESETS = [
+    { label: "Aemad's vials — East Ardougne (Ardougne East bank)", keeper: 'Aemad' },
+    { label: 'Wizard Guild runes — Yanille (Yanille bank)', keeper: 'Magic Store owner' }
+];
+export const NEAREST_BANK = 'Nearest';
+export const SETTINGS = {
+    bank: { type: 'string', default: NEAREST_BANK, options: [NEAREST_BANK, ...BANK_LOCATIONS.map(b => b.name)] },
+    pickaxe: { type: 'string', options: PICK_OPTIONS },
+    herbs: { type: 'string[]', options: [...HERB_OPTIONS, CUSTOM] },
+    secondary: { type: 'string', options: SECONDARY_OPTIONS },
+    bar: { type: 'string', options: [...BAR_OPTIONS] },
+    gems: { type: 'string[]', options: GEM_OPTIONS },
+    rune: { type: 'string', options: RUNE_OPTIONS },
+    leatherType: { type: 'string', options: Object.keys(LEATHERS) },
+    shop: { type: 'string', options: SHOP_PRESETS },
+    jiveProduct: { type: 'string', options: PRODUCT_OPTIONS },
+    staff: { type: 'string', default: 'Staff of air', options: STAFFS }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        let bank = setting(&schema, "bank");
+        assert_eq!(bank.options[0], "Nearest");
+        assert!(
+            bank.options.contains(&"Catherby".into()),
+            "{:?}",
+            bank.options
+        );
+        assert_eq!(
+            setting(&schema, "pickaxe").options,
+            ["Best available", "Rune", "Bronze"]
+        );
+        assert_eq!(
+            setting(&schema, "herbs").options,
+            ["Guam leaf", "Ranarr weed", "Custom"]
+        );
+        assert_eq!(
+            setting(&schema, "secondary").options,
+            ["Red spiders' eggs", "Eye of newt"]
+        );
+        assert_eq!(
+            setting(&schema, "bar").options,
+            ["Bronze", "Iron", "Blurite"]
+        );
+        assert_eq!(setting(&schema, "gems").options, ["Sapphire", "Ruby"]);
+        assert_eq!(
+            setting(&schema, "rune").options,
+            ["Nature runes", "Air runes"]
+        );
+        assert_eq!(
+            setting(&schema, "leatherType").options,
+            ["Leather", "Hard leather"]
+        );
+        assert_eq!(
+            setting(&schema, "shop").options,
+            [
+                "Aemad's vials — East Ardougne (Ardougne East bank)",
+                "Wizard Guild runes — Yanille (Yanille bank)"
+            ]
+        );
+        assert!(
+            setting(&schema, "jiveProduct")
+                .options
+                .contains(&"Gold ring".into()),
+            "constructor-built PRODUCT_OPTIONS uses frozen metadata"
+        );
+        let staff = setting(&schema, "staff");
+        assert!(
+            staff.options.is_empty(),
+            "W1 equipment must stay unpublished: {:?}",
+            staff.options
+        );
+        assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
+    }
+
+    #[test]
+    fn computed_alch_map_key_stays_unresolved() {
+        let src = r#"
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = [];
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+export const SETTINGS = {
+    items: { type: 'string[]', default: ['steel_platebody'], options: ALCH_OPTIONS }
+};
+"#;
+        let items = setting(&settings_schema_from_source(src), "items");
+        assert!(
+            items.options.is_empty(),
+            "ALCH .key map must stay unresolved, got {:?}",
+            items.options
+        );
+        assert!(items.item_option_spec.is_none());
+    }
 }
