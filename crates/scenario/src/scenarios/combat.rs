@@ -2535,6 +2535,51 @@ pub(crate) fn hill_giant_bank_scenario() -> Scenario {
     )
 }
 
+/// Deposit-only HillGiant qualification: same pit prep, inject and combat-first
+/// Strength XP as `hill_giant_bank`, then a script-looted Big bones in pack,
+/// then a fresh Varrock West deposit under the ordinary 150-dirty bank watch.
+/// Restock, close, return and second-fight watches remain on the frozen full-cycle cell.
+pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "hill_giant_loot_deposit",
+        "HillGiant",
+        HILL_GIANT_PIT,
+        16,
+        "trout",
+        TROUT_ID,
+        HILL_GIANT_FOOD,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
+        HILL_GIANT_LOOT_EMPTY,
+        HILL_GIANT_BANK_INJECT,
+        0,
+        "trout",
+        12,
+        &[
+            (
+                "watch looted Big bones in pack before the bank trip",
+                Proof::ItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the trip's Big bones enter a fresh Varrock West bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+        ],
+    );
+    scenario.proof = Proof::BankItemId {
+        id: BIG_BONES_ID,
+        count: 1,
+    };
+    scenario
+}
+
 /// ChaosDruidKiller's own `prepare-trip` end: the pack carries less than
 /// `foodWithdraw`, so the card climbs out, deposits the pack at the Edgeville
 /// booth, withdraws its twelve lobster, closes and returns through the trapdoor

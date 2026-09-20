@@ -1523,6 +1523,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "moss_giant_bank",
             "moss_giant_bank_start",
             "hill_giant_bank",
+            "hill_giant_loot_deposit",
             "chaos_druid_bank",
             "ardy_fighter_bank",
             "rock_crab_bank",
@@ -2340,15 +2341,21 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             "auto_fighter_bank must confirm empty deposit-class id {id} before Start"
         );
     }
-    let hill = settings_inject_map(
-        get("hill_giant_bank")
-            .unwrap()
-            .settings
-            .script_settings_inject,
-    )
-    .unwrap();
-    assert_eq!(hill.get("lootSlots"), Some(&Value::from(1.0)));
-    assert_eq!(hill.get("buryBones"), Some(&Value::Bool(false)));
+    for hill_name in ["hill_giant_bank", "hill_giant_loot_deposit"] {
+        let hill = settings_inject_map(
+            get(hill_name)
+                .unwrap()
+                .settings
+                .script_settings_inject,
+        )
+        .unwrap();
+        assert_eq!(hill.get("lootSlots"), Some(&Value::from(1.0)), "{hill_name}");
+        assert_eq!(
+            hill.get("buryBones"),
+            Some(&Value::Bool(false)),
+            "{hill_name}"
+        );
+    }
     let chaos = settings_inject_map(
         get("chaos_druid_bank")
             .unwrap()
@@ -2640,6 +2647,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("moss_giant_bank", "adamant_scimitar"),
         ("moss_giant_bank_start", "adamant_scimitar"),
         ("hill_giant_bank", "adamant_scimitar"),
+        ("hill_giant_loot_deposit", "adamant_scimitar"),
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
@@ -2766,6 +2774,96 @@ fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
     assert!(
         bones_bank < lobster_restock && lobster_restock < closed && closed < fresh_xp,
         "startup banking watches must stay ordered before fresh combat XP"
+    );
+}
+
+#[test]
+fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
+    let scenario = get("hill_giant_loot_deposit").expect("hill_giant_loot_deposit registered");
+    assert_eq!(
+        scenario.proof,
+        Proof::BankItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        }
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let watch: Vec<_> = scenario.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    let xp = watch
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::StatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                }
+        })
+        .expect("combat-first Strength XP");
+    let loot = watch
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::ItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                }
+        })
+        .expect("looted Big bones in pack");
+    let deposit = watch
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                }
+        })
+        .expect("fresh Varrock West deposit");
+    assert!(xp < loot && loot < deposit);
+    assert!(!watch.contains(&Proof::BankClosed));
+    assert!(
+        !watch.iter().any(|arm| matches!(
+            arm,
+            Proof::FreshStatXpGain {
+                id: STRENGTH_STAT,
+                min: 1
+            }
+        ))
+    );
+    let full = get("hill_giant_bank").expect("hill_giant_bank registered");
+    let full_start = full
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let full_watch: Vec<_> = full.steps[full_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    let full_xp = full_watch
+        .iter()
+        .position(|arm| {
+            *arm
+                == Proof::StatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                }
+        })
+        .unwrap();
+    assert_eq!(
+        full_watch[full_xp + 1],
+        Proof::BankItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        },
+        "frozen full-cycle cell still arms bank deposit at first XP"
     );
 }
 
@@ -8439,6 +8537,13 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
         ),
         (
             "hill_giant_bank",
+            "HillGiant",
+            "Scenario Hill Giant food",
+            "Trout",
+            HILL_GIANT_FOOD as u32,
+        ),
+        (
+            "hill_giant_loot_deposit",
             "HillGiant",
             "Scenario Hill Giant food",
             "Trout",

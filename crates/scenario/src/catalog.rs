@@ -215,6 +215,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::moss_giant_bank_start_scenario,
     ),
     Entry::new("hill_giant_bank", scenarios::hill_giant_bank_scenario),
+    Entry::new(
+        "hill_giant_loot_deposit",
+        scenarios::hill_giant_loot_deposit_scenario,
+    ),
     Entry::new("chaos_druid_bank", scenarios::chaos_druid_bank_scenario),
     Entry::new("ardy_fighter_bank", scenarios::ardy_fighter_bank_scenario),
     Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
