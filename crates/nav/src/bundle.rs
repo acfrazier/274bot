@@ -952,6 +952,7 @@ mod tests {
             "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
             "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
             "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "scripts/minigames/game_ranging/configs/ranging.loc",
             "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
             "scripts/skill_magic/configs/magic_spells.dbrow",
             "scripts/skill_magic/configs/enchanted_jewelry.obj",
@@ -1155,6 +1156,42 @@ mod tests {
                     .starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
             "{missing:?}"
         );
+    }
+
+    #[test]
+    fn a_missing_ranging_loc_is_reported_without_duplicating_scan_owned_rs2() {
+        const RANGING_LOC: &str = "scripts/minigames/game_ranging/configs/ranging.loc";
+        const RANGING_DOOR_RS2: &str = "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2";
+        for revision in [289u16, 274] {
+            let rows = required_content_inputs(revision).expect("inventory");
+            let loc_rows: Vec<_> = rows.iter().filter(|row| row.path == RANGING_LOC).collect();
+            assert_eq!(
+                loc_rows.len(),
+                1,
+                "revision {revision}: {RANGING_LOC} is one named file row"
+            );
+            assert_eq!(
+                loc_rows[0].kind,
+                RequiredKind::File,
+                "revision {revision}: ranging.loc is outside the loc scan roots"
+            );
+            assert!(
+                rows.iter()
+                    .filter(|row| row.path == RANGING_DOOR_RS2)
+                    .all(|row| row.kind == RequiredKind::Rs2),
+                "revision {revision}: {RANGING_DOOR_RS2} stays scan-owned only"
+            );
+
+            let root = RequiredFixture::new(&format!("ranging-loc-{revision}"));
+            write_inventory_tree(&root.0, revision);
+            std::fs::remove_file(root.0.join(RANGING_LOC)).unwrap();
+            let missing = missing_content_inputs(revision, &root.0).expect("guard");
+            assert_eq!(missing.len(), 1, "revision {revision}: {missing:?}");
+            assert!(
+                missing[0].starts_with(&format!("{RANGING_LOC} (Ranging Guild door edges)")),
+                "revision {revision}: {missing:?}"
+            );
+        }
     }
 
     #[test]

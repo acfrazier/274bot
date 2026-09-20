@@ -25,6 +25,7 @@ file	scripts/areas/area_gnome/configs/spirit_tree.constant	spirit-tree destinati
 file	scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2	wilderness lever edges
 file	scripts/areas/area_ardougne_east/configs/wilderness_lever.constant	lever destinations
 file	scripts/areas/area_alkharid/configs/border_gate.loc	Al Kharid toll gate edges
+file	scripts/minigames/game_ranging/configs/ranging.loc	Ranging Guild door edges
 file	scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2	Zanaris shed door edge
 file	scripts/skill_magic/configs/magic_spells.dbrow	spell teleports
 file	scripts/skill_magic/configs/enchanted_jewelry.obj	jewellery rub categories
