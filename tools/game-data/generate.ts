@@ -128,6 +128,168 @@ export function parsePack(text: string) {
     }
     return out;
 }
+
+const EQUIPMENT_FAMILY_ORDER = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs'] as const;
+type EquipmentFamilyId = (typeof EQUIPMENT_FAMILY_ORDER)[number];
+
+export type EquipmentNameEntry = {
+    requested_name: string;
+    disposition: 'resolved' | 'absent' | 'ambiguous';
+    selected_name?: string;
+    alias?: string;
+    id?: number;
+    wear_position?: number;
+    disambiguation?: string;
+    absent_class?: 'no_display_name' | 'revision_unavailable';
+    candidates?: { alias: string; id: number; name: string; wear_position: number; note: string }[];
+};
+
+export type EquipmentNamesFacts = {
+    curated_input: { path: string; bytes: number; sha256: string };
+    equipment_source: { path: string; bytes: number; sha256: string; commit?: string };
+    bows: EquipmentNameEntry[];
+    crossbows: EquipmentNameEntry[];
+    darts: EquipmentNameEntry[];
+    arrows: EquipmentNameEntry[];
+    bolts: EquipmentNameEntry[];
+    melee_weapons: EquipmentNameEntry[];
+    staffs: EquipmentNameEntry[];
+};
+
+type EquipmentCurated = {
+    schema: string;
+    source: { path: string; sha256: string; bytes: number; commit?: string };
+    families: Record<EquipmentFamilyId, string[]>;
+};
+
+function isWearableRow(item: ReturnType<typeof row>) {
+    return item.wear_position >= 0 || item.wear_position_2 >= 0 || item.wear_position_3 >= 0;
+}
+
+function isBankNoteRow(item: ReturnType<typeof row>) {
+    return item.certificate_template >= 0;
+}
+
+export function loadEquipmentNamesCurated(repoRoot: string = root): EquipmentCurated {
+    const curatedPath = path.join(repoRoot, 'tools/game-data/equipment-names.curated.json');
+    const curatedDigest = sha256(curatedPath);
+    const curated = JSON.parse(fs.readFileSync(curatedPath, 'utf8')) as EquipmentCurated;
+    if (curated.schema !== 'r018-equipment-names-curated-1') {
+        throw new Error(`equipment names curated schema mismatch: ${curated.schema}`);
+    }
+    for (const family of EQUIPMENT_FAMILY_ORDER) {
+        const names = curated.families[family];
+        if (!Array.isArray(names) || names.length === 0) {
+            throw new Error(`equipment names curated: missing family ${family}`);
+        }
+        const seen = new Set<string>();
+        for (const name of names) {
+            if (!name || typeof name !== 'string') throw new Error(`equipment names curated: malformed name in ${family}`);
+            if (seen.has(name)) throw new Error(`equipment names curated: duplicate ${family} name ${name}`);
+            seen.add(name);
+        }
+    }
+    const sourcePath = path.join(repoRoot, '..', 'release-0.1.8', curated.source.path);
+    if (!fs.existsSync(sourcePath)) throw new Error(`equipment source missing at ${sourcePath}`);
+    const sourceDigest = sha256(sourcePath);
+    if (sourceDigest.sha256 !== curated.source.sha256 || sourceDigest.bytes !== curated.source.bytes) {
+        throw new Error(`equipment source pin mismatch: expected ${curated.source.sha256}, got ${sourceDigest.sha256}`);
+    }
+    return curated;
+}
+
+function joinEquipmentName(family: EquipmentFamilyId, requestedName: string, items: ReturnType<typeof row>[]): EquipmentNameEntry {
+    const exact = items.filter((item) => item.name === requestedName);
+    let pool = exact.filter((item) => !isBankNoteRow(item));
+    const notes = exact.filter((item) => isBankNoteRow(item));
+    if (family === 'bows' || family === 'crossbows' || family === 'melee_weapons' || family === 'staffs') {
+        pool = pool.filter((item) => isWearableRow(item));
+        if (family === 'bows') {
+            pool = pool.filter((item) => item.alias !== null && !item.alias.startsWith('unstrung_'));
+        }
+    } else if (family === 'darts' || family === 'arrows' || family === 'bolts') {
+        pool = pool.filter((item) => isWearableRow(item));
+    }
+    if (family === 'melee_weapons' && requestedName === 'Black dagger') {
+        const standard = pool.filter((item) => item.alias === 'black_dagger');
+        if (standard.length === 1) {
+            pool = standard;
+        }
+    }
+    if (pool.length === 1) {
+        const item = pool[0]!;
+        return {
+            requested_name: requestedName,
+            disposition: 'resolved',
+            selected_name: item.name ?? requestedName,
+            alias: item.alias ?? undefined,
+            id: item.id,
+            wear_position: item.wear_position,
+            disambiguation: pool.length !== exact.length ? 'exclude_bank_note_prefer_wearable' : undefined,
+        };
+    }
+    if (pool.length === 0) {
+        return {
+            requested_name: requestedName,
+            disposition: 'absent',
+            absent_class: exact.length === 0 ? 'no_display_name' : 'revision_unavailable',
+            candidates: exact.length > 0
+                ? exact.map((item) => ({
+                    alias: item.alias ?? '',
+                    id: item.id,
+                    name: item.name ?? requestedName,
+                    wear_position: item.wear_position,
+                    note: isBankNoteRow(item) ? 'bank_note' : 'filtered_out',
+                }))
+                : notes.map((item) => ({
+                    alias: item.alias ?? '',
+                    id: item.id,
+                    name: item.name ?? requestedName,
+                    wear_position: item.wear_position,
+                    note: 'bank_note_only',
+                })),
+        };
+    }
+    return {
+        requested_name: requestedName,
+        disposition: 'ambiguous',
+        candidates: pool.map((item) => ({
+            alias: item.alias ?? '',
+            id: item.id,
+            name: item.name ?? requestedName,
+            wear_position: item.wear_position,
+            note: 'wearable_candidate',
+        })),
+    };
+}
+
+export function extractEquipmentNamesFacts(items: ReturnType<typeof row>[], repoRoot: string = root): EquipmentNamesFacts {
+    const curated = loadEquipmentNamesCurated(repoRoot);
+    const curatedPath = path.join(repoRoot, 'tools/game-data/equipment-names.curated.json');
+    const curatedDigest = sha256(curatedPath);
+    const sourcePath = path.join(repoRoot, '..', 'release-0.1.8', curated.source.path);
+    const sourceDigest = sha256(sourcePath);
+    const out: EquipmentNamesFacts = {
+        curated_input: { path: path.relative(repoRoot, curatedPath), ...curatedDigest },
+        equipment_source: { path: curated.source.path, ...sourceDigest, commit: curated.source.commit },
+        bows: [],
+        crossbows: [],
+        darts: [],
+        arrows: [],
+        bolts: [],
+        melee_weapons: [],
+        staffs: [],
+    };
+    for (const family of EQUIPMENT_FAMILY_ORDER) {
+        const entries = curated.families[family].map((requestedName) => joinEquipmentName(family, requestedName, items));
+        const ambiguous = entries.filter((entry) => entry.disposition === 'ambiguous');
+        if (ambiguous.length > 0) {
+            throw new Error(`equipment names ${family}: ambiguous joins ${ambiguous.map((row) => row.requested_name).join(', ')}`);
+        }
+        out[family] = entries;
+    }
+    return out;
+}
 export function extractAutocastControls(content: string) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
@@ -1015,8 +1177,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`); const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const equipmentNames = extractEquipmentNamesFacts(items); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

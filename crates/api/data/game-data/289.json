@@ -62280,6 +62280,800 @@
       "note": "Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content."
     }
   },
+  "equipment_names": {
+    "curated_input": {
+      "path": "tools/game-data/equipment-names.curated.json",
+      "bytes": 2604,
+      "sha256": "c6346acbf4f265b7ea73c154ab6b61e6e5da0c78e6e5d015c33e01cd32af4615"
+    },
+    "equipment_source": {
+      "path": ".superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/equipment.ts",
+      "bytes": 2360,
+      "sha256": "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3",
+      "commit": "beecd9126b"
+    },
+    "bows": [
+      {
+        "requested_name": "Shortbow",
+        "disposition": "resolved",
+        "selected_name": "Shortbow",
+        "alias": "shortbow",
+        "id": 841,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Longbow",
+        "disposition": "resolved",
+        "selected_name": "Longbow",
+        "alias": "longbow",
+        "id": 839,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Oak shortbow",
+        "disposition": "resolved",
+        "selected_name": "Oak shortbow",
+        "alias": "oak_shortbow",
+        "id": 843,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Oak longbow",
+        "disposition": "resolved",
+        "selected_name": "Oak longbow",
+        "alias": "oak_longbow",
+        "id": 845,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Willow shortbow",
+        "disposition": "resolved",
+        "selected_name": "Willow shortbow",
+        "alias": "willow_shortbow",
+        "id": 849,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Willow longbow",
+        "disposition": "resolved",
+        "selected_name": "Willow longbow",
+        "alias": "willow_longbow",
+        "id": 847,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Maple shortbow",
+        "disposition": "resolved",
+        "selected_name": "Maple shortbow",
+        "alias": "maple_shortbow",
+        "id": 853,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Maple longbow",
+        "disposition": "resolved",
+        "selected_name": "Maple longbow",
+        "alias": "maple_longbow",
+        "id": 851,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Yew shortbow",
+        "disposition": "resolved",
+        "selected_name": "Yew shortbow",
+        "alias": "yew_shortbow",
+        "id": 857,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Yew longbow",
+        "disposition": "resolved",
+        "selected_name": "Yew longbow",
+        "alias": "yew_longbow",
+        "id": 855,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Magic shortbow",
+        "disposition": "resolved",
+        "selected_name": "Magic shortbow",
+        "alias": "magic_shortbow",
+        "id": 861,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Magic longbow",
+        "disposition": "resolved",
+        "selected_name": "Magic longbow",
+        "alias": "magic_longbow",
+        "id": 859,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      }
+    ],
+    "crossbows": [
+      {
+        "requested_name": "Crossbow",
+        "disposition": "resolved",
+        "selected_name": "Crossbow",
+        "alias": "crossbow",
+        "id": 837,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Bronze crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Iron crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Steel crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Black crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Mithril crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Adamant crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Rune crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Dorgeshuun crossbow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Karil\\",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      }
+    ],
+    "darts": [
+      {
+        "requested_name": "Bronze dart",
+        "disposition": "resolved",
+        "selected_name": "Bronze dart",
+        "alias": "bronze_dart",
+        "id": 806,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Iron dart",
+        "disposition": "resolved",
+        "selected_name": "Iron dart",
+        "alias": "iron_dart",
+        "id": 807,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Steel dart",
+        "disposition": "resolved",
+        "selected_name": "Steel dart",
+        "alias": "steel_dart",
+        "id": 808,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Black dart",
+        "disposition": "resolved",
+        "selected_name": "Black dart",
+        "alias": "black_dart",
+        "id": 3093,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Mithril dart",
+        "disposition": "resolved",
+        "selected_name": "Mithril dart",
+        "alias": "mithril_dart",
+        "id": 809,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Adamant dart",
+        "disposition": "resolved",
+        "selected_name": "Adamant dart",
+        "alias": "adamant_dart",
+        "id": 810,
+        "wear_position": 3
+      },
+      {
+        "requested_name": "Rune dart",
+        "disposition": "resolved",
+        "selected_name": "Rune dart",
+        "alias": "rune_dart",
+        "id": 811,
+        "wear_position": 3
+      }
+    ],
+    "arrows": [
+      {
+        "requested_name": "Bronze arrow",
+        "disposition": "resolved",
+        "selected_name": "Bronze arrow",
+        "alias": "bronze_arrow",
+        "id": 882,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Iron arrow",
+        "disposition": "resolved",
+        "selected_name": "Iron arrow",
+        "alias": "iron_arrow",
+        "id": 884,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Steel arrow",
+        "disposition": "resolved",
+        "selected_name": "Steel arrow",
+        "alias": "steel_arrow",
+        "id": 886,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Mithril arrow",
+        "disposition": "resolved",
+        "selected_name": "Mithril arrow",
+        "alias": "mithril_arrow",
+        "id": 888,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Adamant arrow",
+        "disposition": "resolved",
+        "selected_name": "Adamant arrow",
+        "alias": "adamant_arrow",
+        "id": 890,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Rune arrow",
+        "disposition": "resolved",
+        "selected_name": "Rune arrow",
+        "alias": "rune_arrow",
+        "id": 892,
+        "wear_position": 13
+      },
+      {
+        "requested_name": "Dragon arrow",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      }
+    ],
+    "bolts": [
+      {
+        "requested_name": "Bronze bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Iron bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Steel bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Black bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Mithril bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Adamant bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Rune bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Broad bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      },
+      {
+        "requested_name": "Bone bolts",
+        "disposition": "absent",
+        "absent_class": "no_display_name",
+        "candidates": []
+      }
+    ],
+    "melee_weapons": [
+      {
+        "requested_name": "Bronze scimitar",
+        "disposition": "resolved",
+        "selected_name": "Bronze scimitar",
+        "alias": "bronze_scimitar",
+        "id": 1321,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Iron scimitar",
+        "disposition": "resolved",
+        "selected_name": "Iron scimitar",
+        "alias": "iron_scimitar",
+        "id": 1323,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Steel scimitar",
+        "disposition": "resolved",
+        "selected_name": "Steel scimitar",
+        "alias": "steel_scimitar",
+        "id": 1325,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Black scimitar",
+        "disposition": "resolved",
+        "selected_name": "Black scimitar",
+        "alias": "black_scimitar",
+        "id": 1327,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mithril scimitar",
+        "disposition": "resolved",
+        "selected_name": "Mithril scimitar",
+        "alias": "mithril_scimitar",
+        "id": 1329,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Adamant scimitar",
+        "disposition": "resolved",
+        "selected_name": "Adamant scimitar",
+        "alias": "adamant_scimitar",
+        "id": 1331,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Rune scimitar",
+        "disposition": "resolved",
+        "selected_name": "Rune scimitar",
+        "alias": "rune_scimitar",
+        "id": 1333,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Bronze sword",
+        "disposition": "resolved",
+        "selected_name": "Bronze sword",
+        "alias": "bronze_sword",
+        "id": 1277,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Iron sword",
+        "disposition": "resolved",
+        "selected_name": "Iron sword",
+        "alias": "iron_sword",
+        "id": 1279,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Steel sword",
+        "disposition": "resolved",
+        "selected_name": "Steel sword",
+        "alias": "steel_sword",
+        "id": 1281,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Black sword",
+        "disposition": "resolved",
+        "selected_name": "Black sword",
+        "alias": "black_sword",
+        "id": 1283,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mithril sword",
+        "disposition": "resolved",
+        "selected_name": "Mithril sword",
+        "alias": "mithril_sword",
+        "id": 1285,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Adamant sword",
+        "disposition": "resolved",
+        "selected_name": "Adamant sword",
+        "alias": "adamant_sword",
+        "id": 1287,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Rune sword",
+        "disposition": "resolved",
+        "selected_name": "Rune sword",
+        "alias": "rune_sword",
+        "id": 1289,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Bronze longsword",
+        "disposition": "resolved",
+        "selected_name": "Bronze longsword",
+        "alias": "bronze_longsword",
+        "id": 1291,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Iron longsword",
+        "disposition": "resolved",
+        "selected_name": "Iron longsword",
+        "alias": "iron_longsword",
+        "id": 1293,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Steel longsword",
+        "disposition": "resolved",
+        "selected_name": "Steel longsword",
+        "alias": "steel_longsword",
+        "id": 1295,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Black longsword",
+        "disposition": "resolved",
+        "selected_name": "Black longsword",
+        "alias": "black_longsword",
+        "id": 1297,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mithril longsword",
+        "disposition": "resolved",
+        "selected_name": "Mithril longsword",
+        "alias": "mithril_longsword",
+        "id": 1299,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Adamant longsword",
+        "disposition": "resolved",
+        "selected_name": "Adamant longsword",
+        "alias": "adamant_longsword",
+        "id": 1301,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Rune longsword",
+        "disposition": "resolved",
+        "selected_name": "Rune longsword",
+        "alias": "rune_longsword",
+        "id": 1303,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Dragon longsword",
+        "disposition": "resolved",
+        "selected_name": "Dragon longsword",
+        "alias": "dragon_longsword",
+        "id": 1305,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Bronze dagger",
+        "disposition": "resolved",
+        "selected_name": "Bronze dagger",
+        "alias": "bronze_dagger",
+        "id": 1205,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Iron dagger",
+        "disposition": "resolved",
+        "selected_name": "Iron dagger",
+        "alias": "iron_dagger",
+        "id": 1203,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Steel dagger",
+        "disposition": "resolved",
+        "selected_name": "Steel dagger",
+        "alias": "steel_dagger",
+        "id": 1207,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Black dagger",
+        "disposition": "resolved",
+        "selected_name": "Black dagger",
+        "alias": "black_dagger",
+        "id": 1217,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mithril dagger",
+        "disposition": "resolved",
+        "selected_name": "Mithril dagger",
+        "alias": "mithril_dagger",
+        "id": 1209,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Adamant dagger",
+        "disposition": "resolved",
+        "selected_name": "Adamant dagger",
+        "alias": "adamant_dagger",
+        "id": 1211,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Rune dagger",
+        "disposition": "resolved",
+        "selected_name": "Rune dagger",
+        "alias": "rune_dagger",
+        "id": 1213,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Dragon dagger",
+        "disposition": "resolved",
+        "selected_name": "Dragon dagger",
+        "alias": "dragon_dagger",
+        "id": 1215,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Dragon dagger(p)",
+        "disposition": "resolved",
+        "selected_name": "Dragon dagger(p)",
+        "alias": "dragon_dagger_p",
+        "id": 1231,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Dragon battleaxe",
+        "disposition": "resolved",
+        "selected_name": "Dragon battleaxe",
+        "alias": "dragon_battleaxe",
+        "id": 1377,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Dragon mace",
+        "disposition": "resolved",
+        "selected_name": "Dragon mace",
+        "alias": "dragon_mace",
+        "id": 1434,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      }
+    ],
+    "staffs": [
+      {
+        "requested_name": "Staff",
+        "disposition": "resolved",
+        "selected_name": "Staff",
+        "alias": "plainstaff",
+        "id": 1379,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Magic staff",
+        "disposition": "resolved",
+        "selected_name": "Magic staff",
+        "alias": "magic_staff",
+        "id": 1389,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Staff of air",
+        "disposition": "resolved",
+        "selected_name": "Staff of air",
+        "alias": "staff_of_air",
+        "id": 1381,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Staff of water",
+        "disposition": "resolved",
+        "selected_name": "Staff of water",
+        "alias": "staff_of_water",
+        "id": 1383,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Staff of earth",
+        "disposition": "resolved",
+        "selected_name": "Staff of earth",
+        "alias": "staff_of_earth",
+        "id": 1385,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Staff of fire",
+        "disposition": "resolved",
+        "selected_name": "Staff of fire",
+        "alias": "staff_of_fire",
+        "id": 1387,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Battlestaff",
+        "disposition": "resolved",
+        "selected_name": "Battlestaff",
+        "alias": "battlestaff",
+        "id": 1391,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Air battlestaff",
+        "disposition": "resolved",
+        "selected_name": "Air battlestaff",
+        "alias": "air_battlestaff",
+        "id": 1397,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Water battlestaff",
+        "disposition": "resolved",
+        "selected_name": "Water battlestaff",
+        "alias": "water_battlestaff",
+        "id": 1395,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Earth battlestaff",
+        "disposition": "resolved",
+        "selected_name": "Earth battlestaff",
+        "alias": "earth_battlestaff",
+        "id": 1399,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Fire battlestaff",
+        "disposition": "resolved",
+        "selected_name": "Fire battlestaff",
+        "alias": "fire_battlestaff",
+        "id": 1393,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mystic air staff",
+        "disposition": "resolved",
+        "selected_name": "Mystic air staff",
+        "alias": "mystic_air_staff",
+        "id": 1405,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mystic water staff",
+        "disposition": "resolved",
+        "selected_name": "Mystic water staff",
+        "alias": "mystic_water_staff",
+        "id": 1403,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mystic earth staff",
+        "disposition": "resolved",
+        "selected_name": "Mystic earth staff",
+        "alias": "mystic_earth_staff",
+        "id": 1407,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      },
+      {
+        "requested_name": "Mystic fire staff",
+        "disposition": "resolved",
+        "selected_name": "Mystic fire staff",
+        "alias": "mystic_fire_staff",
+        "id": 1401,
+        "wear_position": 3,
+        "disambiguation": "exclude_bank_note_prefer_wearable"
+      }
+    ]
+  },
   "autocast": {
     "staff_tab_root": 328,
     "spell_panel_root": 1829,

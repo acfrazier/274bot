@@ -132,6 +132,47 @@ for (const revision of [274, 289]) {
     if (flour.bank_tile.provenance !== 'curated' || flour.bank_tile.x !== 2725 || flour.bank_tile.z !== 3491) throw new Error(`${revision}: flour bank tile ${JSON.stringify(flour.bank_tile)}`);
     const joinedPot = byAlias.get('pot_empty') as any;
     if (!joinedPot || joinedPot.id !== flour.pot.id) throw new Error(`${revision}: flour pot join`);
-    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
+    const equipment = payload.equipment_names;
+    if (!equipment) throw new Error(`${revision}: missing equipment_names`);
+    assertEqual(equipment.equipment_source.sha256, 'ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3', `${revision} equipment.ts pin`);
+    const familyCounts = {
+        bows: 12,
+        crossbows: 10,
+        darts: 7,
+        arrows: 7,
+        bolts: 9,
+        melee_weapons: 33,
+        staffs: 15,
+    };
+    for (const [family, count] of Object.entries(familyCounts)) {
+        const rows = equipment[family] ?? [];
+        assertEqual(rows.length, count, `${revision} equipment ${family} row count`);
+        assertEqual(JSON.stringify(rows.map((row: any) => row.requested_name)), JSON.stringify(equipment[family].map((row: any) => row.requested_name)), `${revision} equipment ${family} order drift`);
+        if (rows.some((row: any) => row.disposition === 'ambiguous')) throw new Error(`${revision}: equipment ${family} must not publish ambiguous rows`);
+    }
+    const resolved = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs']
+        .flatMap((family) => equipment[family])
+        .filter((row: any) => row.disposition === 'resolved');
+    const absent = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs']
+        .flatMap((family) => equipment[family])
+        .filter((row: any) => row.disposition === 'absent');
+    assertEqual(resolved.length, 74, `${revision} equipment resolved count`);
+    assertEqual(absent.length, 19, `${revision} equipment absent count`);
+    const shortbow = equipment.bows.find((row: any) => row.requested_name === 'Shortbow');
+    if (!shortbow || shortbow.disposition !== 'resolved' || shortbow.alias !== 'shortbow' || shortbow.id !== 841) throw new Error(`${revision}: Shortbow join ${JSON.stringify(shortbow)}`);
+    const blackDagger = equipment.melee_weapons.find((row: any) => row.requested_name === 'Black dagger');
+    if (!blackDagger || blackDagger.disposition !== 'resolved' || blackDagger.alias !== 'black_dagger' || blackDagger.id !== 1217) throw new Error(`${revision}: Black dagger join ${JSON.stringify(blackDagger)}`);
+    const dragonArrow = equipment.arrows.find((row: any) => row.requested_name === 'Dragon arrow');
+    if (!dragonArrow || dragonArrow.disposition !== 'absent' || dragonArrow.absent_class !== 'no_display_name') throw new Error(`${revision}: Dragon arrow absent ${JSON.stringify(dragonArrow)}`);
+    const bronzeBolt = equipment.bolts.find((row: any) => row.requested_name === 'Bronze bolts');
+    if (!bronzeBolt || bronzeBolt.disposition !== 'absent' || bronzeBolt.absent_class !== 'no_display_name') throw new Error(`${revision}: Bronze bolts absent ${JSON.stringify(bronzeBolt)}`);
+    const bronzeCrossbow = equipment.crossbows.find((row: any) => row.requested_name === 'Bronze crossbow');
+    if (!bronzeCrossbow || bronzeCrossbow.disposition !== 'absent') throw new Error(`${revision}: Bronze crossbow absent ${JSON.stringify(bronzeCrossbow)}`);
+    for (const row of resolved) {
+        if (!row.alias || row.id === undefined) throw new Error(`${revision}: resolved equipment missing join ${JSON.stringify(row)}`);
+        const joined = payload.items.find((item: any) => item.alias === row.alias);
+        if (!joined || joined.id !== row.id || joined.name !== row.selected_name) throw new Error(`${revision}: equipment join drift ${JSON.stringify(row)}`);
+    }
+    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results }; const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));

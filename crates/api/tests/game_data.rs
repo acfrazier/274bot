@@ -442,3 +442,71 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
         assert_eq!(data.item_by_alias("pot_empty").expect("pot").id, flour.pot.id);
     }
 }
+
+#[test]
+fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let equipment = data.equipment_names().expect("equipment names facts");
+        assert_eq!(equipment.bows.len(), 12);
+        assert_eq!(equipment.crossbows.len(), 10);
+        assert_eq!(equipment.darts.len(), 7);
+        assert_eq!(equipment.arrows.len(), 7);
+        assert_eq!(equipment.bolts.len(), 9);
+        assert_eq!(equipment.melee_weapons.len(), 33);
+        assert_eq!(equipment.staffs.len(), 15);
+        assert_eq!(
+            equipment.equipment_source.sha256,
+            "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3"
+        );
+        let resolved = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "resolved")
+            .count();
+        let absent = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "absent")
+            .count();
+        assert_eq!(resolved, 74, "revision {}", revision.as_i32());
+        assert_eq!(absent, 19, "revision {}", revision.as_i32());
+        let shortbow = data
+            .equipment_name("bows", "Shortbow")
+            .expect("shortbow row");
+        assert_eq!(shortbow.disposition, "resolved");
+        assert_eq!(shortbow.alias.as_deref(), Some("shortbow"));
+        assert_eq!(shortbow.id, Some(841));
+        assert_eq!(
+            data.item_by_alias("shortbow").expect("shortbow item").id,
+            841
+        );
+        let black_dagger = data
+            .equipment_name("melee_weapons", "Black dagger")
+            .expect("black dagger row");
+        assert_eq!(black_dagger.alias.as_deref(), Some("black_dagger"));
+        assert_eq!(black_dagger.id, Some(1217));
+        let dragon_arrow = data
+            .equipment_name("arrows", "Dragon arrow")
+            .expect("dragon arrow row");
+        assert_eq!(dragon_arrow.disposition, "absent");
+        assert_eq!(dragon_arrow.absent_class.as_deref(), Some("no_display_name"));
+        let bronze_bolts = data
+            .equipment_name("bolts", "Bronze bolts")
+            .expect("bronze bolts row");
+        assert_eq!(bronze_bolts.disposition, "absent");
+        assert!(data.equipment_name("bows", "Not a bow").is_none());
+    }
+}

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, loadEquipmentNamesCurated, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -475,6 +475,46 @@ assert.throws(
     () => extractFlourSixFacts(toolFlour, [{ id: 1931, debugname: 'pot_empty', name: 'Pot', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }]),
     /pot_flour join/,
     'missing pot_flour must fail closed',
+);
+
+const equipmentItems = [
+    { alias: 'shortbow', id: 841, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'unstrung_shortbow', id: 50, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'black_dagger', id: 1217, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'deathdagger', id: 746, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'bronze_arrow', id: 882, name: 'Bronze arrow', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
+];
+const equipmentFacts = extractEquipmentNamesFacts(equipmentItems);
+const shortbow = equipmentFacts.bows.find((row) => row.requested_name === 'Shortbow');
+assert.equal(shortbow?.disposition, 'resolved');
+assert.equal(shortbow?.alias, 'shortbow');
+assert.equal(shortbow?.id, 841);
+const blackDagger = equipmentFacts.melee_weapons.find((row) => row.requested_name === 'Black dagger');
+assert.equal(blackDagger?.disposition, 'resolved');
+assert.equal(blackDagger?.alias, 'black_dagger');
+const dragonArrow = equipmentFacts.arrows.find((row) => row.requested_name === 'Dragon arrow');
+assert.equal(dragonArrow?.disposition, 'absent');
+assert.equal(dragonArrow?.absent_class, 'no_display_name');
+assert.throws(
+    () => extractEquipmentNamesFacts([
+        { alias: 'bronze_scimitar', id: 1, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+        { alias: 'bronze_scimitar_dup', id: 2, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    ]),
+    /ambiguous joins Bronze scimitar/,
+    'duplicate wieldable display names must fail closed at generate time',
+);
+const curatedCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-curated-'));
+fs.mkdirSync(path.join(curatedCopy, 'tools/game-data'), { recursive: true });
+const curated = loadEquipmentNamesCurated();
+fs.writeFileSync(path.join(curatedCopy, 'tools/game-data/equipment-names.curated.json'), JSON.stringify({
+    ...curated,
+    families: { ...curated.families, melee_weapons: ['Dup', 'Dup'] },
+}, null, 2));
+assert.throws(
+    () => loadEquipmentNamesCurated(curatedCopy),
+    /duplicate melee_weapons name Dup/,
+    'curated duplicate family rows must fail closed',
 );
 
 console.log('generate fixture passed');
