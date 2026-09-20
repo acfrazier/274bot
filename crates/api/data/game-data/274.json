@@ -108,6 +108,56 @@
         "sha256": "5eb68ee2dabf251196d5540d8e79510bdff5b77ffae41ba8687b19eb79108ff1"
       },
       {
+        "path": "scripts/areas/area_falador/configs/dwarven_mine.inv",
+        "bytes": 1102,
+        "sha256": "55d857c26957896d617d01ec14318768997e4cd25ff47bf94a959138b4e1fa54"
+      },
+      {
+        "path": "scripts/areas/area_falador/configs/dwarven_mine.npc",
+        "bytes": 2659,
+        "sha256": "ea0b92e3d995f69277b6c0b22e1dc88d2738fea03ec9c1173ba8e61077e4e8aa"
+      },
+      {
+        "path": "scripts/skill_runecraft/configs/runecraft.constant",
+        "bytes": 500,
+        "sha256": "b6af925c204276b7f348dbe7a33500ff532951970c8a6227cae8233e35bf3d09"
+      },
+      {
+        "path": "maps/m45_75.jm2",
+        "bytes": 165681,
+        "sha256": "d6c7085e1beb35e61aec2e7daffa137da491fd1560c8c73ff2835c45ac577525"
+      },
+      {
+        "path": "pack/npc.pack",
+        "bytes": 25984,
+        "sha256": "a19dc299ef62570e3c190029c32719373e3d6d3fc81b875ff1f02877fe75e01d"
+      },
+      {
+        "path": "scripts/quests/quest_murder/configs/quest_murder.loc",
+        "bytes": 2417,
+        "sha256": "549b33a51e81de6054e9b133520c935d8e63bc8023f4c13c66e56d49ce55a318"
+      },
+      {
+        "path": "scripts/general/configs/quest.enum",
+        "bytes": 1452,
+        "sha256": "a1016195555d7f8b9d98df95972e79e3044c6d1b94f184af49385fba2a4cf88c"
+      },
+      {
+        "path": "maps/m42_55.jm2",
+        "bytes": 114393,
+        "sha256": "c30ac672c933ed7e7396c41eba4ad0df0615ed0b635a984d70b35c69ff0860cf"
+      },
+      {
+        "path": "pack/loc.pack",
+        "bytes": 105424,
+        "sha256": "326b4b80f62abcd4b81dd0c6f7af94e2ab49b5b915e1dfe64ffab312df00c291"
+      },
+      {
+        "path": "pack/obj.pack",
+        "bytes": 91021,
+        "sha256": "358e01a1f2e3751e3d1f8c6704b2f248f8f160567a73eddfc53feeaaf49c7f77"
+      },
+      {
         "path": "pack/interface.pack",
         "bytes": 286718,
         "sha256": "74f8c9d15bcf4c519a709a92a756450eb1d617d493eec50b8439f8d12b4aae00"
@@ -59538,6 +59588,143 @@
       "varp_alias": "prayer14"
     }
   ],
+  "nurmof_essence": {
+    "npc_alias": "nurmof",
+    "npc_id": 594,
+    "npc_name": "Nurmof",
+    "shop_inv": "pickaxeshop",
+    "shop_inv_source": "scripts/areas/area_falador/configs/dwarven_mine.inv",
+    "pickaxes": [
+      {
+        "alias": "bronze_pickaxe",
+        "id": 1265,
+        "name": "Bronze pickaxe",
+        "base_cost": 1,
+        "shop_baseline_qty": 6,
+        "cost_source": "obj.cost"
+      },
+      {
+        "alias": "iron_pickaxe",
+        "id": 1267,
+        "name": "Iron pickaxe",
+        "base_cost": 140,
+        "shop_baseline_qty": 5,
+        "cost_source": "obj.cost"
+      },
+      {
+        "alias": "steel_pickaxe",
+        "id": 1269,
+        "name": "Steel pickaxe",
+        "base_cost": 500,
+        "shop_baseline_qty": 4,
+        "cost_source": "obj.cost"
+      },
+      {
+        "alias": "mithril_pickaxe",
+        "id": 1273,
+        "name": "Mithril pickaxe",
+        "base_cost": 1300,
+        "shop_baseline_qty": 3,
+        "cost_source": "obj.cost"
+      },
+      {
+        "alias": "adamant_pickaxe",
+        "id": 1271,
+        "name": "Adamant pickaxe",
+        "base_cost": 3200,
+        "shop_baseline_qty": 2,
+        "cost_source": "obj.cost"
+      },
+      {
+        "alias": "rune_pickaxe",
+        "id": 1275,
+        "name": "Rune pickaxe",
+        "base_cost": 32000,
+        "shop_baseline_qty": 1,
+        "cost_source": "obj.cost"
+      }
+    ],
+    "essence_region": {
+      "mapsquare_mx": 45,
+      "mapsquare_mz": 75,
+      "predicate": "(x >> 6) === 45 && (z >> 6) === 75",
+      "source_map": "maps/m45_75.jm2",
+      "source_constant": "scripts/skill_runecraft/configs/runecraft.constant",
+      "example_inside": {
+        "x": 2880,
+        "z": 4800,
+        "plane": 0
+      }
+    },
+    "aubury_travel": {
+      "note": "Essence wizard Aubury entry/return hops are already packed in nav transport; not duplicated here.",
+      "npc_alias": "aubury",
+      "npc_id": 553,
+      "already_packed": true
+    },
+    "curated_vendor_tactics": {
+      "label": "curated",
+      "authority": "reference rs2b0t-beecd9126b src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR",
+      "keeper": "Nurmof",
+      "stand": {
+        "x": 2997,
+        "z": 9844,
+        "plane": 0
+      },
+      "bank_stand": {
+        "x": 3013,
+        "z": 3355,
+        "plane": 0
+      },
+      "hop_from": {
+        "x": 3019,
+        "z": 3449,
+        "plane": 0
+      },
+      "hop_loc": "Trapdoor",
+      "hop_action": "Climb-down"
+    }
+  },
+  "flour_six": {
+    "quest_name": "Murder Mystery",
+    "quest_name_source": "scripts/general/configs/quest.enum",
+    "pot": {
+      "alias": "pot_empty",
+      "id": 1931,
+      "name": "Pot"
+    },
+    "pot_flour": {
+      "alias": "pot_flour",
+      "id": 1933,
+      "name": "Pot of flour"
+    },
+    "flour_barrel": {
+      "alias": "flourbarrel",
+      "id": 2662,
+      "name": "Barrel of flour",
+      "loc_config_source": "scripts/quests/quest_murder/configs/quest_murder.loc"
+    },
+    "flour_barrel_tile": {
+      "x": 2735,
+      "z": 3582,
+      "plane": 0,
+      "provenance": "derived",
+      "source": "maps/m42_55.jm2",
+      "mapsquare": "m42_55",
+      "local": {
+        "lx": 47,
+        "lz": 62
+      }
+    },
+    "bank_tile": {
+      "x": 2725,
+      "z": 3491,
+      "plane": 0,
+      "provenance": "curated",
+      "authority": "reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK",
+      "note": "Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content."
+    }
+  },
   "autocast": {
     "staff_tab_root": 328,
     "spell_panel_root": 1829,

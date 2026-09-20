@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -410,6 +410,40 @@ assert.throws(
     () => extractPrayerFacts(prayerContent),
     /expected 15 rows, got 1/,
     'single-row fixture stays fail-closed until complete',
+);
+
+assert.deepEqual(parseInvShopStock('[pickaxeshop]\nstock1=bronze_pickaxe,6,50\n', 'pickaxeshop').map((row) => row.alias), ['bronze_pickaxe']);
+assert.throws(() => parseInvShopStock('[other]\nstock1=a,1,1\n', 'pickaxeshop'), /missing stock rows/);
+assert.deepEqual(parseJm2LocPlacements('0 47 62: 2662 10 1\n0 48 1: 100 1 1\n', 2662), [{ plane: 0, lx: 47, lz: 62, loc_id: 2662 }]);
+assert.throws(() => parseQuestEnumEntry('val=1,Other\n', 'Murder Mystery'), /missing Murder Mystery/);
+
+const toolFlour = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-tool-flour-'));
+fs.mkdirSync(path.join(toolFlour, 'scripts/areas/area_falador/configs'), { recursive: true });
+fs.mkdirSync(path.join(toolFlour, 'scripts/skill_runecraft/configs'), { recursive: true });
+fs.mkdirSync(path.join(toolFlour, 'maps'), { recursive: true });
+fs.mkdirSync(path.join(toolFlour, 'pack'), { recursive: true });
+fs.writeFileSync(path.join(toolFlour, 'scripts/areas/area_falador/configs/dwarven_mine.inv'), '[pickaxeshop]\nstock1=bronze_pickaxe,6,50\n');
+fs.writeFileSync(path.join(toolFlour, 'scripts/areas/area_falador/configs/dwarven_mine.npc'), '[nurmof]\nname=Nurmof\nparam=owned_shop,pickaxeshop\n');
+fs.writeFileSync(path.join(toolFlour, 'scripts/skill_runecraft/configs/runecraft.constant'), '^essence_mine_to_aubury = 0_50_53_53_9\n');
+fs.writeFileSync(path.join(toolFlour, 'maps/m45_75.jm2'), '==== MAP ====\n');
+fs.writeFileSync(path.join(toolFlour, 'pack/npc.pack'), '594=nurmof\n');
+assert.throws(
+    () => extractNurmofEssenceFacts(toolFlour, [{ id: 1265, debugname: 'bronze_pickaxe', name: 'Bronze pickaxe', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }], [{ id: 594, debugname: 'nurmof', name: 'Nurmof' }]),
+    /expected 6 stock rows/,
+    'partial pickaxeshop must fail closed',
+);
+
+fs.mkdirSync(path.join(toolFlour, 'scripts/quests/quest_murder/configs'), { recursive: true });
+fs.mkdirSync(path.join(toolFlour, 'scripts/general/configs'), { recursive: true });
+fs.writeFileSync(path.join(toolFlour, 'scripts/general/configs/quest.enum'), 'val=37,Murder Mystery\n');
+fs.writeFileSync(path.join(toolFlour, 'scripts/quests/quest_murder/configs/quest_murder.loc'), '[flourbarrel]\nname=Barrel of flour\n');
+fs.writeFileSync(path.join(toolFlour, 'pack/loc.pack'), '2662=flourbarrel\n');
+fs.writeFileSync(path.join(toolFlour, 'pack/obj.pack'), '1931=pot_empty\n1933=pot_flour\n');
+fs.writeFileSync(path.join(toolFlour, 'maps/m42_55.jm2'), '0 47 62: 2662 10 1\n');
+assert.throws(
+    () => extractFlourSixFacts(toolFlour, [{ id: 1931, debugname: 'pot_empty', name: 'Pot', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }]),
+    /pot_flour join/,
+    'missing pot_flour must fail closed',
 );
 
 console.log('generate fixture passed');

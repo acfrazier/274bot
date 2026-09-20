@@ -316,6 +316,118 @@ pub struct PrayerFact {
     pub varp_alias: String,
 }
 
+/// One pickaxe row from `[pickaxeshop]` stock joined to ObjType base cost.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PickaxeShopFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub base_cost: i32,
+    pub shop_baseline_qty: i32,
+    pub cost_source: String,
+}
+
+/// Mapsquare predicate for the enclosed Rune Essence mine (m45_75).
+#[derive(Debug, Deserialize, Clone)]
+pub struct EssenceRegionFact {
+    pub mapsquare_mx: i32,
+    pub mapsquare_mz: i32,
+    pub predicate: String,
+    pub source_map: String,
+    pub source_constant: String,
+    pub example_inside: EssenceExampleTile,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EssenceExampleTile {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+/// Curated shop-approach tiles copied from frozen reference tactics, not jm2 facts.
+#[derive(Debug, Deserialize, Clone)]
+pub struct CuratedVendorTactics {
+    pub label: String,
+    pub authority: String,
+    pub keeper: String,
+    pub stand: TileFact,
+    pub bank_stand: TileFact,
+    pub hop_from: TileFact,
+    pub hop_loc: String,
+    pub hop_action: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TileFact {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AuburyTravelNote {
+    pub note: String,
+    pub npc_alias: String,
+    pub npc_id: i32,
+    pub already_packed: bool,
+}
+
+/// Nurmof pickaxe shop + essence region facts (no acquire routing).
+#[derive(Debug, Deserialize, Clone)]
+pub struct NurmofEssenceFacts {
+    pub npc_alias: String,
+    pub npc_id: i32,
+    pub npc_name: String,
+    pub shop_inv: String,
+    pub shop_inv_source: String,
+    pub pickaxes: Vec<PickaxeShopFact>,
+    pub essence_region: EssenceRegionFact,
+    pub aubury_travel: AuburyTravelNote,
+    pub curated_vendor_tactics: CuratedVendorTactics,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourItemFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourLocFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub loc_config_source: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProvenanceTile {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+    pub provenance: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub authority: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// Six Murder Mystery flour pins (quest name, pots, barrel, two tiles).
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourSixFacts {
+    pub quest_name: String,
+    pub quest_name_source: String,
+    pub pot: FlourItemFact,
+    pub pot_flour: FlourItemFact,
+    pub flour_barrel: FlourLocFact,
+    pub flour_barrel_tile: ProvenanceTile,
+    pub bank_tile: ProvenanceTile,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -345,6 +457,10 @@ pub struct SelectedGameData {
     drop_tables: Vec<DropTable>,
     #[serde(default)]
     prayers: Vec<PrayerFact>,
+    #[serde(default)]
+    nurmof_essence: Option<NurmofEssenceFacts>,
+    #[serde(default)]
+    flour_six: Option<FlourSixFacts>,
 }
 
 impl SelectedGameData {
@@ -506,6 +622,22 @@ impl SelectedGameData {
         self.prayers
             .iter()
             .find(|row| row.name.eq_ignore_ascii_case(wanted))
+    }
+
+    pub fn nurmof_essence(&self) -> Option<&NurmofEssenceFacts> {
+        self.nurmof_essence.as_ref()
+    }
+
+    pub fn flour_six(&self) -> Option<&FlourSixFacts> {
+        self.flour_six.as_ref()
+    }
+
+    /// Mapsquare predicate `(x >> 6, z >> 6) == (45, 75)` from generated facts.
+    pub fn in_essence_mine(&self, x: i32, z: i32) -> bool {
+        let Some(region) = self.nurmof_essence.as_ref().map(|facts| &facts.essence_region) else {
+            return false;
+        };
+        (x >> 6) == region.mapsquare_mx && (z >> 6) == region.mapsquare_mz
     }
 
     pub fn herb_level_default(&self) -> Option<i32> {

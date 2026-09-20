@@ -398,3 +398,40 @@ fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
         assert!(data.prayer_by_name("Not a prayer").is_none());
     }
 }
+
+#[test]
+fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let nurmof = data.nurmof_essence().expect("nurmof essence facts");
+        assert_eq!(nurmof.npc_id, 594);
+        assert_eq!(nurmof.npc_alias, "nurmof");
+        assert_eq!(nurmof.shop_inv, "pickaxeshop");
+        assert_eq!(nurmof.pickaxes.len(), 6);
+        let iron = nurmof
+            .pickaxes
+            .iter()
+            .find(|row| row.alias == "iron_pickaxe")
+            .expect("iron pickaxe");
+        assert_eq!(iron.id, 1267);
+        assert_eq!(iron.base_cost, 140);
+        assert_eq!(iron.cost_source, "obj.cost");
+        assert_eq!(nurmof.essence_region.mapsquare_mx, 45);
+        assert_eq!(nurmof.essence_region.mapsquare_mz, 75);
+        assert!(data.in_essence_mine(2880, 4800));
+        assert!(!data.in_essence_mine(3253, 3402));
+        assert_eq!(nurmof.curated_vendor_tactics.label, "curated");
+        assert!(nurmof.aubury_travel.already_packed);
+
+        let flour = data.flour_six().expect("flour six facts");
+        assert_eq!(flour.quest_name, "Murder Mystery");
+        assert_eq!(flour.pot.id, 1931);
+        assert_eq!(flour.pot_flour.id, 1933);
+        assert_eq!(flour.flour_barrel.id, 2662);
+        assert_eq!(flour.flour_barrel_tile.provenance, "derived");
+        assert_eq!(flour.flour_barrel_tile.x, 2735);
+        assert_eq!(flour.flour_barrel_tile.z, 3582);
+        assert_eq!(flour.bank_tile.provenance, "curated");
+        assert_eq!(data.item_by_alias("pot_empty").expect("pot").id, flour.pot.id);
+    }
+}
