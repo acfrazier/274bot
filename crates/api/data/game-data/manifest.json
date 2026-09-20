@@ -12,6 +12,7 @@
       "spells": 16,
       "staves": 14,
       "herbs": 19,
+      "prayers": 15,
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -41,7 +42,7 @@
       },
       "teleports": 7,
       "bytes": 1428260,
-      "sha256": "8d6669ee18c5a145df5b5e971f70572c3341448364eca9cb963d7cf28b8b2053",
+      "sha256": "57a58532c168dd76a632ab69dbd0e34471bbc07e9c70750ef6bcf2bd4526fb3b",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -280,8 +281,7 @@
         "content_id": "0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c",
         "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
         "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
-      },
-      "prayers": 15
+      }
     },
     {
       "revision": 289,
@@ -293,6 +293,7 @@
       "spells": 16,
       "staves": 14,
       "herbs": 19,
+      "prayers": 15,
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -322,7 +323,7 @@
       },
       "teleports": 7,
       "bytes": 1490756,
-      "sha256": "62ca81be3fa23d828ae921a83d5519a47190d7a540b420bed81966a03a1869da",
+      "sha256": "06c4a1c7e107a3f07c76f7fa21ec01975b7d9795187bef8f218b1ee82a289a5c",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -561,8 +562,7 @@
         "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
         "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
         "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
-      },
-      "prayers": 15
+      }
     }
   ]
 }
