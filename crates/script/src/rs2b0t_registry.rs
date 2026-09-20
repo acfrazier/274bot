@@ -1624,6 +1624,9 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
     } else {
         None
     };
+    let options_from = scan_key_quoted(obj, "optionsFrom")
+        .or_else(|| scan_key_ident(obj, "optionsFrom"))
+        .or_else(|| inferred_options_from(obj, &options, item_option_spec.as_ref()));
     SettingDef {
         id: id.to_string(),
         ty: scan_key_quoted(obj, "type").unwrap_or_default(),
@@ -1636,9 +1639,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
         option_labels: scan_key_option_labels(obj, file_src),
         group: scan_key_quoted(obj, "group"),
         show_if: scan_key_show_if(obj, file_src),
-        options_from: scan_key_quoted(obj, "optionsFrom")
-            .or_else(|| scan_key_ident(obj, "optionsFrom"))
-            .or_else(|| inferred_options_from(obj, &options, item_option_spec.as_ref())),
+        options_from,
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
         help: scan_key_quoted(obj, "help"),
         item_option_spec,
@@ -2308,12 +2309,195 @@ export const SETTINGS = {
     items: { type: 'string[]', default: ['steel_platebody'], options: ALCH_OPTIONS }
 };
 "#;
-        let items = setting(&settings_schema_from_source(src), "items");
+        let schema = settings_schema_from_source(src);
+        let items = setting(&schema, "items");
         assert!(
             items.options.is_empty(),
             "ALCH .key map must stay unresolved, got {:?}",
             items.options
         );
         assert!(items.item_option_spec.is_none());
+    }
+
+    /// Bounded frozen same-dir walk. Not UI proof. Requires `$RS2B0T`.
+    #[test]
+    #[ignore = "requires absolute RS2B0T frozen catalog"]
+    fn frozen_catalog_settings_audit() {
+        let root = PathBuf::from(
+            std::env::var("RS2B0T").expect("RS2B0T must name the frozen catalog root"),
+        );
+        assert!(root.is_absolute(), "RS2B0T must be absolute");
+        let index_path = registry_index_path(&root);
+        let index = std::fs::read_to_string(&index_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", index_path.display()));
+        let skeleton = parse_registry_with_sources(&index, &HashMap::new())
+            .expect("frozen index parses without sources");
+        let mut sources = HashMap::new();
+        for card in &skeleton {
+            let Some(path) = script_file_path(&root, &card.rel_path) else {
+                continue;
+            };
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sources.insert(card.rel_path.clone(), text);
+            }
+            let Some(dir) = path.parent() else {
+                continue;
+            };
+            let Some(card_dir) = rel_dir(&card.rel_path) else {
+                continue;
+            };
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for ent in entries.flatten() {
+                let name = ent.file_name();
+                let name = name.to_string_lossy();
+                if !(name.ends_with(".ts") || name.ends_with(".js")) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(ent.path()) else {
+                    continue;
+                };
+                let rel_native = format!("./{card_dir}/{name}");
+                sources.entry(rel_native).or_insert_with(|| text.clone());
+                if let Some(stem) = name.strip_suffix(".ts") {
+                    sources
+                        .entry(format!("./{card_dir}/{stem}.js"))
+                        .or_insert(text);
+                }
+            }
+        }
+        let cards = parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
+        let by_name: HashMap<&str, &RegistryCard> =
+            cards.iter().map(|c| (c.name.as_str(), c)).collect();
+
+        let want = [
+            ("JiveCrafting", "product"),
+            ("JiveEnchanter", "jewel"),
+            ("JiveMarketDumper", "bank"),
+            ("EssMiner", "pickaxe"),
+            ("RuneCrafter", "rune"),
+            ("NatureCrafter", "rune"),
+            ("CookBot", "location"),
+            ("CookBot", "surface"),
+            ("CookBot", "logType"),
+            ("DartFletcher", "tier"),
+            ("HerbloreSecondaries", "secondary"),
+            ("HerbCleaner", "herbs"),
+            ("PotionMaker", "herb"),
+            ("PotionMaker", "secondary"),
+            ("SmelterBot", "bar"),
+            ("Superheater", "bar"),
+            ("Alcher", "items"),
+            ("GemCutter", "gems"),
+            ("MuleCrafter", "rune"),
+            ("ShopBuyout", "shop"),
+            ("ShopBuyout", "buyItems"),
+            ("LeatherCrafter", "leatherType"),
+            ("Firemaker", "logType"),
+            ("Firemaker", "location"),
+        ];
+        let mut recovered = 0usize;
+        let mut empty = 0usize;
+        for (card_name, setting_id) in want {
+            let card = by_name
+                .get(card_name)
+                .unwrap_or_else(|| panic!("missing catalog card {card_name}"));
+            let def = card
+                .settings_schema
+                .iter()
+                .find(|s| s.id == setting_id)
+                .unwrap_or_else(|| panic!("{card_name}.{setting_id} missing from schema"));
+            eprintln!(
+                "AUDIT {card_name}.{setting_id} n={} spec={} from={:?} opts={:?}",
+                def.options.len(),
+                def.item_option_spec.is_some(),
+                def.options_from,
+                def.options
+            );
+            if def.options.is_empty() && def.item_option_spec.is_none() {
+                empty += 1;
+            } else {
+                recovered += 1;
+            }
+        }
+
+        let rock = by_name.get("RockCrab").expect("RockCrab card");
+        let rock_ids: Vec<&str> = rock.settings_schema.iter().map(|s| s.id.as_str()).collect();
+        eprintln!("AUDIT RockCrab ids={rock_ids:?}");
+        for id in [
+            "bankStrategy",
+            "bankEveryItems",
+            "bankEveryMinutes",
+            "bankCommonJunk",
+            "solveClues",
+        ] {
+            assert!(rock_ids.contains(&id), "RockCrab lost {id}: {rock_ids:?}");
+        }
+        assert!(
+            !rock_ids.contains(&"group"),
+            "RockCrab must not invent group: {rock_ids:?}"
+        );
+
+        let rune_crafter = setting(&by_name["RuneCrafter"].settings_schema, "rune");
+        assert_eq!(
+            rune_crafter.options,
+            ["Air runes", "Earth runes"],
+            "RuneCrafter local Object.keys must win over mule altar table: {:?}",
+            rune_crafter.options
+        );
+        let nature = setting(&by_name["NatureCrafter"].settings_schema, "rune");
+        assert_eq!(
+            nature.options,
+            ["Nature runes", "Air runes"],
+            "NatureCrafter local keys must win: {:?}",
+            nature.options
+        );
+        let mule = setting(&by_name["MuleCrafter"].settings_schema, "rune");
+        assert_eq!(
+            mule.options,
+            catalog_option_values("RUNE_OPTIONS").unwrap(),
+            "MuleCrafter re-export uses imported 11 altar names: {:?}",
+            mule.options
+        );
+
+        let cook_loc = setting(&by_name["CookBot"].settings_schema, "location");
+        assert!(cook_loc.options.contains(&"Catherby".into()));
+        assert_eq!(
+            setting(&by_name["CookBot"].settings_schema, "surface").options,
+            ["Range", "Fire"]
+        );
+        assert!(!setting(&by_name["CookBot"].settings_schema, "logType")
+            .options
+            .is_empty());
+
+        let alcher = setting(&by_name["Alcher"].settings_schema, "items");
+        assert!(
+            alcher.options.is_empty() && alcher.item_option_spec.is_none(),
+            "Alcher.items remains later product work, got opts={:?} spec={:?}",
+            alcher.options,
+            alcher.item_option_spec
+        );
+        let buy = setting(&by_name["ShopBuyout"].settings_schema, "buyItems");
+        assert!(
+            buy.options.is_empty() && buy.item_option_spec.is_none(),
+            "ShopBuyout.buyItems remains later product work, got opts={:?}",
+            buy.options
+        );
+
+        eprintln!(
+            "AUDIT summary recovered={recovered} empty={empty} of {}",
+            want.len()
+        );
+        assert_eq!(
+            recovered + empty,
+            want.len(),
+            "row accounting {recovered}+{empty}"
+        );
+        assert_eq!(
+            empty, 2,
+            "only Alcher.items and ShopBuyout.buyItems stay empty"
+        );
+        assert_eq!(recovered, 22);
     }
 }
