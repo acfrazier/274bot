@@ -59649,7 +59649,10 @@
       "mapsquare_mz": 75,
       "predicate": "(x >> 6) === 45 && (z >> 6) === 75",
       "source_map": "maps/m45_75.jm2",
-      "source_constant": "scripts/skill_runecraft/configs/runecraft.constant",
+      "mapsquare_from_filename": true,
+      "mine_portal_loc_alias": "blankrunestone_exit_portal",
+      "mine_portal_loc_id": 2492,
+      "mine_portal_loc_placements": 4,
       "example_inside": {
         "x": 2880,
         "z": 4800,
@@ -59660,7 +59663,12 @@
       "note": "Essence wizard Aubury entry/return hops are already packed in nav transport; not duplicated here.",
       "npc_alias": "aubury",
       "npc_id": 553,
-      "already_packed": true
+      "npc_name": "Aubury",
+      "already_packed": true,
+      "return_anchor_constant": "^essence_mine_to_aubury",
+      "return_anchor_coord": "0_50_53_53_9",
+      "return_anchor_source": "scripts/skill_runecraft/configs/runecraft.constant",
+      "return_anchor_role": "overworld_exit_after_mine_teleport"
     },
     "curated_vendor_tactics": {
       "label": "curated",
@@ -59704,17 +59712,29 @@
       "name": "Barrel of flour",
       "loc_config_source": "scripts/quests/quest_murder/configs/quest_murder.loc"
     },
-    "flour_barrel_tile": {
+    "flour_barrel_object_tile": {
       "x": 2735,
       "z": 3582,
       "plane": 0,
+      "role": "loc_placement",
       "provenance": "derived",
       "source": "maps/m42_55.jm2",
       "mapsquare": "m42_55",
       "local": {
         "lx": 47,
         "lz": 62
-      }
+      },
+      "loc_shape": 10,
+      "loc_angle": 1
+    },
+    "flour_barrel_approach_tile": {
+      "x": 2735,
+      "z": 3581,
+      "plane": 0,
+      "role": "interaction_near",
+      "provenance": "curated",
+      "authority": "reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL",
+      "note": "FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582)."
     },
     "bank_tile": {
       "x": 2725,

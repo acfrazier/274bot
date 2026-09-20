@@ -644,13 +644,41 @@ export function parseNpcSection(text: string, alias: string) {
 }
 
 export function parseQuestEnumEntry(text: string, questName: string) {
+    let inQuestNames = false;
+    let found: string | null = null;
     for (const raw of text.split(/\r?\n/)) {
         const line = raw.trim();
-        if (!line.startsWith('val=')) continue;
-        const [, name] = line.split(',', 2);
-        if (name?.trim() === questName) return line;
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            const section = line.slice(1, -1);
+            if (inQuestNames && section !== 'quest_names_enum') break;
+            inQuestNames = section === 'quest_names_enum';
+            continue;
+        }
+        if (!inQuestNames || !line.startsWith('val=')) continue;
+        const eq = line.indexOf('=');
+        const comma = line.indexOf(',', eq + 1);
+        if (comma <= eq) throw new Error(`quest.enum: malformed val line ${line}`);
+        const name = line.slice(comma + 1).trim();
+        if (name !== questName) continue;
+        if (found) throw new Error(`quest.enum: duplicate val for ${questName}`);
+        found = line;
     }
-    throw new Error(`quest.enum: missing ${questName}`);
+    if (!found) throw new Error(`quest.enum: missing ${questName} in [quest_names_enum]`);
+    return found;
+}
+
+export function parseMapsquarePath(relative: string) {
+    const base = path.basename(relative, '.jm2');
+    const match = /^m(\d+)_(\d+)$/.exec(base);
+    if (!match) throw new Error(`mapsquare path: expected m<x>_<z>.jm2, got ${relative}`);
+    return { mx: integer(match[1], relative), mz: integer(match[2], relative) };
+}
+
+function jm2SectionName(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('==== ') || !trimmed.endsWith(' ====')) return null;
+    return trimmed.slice('==== '.length, -' ===='.length);
 }
 
 export function parseLocSection(text: string, alias: string) {
@@ -671,19 +699,38 @@ export function parseLocSection(text: string, alias: string) {
     return section;
 }
 
+/** LOC placements only — mirrors `crates/nav/src/transport.rs` `parse_jm2_locs` gating. */
 export function parseJm2LocPlacements(text: string, locId: number) {
-    const placements: { plane: number; lx: number; lz: number; loc_id: number }[] = [];
+    const placements: { plane: number; lx: number; lz: number; loc_id: number; shape: number; angle: number }[] = [];
+    let inLoc = false;
     for (const raw of text.split(/\r?\n/)) {
-        const match = /^(\d+)\s+(\d+)\s+(\d+):\s+(\d+)/.exec(raw.trim());
-        if (!match) continue;
-        const id = Number(match[4]);
+        const line = raw.trim();
+        if (!line) continue;
+        const section = jm2SectionName(line);
+        if (section !== null) {
+            inLoc = section === 'LOC';
+            continue;
+        }
+        if (!inLoc) continue;
+        const colon = line.indexOf(':');
+        if (colon <= 0) throw new Error(`jm2 LOC: malformed row ${line}`);
+        const coords = line.slice(0, colon).trim();
+        const data = line.slice(colon + 1).trim();
+        const coordTokens = coords.split(/\s+/);
+        if (coordTokens.length !== 3) throw new Error(`jm2 LOC: bad coords ${line}`);
+        const plane = integer(coordTokens[0], line);
+        const lx = integer(coordTokens[1], line);
+        const lz = integer(coordTokens[2], line);
+        if (plane < 0 || plane > 3) throw new Error(`jm2 LOC: plane out of range ${line}`);
+        if (lx < 0 || lx > 63 || lz < 0 || lz > 63) throw new Error(`jm2 LOC: local coords out of range ${line}`);
+        const dataTokens = data.split(/\s+/).filter((token) => token.length > 0);
+        if (dataTokens.length === 0) throw new Error(`jm2 LOC: missing loc id ${line}`);
+        if (dataTokens.length > 3) throw new Error(`jm2 LOC: extra tokens ${line}`);
+        const id = integer(dataTokens[0], line);
+        const shape = dataTokens[1] !== undefined ? integer(dataTokens[1], line) : 0;
+        const angle = dataTokens[2] !== undefined ? integer(dataTokens[2], line) : 0;
         if (id !== locId) continue;
-        placements.push({
-            plane: integer(match[1], raw),
-            lx: integer(match[2], raw),
-            lz: integer(match[3], raw),
-            loc_id: id,
-        });
+        placements.push({ plane, lx, lz, loc_id: id, shape, angle });
     }
     return placements;
 }
@@ -750,20 +797,32 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
     const npcPack = parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'));
     const packedId = npcPack.get('nurmof');
     if (packedId !== 594) throw new Error(`nurmof: pack id ${packedId}, expected 594`);
-    const runecraftConstant = fs.readFileSync(
-        path.join(content, 'scripts/skill_runecraft/configs/runecraft.constant'),
-        'utf8',
-    );
-    if (!runecraftConstant.includes('^essence_mine_to_aubury')) {
-        throw new Error('runecraft.constant: missing essence_mine_to_aubury anchor');
-    }
     const essenceMap = 'maps/m45_75.jm2';
     if (!fs.existsSync(path.join(content, essenceMap))) throw new Error(`missing ${essenceMap}`);
-    const essence_mapsquare_mx = 45;
-    const essence_mapsquare_mz = 75;
-    const example = worldFromMapsquare(essence_mapsquare_mx, essence_mapsquare_mz, 0, 0, 0);
-    example.x = 2880;
-    example.z = 4800;
+    const { mx: essence_mapsquare_mx, mz: essence_mapsquare_mz } = parseMapsquarePath(essenceMap);
+    const minePortalLocId = 2492;
+    const portalPlacements = parseJm2LocPlacements(
+        fs.readFileSync(path.join(content, essenceMap), 'utf8'),
+        minePortalLocId,
+    );
+    if (portalPlacements.length === 0) {
+        throw new Error(`essence mine: no loc ${minePortalLocId} placements in ${essenceMap}`);
+    }
+    const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    const portalAlias = [...locPack.entries()].find(([, id]) => id === minePortalLocId)?.[0];
+    if (portalAlias !== 'blankrunestone_exit_portal') {
+        throw new Error(`essence mine: loc ${minePortalLocId} alias ${portalAlias}, expected blankrunestone_exit_portal`);
+    }
+    const auburyPacked = npcPack.get('aubury');
+    const auburyNpc = npcs.find((npc) => npc.debugname === 'aubury');
+    if (auburyPacked !== 553 || !auburyNpc?.name) {
+        throw new Error(`aubury: pack/npc join mismatch ${auburyPacked}/${auburyNpc?.name}`);
+    }
+    const runecraftConstantPath = 'scripts/skill_runecraft/configs/runecraft.constant';
+    const runecraftConstant = fs.readFileSync(path.join(content, runecraftConstantPath), 'utf8');
+    const returnAnchorMatch = runecraftConstant.match(/^\^essence_mine_to_aubury\s*=\s*(\S+)/m);
+    if (!returnAnchorMatch) throw new Error('runecraft.constant: missing ^essence_mine_to_aubury return anchor');
+    const example = { x: 2880, z: 4800, plane: 0 };
     return {
         npc_alias: 'nurmof',
         npc_id: nurmof.id,
@@ -774,16 +833,24 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
         essence_region: {
             mapsquare_mx: essence_mapsquare_mx,
             mapsquare_mz: essence_mapsquare_mz,
-            predicate: '(x >> 6) === 45 && (z >> 6) === 75',
+            predicate: `(x >> 6) === ${essence_mapsquare_mx} && (z >> 6) === ${essence_mapsquare_mz}`,
             source_map: essenceMap,
-            source_constant: 'scripts/skill_runecraft/configs/runecraft.constant',
+            mapsquare_from_filename: true,
+            mine_portal_loc_alias: portalAlias,
+            mine_portal_loc_id: minePortalLocId,
+            mine_portal_loc_placements: portalPlacements.length,
             example_inside: example,
         },
         aubury_travel: {
             note: 'Essence wizard Aubury entry/return hops are already packed in nav transport; not duplicated here.',
             npc_alias: 'aubury',
-            npc_id: 553,
+            npc_id: auburyNpc.id,
+            npc_name: auburyNpc.name,
             already_packed: true,
+            return_anchor_constant: '^essence_mine_to_aubury',
+            return_anchor_coord: returnAnchorMatch[1],
+            return_anchor_source: runecraftConstantPath,
+            return_anchor_role: 'overworld_exit_after_mine_teleport',
         },
         curated_vendor_tactics: {
             label: 'curated',
@@ -819,13 +886,12 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
         throw new Error('flour: obj.pack id mismatch for pot items');
     }
     const mapRelative = 'maps/m42_55.jm2';
+    const { mx, mz } = parseMapsquarePath(mapRelative);
     const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), 2662);
     if (placements.length !== 1) {
-        throw new Error(`flourbarrel: expected one m42_55 placement, got ${placements.length}`);
+        throw new Error(`flourbarrel: expected one ${mapRelative} LOC placement, got ${placements.length}`);
     }
     const placement = placements[0];
-    const mx = 42;
-    const mz = 55;
     const derivedBarrel = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
     return {
         quest_name: 'Murder Mystery',
@@ -838,12 +904,24 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
             name: flourLoc.name!,
             loc_config_source: locRelative,
         },
-        flour_barrel_tile: {
+        flour_barrel_object_tile: {
             ...derivedBarrel,
+            role: 'loc_placement',
             provenance: 'derived',
             source: mapRelative,
             mapsquare: `m${mx}_${mz}`,
             local: { lx: placement.lx, lz: placement.lz },
+            loc_shape: placement.shape,
+            loc_angle: placement.angle,
+        },
+        flour_barrel_approach_tile: {
+            x: 2735,
+            z: 3581,
+            plane: 0,
+            role: 'interaction_near',
+            provenance: 'curated',
+            authority: 'reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL',
+            note: 'FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582).',
         },
         bank_tile: {
             x: 2725,

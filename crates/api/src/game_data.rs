@@ -334,7 +334,10 @@ pub struct EssenceRegionFact {
     pub mapsquare_mz: i32,
     pub predicate: String,
     pub source_map: String,
-    pub source_constant: String,
+    pub mapsquare_from_filename: bool,
+    pub mine_portal_loc_alias: String,
+    pub mine_portal_loc_id: i32,
+    pub mine_portal_loc_placements: i32,
     pub example_inside: EssenceExampleTile,
 }
 
@@ -370,7 +373,12 @@ pub struct AuburyTravelNote {
     pub note: String,
     pub npc_alias: String,
     pub npc_id: i32,
+    pub npc_name: String,
     pub already_packed: bool,
+    pub return_anchor_constant: String,
+    pub return_anchor_coord: String,
+    pub return_anchor_source: String,
+    pub return_anchor_role: String,
 }
 
 /// Nurmof pickaxe shop + essence region facts (no acquire routing).
@@ -407,6 +415,8 @@ pub struct ProvenanceTile {
     pub x: i32,
     pub z: i32,
     pub plane: i32,
+    #[serde(default)]
+    pub role: Option<String>,
     pub provenance: String,
     #[serde(default)]
     pub source: Option<String>,
@@ -414,9 +424,23 @@ pub struct ProvenanceTile {
     pub authority: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub mapsquare: Option<String>,
+    #[serde(default)]
+    pub local: Option<FlourLocalTile>,
+    #[serde(default)]
+    pub loc_shape: Option<i32>,
+    #[serde(default)]
+    pub loc_angle: Option<i32>,
 }
 
-/// Six Murder Mystery flour pins (quest name, pots, barrel, two tiles).
+#[derive(Debug, Deserialize, Clone)]
+pub struct FlourLocalTile {
+    pub lx: i32,
+    pub lz: i32,
+}
+
+/// Six Murder Mystery flour pins (quest name, pots, barrel, object + approach + bank tiles).
 #[derive(Debug, Deserialize, Clone)]
 pub struct FlourSixFacts {
     pub quest_name: String,
@@ -424,7 +448,8 @@ pub struct FlourSixFacts {
     pub pot: FlourItemFact,
     pub pot_flour: FlourItemFact,
     pub flour_barrel: FlourLocFact,
-    pub flour_barrel_tile: ProvenanceTile,
+    pub flour_barrel_object_tile: ProvenanceTile,
+    pub flour_barrel_approach_tile: ProvenanceTile,
     pub bank_tile: ProvenanceTile,
 }
 
@@ -632,12 +657,10 @@ impl SelectedGameData {
         self.flour_six.as_ref()
     }
 
-    /// Mapsquare predicate `(x >> 6, z >> 6) == (45, 75)` from generated facts.
-    pub fn in_essence_mine(&self, x: i32, z: i32) -> bool {
-        let Some(region) = self.nurmof_essence.as_ref().map(|facts| &facts.essence_region) else {
-            return false;
-        };
-        (x >> 6) == region.mapsquare_mx && (z >> 6) == region.mapsquare_mz
+    /// Mapsquare predicate from generated facts. `None` when `nurmof_essence` is absent.
+    pub fn in_essence_mine(&self, x: i32, z: i32) -> Option<bool> {
+        let region = &self.nurmof_essence.as_ref()?.essence_region;
+        Some((x >> 6) == region.mapsquare_mx && (z >> 6) == region.mapsquare_mz)
     }
 
     pub fn herb_level_default(&self) -> Option<i32> {
