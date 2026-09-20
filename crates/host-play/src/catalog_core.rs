@@ -5606,6 +5606,9 @@ pub struct CombatCoreCycle {
     pub noted: bool,
     pub activated: bool,
     pub shield_worn: bool,
+    /// Mage-branch only: latched when Start wore 1540 and a later WornShield frame saw it off.
+    /// Re-equipping does not clear this; `qualified()` still uses sticky `shield_worn` only.
+    pub shield_continuity_break: bool,
     pub stolen_food: bool,
     pub wrong_item: bool,
     pub dormant_indexes: BTreeSet<usize>,
@@ -5659,6 +5662,11 @@ impl CombatCoreCycle {
             || now.item_id(CHOCOLATE_CAKE_ID) > 0;
         if spec.extra == CombatExtra::WornShield {
             self.shield_worn |= now.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1;
+            if baseline.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1
+                && now.equipment_id(DRAGONFIRE_SHIELD_ID) == 0
+            {
+                self.shield_continuity_break = true;
+            }
         }
         if spec.extra == CombatExtra::StolenFood {
             self.stolen_food |= stall_food(now) > stall_food(baseline);
@@ -5908,6 +5916,7 @@ pub fn qualified_mage_branch(cycle: &CombatCoreCycle, spec: CombatSpec) -> bool 
         && cycle.mind_rune_consumed
         && cycle.air_runes_consumed
         && cycle.shield_worn
+        && !cycle.shield_continuity_break
         && !cycle.noted
         && !cycle.wrong_item
 }
@@ -5926,7 +5935,13 @@ pub struct CombatDartBranchCycle {
 impl CombatDartBranchCycle {
     pub fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
         self.combat.observe(spec, baseline, now);
-        self.withdrawn |= held_id(now, BRONZE_DART_ID) > 0;
+        let bank_withdraw = baseline.bank_open
+            && baseline.bank_loaded
+            && now.bank_open
+            && now.bank_loaded
+            && baseline.bank_item_id(BRONZE_DART_ID) > 0
+            && now.bank_item_id(BRONZE_DART_ID) < baseline.bank_item_id(BRONZE_DART_ID);
+        self.withdrawn |= now.item_id(BRONZE_DART_ID) > 0 || bank_withdraw;
         self.worn |= now.equipment_id(BRONZE_DART_ID) >= 1;
         self.arrived |= near(now.tile, MOSS_GIANT_SAFESPOT, MOSS_GIANT_DART_FIELD_RADIUS);
         self.wrong_ammo |= held_id(now, RUNE_ARROW_ID) > 0 || now.bank_item_id(RUNE_ARROW_ID) > 0;

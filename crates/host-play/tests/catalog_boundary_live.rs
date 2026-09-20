@@ -6779,19 +6779,23 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(dart_case, &wrong_ammo_bank).is_err());
 
         let dart_spec = combat_spec(dart_case).unwrap();
-        let mut dart_worn = dart_baseline.clone();
-        dart_worn.tile = Some(MOSS_GIANT_SAFESPOT);
-        dart_worn.bank_open = false;
-        dart_worn.bank_loaded = false;
-        dart_worn.equipment_ids.insert(BRONZE_DART_ID, 80);
+        let mut dart_pack = dart_baseline.clone();
+        dart_pack.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_pack.bank_open = false;
+        dart_pack.bank_loaded = false;
+        dart_pack.item_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_worn = dart_pack.clone();
+        dart_worn.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
         dart_worn.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
         let mut dart_field = dart_worn.clone();
-        dart_field.equipment_ids.insert(BRONZE_DART_ID, 79);
+        dart_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_field.xp.insert("ranged".into(), 12);
         dart_field.npc_facts = vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
         dart_field.local_in_combat = true;
         dart_field.local_target_npc = Some(4);
-        let dart_ok = witness(dart_case, &dart_baseline, [&dart_worn, &dart_field]);
+        let dart_ok =
+            witness(dart_case, &dart_baseline, [&dart_pack, &dart_worn, &dart_field]);
         assert!(dart_ok.combat_dart_branch_cycle.qualified());
         assert!(
             !dart_ok.combat_dart_branch_cycle.combat.qualified(dart_spec),
@@ -6799,16 +6803,97 @@ export default class NativeStop extends LoopingBot {{
         );
         assert!(dart_ok.qualify().is_ok());
 
+        let mut dart_bank_pull = dart_baseline.clone();
+        dart_bank_pull.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_bank_pull.bank_open = true;
+        dart_bank_pull.bank_loaded = true;
+        dart_bank_pull.bank_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_bank_pull.item_ids.insert(BRONZE_DART_ID, 1);
+        let mut dart_worn_from_bank = dart_bank_pull.clone();
+        dart_worn_from_bank.bank_open = false;
+        dart_worn_from_bank.bank_loaded = false;
+        dart_worn_from_bank.bank_ids.clear();
+        dart_worn_from_bank.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn_from_bank.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn_from_bank.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
+        let mut dart_field_from_bank = dart_worn_from_bank.clone();
+        dart_field_from_bank.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_field_from_bank.xp.insert("ranged".into(), 12);
+        dart_field_from_bank.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_field_from_bank.local_in_combat = true;
+        dart_field_from_bank.local_target_npc = Some(4);
+        assert!(
+            witness(
+                dart_case,
+                &dart_baseline,
+                [&dart_bank_pull, &dart_worn_from_bank, &dart_field_from_bank]
+            )
+            .combat_dart_branch_cycle
+            .qualified()
+        );
+
+        let mut dart_worn_only = dart_baseline.clone();
+        dart_worn_only.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_worn_only.bank_open = true;
+        dart_worn_only.bank_loaded = true;
+        dart_worn_only.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_worn_only_field = dart_worn_only.clone();
+        dart_worn_only_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_worn_only_field.xp.insert("ranged".into(), 12);
+        dart_worn_only_field.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_worn_only_field.local_in_combat = true;
+        dart_worn_only_field.local_target_npc = Some(4);
+        assert!(
+            !witness(
+                dart_case,
+                &dart_baseline,
+                [&dart_worn_only, &dart_worn_only_field]
+            )
+            .combat_dart_branch_cycle
+            .qualified(),
+            "worn-only with untouched open bank must not prove withdrawal"
+        );
+
+        let mut dart_closed_bank_worn = dart_baseline.clone();
+        dart_closed_bank_worn.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_closed_bank_worn.bank_open = false;
+        dart_closed_bank_worn.bank_loaded = false;
+        dart_closed_bank_worn.bank_ids.clear();
+        dart_closed_bank_worn.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_closed_field = dart_closed_bank_worn.clone();
+        dart_closed_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_closed_field.xp.insert("ranged".into(), 12);
+        dart_closed_field.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_closed_field.local_in_combat = true;
+        dart_closed_field.local_target_npc = Some(4);
+        assert!(
+            !witness(
+                dart_case,
+                &dart_baseline,
+                [&dart_closed_bank_worn, &dart_closed_field]
+            )
+            .combat_dart_branch_cycle
+            .withdrawn,
+            "closed-bank absent snapshot must not count as bank withdraw"
+        );
+
         let mut no_travel = dart_field.clone();
         no_travel.tile = Some(MOSS_GIANT_BANK);
-        assert!(witness(dart_case, &dart_baseline, [&no_travel])
+        assert!(witness(dart_case, &dart_baseline, [&dart_pack, &no_travel])
             .qualify()
             .is_err());
         let mut wrong_ammo_live = dart_field.clone();
         wrong_ammo_live.item_ids.insert(RUNE_ARROW_ID, 1);
-        assert!(witness(dart_case, &dart_baseline, [&dart_worn, &wrong_ammo_live])
-            .qualify()
-            .is_err());
+        assert!(witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_pack, &dart_worn, &wrong_ammo_live]
+        )
+        .qualify()
+        .is_err());
 
         let mage_case = CoreCase::GreenDragonMagePrepared;
         let mage_baseline = branch_obs(
@@ -6863,6 +6948,44 @@ export default class NativeStop extends LoopingBot {{
         assert!(witness(mage_case, &mage_baseline, [&no_shield])
             .qualify()
             .is_err());
+
+        let mage_precombat = mage_baseline.clone();
+        let mut mage_cast_bare = mage_hit.clone();
+        mage_cast_bare.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        let mixed_shield = witness(
+            mage_case,
+            &mage_baseline,
+            [&mage_precombat, &mage_cast_bare],
+        );
+        assert!(
+            mixed_shield.combat_core_cycle.shield_worn,
+            "sticky shield_worn preserves accepted full-kill semantics"
+        );
+        assert!(
+            !qualified_mage_branch(&mixed_shield.combat_core_cycle, mage_spec),
+            "precombat worn then missing during cast must not qualify mage branch"
+        );
+        assert!(mixed_shield.qualify().is_err());
+
+        let mage_re_shield = mage_hit.clone();
+        assert!(
+            witness(
+                mage_case,
+                &mage_baseline,
+                [&mage_cast_bare, &mage_re_shield],
+            )
+            .qualify()
+            .is_err(),
+            "missing then re-equipped must not satisfy shield continuity"
+        );
+
+        let continuous = witness(
+            mage_case,
+            &mage_baseline,
+            [&mage_precombat, &mage_hit],
+        );
+        assert!(qualified_mage_branch(&continuous.combat_core_cycle, mage_spec));
+        assert!(continuous.qualify().is_ok());
 
         let camelot_case = CoreCase::FireGiantCamelotPrepared;
         let camelot_baseline = branch_obs(
