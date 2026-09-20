@@ -12,7 +12,6 @@ use crate::isolate_fb::{RowReader, SnapshotReader};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::Duration;
 
 /// Frozen `Input.interactPlayer` op slot: `set_player_op("Trade with", 4)`.
 pub const TRADE_OP: usize = 4;
@@ -836,6 +835,7 @@ fn decline_step(rt: &mut TradeRuntime, probe: &Probe<'_>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn trade_op_is_the_frozen_fourth_player_slot() {

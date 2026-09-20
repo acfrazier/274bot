@@ -16,7 +16,6 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// Frozen `Shop.open`: wait for `isOpen` this long per attempt.
 pub const OPEN_WAIT_MS: u64 = 3_000;
@@ -751,6 +750,7 @@ fn plan(remaining: i32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     fn row(name: &str, count: i32, slot: i32) -> Row {
         Row {

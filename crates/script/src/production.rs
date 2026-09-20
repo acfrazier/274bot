@@ -13,7 +13,6 @@ use crate::isolate_fb::{RowReader, SnapshotReader};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
 
 /// Frozen family-1 count-dialog open wait.
 pub const COUNT_OPEN_MS: u64 = 3_000;
@@ -529,6 +528,7 @@ pub fn largest_make_op(ops: &[String]) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     fn product(name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
         MakeProduct {
