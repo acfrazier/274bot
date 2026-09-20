@@ -274,6 +274,8 @@ pub const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 pub const FIRE_GIANT_FOOD: i32 = 12;
 pub const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
 pub const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
+/// Camelot escape restock line; barrel prepared keeps `FIRE_GIANT_BANK_PREPARED_RESTOCK`.
+pub const FIRE_GIANT_CAMELOT_PREPARED_RESTOCK: i32 = 24;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
 pub const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 pub const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
@@ -2913,7 +2915,7 @@ pub fn validate_case_baseline_with_preparation(
             "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty earned Big bones 532, stock-selected one-food escapeTele Barrel and exact restock 25"
         }
         CoreCase::FireGiantCamelotPrepared => {
-            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, Magic 45, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, worn amulet 295, rope 954, Air 556x15 and Law 563x3, empty earned Big bones 532, escapeTele Camelot land 2757,3478 then Seers 25-lobster restock"
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, Magic 45, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, worn amulet 295, rope 954, Air 556x15 and Law 563x3, empty earned Big bones 532, escapeTele Camelot land 2757,3478 then Seers 24-lobster restock"
         }
         CoreCase::AioTeleport => {
             "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
@@ -5268,7 +5270,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: SEERS_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
-            restock_count: Some(FIRE_GIANT_BANK_PREPARED_RESTOCK),
+            restock_count: Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK),
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
             via: Some(CAMELOT_TELE_LAND),

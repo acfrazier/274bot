@@ -6462,11 +6462,23 @@ export default class NativeStop extends LoopingBot {{
         assert!(camelot_trip.via_magic);
         assert_eq!(camelot_trip.via, Some(CAMELOT_TELE_LAND));
         assert_eq!(camelot_trip.stand, SEERS_BANK);
-        assert_eq!(camelot_trip.restock_count, Some(FIRE_GIANT_BANK_PREPARED_RESTOCK));
+        assert_eq!(
+            camelot_trip.restock_count,
+            Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK)
+        );
         assert_ne!(camelot_trip.via, Some(FIRE_GIANT_WASH));
         let barrel = combat_bank_spec(CoreCase::FireGiantBankPrepared).unwrap();
+        assert_eq!(
+            barrel.restock_count,
+            Some(FIRE_GIANT_BANK_PREPARED_RESTOCK)
+        );
         assert_eq!(barrel.via, Some(FIRE_GIANT_WASH));
         assert!(!barrel.via_magic);
+        assert_ne!(
+            camelot_trip.restock_count,
+            barrel.restock_count,
+            "Camelot observer restock line stays separate from barrel 25"
+        );
 
         let hill_prepared = CoreCase::parse("hill_giant_bank_prepared").unwrap();
         assert_eq!(hill_prepared.card_name(), "HillGiant");
@@ -7265,6 +7277,184 @@ export default class NativeStop extends LoopingBot {{
         let short = trace(FIRE_GIANT_BANK_PREPARED_RESTOCK - 1);
         assert!(!short.combat_bank_cycle.restocked);
         assert!(short.qualify().is_err());
+    }
+
+    #[test]
+    fn prepared_fire_giant_camelot_accepts_exact_24_restock_and_rejects_incomplete_return() {
+        let case = CoreCase::FireGiantCamelotPrepared;
+        let bank = combat_bank_spec(case).unwrap();
+        assert_eq!(bank.restock_count, Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK));
+        assert_eq!(
+            combat_bank_spec(CoreCase::FireGiantBankPrepared)
+                .unwrap()
+                .restock_count,
+            Some(FIRE_GIANT_BANK_PREPARED_RESTOCK)
+        );
+
+        let armour_and_weapon = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+            (RUNE_SCIMITAR_ID, 1),
+            (GLARIALS_AMULET_ID, 1),
+        ];
+        let levels = [
+            ("attack", BANK_PRESSURE_PREPARED_LEVEL),
+            ("strength", BANK_PRESSURE_PREPARED_LEVEL),
+            ("defence", BANK_PRESSURE_PREPARED_LEVEL),
+            ("hitpoints", BANK_PRESSURE_PREPARED_LEVEL),
+            ("magic", CAMELOT_TELE_MAGIC),
+        ];
+        let baseline = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (ROPE_ID, 1),
+                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
+                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+            ],
+            &armour_and_weapon,
+            &[("strength", 0), ("magic", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let trace = |restock_count: i32| {
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, "Fire giant", 50, true, FIRE_GIANT_ROOM)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+
+            let mut earned = baseline.clone();
+            earned.item_ids.remove(&LOBSTER_ID);
+            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.xp.insert("strength".into(), 10);
+            earned.npc_facts = vec![
+                combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(7, "Fire giant", 40, true, FIRE_GIANT_ROOM),
+            ];
+            earned.local_in_combat = true;
+            earned.local_target_npc = Some(7);
+
+            let mut continued = earned.clone();
+            continued.npc_facts = vec![combat_npc(7, "Fire giant", 35, true, FIRE_GIANT_ROOM)];
+
+            let mut landed = continued.clone();
+            landed.tile = Some(CAMELOT_TELE_LAND);
+            landed.xp.insert("magic".into(), 1);
+            landed.npc_facts.clear();
+            landed.local_in_combat = false;
+            landed.local_target_npc = None;
+
+            let mut deposited = landed.clone();
+            deposited.tile = Some(SEERS_BANK);
+            deposited.item_ids.remove(&BIG_BONES_ID);
+            deposited.bank_ids.insert(BIG_BONES_ID, 1);
+            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+
+            let mut restocked = deposited.clone();
+            restocked.item_ids.insert(LOBSTER_ID, restock_count);
+            restocked.bank_ids.insert(LOBSTER_ID, 50 - restock_count);
+
+            let mut closed = restocked.clone();
+            closed.bank_open = false;
+            closed.bank_loaded = false;
+            closed.bank_generation = 2;
+
+            let mut returned = closed.clone();
+            returned.tile = Some(FIRE_GIANT_ROOM);
+
+            let mut fresh_xp = returned.clone();
+            fresh_xp.xp.insert("strength".into(), 20);
+            fresh_xp.npc_facts = vec![combat_npc(9, "Fire giant", 40, true, FIRE_GIANT_ROOM)];
+            fresh_xp.local_in_combat = true;
+            fresh_xp.local_target_npc = Some(9);
+
+            witness(
+                case,
+                &baseline,
+                [
+                    &first, &earned, &continued, &landed, &deposited, &restocked, &closed,
+                    &returned, &fresh_xp,
+                ],
+            )
+        };
+
+        let exact = trace(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+        assert_eq!(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK + 1 + 1 + 1, 27);
+        assert!(exact.combat_bank_cycle.via_seen);
+        assert!(exact.combat_bank_cycle.via_magic);
+        assert!(exact.combat_bank_cycle.restocked);
+        assert!(exact.combat_bank_cycle.returned);
+        assert!(exact.combat_bank_cycle.further);
+        assert!(exact.qualify().is_ok());
+
+        let barrel_food = trace(FIRE_GIANT_BANK_PREPARED_RESTOCK);
+        assert!(
+            !barrel_food.combat_bank_cycle.restocked,
+            "25-food restock must not satisfy the Camelot 24 observer line"
+        );
+        assert!(barrel_food.qualify().is_err());
+
+        let bank_only_closed = {
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, "Fire giant", 50, true, FIRE_GIANT_ROOM)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+            let mut earned = baseline.clone();
+            earned.item_ids.remove(&LOBSTER_ID);
+            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.xp.insert("strength".into(), 10);
+            earned.npc_facts = vec![
+                combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(7, "Fire giant", 40, true, FIRE_GIANT_ROOM),
+            ];
+            earned.local_in_combat = true;
+            earned.local_target_npc = Some(7);
+            let mut continued = earned.clone();
+            continued.npc_facts = vec![combat_npc(7, "Fire giant", 35, true, FIRE_GIANT_ROOM)];
+            let mut landed = continued.clone();
+            landed.tile = Some(CAMELOT_TELE_LAND);
+            landed.xp.insert("magic".into(), 1);
+            landed.npc_facts.clear();
+            landed.local_in_combat = false;
+            landed.local_target_npc = None;
+            let mut deposited = landed.clone();
+            deposited.tile = Some(SEERS_BANK);
+            deposited.item_ids.remove(&BIG_BONES_ID);
+            deposited.bank_ids.insert(BIG_BONES_ID, 1);
+            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut restocked = deposited.clone();
+            restocked.item_ids.insert(LOBSTER_ID, FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            restocked.bank_ids.insert(LOBSTER_ID, 50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            let mut closed = restocked.clone();
+            closed.bank_open = false;
+            closed.bank_loaded = false;
+            closed.bank_generation = 2;
+            witness(
+                case,
+                &baseline,
+                [
+                    &first, &earned, &continued, &landed, &deposited, &restocked, &closed,
+                ],
+            )
+        };
+        assert!(bank_only_closed.combat_bank_cycle.restocked);
+        assert!(bank_only_closed.combat_bank_cycle.closed);
+        assert!(!bank_only_closed.combat_bank_cycle.returned);
+        assert!(!bank_only_closed.combat_bank_cycle.further);
+        assert!(bank_only_closed.qualify().is_err());
     }
 
     fn combat_npc(
