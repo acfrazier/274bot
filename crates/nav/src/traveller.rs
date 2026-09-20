@@ -1592,6 +1592,11 @@ impl FollowRun {
                 door_crossed(&edge, here)
                     && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
             })
+        } else if edge.kind == TransportKind::Door && edge.dir.is_none() {
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile()
+                    .is_some_and(|here| door_dir_none_arrived(&edge, here, close_enough))
+            })
         } else if is_essence_entry_edge(&edge) {
             // The entry teleport lands at a random `essence_mine_teleports`
             // coord — never the pad exactly — so any tile inside the
@@ -2842,6 +2847,33 @@ fn door_crossed(edge: &TransportEdge, here: WorldTile) -> bool {
         Some(DoorDir::E) => here.x > edge.at.x,
         Some(DoorDir::W) => here.x < edge.at.x,
         None => true,
+    }
+}
+
+/// Door hops without a cardinal `dir` normally settle with
+/// `arrived(to, close_enough)`. When the origin stand sits inside that
+/// radius (`Cheb(at, to) <= close_enough` on the same level), the
+/// tolerance is geometrically invalid: standing on `at` — including after
+/// a script `~forcemove` and before `p_teleport` — looks like arrival.
+/// Those short hops require the exact landing. Far dir=None doors
+/// (Zanaris, levers, Shantay south) keep the runner's radius. Cardinal
+/// `dir=Some` doors stay on [`door_crossed`].
+fn door_dir_none_arrived(edge: &TransportEdge, here: WorldTile, close_enough: i32) -> bool {
+    if here.level != edge.to.level {
+        return false;
+    }
+    let to_gap = (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs());
+    let hop_span = if edge.at.level == edge.to.level {
+        (edge.at.x - edge.to.x)
+            .abs()
+            .max((edge.at.z - edge.to.z).abs())
+    } else {
+        i32::MAX
+    };
+    if hop_span <= close_enough {
+        here == edge.to
+    } else {
+        to_gap <= close_enough
     }
 }
 
@@ -5391,6 +5423,101 @@ mod tests {
         assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
     }
 
+    /// Scene origin that places the real Ranging Guild stands inside the
+    /// 104-tile fixture scene without inventing hop offsets.
+    const RANGING_SCENE_BASE: (i32, i32) = (2650, 3430);
+    const RANGING_OUTSIDE: WorldTile = WorldTile {
+        x: 2657,
+        z: 3439,
+        level: 0,
+    };
+    const RANGING_INSIDE: WorldTile = WorldTile {
+        x: 2659,
+        z: 3437,
+        level: 0,
+    };
+    const RANGING_LOC: WorldTile = WorldTile {
+        x: 2658,
+        z: 3438,
+        level: 0,
+    };
+    const SHANTAY_NORTH_SCENE_BASE: (i32, i32) = (3296, 3104);
+    const SHANTAY_NORTH_AT: WorldTile = WorldTile {
+        x: 3302,
+        z: 3116,
+        level: 0,
+    };
+    const SHANTAY_NORTH_TO: WorldTile = WorldTile {
+        x: 3304,
+        z: 3115,
+        level: 0,
+    };
+
+    fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
+        (tile.x - base.0, tile.z - base.1)
+    }
+
+    fn rangingguild_enter_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            at: RANGING_OUTSIDE,
+            to: RANGING_INSIDE,
+            loc_id: 2514,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![(4, 40)],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    fn rangingguild_exit_edge() -> TransportEdge {
+        TransportEdge {
+            skill_req: vec![],
+            at: RANGING_INSIDE,
+            to: RANGING_OUTSIDE,
+            ..rangingguild_enter_edge()
+        }
+    }
+
+    fn shantay_north_short_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            at: SHANTAY_NORTH_AT,
+            to: SHANTAY_NORTH_TO,
+            loc_id: SHANTAY_HENGE_LOC_ID,
+            option: 1,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(1854, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    fn follow_still_pending<D: Driver>(
+        t: &mut Traveller,
+        d: &mut D,
+        snap: &GameSnapshot,
+        route: &Route,
+        options: &mut TravelOptions<'_>,
+        label: &str,
+    ) {
+        assert!(
+            t.follow(d, snap, route.clone(), options).is_none(),
+            "{label} must stay pending"
+        );
+    }
+
     /// The Shantay henge gated hop on the fixture scene: loc 4031 at the
     /// edge's `at` (3201, 3201) — the live target the `op_loc` resolves
     /// through — `to` the `[queue,shantay_pass_enter]` landing.
@@ -5511,6 +5638,335 @@ mod tests {
             rec.pause_buttons, 3,
             "the three handover pages were pressed"
         );
+    }
+
+    /// Reciprocal stand→teleport Door hops (Ranging 2514) are Chebyshev 2.
+    /// Default `close_enough` 2 must not complete from the origin stand,
+    /// a forcemove wait, or an adjacent/wrong-side tile; only the packed
+    /// landing finishes. WalkNear's explicit 0 must stay exact-`to` too.
+    #[test]
+    fn follow_rangingguild_dir_none_completes_only_on_the_teleport_landing() {
+        assert_eq!(TravelOptions::default().close_enough, 2);
+        let loc = scene_of(RANGING_SCENE_BASE, RANGING_LOC);
+        for (label, mut options, edge, origin, dest) in [
+            (
+                "default enter",
+                TravelOptions::default(),
+                rangingguild_enter_edge(),
+                RANGING_OUTSIDE,
+                RANGING_INSIDE,
+            ),
+            (
+                "explicit0 enter",
+                TravelOptions {
+                    close_enough: 0,
+                    ..TravelOptions::default()
+                },
+                rangingguild_enter_edge(),
+                RANGING_OUTSIDE,
+                RANGING_INSIDE,
+            ),
+            (
+                "default exit",
+                TravelOptions::default(),
+                rangingguild_exit_edge(),
+                RANGING_INSIDE,
+                RANGING_OUTSIDE,
+            ),
+            (
+                "explicit0 exit",
+                TravelOptions {
+                    close_enough: 0,
+                    ..TravelOptions::default()
+                },
+                rangingguild_exit_edge(),
+                RANGING_INSIDE,
+                RANGING_OUTSIDE,
+            ),
+        ] {
+            let mut c = scene_client();
+            c.map_build_base_x = RANGING_SCENE_BASE.0;
+            c.map_build_base_z = RANGING_SCENE_BASE.1;
+            plant_loc(&mut c, 2514, "Guild door", "Open", loc.0, loc.1);
+            let start = scene_of(RANGING_SCENE_BASE, origin);
+            let mut snap = snap_at(&mut c, start.0, start.1);
+            let mut rec = FollowRec {
+                route: Some(start),
+                build_base: Some(RANGING_SCENE_BASE),
+                ..FollowRec::default()
+            };
+            let mut t = Traveller::new();
+            let route = Route {
+                legs: vec![Leg::Transport { edge: edge.clone() }],
+                dest,
+                ticks: 1.0,
+            };
+
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} first poll"),
+            );
+            assert_eq!(
+                rec.loc_ops, 1,
+                "{label} must send Open from the origin stand"
+            );
+
+            bump_rebuild(&mut c, &mut snap);
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} origin wait"),
+            );
+
+            let force = scene_of(RANGING_SCENE_BASE, origin);
+            plant_player(&mut c, force.0, force.1);
+            bump_rebuild(&mut c, &mut snap);
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} forcemove still on at"),
+            );
+
+            for (tile, why) in [
+                (
+                    WorldTile {
+                        x: origin.x + 1,
+                        z: origin.z,
+                        level: 0,
+                    },
+                    "adjacent +x",
+                ),
+                (
+                    WorldTile {
+                        x: origin.x,
+                        z: origin.z - 1,
+                        level: 0,
+                    },
+                    "adjacent -z",
+                ),
+                (
+                    WorldTile {
+                        x: dest.x,
+                        z: origin.z,
+                        level: 0,
+                    },
+                    "wrong-side dest x / origin z",
+                ),
+            ] {
+                let (sx, sz) = scene_of(RANGING_SCENE_BASE, tile);
+                plant_player(&mut c, sx, sz);
+                bump_rebuild(&mut c, &mut snap);
+                follow_still_pending(
+                    &mut t,
+                    &mut rec,
+                    &snap,
+                    &route,
+                    &mut options,
+                    &format!("{label} {why} {tile:?}"),
+                );
+            }
+
+            let (dx, dz) = scene_of(RANGING_SCENE_BASE, dest);
+            plant_player(&mut c, dx, dz);
+            bump_rebuild(&mut c, &mut snap);
+            match t.follow(&mut rec, &snap, route, &mut options) {
+                Some(TravelOutcome::Arrived { at }) => {
+                    assert_eq!(at, dest, "{label} landing");
+                }
+                other => panic!("{label} expected Arrived on exact to, got {other:?}"),
+            }
+            assert_eq!(rec.loc_ops, 1, "{label} one Open");
+        }
+    }
+
+    /// Shantay north is another Door+dir=None Cheb-2 teleport. Default-2
+    /// must not finish at the origin loc; only (3304,3115) completes.
+    #[test]
+    fn follow_shantay_north_dir_none_does_not_complete_from_origin() {
+        let mut c = scene_client();
+        c.map_build_base_x = SHANTAY_NORTH_SCENE_BASE.0;
+        c.map_build_base_z = SHANTAY_NORTH_SCENE_BASE.1;
+        let at = scene_of(SHANTAY_NORTH_SCENE_BASE, SHANTAY_NORTH_AT);
+        plant_loc(
+            &mut c,
+            SHANTAY_HENGE_LOC_ID,
+            "Shantay pass henge doorway",
+            "Go-through",
+            at.0,
+            at.1,
+        );
+        let mut snap = snap_at(&mut c, at.0, at.1);
+        let mut rec = FollowRec {
+            route: Some(at),
+            build_base: Some(SHANTAY_NORTH_SCENE_BASE),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: shantay_north_short_edge(),
+            }],
+            dest: SHANTAY_NORTH_TO,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(&mut t, &mut rec, &snap, &route, &mut options, "open");
+        assert_eq!(rec.loc_ops, 1);
+        bump_rebuild(&mut c, &mut snap);
+        follow_still_pending(&mut t, &mut rec, &snap, &route, &mut options, "origin");
+        let adj = scene_of(
+            SHANTAY_NORTH_SCENE_BASE,
+            WorldTile {
+                x: 3303,
+                z: 3116,
+                level: 0,
+            },
+        );
+        plant_player(&mut c, adj.0, adj.1);
+        bump_rebuild(&mut c, &mut snap);
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "adjacent origin",
+        );
+        let to = scene_of(SHANTAY_NORTH_SCENE_BASE, SHANTAY_NORTH_TO);
+        plant_player(&mut c, to.0, to.1);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => assert_eq!(at, SHANTAY_NORTH_TO),
+            other => panic!("expected Arrived at north landing, got {other:?}"),
+        }
+    }
+
+    /// Far Door+dir=None teleports (Zanaris / wilderness levers) must keep
+    /// runner close_enough: a Cheb-1 landing still completes under default 2.
+    #[test]
+    fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 2409, "Door", "Open", 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let dest = WorldTile {
+            x: 3200,
+            z: 3300,
+            level: 0,
+        };
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: dest,
+            loc_id: 2409,
+            option: 1,
+            ticks: 4,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "zanaris-style open",
+        );
+        assert_eq!(rec.loc_ops, 1);
+        plant_player(&mut c, 1, 100);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3201,
+                        z: 3300,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("far dir=None must accept close_enough 2, got {other:?}"),
+        }
+    }
+
+    /// Cardinal doors keep tolerant dest-adjacent completion under default 2.
+    #[test]
+    fn follow_cardinal_door_still_arrives_adjacent_to_to_under_default_close_enough() {
+        let mut c = scene_client();
+        plant_door(&mut c, false, 1);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut edge = door_edge();
+        edge.dir = Some(DoorDir::E);
+        edge.open_loc_id = Some(1531);
+        let dest = edge.to;
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "cardinal open",
+        );
+        assert_eq!(rec.loc_ops, 1);
+        plant_player(&mut c, 3, 1);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3203,
+                        z: 3201,
+                        level: 0
+                    }
+                );
+            }
+            other => {
+                panic!("cardinal Door must keep tolerant dest-adjacent arrival, got {other:?}")
+            }
+        }
     }
 
     #[test]
