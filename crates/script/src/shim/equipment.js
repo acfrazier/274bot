@@ -11,6 +11,7 @@ export const Equipment = proxy('Equipment', {
             .map((r) => ({
                 name: r.name,
                 count: typeof r.count === 'number' ? r.count : 1,
+                id: typeof r.id === 'number' ? r.id : 0,
             }));
     },
     contains(name) {
