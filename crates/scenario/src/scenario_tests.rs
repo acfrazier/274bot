@@ -2638,14 +2638,14 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             .position(|step| matches!(step.kind, StepKind::StartScript))
             .expect("prepared case starts the card")
     };
-    let names_and_cards = [
-        ("green_dragon_special_prepared", "GreenDragon"),
-        ("green_dragon_potions_prepared", "GreenDragon"),
-        ("green_dragon_bank_prepared", "GreenDragon"),
-        ("green_dragon_tele_prepared", "GreenDragon"),
-        ("fire_giant_bank_prepared", "FireGiant"),
+    let names_cards_and_levels = [
+        ("green_dragon_special_prepared", "GreenDragon", 70),
+        ("green_dragon_potions_prepared", "GreenDragon", 70),
+        ("green_dragon_bank_prepared", "GreenDragon", 99),
+        ("green_dragon_tele_prepared", "GreenDragon", 70),
+        ("fire_giant_bank_prepared", "FireGiant", 99),
     ];
-    for (name, card) in names_and_cards {
+    for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
         assert_eq!(
@@ -2664,10 +2664,10 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
                 step.wait.arm
                     == Proof::Stat {
                         id: DEFENCE,
-                        min: 70,
+                        min: level,
                     }
             }),
-            "{name}: exact prepared profile includes Defence 70"
+            "{name}: exact prepared profile includes Defence {level}"
         );
         for id in [RUNE_CHAINBODY_ID, 1079, 1163] {
             assert!(
@@ -2695,6 +2695,13 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     assert_eq!(
         green_bank_inject.get("foodWithdraw"),
         Some(&Value::from(27.0))
+    );
+    assert_eq!(
+        green_bank_inject.get("loot"),
+        Some(&Value::Array(vec![
+            Value::String("Dragon bones".into()),
+            Value::String("Dragonhide".into()),
+        ]))
     );
     let green_bank_start = start_idx(&green_bank);
     assert!(green_bank.steps[..green_bank_start].iter().any(|step| {
@@ -2749,12 +2756,16 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         fire_bank_inject.get("foodWithdraw"),
         Some(&Value::from(26.0))
     );
+    assert_eq!(
+        fire_bank_inject.get("loot"),
+        Some(&Value::Array(vec![Value::String("Big bones".into())]))
+    );
     let fire_start = start_idx(&fire_bank);
     assert!(fire_bank.steps[..fire_start].iter().any(|step| {
         step.wait.arm
             == Proof::ItemId {
                 id: LOBSTER_ID,
-                count: 24,
+                count: 25,
             }
     }));
     let fire_food = fire_bank.steps[..fire_start]
@@ -2763,7 +2774,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             step.wait.arm
                 == Proof::ItemId {
                     id: LOBSTER_ID,
-                    count: 24,
+                    count: 25,
                 }
         })
         .unwrap();

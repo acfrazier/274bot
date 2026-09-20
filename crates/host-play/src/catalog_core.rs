@@ -253,9 +253,10 @@ pub const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
 pub const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 pub const FIRE_GIANT_FOOD: i32 = 12;
-pub const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 24;
+pub const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 25;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
 pub const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
+pub const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
 pub const RUNE_SCIMITAR_ID: i32 = 1333;
 pub const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 pub const NOTED_DRAGONFIRE_SHIELD_ID: i32 = 1541;
@@ -2775,7 +2776,7 @@ pub fn validate_case_baseline_with_preparation(
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn rune scimitar 1333 and shield 1540, lobster 12, empty 536/1753, escape Flee to bank"
         }
         CoreCase::GreenDragonBankPrepared => {
-            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 70, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, inventory-pressure Flee to bank"
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, stock-selected inventory-pressure Flee to bank"
         }
         CoreCase::GreenDragonTele => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
@@ -2790,7 +2791,7 @@ pub fn validate_case_baseline_with_preparation(
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 12, amulet 295, rope 954, empty 532, escapeTele Barrel"
         }
         CoreCase::FireGiantBankPrepared => {
-            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 70, exact lobster 24, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty 532, full-pack escapeTele Barrel"
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 25, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty 532, stock-selected full-pack escapeTele Barrel"
         }
         CoreCase::AioTeleport => {
             "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
@@ -5150,12 +5151,16 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
         CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
             baseline.level("defence") == COMBAT_ATTACK_LEVEL
         }
-        CoreCase::GreenDragonPotionsPrepared
-        | CoreCase::GreenDragonBankPrepared
-        | CoreCase::GreenDragonTelePrepared
-        | CoreCase::FireGiantBankPrepared => ["attack", "strength", "defence", "hitpoints"]
-            .into_iter()
-            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL),
+        CoreCase::GreenDragonPotionsPrepared | CoreCase::GreenDragonTelePrepared => {
+            ["attack", "strength", "defence", "hitpoints"]
+                .into_iter()
+                .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
+        }
+        CoreCase::GreenDragonBankPrepared | CoreCase::FireGiantBankPrepared => {
+            ["attack", "strength", "defence", "hitpoints"]
+                .into_iter()
+                .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL)
+        }
         _ => return false,
     };
     let exact_profile = exact_stats

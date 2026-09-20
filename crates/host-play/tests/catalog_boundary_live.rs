@@ -6426,7 +6426,7 @@ export default class NativeStop extends LoopingBot {{
         let fire_bank = CoreCase::parse("fire_giant_bank_prepared").unwrap();
         assert_eq!(fire_bank.card_name(), "FireGiant");
         let fire_spec = combat_spec(fire_bank).unwrap();
-        assert_eq!(fire_spec.food_count, 24);
+        assert_eq!(fire_spec.food_count, 25);
         assert_eq!(fire_spec.loot, CombatLoot::BigBones);
         let fire_trip = combat_bank_spec(fire_bank).unwrap();
         assert!(fire_trip.require_combat);
@@ -6445,6 +6445,12 @@ export default class NativeStop extends LoopingBot {{
             ("strength", 70),
             ("defence", 70),
             ("hitpoints", 70),
+        ];
+        let bank_levels = [
+            ("attack", 99),
+            ("strength", 99),
+            ("defence", 99),
+            ("hitpoints", 99),
         ];
         let mut potions_gear = armour.to_vec();
         potions_gear.push((DRAGONFIRE_SHIELD_ID, 1));
@@ -6479,7 +6485,7 @@ export default class NativeStop extends LoopingBot {{
             &[(LOBSTER_ID, 26)],
             &green_gear,
             &[("strength", 0)],
-            &levels,
+            &bank_levels,
             &[],
             &[],
             &[],
@@ -6519,10 +6525,10 @@ export default class NativeStop extends LoopingBot {{
         fire_gear.push((RUNE_SCIMITAR_ID, 1));
         let fire_bank = branch_obs(
             FIRE_GIANT_ROOM,
-            &[(LOBSTER_ID, 24), (GLARIALS_AMULET_ID, 1), (ROPE_ID, 1)],
+            &[(LOBSTER_ID, 25), (GLARIALS_AMULET_ID, 1), (ROPE_ID, 1)],
             &fire_gear,
             &[("strength", 0)],
-            &levels,
+            &bank_levels,
             &[],
             &[],
             &[],

@@ -44,10 +44,11 @@ const GREEN_DRAGON_FOOD: i32 = 12;
 const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const FIRE_GIANT_FOOD: i32 = 12;
-const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 24;
+const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 25;
 const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 26;
 pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
+const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
 const COMBAT_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(300);
 /// Runner dirty-snapshot increments, not engine ticks or wall seconds. Live
 /// combat receipts run near two dirty increments/second; 750 keeps the named
@@ -686,6 +687,10 @@ const FIRE_GIANT_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "foodWithdraw",
         value: ScriptInjectValue::Num(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Big bones"]),
     },
 ];
 const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
@@ -2450,6 +2455,10 @@ const GREEN_DRAGON_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
         id: "shield",
         value: ScriptInjectValue::Str("Dragonfire shield"),
     },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Dragon bones", "Dragonhide"]),
+    },
 ];
 
 /// HillGiant's always-on trip end, reached on the first loot slot so the cell
@@ -2804,6 +2813,7 @@ fn remaining_prepared_combat_bank_scenario(
     inject: &'static [ScriptSettingInject],
     bank_alias: &'static str,
     bank_food_count: i32,
+    prepared_level: i32,
     watches: &[(&'static str, Proof)],
 ) -> Scenario {
     let mut scenario = combat_bank_scenario_with_preparation(
@@ -2824,7 +2834,7 @@ fn remaining_prepared_combat_bank_scenario(
         bank_food_count,
         watches,
         Some(PreparedCombatPlan {
-            level: REMAINING_COMBAT_PREPARED_LEVEL,
+            level: prepared_level,
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         }),
@@ -3417,10 +3427,10 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
     scenario
 }
 
-/// Prepared earned-kill full-bank witness. Twenty-six carried Lobsters leave
-/// exactly two slots for the dragon's guaranteed bones and hide; the canonical
-/// `packFull && foodCount <= foodReserve` branch then deposits those earned
-/// drops, draws one banked Lobster to the configured 27, returns and fights.
+/// Prepared earned-kill full-bank witness. The stock names `Dragon bones` and
+/// `Dragonhide` are selected explicitly because the compatibility drop catalog
+/// omits the hide. Twenty-six Lobsters leave two slots for that guaranteed pair;
+/// exact upstream-preparation stats keep the pressure cycle inside its bound.
 pub(crate) fn green_dragon_bank_prepared_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
         "green_dragon_bank_prepared",
@@ -3437,6 +3447,7 @@ pub(crate) fn green_dragon_bank_prepared_scenario() -> Scenario {
         GREEN_DRAGON_BANK_PREPARED_INJECT,
         "lobster",
         40,
+        BANK_PRESSURE_PREPARED_LEVEL,
         &[
             (
                 "watch earned dragon bones or hide enter a fresh Edgeville bank",
@@ -3605,6 +3616,7 @@ pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
         GREEN_DRAGON_TELE_PREPARED_INJECT,
         "lobster",
         40,
+        REMAINING_COMBAT_PREPARED_LEVEL,
         &[
             (
                 "watch Magic XP from the prepared Varrock teleport after Start",
@@ -3811,10 +3823,10 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
     scenario
 }
 
-/// Prepared earned-kill full-bank witness. The worn combat kit leaves the pack
-/// at 24 Lobsters plus the amulet and rope; a Fire giant's earned Big bones and
-/// ordinary drop fill it, causing the canonical full-pack BankRun. The witness
-/// still requires the barrel, fresh Big-bones deposit, food draw and re-entry.
+/// Prepared earned-kill full-bank witness. Big bones are explicitly selected;
+/// 25 Lobsters plus the amulet and rope leave one slot, so pressure depends only
+/// on that guaranteed stock drop, not an unselected random secondary. Exact
+/// upstream-preparation stats keep the full barrel/bank/return cycle bounded.
 pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
         "fire_giant_bank_prepared",
@@ -3834,6 +3846,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
         FIRE_GIANT_BANK_PREPARED_INJECT,
         "lobster",
         40,
+        BANK_PRESSURE_PREPARED_LEVEL,
         &[
             (
                 "watch the prepared barrel wash-up before the bank walk",
