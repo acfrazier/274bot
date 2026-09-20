@@ -3176,9 +3176,10 @@ impl Session {
         // Credentials fields follow the newly focused profile; the General
         // config mirrors the profile's raster/mem so the pane shows what the
         // slot actually runs (display only — no write-back, no re-role).
-        self.sync_cred_fields_from_vault(name);
         if let Some(vault) = &self.vault {
             if let Some(p) = vault.get(name) {
+                self.cred_user = p.username.clone();
+                self.cred_pass = p.password.clone();
                 self.ui.raster = p.settings.raster;
                 self.ui.lowmem = p.settings.lowmem;
             }

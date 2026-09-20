@@ -5,15 +5,6 @@ use vault::{Profile, ProfileSettings};
 use super::{fresh_uid, Session};
 
 impl Session {
-    fn sync_cred_fields_from_vault(&mut self, name: &str) {
-        if let Some(vault) = &self.vault {
-            if let Some(p) = vault.get(name) {
-                self.cred_user = p.username.clone();
-                self.cred_pass = p.password.clone();
-            }
-        }
-    }
-
     /// Save the credentials fields as a vault profile: the username field
     /// is the key, the password field the secret, and an existing profile's
     /// uid/settings are kept. Does not require a focused profile (first-run
