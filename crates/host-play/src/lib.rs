@@ -2215,6 +2215,40 @@ fn bounded_guardian_fact(status: &RandomStatus) -> catalog_core::BoundedGuardian
     }
 }
 
+/// Catalog/paired observer hook shared by the slot pump. Lifecycle and guardian
+/// facts are produced only while the catalog watch is configured; paired
+/// snapshot conversion runs only while the pair watch is configured.
+fn observe_slot_catalog_and_paired(
+    catalog: &catalog_core::CoreWatch,
+    paired: &paired_core::PairWatch,
+    account: &str,
+    snapshot: &GameSnapshot,
+    names: &api::obj_names::ObjNames,
+    session_boundary: bool,
+    lifecycle_receipt: impl FnOnce() -> Option<script::ScriptLifecycleReceipt>,
+    guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
+) {
+    if catalog.configured() {
+        let script_lifecycle = lifecycle_receipt();
+        let guardian = if session_boundary {
+            catalog_core::BoundedGuardian::default()
+        } else {
+            guardian_fact()
+        };
+        catalog.observe_snapshot_with_lifecycle(
+            account,
+            snapshot,
+            names,
+            script_lifecycle,
+            guardian,
+            session_boundary,
+        );
+    }
+    if paired.configured() {
+        paired.observe_snapshot(account, snapshot, session_boundary);
+    }
+}
+
 /// `session_changed` is a successful login/reconnect, not a drop. Close the
 /// producer gate in both cases; only a native logout returns the banner to
 /// queue/connect wait.
@@ -2510,25 +2544,23 @@ fn spawn_slot_thread(
                             // frame attaches that bounded value here before
                             // status publication; pending panel logs are never
                             // consumed by this read.
-                            let script_lifecycle = script_slot(&slot_scripts, name)
-                                .and_then(|slot| slot.lock().unwrap().lifecycle_receipt());
                             // `status` is last frame's client_frame publication.
                             // Snapshot observe runs before this frame copies it
                             // onto the slot row.
-                            let guardian = if session_boundary {
-                                catalog_core::BoundedGuardian::default()
-                            } else {
-                                bounded_guardian_fact(status)
-                            };
-                            obs_catalog_core.observe_snapshot_with_lifecycle(
+                            observe_slot_catalog_and_paired(
+                                &obs_catalog_core,
+                                &obs_paired_core,
                                 name,
                                 &nav_snapshot,
-                                &slot_obj_names,
-                                script_lifecycle,
-                                guardian,
+                                slot_obj_names.as_ref(),
                                 session_boundary,
+                                || {
+                                    script_slot(&slot_scripts, name).and_then(|slot| {
+                                        slot.lock().unwrap().lifecycle_receipt()
+                                    })
+                                },
+                                || bounded_guardian_fact(status),
                             );
-                            obs_paired_core.observe_snapshot(name, &nav_snapshot, session_boundary);
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();
                             let welcome_obs = login_readiness::WelcomeObservation {

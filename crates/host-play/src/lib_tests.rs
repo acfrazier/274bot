@@ -13979,3 +13979,185 @@ fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
         "the armed route is untouched"
     );
 }
+
+fn thiever_watch_observation(account: &str) -> catalog_core::Observation {
+    let mut observation = catalog_core::Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some(account.into()),
+        tile: Some((2661, 3306, 0)),
+        ..catalog_core::Observation::default()
+    };
+    observation.levels.insert("thieving".into(), 50);
+    observation.levels.insert("hitpoints".into(), 50);
+    observation.effective_levels.insert("thieving".into(), 50);
+    observation.effective_levels.insert("hitpoints".into(), 50);
+    observation.items.insert("Lobster".into(), 10);
+    observation
+}
+
+#[test]
+fn observer_pump_inactive_watches_skip_lifecycle_and_guardian_producers() {
+    use std::cell::Cell;
+
+    let lifecycle_called = Cell::new(false);
+    let guardian_called = Cell::new(false);
+    let catalog = catalog_core::CoreWatch::default();
+    let paired = paired_core::PairWatch::default();
+    let snapshot = GameSnapshot::new();
+    let names = api::obj_names::ObjNames::default();
+
+    observe_slot_catalog_and_paired(
+        &catalog,
+        &paired,
+        "alice",
+        &snapshot,
+        &names,
+        false,
+        || {
+            lifecycle_called.set(true);
+            None
+        },
+        || {
+            guardian_called.set(true);
+            catalog_core::BoundedGuardian::default()
+        },
+    );
+
+    assert!(
+        !lifecycle_called.get(),
+        "disabled catalog must not read the script lifecycle receipt"
+    );
+    assert!(
+        !guardian_called.get(),
+        "disabled catalog must not build a guardian fact"
+    );
+}
+
+#[test]
+fn observer_pump_configured_catalog_runs_producers_and_clear_stops_them() {
+    use std::cell::Cell;
+
+    let lifecycle_called = Cell::new(false);
+    let guardian_called = Cell::new(false);
+    let catalog = catalog_core::CoreWatch::default();
+    let paired = paired_core::PairWatch::default();
+    catalog.configure(catalog_core::CoreCase::Thiever, "alice");
+    let snapshot = GameSnapshot::new();
+    let names = api::obj_names::ObjNames::default();
+
+    let run = |lifecycle_called: &Cell<bool>, guardian_called: &Cell<bool>| {
+        observe_slot_catalog_and_paired(
+            &catalog,
+            &paired,
+            "alice",
+            &snapshot,
+            &names,
+            false,
+            || {
+                lifecycle_called.set(true);
+                None
+            },
+            || {
+                guardian_called.set(true);
+                catalog_core::BoundedGuardian {
+                    kind: Some("lamp".into()),
+                    hold: true,
+                    ..catalog_core::BoundedGuardian::default()
+                }
+            },
+        );
+    };
+
+    run(&lifecycle_called, &guardian_called);
+    assert!(lifecycle_called.get());
+    assert!(guardian_called.get());
+
+    lifecycle_called.set(false);
+    guardian_called.set(false);
+    catalog.clear();
+    run(&lifecycle_called, &guardian_called);
+    assert!(!lifecycle_called.get());
+    assert!(!guardian_called.get());
+}
+
+#[test]
+fn observer_pump_paired_only_skips_catalog_fact_producers() {
+    use std::cell::Cell;
+
+    let lifecycle_called = Cell::new(false);
+    let catalog = catalog_core::CoreWatch::default();
+    let paired = paired_core::PairWatch::default();
+    paired.configure(paired_core::PairCase::Flax, "runner", "spinner");
+    let snapshot = GameSnapshot::new();
+    let names = api::obj_names::ObjNames::default();
+
+    observe_slot_catalog_and_paired(
+        &catalog,
+        &paired,
+        "runner",
+        &snapshot,
+        &names,
+        false,
+        || {
+            lifecycle_called.set(true);
+            None
+        },
+        || catalog_core::BoundedGuardian::default(),
+    );
+
+    assert!(
+        !lifecycle_called.get(),
+        "paired-only slots must not touch catalog lifecycle/guardian producers"
+    );
+    assert!(paired.configured());
+    assert_eq!(paired.status(), paired_core::PairWatchStatus::Ready);
+}
+
+#[test]
+fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_lifecycle() {
+    use std::cell::Cell;
+
+    let lifecycle_called = Cell::new(false);
+    let guardian_called = Cell::new(false);
+    let catalog = catalog_core::CoreWatch::default();
+    let paired = paired_core::PairWatch::default();
+    catalog.configure(catalog_core::CoreCase::Thiever, "alice");
+    catalog.observe("alice", thiever_watch_observation("alice"), false);
+    assert!(
+        catalog.begin_start("alice").is_ok(),
+        "pre-start baseline must arm Start"
+    );
+
+    observe_slot_catalog_and_paired(
+        &catalog,
+        &paired,
+        "alice",
+        &GameSnapshot::new(),
+        &api::obj_names::ObjNames::default(),
+        true,
+        || {
+            lifecycle_called.set(true);
+            None
+        },
+        || {
+            guardian_called.set(true);
+            unreachable!("session boundary must not read prior-frame random status")
+        },
+    );
+
+    assert!(
+        lifecycle_called.get(),
+        "active catalog still attaches lifecycle across session boundaries"
+    );
+    assert!(
+        !guardian_called.get(),
+        "session boundary uses a default guardian without prior-frame facts"
+    );
+    assert!(
+        catalog
+            .failure()
+            .expect("post-Start session boundary is terminal")
+            .contains("session boundary after Start")
+    );
+}
