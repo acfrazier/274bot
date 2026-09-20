@@ -44,8 +44,8 @@ const GREEN_DRAGON_FOOD: i32 = 12;
 const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const FIRE_GIANT_FOOD: i32 = 12;
-const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 25;
-const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 26;
+pub(crate) const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
+pub(crate) const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
 pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
@@ -57,8 +57,12 @@ const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
 /// Measured GreenDragon pressure reached its loaded deposit 268s after the
 /// post-Start baseline, before the roughly 320-tile return and resumed combat.
 const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
-/// FireGiant adds the source's barrel exit, 118-tile bank leg, longer
-/// bank-to-Waterfall re-entry, obstacle sequence, and resumed combat.
+/// The measured GreenDragon teleport/Edgeville/return path predicts 475.2s
+/// including fresh post-return XP and route margin.
+const GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(480);
+const GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS: u32 = 1200;
+/// FireGiant's one-food trigger plus barrel exit, bank leg, Waterfall re-entry
+/// and fresh post-return XP is estimated at 259.4s before margin.
 const FIRE_GIANT_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
 /// Keep the same 2.5 dirty increments/second allowance as the 300s/750 arm.
 const BANK_QUALIFICATION_WATCH_TICKS: u32 = 1500;
@@ -2741,7 +2745,7 @@ fn combat_bank_scenario_with_preparation(
         }
         if food_count > 0 {
             steps.push(Step {
-                name: "stock prepared full-pack food after wearing the combat kit",
+                name: "stock prepared trip food after wearing the combat kit",
                 kind: StepKind::Perform {
                     send: Box::new(move |c, _| {
                         cheat(c, &format!("give {food_alias} {food_count}"));
@@ -3641,8 +3645,8 @@ pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
         "lobster",
         40,
         REMAINING_COMBAT_PREPARED_LEVEL,
-        COMBAT_QUALIFICATION_DEADLINE,
-        COMBAT_QUALIFICATION_WATCH_TICKS,
+        GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE,
+        GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch Magic XP from the prepared Varrock teleport after Start",
@@ -3849,10 +3853,10 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
     scenario
 }
 
-/// Prepared earned-kill full-bank witness. Big bones are explicitly selected;
-/// 25 Lobsters plus the amulet and rope leave one slot, so pressure depends only
-/// on that guaranteed stock drop, not an unselected random secondary. Exact
-/// upstream-preparation stats keep the full barrel/bank/return cycle bounded.
+/// Prepared earned-kill bank witness. One Lobster creates the source's earliest
+/// food-empty yield after eating; the strict gate still requires Big bones to
+/// have been earned, never seeded. The 25-Lobster restock plus amulet and rope
+/// leaves one cargo slot free. Exact upstream-preparation stats bound the cycle.
 pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
         "fire_giant_bank_prepared",
@@ -3861,7 +3865,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
         10,
         "lobster",
         LOBSTER_ID,
-        FIRE_GIANT_BANK_PREPARED_FOOD,
+        FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
         "rune_scimitar",
         RUNE_SCIMITAR_ID,
         &[
@@ -3902,7 +3906,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
                 },
             ),
             (
-                "watch the prepared full-pack trip draw Lobster to 26",
+                "watch the prepared one-food trip restock Lobster to 25",
                 Proof::ItemId {
                     id: LOBSTER_ID,
                     count: FIRE_GIANT_BANK_PREPARED_RESTOCK,

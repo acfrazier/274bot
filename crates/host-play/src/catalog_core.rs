@@ -253,7 +253,8 @@ pub const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
 pub const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 pub const FIRE_GIANT_FOOD: i32 = 12;
-pub const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 25;
+pub const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
+pub const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
 pub const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 pub const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
@@ -2791,7 +2792,7 @@ pub fn validate_case_baseline_with_preparation(
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 12, amulet 295, rope 954, empty 532, escapeTele Barrel"
         }
         CoreCase::FireGiantBankPrepared => {
-            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 25, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty 532, stock-selected full-pack escapeTele Barrel"
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty earned Big bones 532, stock-selected one-food escapeTele Barrel and exact restock 25"
         }
         CoreCase::AioTeleport => {
             "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
@@ -4820,7 +4821,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             stand: FIRE_GIANT_ROOM,
             radius: 10,
             food_id: LOBSTER_ID,
-            food_count: FIRE_GIANT_BANK_PREPARED_FOOD,
+            food_count: FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
             weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::BigBones,
@@ -4847,6 +4848,8 @@ pub struct CombatBankSpec {
     pub stand_radius: i32,
     /// Food the trip withdraws back into the pack, when the card restocks.
     pub restock: Option<i32>,
+    /// Exact post-withdrawal pack count when this fixture selects one.
+    pub restock_count: Option<i32>,
     /// Where the trip returns before further work.
     pub ret: (i32, i32, i32),
     pub ret_radius: i32,
@@ -4872,6 +4875,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: ARDOUGNE_EAST_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
+            restock_count: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
             via: None,
@@ -4886,6 +4890,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: MOSS_GIANT_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: MOSS_GIANT_SAFESPOT,
             ret_radius: 6,
             via: None,
@@ -4899,6 +4904,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: HILL_GIANT_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
+            restock_count: None,
             ret: HILL_GIANT_PIT,
             ret_radius: 16,
             via: None,
@@ -4913,6 +4919,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: CHAOS_DRUID_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: CHAOS_DRUID_FIELD,
             ret_radius: 14,
             via: None,
@@ -4929,6 +4936,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: ARDY_BANK,
             stand_radius: 6,
             restock: None,
+            restock_count: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
             via: None,
@@ -4944,6 +4952,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: SEERS_BANK,
             stand_radius: 6,
             restock: None,
+            restock_count: None,
             ret: ROCK_CRAB_BANK_RET,
             ret_radius: 6,
             via: None,
@@ -4958,6 +4967,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
             via: None,
@@ -4972,6 +4982,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
             via: Some(VARROCK_TELE_LAND),
@@ -4980,11 +4991,25 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             require_combat: false,
         }),
         // Barrel exit to (2527,3413,0) then Ardougne West restock and re-entry.
-        CoreCase::FireGiantBank | CoreCase::FireGiantBankPrepared => Some(CombatBankSpec {
+        CoreCase::FireGiantBank => Some(CombatBankSpec {
             deposit: &[BIG_BONES_ID],
             stand: FIRE_GIANT_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
+            ret: FIRE_GIANT_ROOM,
+            ret_radius: 10,
+            via: Some(FIRE_GIANT_WASH),
+            via_radius: 6,
+            via_magic: false,
+            require_combat: true,
+        }),
+        CoreCase::FireGiantBankPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID],
+            stand: FIRE_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(FIRE_GIANT_BANK_PREPARED_RESTOCK),
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
             via: Some(FIRE_GIANT_WASH),
@@ -5173,7 +5198,7 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
                 CoreCase::GreenDragonBankPrepared => GREEN_DRAGON_BANK_PREPARED_FOOD,
                 CoreCase::GreenDragonTelePrepared => 0,
                 CoreCase::FireGiantPrepared => FIRE_GIANT_FOOD,
-                CoreCase::FireGiantBankPrepared => FIRE_GIANT_BANK_PREPARED_FOOD,
+                CoreCase::FireGiantBankPrepared => FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
                 _ => return false,
             };
     exact_profile
@@ -5600,11 +5625,12 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
 
 /// Bank/return cycle for the five bank cells: the reviewed combat witness plus
 /// the declared bank trip the card itself has to execute — pack stock moves to
-/// the booth's bank, the card's restock line is met from that bank's own stock,
-/// the modal closes on a later bank session, the trip returns to the card's
-/// tile, and work resumes there. A booth opened away from the card's stand, a
-/// deposit the card never made, a return without further work, or a bank that
-/// only ever opened (seed/readiness) cannot qualify it.
+/// the booth's bank, the card's restock line (and selected exact count) is met
+/// from that bank's own stock, the modal closes on a later bank session, the
+/// trip returns to the card's tile, and work resumes there. A booth opened away
+/// from the card's stand, a deposit the card never made, a return without
+/// further work, or a bank that only ever opened (seed/readiness) cannot
+/// qualify it.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CombatBankCycle {
     /// The same reviewed combat witness the plain card core uses.
@@ -5686,7 +5712,10 @@ impl CombatBankCycle {
                 self.restocked |= open
                     && now.bank_generation == banked.bank_generation
                     && now.item_id(food) > self.food_at_deposit
-                    && now.bank_item_id(food) < banked.bank_item_id(food);
+                    && now.bank_item_id(food) < banked.bank_item_id(food)
+                    && bank
+                        .restock_count
+                        .is_none_or(|count| now.item_id(food) == count);
             }
             self.closed |=
                 !now.bank_open && !now.bank_loaded && now.bank_generation > banked.bank_generation;

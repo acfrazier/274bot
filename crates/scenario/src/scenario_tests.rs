@@ -2650,6 +2650,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
         let (deadline_secs, min_watch_ticks) = match name {
             "green_dragon_bank_prepared" => (600, 1500),
+            "green_dragon_tele_prepared" => (480, 1200),
             "fire_giant_bank_prepared" => (600, 1500),
             _ => (300, 750),
         };
@@ -2757,9 +2758,11 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
 
     let fire_bank = get("fire_giant_bank_prepared").unwrap();
     let fire_bank_inject = settings_inject_map(fire_bank.settings.script_settings_inject).unwrap();
+    assert_eq!(FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD, 1);
+    assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK, 25);
     assert_eq!(
         fire_bank_inject.get("foodWithdraw"),
-        Some(&Value::from(26.0))
+        Some(&Value::from(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64))
     );
     assert_eq!(
         fire_bank_inject.get("loot"),
@@ -2770,7 +2773,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         step.wait.arm
             == Proof::ItemId {
                 id: LOBSTER_ID,
-                count: 25,
+                count: FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
             }
     }));
     let fire_food = fire_bank.steps[..fire_start]
@@ -2779,7 +2782,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             step.wait.arm
                 == Proof::ItemId {
                     id: LOBSTER_ID,
-                    count: 25,
+                    count: FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
                 }
         })
         .unwrap();
@@ -2790,7 +2793,15 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             .unwrap();
         assert!(
             worn < fire_food,
-            "fire full-pack food is stocked only after armour frees pack slots"
+            "fire pressure food is stocked only after armour frees pack slots"
+        );
+    }
+    for id in [GLARIALS_AMULET_ID, ROPE_ID] {
+        assert!(
+            fire_bank.steps[..fire_start]
+                .iter()
+                .any(|step| step.wait.arm == Proof::ItemId { id, count: 1 }),
+            "prepared FireGiant keeps required traversal item {id}"
         );
     }
     assert!(fire_bank.steps[..fire_start].iter().any(|step| {
@@ -2800,6 +2811,61 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
                 count: 0,
             }
     }));
+    let fire_watch = fire_bank.steps[fire_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    let earned_deposit = fire_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
+        })
+        .expect("earned Big bones reach a fresh bank");
+    let restock = fire_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: FIRE_GIANT_BANK_PREPARED_RESTOCK,
+            }
+        })
+        .expect("prepared FireGiant restocks exactly 25 Lobsters");
+    let closed = fire_watch
+        .iter()
+        .position(|arm| *arm == Proof::BankClosed)
+        .expect("prepared FireGiant closes the bank");
+    let returned = fire_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ArrivedNear {
+                x: FIRE_GIANT_ROOM.x,
+                z: FIRE_GIANT_ROOM.z,
+                level: FIRE_GIANT_ROOM.level,
+                radius: 10,
+            }
+        })
+        .expect("prepared FireGiant returns to the room");
+    let fresh_xp = fire_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::FreshStatXpGain {
+                id: STRENGTH_STAT,
+                min: 1,
+            }
+        })
+        .expect("prepared FireGiant earns fresh Strength XP after return");
+    assert_eq!(
+        FIRE_GIANT_BANK_PREPARED_RESTOCK + 1 + 1,
+        27,
+        "restock leaves one cargo slot free"
+    );
+    assert!(
+        earned_deposit < restock && restock < closed && closed < returned && returned < fresh_xp,
+        "earned deposit, exact restock, close, return and fresh XP stay ordered"
+    );
 }
 
 /// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
