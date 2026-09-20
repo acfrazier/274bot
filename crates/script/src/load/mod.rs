@@ -21,6 +21,8 @@ mod buyout_plan;
 #[cfg(feature = "load")]
 mod paint_chrome;
 #[cfg(feature = "load")]
+mod paint_jive;
+#[cfg(feature = "load")]
 mod snapshot;
 #[cfg(feature = "load")]
 mod isolate;

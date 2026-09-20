@@ -36,3 +36,11 @@ export function etaHours(level, xp, xpPerHour) {
     const hours = prog.remaining / xpPerHour;
     return Number.isFinite(hours) ? hours : null;
 }
+
+export function levelRow(g, mins) {
+    const fn = globalThis.__rs2b0t_paint_jive;
+    if (typeof fn !== 'function') {
+        throw new Error('not impl: levelRow');
+    }
+    return fn('levelRow', g, mins);
+}

@@ -1788,6 +1788,7 @@ fn tick_loop(
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
+                super::paint_jive::reset();
             }
             IsolateCmd::Pause => {
                 paused = true;

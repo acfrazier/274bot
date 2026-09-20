@@ -831,6 +831,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("shim: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
+    super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
