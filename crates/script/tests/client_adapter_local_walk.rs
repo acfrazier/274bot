@@ -7,9 +7,8 @@ use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
-fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
-}
+mod common;
+use common::post_snapshot_input;
 
 fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
     SnapshotInput {
