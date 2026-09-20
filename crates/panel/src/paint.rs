@@ -445,7 +445,8 @@ impl PaintOverlay {
             if !brand.is_empty() {
                 let slot_x = x + seg.brand.x;
                 let brand_w = text_width(ui, font_sz, brand);
-                let brand_x = slot_x + (seg.brand.w - brand_w).max(0.0);
+                // The reserve includes the collapse square; text starts at its left edge.
+                let brand_x = slot_x;
                 let _brand_clip = dl.push_clip_rect(
                     [slot_x, y],
                     [slot_x + seg.brand.w, y + header_h],
@@ -1361,6 +1362,13 @@ mod tests {
                 assert!(
                     !label_rects_overlap(status_rect, brand_rect),
                     "status {status:?} overlaps brand at scale {size:?}: {status_rect:?} vs {brand_rect:?}"
+                );
+                let chat = chatbox_rect(min, size);
+                let toggle_left = chat[0] + chat[2]
+                    - (super::TITLE_H_1X * paint_uniform_scale(size)).max(1.0);
+                assert!(
+                    brand_rect[2] <= toggle_left,
+                    "brand overlaps collapse control at {size:?}: {brand_rect:?}, toggle starts {toggle_left}"
                 );
                 for (_key, _name, hit) in &overlay.chrome_hits {
                     assert!(
