@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -62,6 +63,21 @@ def vt_suffix_to_schema_name(suffix: str) -> str:
     return suffix.lower()
 
 
+def expected_voffset_for_index(index: int) -> int:
+    return (index + 2) * 2
+
+
+def validate_wire_voffset(voffset: int, *, vt_name: str) -> None:
+    if voffset < 4:
+        raise ValueError(
+            f"isolate_fb.rs: {vt_name} voffset={voffset} invalid (need even integer >= 4)"
+        )
+    if voffset % 2 != 0:
+        raise ValueError(
+            f"isolate_fb.rs: {vt_name} voffset={voffset} invalid (need even integer >= 4)"
+        )
+
+
 def parse_snapshot_fields(fbs_text: str) -> list[str]:
     start = fbs_text.find("table Snapshot {")
     if start < 0:
@@ -97,6 +113,11 @@ def parse_snapshot_fields(fbs_text: str) -> list[str]:
             raise ValueError(
                 f"isolate.fbs Snapshot: unsupported field syntax (block comment): {raw_line!r}"
             )
+        if "(" in line:
+            raise ValueError(
+                f"isolate.fbs Snapshot: unsupported field attributes (parenthetical / id): "
+                f"{raw_line!r}"
+            )
         m = FBS_FIELD_RE.match(line)
         if not m:
             if re.match(r"^\s*$", raw_line):
@@ -114,27 +135,49 @@ def parse_vt_snap_slots(rs_text: str) -> list[RustSlot]:
     matches = list(VT_SNAP_RE.finditer(rs_text))
     if not matches:
         raise ValueError("isolate_fb.rs: no VT_SNAP_* constants found")
-    slots: list[RustSlot] = []
+
+    by_voffset: dict[int, RustSlot] = {}
     seen_vt: set[str] = set()
-    for idx, m in enumerate(matches):
+    unsorted: list[RustSlot] = []
+
+    for m in matches:
         suffix = m.group(1)
+        vt_name = f"VT_SNAP_{suffix}"
         voffset = int(m.group(2))
         if suffix in seen_vt:
-            raise ValueError(f"isolate_fb.rs: duplicate VT_SNAP_{suffix}")
+            raise ValueError(f"isolate_fb.rs: duplicate {vt_name}")
         seen_vt.add(suffix)
-        expected_index = voffset // 2 - 2
-        if expected_index != idx:
-            raise ValueError(
-                f"isolate_fb.rs: VT_SNAP_{suffix} index {idx} != voffset-derived {expected_index} "
-                f"(voffset={voffset})"
-            )
+        validate_wire_voffset(voffset, vt_name=vt_name)
         schema_name = vt_suffix_to_schema_name(suffix)
+        slot = RustSlot(
+            index=-1,
+            vt_name=vt_name,
+            schema_name=schema_name,
+            voffset=voffset,
+        )
+        unsorted.append(slot)
+        if voffset in by_voffset:
+            other = by_voffset[voffset]
+            raise ValueError(
+                f"isolate_fb.rs: duplicate voffset {voffset} on {vt_name} and {other.vt_name}"
+            )
+        by_voffset[voffset] = slot
+
+    ordered = sorted(unsorted, key=lambda s: s.voffset)
+    slots: list[RustSlot] = []
+    for idx, slot in enumerate(ordered):
+        expected_v = expected_voffset_for_index(idx)
+        if slot.voffset != expected_v:
+            raise ValueError(
+                f"isolate_fb.rs: {slot.vt_name} voffset={slot.voffset} != "
+                f"wire slot {idx} expected {expected_v}"
+            )
         slots.append(
             RustSlot(
                 index=idx,
-                vt_name=f"VT_SNAP_{suffix}",
-                schema_name=schema_name,
-                voffset=voffset,
+                vt_name=slot.vt_name,
+                schema_name=slot.schema_name,
+                voffset=slot.voffset,
             )
         )
     return slots
@@ -190,24 +233,65 @@ def compare_snapshot_slots(
 def run_check(fbs_path: Path, rs_path: Path) -> list[str]:
     fbs_text = fbs_path.read_text(encoding="utf-8")
     rs_text = rs_path.read_text(encoding="utf-8")
-    schema_names = parse_snapshot_fields(fbs_text)
-    rust_slots = parse_vt_snap_slots(rs_text)
+    try:
+        schema_names = parse_snapshot_fields(fbs_text)
+        rust_slots = parse_vt_snap_slots(rs_text)
+    except ValueError as exc:
+        return [str(exc)]
     return compare_snapshot_slots(schema_names, rust_slots)
+
+
+def _script_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _run_public_check(
+    fbs_path: Path, rs_path: Path, *, expect_fail: bool
+) -> tuple[int, str]:
+    """Invoke this checker as a subprocess (public CLI entry), not run_check()."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_script_path()),
+            "--fbs",
+            str(fbs_path),
+            "--rust",
+            str(rs_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    if expect_fail:
+        if proc.returncode == 0:
+            return proc.returncode, combined
+        return proc.returncode, combined
+    if proc.returncode != 0:
+        return proc.returncode, combined
+    return proc.returncode, combined
 
 
 def run_self_test() -> int:
     root = repo_root_from_script()
     fbs = root / "crates/script/schema/isolate.fbs"
     rs = root / "crates/script/src/isolate_fb.rs"
-    if run_check(fbs, rs):
-        sys.stderr.write("self-test: product snapshot check failed (expected pass)\n")
+
+    code, out = _run_public_check(fbs, rs, expect_fail=False)
+    if code != 0:
+        sys.stderr.write(
+            f"self-test: product snapshot public check failed (expected pass):\n{out}\n"
+        )
         return 1
 
     with tempfile.TemporaryDirectory(prefix="snap-slot-check-") as tmp:
         tmp_path = Path(tmp)
         bad_fbs = tmp_path / "isolate.fbs"
+        bad_rs = tmp_path / "isolate_fb.rs"
         shutil.copy(fbs, bad_fbs)
+        shutil.copy(rs, bad_rs)
         text = bad_fbs.read_text(encoding="utf-8")
+        rs_text = bad_rs.read_text(encoding="utf-8")
+
         # Reintroduce confirmed drift: nearest_booth after booths instead of chat_lines.
         if "  booths: [Booth];\n  banks:" not in text:
             sys.stderr.write("self-test: unexpected isolate.fbs layout\n")
@@ -221,10 +305,11 @@ def run_self_test() -> int:
             "  chat_lines: [ChatLine];\n  bank_note_on:",
         )
         bad_fbs.write_text(drifted, encoding="utf-8")
-        errs = run_check(bad_fbs, rs)
-        if not errs or not any("nearest_booth" in e or "index 7" in e for e in errs):
+        code, out = _run_public_check(bad_fbs, rs, expect_fail=True)
+        if code == 0 or not ("nearest_booth" in out or "index 7" in out):
             sys.stderr.write(
-                f"self-test: drift fixture should fail on nearest_booth shift; got: {errs}\n"
+                f"self-test: drift fixture should fail on nearest_booth shift; "
+                f"code={code} out={out!r}\n"
             )
             return 1
 
@@ -233,9 +318,11 @@ def run_self_test() -> int:
             text.replace("  tick: ulong;\n", "  tick: ulong;\n  tick: ulong;\n"),
             encoding="utf-8",
         )
-        dup_errs = run_check(dup_fbs, rs)
-        if not dup_errs or not any("duplicate" in e.lower() for e in dup_errs):
-            sys.stderr.write(f"self-test: duplicate field should fail; got: {dup_errs}\n")
+        code, out = _run_public_check(dup_fbs, rs, expect_fail=True)
+        if code == 0 or "duplicate" not in out.lower():
+            sys.stderr.write(
+                f"self-test: duplicate field should fail; code={code} out={out!r}\n"
+            )
             return 1
 
         extra_fbs = tmp_path / "extra.fbs"
@@ -246,9 +333,11 @@ def run_self_test() -> int:
             ),
             encoding="utf-8",
         )
-        extra_errs = run_check(extra_fbs, rs)
-        if not extra_errs or not any("extra field" in e for e in extra_errs):
-            sys.stderr.write(f"self-test: extra field should fail; got: {extra_errs}\n")
+        code, out = _run_public_check(extra_fbs, rs, expect_fail=True)
+        if code == 0 or "extra field" not in out:
+            sys.stderr.write(
+                f"self-test: extra field should fail; code={code} out={out!r}\n"
+            )
             return 1
 
         alias_fbs = tmp_path / "alias.fbs"
@@ -256,19 +345,71 @@ def run_self_test() -> int:
             text.replace("  main_modal_id: int;", "  main_modal: int;"),
             encoding="utf-8",
         )
-        alias_errs = run_check(alias_fbs, rs)
-        if not alias_errs or not any(
-            "main_modal" in e for e in alias_errs
-        ):
+        code, out = _run_public_check(alias_fbs, rs, expect_fail=True)
+        if code == 0 or "main_modal" not in out:
             sys.stderr.write(
                 f"self-test: MAIN_MODAL alias (main_modal_id) mismatch should fail; "
-                f"got: {alias_errs}\n"
+                f"code={code} out={out!r}\n"
+            )
+            return 1
+
+        # Odd / wrong voffset: nearest_booth 80 -> 81 must reject (public CLI).
+        bad_voff_rs = tmp_path / "voff81.rs"
+        bad_voff_rs.write_text(
+            rs_text.replace(
+                "VT_SNAP_NEAREST_BOOTH: VOffsetT = 80",
+                "VT_SNAP_NEAREST_BOOTH: VOffsetT = 81",
+            ),
+            encoding="utf-8",
+        )
+        code, out = _run_public_check(fbs, bad_voff_rs, expect_fail=True)
+        if code == 0 or "81" not in out:
+            sys.stderr.write(
+                f"self-test: VT_SNAP_NEAREST_BOOTH voffset 81 should fail; "
+                f"code={code} out={out!r}\n"
+            )
+            return 1
+
+        # FlatBuffers field id / parenthetical attributes must not be swallowed.
+        id_attr_fbs = tmp_path / "id_attr.fbs"
+        id_attr_fbs.write_text(
+            text.replace("  tick: ulong;", "  tick: ulong (id: 0);"),
+            encoding="utf-8",
+        )
+        code, out = _run_public_check(id_attr_fbs, rs, expect_fail=True)
+        if code == 0 or "parenthetical" not in out.lower():
+            sys.stderr.write(
+                f"self-test: Snapshot (id:) attribute should fail; "
+                f"code={code} out={out!r}\n"
+            )
+            return 1
+
+        # Harmless Rust declaration reorder: sort by voffset, not source order.
+        tick_line = "const VT_SNAP_TICK: VOffsetT = 4;"
+        here_line = "const VT_SNAP_HERE: VOffsetT = 6;"
+        if tick_line not in rs_text or here_line not in rs_text:
+            sys.stderr.write("self-test: unexpected isolate_fb.rs VT_SNAP layout\n")
+            return 1
+        reordered_rs = tmp_path / "reordered.rs"
+        reordered_rs.write_text(
+            rs_text.replace(
+                f"{tick_line}\n{here_line}",
+                f"{here_line}\n{tick_line}",
+            ),
+            encoding="utf-8",
+        )
+        code, out = _run_public_check(fbs, reordered_rs, expect_fail=False)
+        if code != 0:
+            sys.stderr.write(
+                f"self-test: harmless VT_SNAP declaration reorder should pass; "
+                f"code={code} out={out!r}\n"
             )
             return 1
 
     print(
         "isolate_snapshot_check self-test: pass on product tree; "
-        "detects nearest_booth drift, duplicate, extra, alias mismatch"
+        "detects nearest_booth drift, duplicate, extra, alias mismatch, "
+        "invalid voffset, fbs id attributes; allows rust VT reorder"
     )
     return 0
 
