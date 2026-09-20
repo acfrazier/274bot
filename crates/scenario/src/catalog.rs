@@ -353,6 +353,7 @@ const REGISTRY: &[Entry] = &[
         "ranging_guild_redeem",
         scenarios::ranging_guild_redeem_scenario,
     ),
+    Entry::new("ranging_guild_bank", scenarios::ranging_guild_bank_scenario),
     Entry::new("script_trade", scenarios::script_trade_scenario),
     Entry::new("nature_crafter_air", scenarios::nature_crafter_air_scenario),
     Entry::new("mule_crafter_air", scenarios::mule_crafter_air_scenario),

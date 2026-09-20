@@ -382,9 +382,9 @@ fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
 }
 
 use host_play::catalog_core::{
-    ARCHERY_TICKET_ID, ENTRY_FEE, MAGIC_SHORTBOW_ID, RANGING_GUILD_MERCHANT_STAND,
-    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID, TICKETS_PER_TRADE,
-    VARP_TARGET_COUNT, VARP_TARGET_SCORE,
+    ARCHERY_TICKET_ID, COINS_PER_TRIP, ENTRY_FEE, MAGIC_SHORTBOW_ID, RANGING_GUILD_MERCHANT_STAND,
+    RANGING_GUILD_SEERS_BANK, RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID,
+    SEED_KEEP_TICKETS, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_SCORE,
 };
 
 fn ranging_round_baseline() -> Observation {
@@ -557,5 +557,200 @@ fn ranging_guild_redeem_rejects_already_held_arrows_as_baseline() {
     assert!(
         watch.begin_start("catalogtest").is_err(),
         "held rune arrows are not a redemption baseline"
+    );
+}
+
+fn ranging_bank_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_SEERS_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, SEED_KEEP_TICKETS);
+    observation
+        .item_ids
+        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation
+}
+
+fn ranging_bank_open(
+    baseline: &Observation,
+    coins_in_bank: i32,
+    arrows_in_bank: i32,
+) -> Observation {
+    let mut now = baseline.clone();
+    now.tick += 1;
+    now.bank_open = true;
+    now.bank_loaded = true;
+    now.bank_generation = baseline.bank_generation + 1;
+    now.item_ids.insert(RUNE_ARROW_ID, 0);
+    now.bank_ids.insert(RUNE_ARROW_ID, arrows_in_bank);
+    now.bank_ids.insert(COINS_ID, coins_in_bank);
+    now.bank_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    now
+}
+
+#[test]
+fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_bank").unwrap(),
+        CoreCase::RangingGuildBank
+    );
+    assert_eq!(CoreCase::RangingGuildBank.card_name(), "RangingGuild");
+
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_bank_baseline();
+    let watch = start(baseline.clone());
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "preseeded Seers KEEP/arrows alone must not qualify"
+    );
+
+    let wrong = start(baseline.clone());
+    let mut varrock = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    varrock.tile = Some(VARROCK_WEST_BANK);
+    varrock.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    varrock.bank_ids.insert(COINS_ID, 0);
+    wrong.observe("catalogtest", varrock, false);
+    assert!(
+        wrong.qualify().is_err(),
+        "a loaded booth away from Seers cannot qualify"
+    );
+
+    let no_return = start(baseline.clone());
+    let mut deposited = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    no_return.observe("catalogtest", deposited.clone(), false);
+    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    deposited.bank_ids.insert(COINS_ID, 0);
+    no_return.observe("catalogtest", deposited.clone(), false);
+    let mut closed = deposited;
+    closed.bank_open = false;
+    closed.bank_loaded = false;
+    closed.bank_generation += 1;
+    closed.bank_ids.clear();
+    no_return.observe("catalogtest", closed.clone(), false);
+    assert!(
+        no_return.qualify().is_err(),
+        "deposit, withdraw and close without STAND return is incomplete"
+    );
+
+    let mut fee_at_bank = closed;
+    fee_at_bank.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee_at_bank.varps.insert(VARP_TARGET_COUNT, 1);
+    no_return.observe("catalogtest", fee_at_bank, false);
+    assert!(
+        no_return.qualify().is_err(),
+        "a fee at Seers is not a STAND return"
+    );
+}
+
+#[test]
+fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_bank_baseline();
+
+    let deposited_tickets = start(baseline.clone());
+    let mut lost_keep = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    lost_keep.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    deposited_tickets.observe("catalogtest", lost_keep, false);
+    assert!(
+        deposited_tickets.qualify().is_err(),
+        "depositing KEEP tickets is not the rune-arrow KEEP deposit"
+    );
+
+    let coins_without_bank = start(baseline.clone());
+    let mut gifted = baseline.clone();
+    gifted.tick += 1;
+    gifted.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    gifted.item_ids.insert(RUNE_ARROW_ID, 0);
+    coins_without_bank.observe("catalogtest", gifted, false);
+    assert!(
+        coins_without_bank.qualify().is_err(),
+        "pack coins without a Seers bank session are not withdraw-X"
+    );
+
+    let watch = start(baseline.clone());
+    let mut deposited = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    watch.observe("catalogtest", deposited.clone(), false);
+    assert!(watch.qualify().is_err(), "deposit alone is incomplete");
+
+    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    deposited.bank_ids.insert(COINS_ID, 0);
+    watch.observe("catalogtest", deposited.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "coin withdraw without close and return is incomplete"
+    );
+
+    let mut closed = deposited.clone();
+    closed.bank_open = false;
+    closed.bank_loaded = false;
+    closed.bank_generation += 1;
+    closed.bank_ids.clear();
+    watch.observe("catalogtest", closed.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "close without STAND return is incomplete"
+    );
+
+    let mut returned = closed;
+    returned.tile = Some(RANGING_GUILD_STAND);
+    watch.observe("catalogtest", returned.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "return without a subsequent fee is incomplete"
+    );
+
+    let mut fee = returned;
+    fee.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", fee, false);
+    watch
+        .qualify()
+        .expect("KEEP deposit, coin withdraw, close, STAND return and fee");
+}
+
+#[test]
+fn ranging_guild_bank_rejects_redeem_stack_and_already_funded_pack() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+    let mut redeem_stack = ranging_bank_baseline();
+    redeem_stack
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    watch.observe("catalogtest", redeem_stack, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "2000 tickets would redeem before banking"
+    );
+
+    let funded = CoreWatch::default();
+    funded.configure(CoreCase::RangingGuildBank, "catalogtest");
+    let mut coins = ranging_bank_baseline();
+    coins.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    funded.observe("catalogtest", coins, false);
+    assert!(
+        funded.begin_start("catalogtest").is_err(),
+        "pack coins at Start are not a Seers withdraw baseline"
     );
 }
