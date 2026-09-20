@@ -524,6 +524,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("recovery_hints.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/runtime/Supervisor.js",
+            include_str!("supervisor.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/bank/BankLocations.js",
             include_str!("bank_locations.js"),
         ),
