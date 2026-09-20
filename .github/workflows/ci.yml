@@ -69,6 +69,8 @@ jobs:
           python3 --version
           python3 tools/architecture/check.py
           python3 tools/architecture/check.py --self-test
+          python3 tools/schema/isolate_snapshot_check.py
+          python3 tools/schema/isolate_snapshot_check.py --self-test
 
   test:
     name: test
