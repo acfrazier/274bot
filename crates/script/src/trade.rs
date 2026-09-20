@@ -12,7 +12,7 @@ use crate::isolate_fb::{RowReader, SnapshotReader};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Frozen `Input.interactPlayer` op slot: `set_player_op("Trade with", 4)`.
 pub const TRADE_OP: usize = 4;
@@ -226,10 +226,6 @@ impl TradeRuntime {
 
     fn frozen(&self) -> bool {
         self.clock.frozen()
-    }
-
-    fn now(&self) -> Instant {
-        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {

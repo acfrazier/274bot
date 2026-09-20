@@ -170,8 +170,8 @@ fn parse_declared_api_version_ast(source: &str) -> Result<Option<u32>, VersionDi
         let ModuleItem::ModuleDecl(decl) = item else {
             continue;
         };
-        match decl {
-            ModuleDecl::ExportDecl(export) => match &export.decl {
+        if let ModuleDecl::ExportDecl(export) = decl {
+            match &export.decl {
                 Decl::Var(var) => {
                     for declarator in &var.decls {
                         let Pat::Ident(ident) = &declarator.name else {
@@ -207,8 +207,7 @@ fn parse_declared_api_version_ast(source: &str) -> Result<Option<u32>, VersionDi
                     )))?;
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
@@ -245,7 +244,7 @@ fn numeric_literal_version(expr: &deno_ast::swc::ast::Expr) -> Result<u32, Versi
 }
 
 #[cfg(feature = "load")]
-fn unwrap_ts_assertion<'a>(expr: &'a deno_ast::swc::ast::Expr) -> &'a deno_ast::swc::ast::Expr {
+fn unwrap_ts_assertion(expr: &deno_ast::swc::ast::Expr) -> &deno_ast::swc::ast::Expr {
     use deno_ast::swc::ast::Expr;
     match expr {
         Expr::TsAs(n) => unwrap_ts_assertion(&n.expr),
@@ -767,7 +766,11 @@ pub(super) fn catalog_unloadable(
 /// A diagnosed foreign-script defect applies only to the exact audited pair.
 /// A changed card or helper is a different version, not a global name ban.
 #[cfg(feature = "load")]
-pub(super) fn catalog_defect_reason(name: &str, origin_sha: &str, path: &Path) -> Option<&'static str> {
+pub(super) fn catalog_defect_reason(
+    name: &str,
+    origin_sha: &str,
+    path: &Path,
+) -> Option<&'static str> {
     if name != "BrimhavenAgility"
         || origin_sha != "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859"
     {

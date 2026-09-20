@@ -196,10 +196,6 @@ impl ShopRuntime {
         self.clock.frozen()
     }
 
-    fn now(&self) -> Instant {
-        self.clock.now()
-    }
-
     fn set_freeze(&mut self, paused: bool, held: bool) {
         self.clock.set_freeze(paused, held);
     }

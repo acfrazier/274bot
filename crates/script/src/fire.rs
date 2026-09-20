@@ -702,7 +702,7 @@ fn direction_from(value: Option<&Value>) -> Option<(i32, i32)> {
 }
 
 fn fire_at(fire_locs: &[Tile], tile: Tile) -> bool {
-    fire_locs.iter().any(|fire| *fire == tile)
+    fire_locs.contains(&tile)
 }
 
 fn run_length(
@@ -753,6 +753,17 @@ fn run_length(
     run
 }
 
+/// Ranked burn-lane candidate used only while scanning the posted plot.
+#[derive(Clone, Copy)]
+struct BurnRank {
+    tile: Tile,
+    direction: (i32, i32),
+    run: i32,
+    full: bool,
+    west: bool,
+    distance: i32,
+}
+
 fn select_burn_tile(
     plot: Plot,
     here: Option<Tile>,
@@ -770,7 +781,7 @@ fn select_burn_tile(
         z: plot.z0,
         level: plot.level,
     });
-    let mut best: Option<(Tile, (i32, i32), i32, bool, bool, i32)> = None;
+    let mut best: Option<BurnRank> = None;
     for z in plot.z0..=plot.z1 {
         for x in plot.x0..=plot.x1 {
             if refused.contains(&(x, z)) {
@@ -801,19 +812,26 @@ fn select_burn_tile(
                 let d = (x - here.x).abs().max((z - here.z).abs());
                 let better = match best {
                     None => true,
-                    Some((cur, _, cur_run, cur_full, cur_west, cur_d)) => {
-                        (full, west, run, -d) > (cur_full, cur_west, cur_run, -cur_d)
-                            || ((full, west, run, d) == (cur_full, cur_west, cur_run, cur_d)
-                                && (x, z) < (cur.x, cur.z))
+                    Some(cur) => {
+                        (full, west, run, -d) > (cur.full, cur.west, cur.run, -cur.distance)
+                            || ((full, west, run, d) == (cur.full, cur.west, cur.run, cur.distance)
+                                && (x, z) < (cur.tile.x, cur.tile.z))
                     }
                 };
                 if better {
-                    best = Some((tile, direction, run, full, west, d));
+                    best = Some(BurnRank {
+                        tile,
+                        direction,
+                        run,
+                        full,
+                        west,
+                        distance: d,
+                    });
                 }
             }
         }
     }
-    best.map(|(tile, direction, run, _, _, _)| (tile, direction, run))
+    best.map(|cur| (cur.tile, cur.direction, cur.run))
 }
 
 fn next_tile(input: &Value) -> Value {

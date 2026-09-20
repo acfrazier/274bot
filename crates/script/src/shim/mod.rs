@@ -925,7 +925,7 @@ pub struct PaintChromeBand {
 /// one-shot buttons, optional canvas ops, and optional advertised chrome.
 /// The host reads it off `__rs2b0t_host.paint` for the script paint views.
 /// Older objects omit chrome fields; they deserialize empty.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
 pub struct ScriptPaint {
     pub title: Option<String>,
     pub accent: Option<String>,
@@ -954,23 +954,6 @@ pub struct ScriptPaint {
     /// Enabled-script `tabs()` bands in call order.
     #[serde(default)]
     pub tabs: Vec<PaintChromeBand>,
-}
-
-impl Default for ScriptPaint {
-    fn default() -> Self {
-        Self {
-            title: None,
-            accent: None,
-            lines: Vec::new(),
-            buttons: Vec::new(),
-            canvas: Vec::new(),
-            generation: 0,
-            strip: None,
-            rail: None,
-            footer: None,
-            tabs: Vec::new(),
-        }
-    }
 }
 
 /// One interact request the shim `Bank`/`Banking` modules queue on the

@@ -535,15 +535,11 @@ pub fn set_number(prop: &str, value: f64) {
                     }
                 }
             }
-            "shadowOffsetX" => {
-                if value.is_finite() {
-                    rec.style.shadow_offset_x = value as f32;
-                }
+            "shadowOffsetX" if value.is_finite() => {
+                rec.style.shadow_offset_x = value as f32;
             }
-            "shadowOffsetY" => {
-                if value.is_finite() {
-                    rec.style.shadow_offset_y = value as f32;
-                }
+            "shadowOffsetY" if value.is_finite() => {
+                rec.style.shadow_offset_y = value as f32;
             }
             _ => {}
         }
@@ -608,7 +604,7 @@ pub fn fill_text(text: &str, x: f64, y: f64) {
             return;
         }
         let color = rec.solid_fill();
-        let font_px = rec.style.font_px.min(MAX_FONT_PX).max(1);
+        let font_px = rec.style.font_px.clamp(1, MAX_FONT_PX);
         let mono = rec.style.mono;
         let align = rec.style.text_align;
         let baseline = rec.style.text_baseline;
@@ -926,7 +922,7 @@ pub fn measure_text(text: &str) -> Result<f64, String> {
 
 /// Same metrics as [`measure_text`] for a concrete face/size (tests / panel).
 pub fn measure_with(font_px: u16, mono: bool, text: &str) -> f64 {
-    let font_px = font_px.min(MAX_FONT_PX).max(1);
+    let font_px = font_px.clamp(1, MAX_FONT_PX);
     let font = font_for(mono);
     let scale = PxScale::from(font_px as f32);
     let scaled = font.as_scaled(scale);

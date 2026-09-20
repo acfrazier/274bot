@@ -5112,7 +5112,7 @@ impl PaintChromeBandReader<'_> {
     fn brand(&self) -> Option<&str> {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CHROME_BRAND, None) }
     }
-    fn into_band(&self) -> Result<crate::shim::PaintChromeBand, String> {
+    fn decode_band(&self) -> Result<crate::shim::PaintChromeBand, String> {
         Ok(crate::shim::PaintChromeBand {
             id: self.id().to_string(),
             names: self.names()?,
@@ -5152,7 +5152,7 @@ impl Verifiable for CanvasSegReader<'_> {
 }
 
 impl CanvasSegReader<'_> {
-    fn into_seg(&self) -> Result<crate::canvas::PathSeg, String> {
+    fn decode_seg(&self) -> Result<crate::canvas::PathSeg, String> {
         let kind = unsafe { self.tab.get::<i8>(VT_SEG_KIND, None) }.unwrap_or(0);
         let x = unsafe { self.tab.get::<f32>(VT_SEG_X, None) }.unwrap_or(0.0);
         let y = unsafe { self.tab.get::<f32>(VT_SEG_Y, None) }.unwrap_or(0.0);
@@ -5207,7 +5207,7 @@ impl Verifiable for GradStopReader<'_> {
 }
 
 impl GradStopReader<'_> {
-    fn into_stop(&self) -> Result<crate::canvas::GradStop, String> {
+    fn decode_stop(&self) -> Result<crate::canvas::GradStop, String> {
         let offset = unsafe { self.tab.get::<f32>(VT_GSTOP_OFFSET, None) }.unwrap_or(0.0);
         if !offset.is_finite() || !(0.0..=1.0).contains(&offset) {
             return Err("canvas gradient stop offset out of range".into());
@@ -5244,7 +5244,7 @@ impl Verifiable for ClipPathFbReader<'_> {
 }
 
 impl ClipPathFbReader<'_> {
-    fn into_clip(&self) -> Result<crate::canvas::ClipPath, String> {
+    fn decode_clip(&self) -> Result<crate::canvas::ClipPath, String> {
         let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CLIP_SEGS, MAX_PATH_SEGS_PER_OP)?;
         if rows.len() > MAX_PATH_SEGS_PER_OP {
             return Err(format!(
@@ -5255,7 +5255,7 @@ impl ClipPathFbReader<'_> {
         Ok(crate::canvas::ClipPath {
             segs: rows
                 .into_iter()
-                .map(|r| r.into_seg())
+                .map(|r| r.decode_seg())
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -5324,7 +5324,7 @@ impl Verifiable for CanvasOpReader<'_> {
 impl CanvasOpReader<'_> {
     fn decode_segs(&self) -> Result<Vec<crate::canvas::PathSeg>, String> {
         let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CANVAS_SEGS, MAX_PATH_SEGS_PER_OP)?;
-        rows.into_iter().map(|r| r.into_seg()).collect()
+        rows.into_iter().map(|r| r.decode_seg()).collect()
     }
 
     fn decode_extras(&self) -> Result<crate::canvas::DrawExtras, String> {
@@ -5339,7 +5339,7 @@ impl CanvasOpReader<'_> {
         }
         let clips = clip_rows
             .into_iter()
-            .map(|r| r.into_clip())
+            .map(|r| r.decode_clip())
             .collect::<Result<Vec<_>, _>>()?;
         let stop_rows =
             rows_capped::<GradStopReader>(&self.tab, VT_CANVAS_STOPS, MAX_GRADIENT_STOPS)?;
@@ -5351,7 +5351,7 @@ impl CanvasOpReader<'_> {
         }
         let stops = stop_rows
             .into_iter()
-            .map(|r| r.into_stop())
+            .map(|r| r.decode_stop())
             .collect::<Result<Vec<_>, _>>()?;
         let gx0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GX0, None) }.unwrap_or(0.0);
         let gy0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GY0, None) }.unwrap_or(0.0);
@@ -5398,7 +5398,7 @@ impl CanvasOpReader<'_> {
         })
     }
 
-    fn into_op(&self) -> Result<crate::canvas::CanvasOp, String> {
+    fn decode_op(&self) -> Result<crate::canvas::CanvasOp, String> {
         use crate::canvas::{CanvasOp, LineJoinKind, TextAlign, TextBaseline};
         let kind = unsafe { self.tab.get::<i8>(VT_CANVAS_KIND, None) }.unwrap_or(0);
         let x = unsafe { self.tab.get::<i32>(VT_CANVAS_X, None) }.unwrap_or(0);
@@ -5549,7 +5549,7 @@ impl PaintReader<'_> {
             self.tab
                 .get::<ForwardsUOffset<PaintChromeBandReader>>(VT_PAINT_STRIP, None)
         } {
-            Some(row) => Ok(Some(row.into_band()?)),
+            Some(row) => Ok(Some(row.decode_band()?)),
             None => Ok(None),
         }
     }
@@ -5558,7 +5558,7 @@ impl PaintReader<'_> {
             self.tab
                 .get::<ForwardsUOffset<PaintChromeBandReader>>(VT_PAINT_RAIL, None)
         } {
-            Some(row) => Ok(Some(row.into_band()?)),
+            Some(row) => Ok(Some(row.decode_band()?)),
             None => Ok(None),
         }
     }
@@ -5567,14 +5567,14 @@ impl PaintReader<'_> {
     }
     fn tabs(&self) -> Result<Vec<crate::shim::PaintChromeBand>, String> {
         let rows = rows_capped::<PaintChromeBandReader>(&self.tab, VT_PAINT_TABS, MAX_PAINT_TABS)?;
-        rows.into_iter().map(|row| row.into_band()).collect()
+        rows.into_iter().map(|row| row.decode_band()).collect()
     }
     fn canvas(&self) -> Result<Vec<crate::canvas::CanvasOp>, String> {
         let rows = rows_capped::<CanvasOpReader>(&self.tab, VT_PAINT_CANVAS, MAX_CANVAS_OPS)?;
         let mut out = Vec::with_capacity(rows.len());
         let mut segs = 0usize;
         for row in rows {
-            let op = row.into_op()?;
+            let op = row.decode_op()?;
             segs = segs.saturating_add(match &op {
                 crate::canvas::CanvasOp::FillPath { segs, extras, .. }
                 | crate::canvas::CanvasOp::StrokePath { segs, extras, .. } => {

@@ -211,6 +211,10 @@ pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
 /// CW full circle iff `end − start ≥ 2π`; CCW full circle iff `start − end ≥ 2π`;
 /// equal angles are a connecting segment only. Zero radius still connects.
 /// Returns `false` if a segment would exceed `max_len` (path stays ≤ `max_len`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public HTML-canvas arc primitive: centre, radius, sweep, direction, and path cap stay explicit scalars so callers and tests keep the current signature"
+)]
 pub fn append_arc(
     path: &mut Vec<PathSeg>,
     cx: f32,
@@ -336,6 +340,10 @@ fn append_arc_cubic(
 ///
 /// Circle(t) has centre `C0 + t (C1-C0)` and radius `r0 + t (r1-r0)`.
 /// tiny-skia's `RadialGradient` drops the start radius; this keeps it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public two-circle sample: query point plus start/end centre and radius stay explicit scalars matching Radial geometry; grouping would change the published math signature"
+)]
 pub fn conical_t(px: f32, py: f32, x0: f32, y0: f32, r0: f32, x1: f32, y1: f32, r1: f32) -> f32 {
     let dx = x1 - x0;
     let dy = y1 - y0;

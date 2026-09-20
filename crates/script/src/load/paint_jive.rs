@@ -129,7 +129,7 @@ fn run<'s>(
         "gains" => {
             let mut gains = collect_progress(scope, args)?;
             gains.retain(|g| g.gained > 0);
-            gains.sort_by(|a, b| b.gained.cmp(&a.gained));
+            gains.sort_by_key(|a| std::cmp::Reverse(a.gained));
             js_gains(scope, &gains)
         }
         "levelRow" => {
@@ -368,7 +368,7 @@ fn fmt_grouped(n: i32) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
