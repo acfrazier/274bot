@@ -258,6 +258,8 @@ pub const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
 pub const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 pub const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
+pub const GREEN_DRAGON_TELE_PREPARED_LEVEL: i32 = 99;
+pub const GREEN_DRAGON_TELE_PREPARED_HP: i32 = 70;
 pub const RUNE_SCIMITAR_ID: i32 = 1333;
 pub const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 pub const NOTED_DRAGONFIRE_SHIELD_ID: i32 = 1541;
@@ -2783,7 +2785,7 @@ pub fn validate_case_baseline_with_preparation(
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
         }
         CoreCase::GreenDragonTelePrepared => {
-            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 70 at <=5 current HP, zero lobster, Magic 25, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, Law/Air/Fire runes, escape Teleport to Varrock"
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99 at exactly 70 current HP, zero lobster, Magic 25, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, Law/Air/Fire runes, panicHp 98, escape Teleport to Varrock, no death recovery"
         }
         CoreCase::FireGiantApproach => {
             "raft stand (2510,3493,0) z<9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, Waterfall Quest"
@@ -4862,6 +4864,9 @@ pub struct CombatBankSpec {
     /// When false, the bank trip itself is the cell (tele escape). The
     /// reviewed two-engagement combat core is not required.
     pub require_combat: bool,
+    /// A death/recovery path cannot substitute for this fixture's intended
+    /// escape route.
+    pub forbid_death: bool,
 }
 
 pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
@@ -4882,6 +4887,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // Script-owned Ardougne West trip: deposits everything but
         // food/runes/ammo/weapon and withdraws lobster back to the safespot.
@@ -4897,6 +4903,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // Always-on trip end: Varrock West keeps only trout and the Brass key.
         CoreCase::HillGiantBank => Some(CombatBankSpec {
@@ -4911,6 +4918,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // Edgeville trip end: `depositInventory` empties the pack, then the
         // card withdraws exactly its food back and returns through the trapdoor.
@@ -4926,6 +4934,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // `bankStrategy=Loot count`: PeriodicBank deposits the card's own
         // Guard-reachable loot list and walks back to the market anchor. No
@@ -4943,6 +4952,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // RockCrab PeriodicBank Loot-count at Seers. The task deposits listed
         // loot and returns to `currentSpot()`; it does not restock food
@@ -4959,6 +4969,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // GreenDragon BankRun to Edgeville: deposit except keep-list, withdraw
         // food to `foodWithdraw` 20, walk back past the ditch.
@@ -4974,10 +4985,11 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
         // Edgeville booth. A south-walk flee without the teleport fails.
-        CoreCase::GreenDragonTele | CoreCase::GreenDragonTelePrepared => Some(CombatBankSpec {
+        CoreCase::GreenDragonTele => Some(CombatBankSpec {
             deposit: &[],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
@@ -4989,6 +5001,21 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 8,
             via_magic: true,
             require_combat: false,
+            forbid_death: false,
+        }),
+        CoreCase::GreenDragonTelePrepared => Some(CombatBankSpec {
+            deposit: &[],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            restock_count: None,
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: Some(VARROCK_TELE_LAND),
+            via_radius: 8,
+            via_magic: true,
+            require_combat: false,
+            forbid_death: true,
         }),
         // Barrel exit to (2527,3413,0) then Ardougne West restock and re-entry.
         CoreCase::FireGiantBank => Some(CombatBankSpec {
@@ -5003,6 +5030,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 6,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         CoreCase::FireGiantBankPrepared => Some(CombatBankSpec {
             deposit: &[BIG_BONES_ID],
@@ -5016,6 +5044,7 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             via_radius: 6,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         _ => None,
     }
@@ -5176,11 +5205,12 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
         CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
             baseline.level("defence") == COMBAT_ATTACK_LEVEL
         }
-        CoreCase::GreenDragonPotionsPrepared | CoreCase::GreenDragonTelePrepared => {
-            ["attack", "strength", "defence", "hitpoints"]
-                .into_iter()
-                .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
-        }
+        CoreCase::GreenDragonPotionsPrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL),
+        CoreCase::GreenDragonTelePrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == GREEN_DRAGON_TELE_PREPARED_LEVEL),
         CoreCase::GreenDragonBankPrepared | CoreCase::FireGiantBankPrepared => {
             ["attack", "strength", "defence", "hitpoints"]
                 .into_iter()
@@ -5232,7 +5262,7 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
                     && baseline.item_id(LAW_RUNE_ID) >= 1
                     && baseline.item_id(AIR_RUNE_ID) >= 3
                     && baseline.item_id(FIRE_RUNE_ID) >= 1
-                    && baseline.effective_level("hitpoints") <= 5
+                    && baseline.effective_level("hitpoints") == GREEN_DRAGON_TELE_PREPARED_HP
             }
             CoreCase::FireGiantPrepared => {
                 baseline.item_id(RUNE_SCIMITAR_ID) == 0
@@ -5656,6 +5686,8 @@ pub struct CombatBankCycle {
     pub via_seen: bool,
     /// Magic XP landed with the via tile when `via_magic` is set.
     pub via_magic: bool,
+    /// A fresh post-Start player death line was observed.
+    pub death_seen: bool,
 }
 
 impl CombatBankCycle {
@@ -5675,6 +5707,10 @@ impl CombatBankCycle {
         now: &Observation,
     ) {
         self.combat.observe(spec, baseline, now);
+        self.death_seen |= now.chat.iter().any(|line| {
+            !baseline.chat.contains(line)
+                && line.1.to_ascii_lowercase().contains("oh dear you are dead")
+        });
         let open = now.bank_open && now.bank_loaded;
         let at_stand = near(now.tile, bank.stand, bank.stand_radius);
         if open && !at_stand {
@@ -5741,6 +5777,7 @@ impl CombatBankCycle {
             && self.returned
             && self.further
             && !self.wrong_bank
+            && (!bank.forbid_death || !self.death_seen)
     }
 }
 

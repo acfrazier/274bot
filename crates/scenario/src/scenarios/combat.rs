@@ -61,6 +61,12 @@ const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(6
 /// including fresh post-return XP and route margin.
 const GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(480);
 const GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS: u32 = 1200;
+/// The pinned GreenDragon source only enters `Escape` when it is both foodless
+/// and below `panicHp`. At 70/99 HP and a configured 98% threshold the branch
+/// is deterministic while retaining enough absolute health for the south run.
+const GREEN_DRAGON_TELE_PREPARED_LEVEL: i32 = 99;
+const GREEN_DRAGON_TELE_PREPARED_HP: i32 = 70;
+const GREEN_DRAGON_TELE_PANIC_PERCENT: i32 = 98;
 /// FireGiant's one-food trigger plus barrel exit, bank leg, Waterfall re-entry
 /// and fresh post-return XP is estimated at 259.4s before margin.
 const FIRE_GIANT_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
@@ -797,6 +803,10 @@ const GREEN_DRAGON_TELE_PREPARED_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "foodWithdraw",
         value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "panicHp",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_TELE_PANIC_PERCENT as f64),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -3017,7 +3027,10 @@ pub(crate) fn moss_giant_bank_start_scenario() -> Scenario {
                     count: MOSS_GIANT_BANK_RESTOCK,
                 },
             ),
-            ("watch MossGiant close its bank after startup banking", Proof::BankClosed),
+            (
+                "watch MossGiant close its bank after startup banking",
+                Proof::BankClosed,
+            ),
             (
                 "watch return to the moss-giant safespot after startup banking",
                 Proof::ArrivedNear {
@@ -3276,7 +3289,7 @@ fn wear_shield_before_hostile_teleport(scenario: &mut Scenario) {
     );
 }
 
-fn prepare_low_hp_empty_food_before_hostile_teleport(scenario: &mut Scenario) {
+fn prepare_safe_empty_food_escape_before_hostile_teleport(scenario: &mut Scenario) {
     let hostile_teleport = scenario
         .steps
         .iter()
@@ -3295,18 +3308,34 @@ fn prepare_low_hp_empty_food_before_hostile_teleport(scenario: &mut Scenario) {
                 },
             ),
             Step {
-                name: "prepare and acknowledge the upstream panic-health trigger before Start",
+                name: "prepare and acknowledge 70 of 99 Hitpoints for the configured panic trigger",
                 kind: StepKind::Perform {
                     send: Box::new(|c, _| {
-                        cheat(c, "~1hp");
+                        cheat(
+                            c,
+                            &format!(
+                                "~hit {}",
+                                GREEN_DRAGON_TELE_PREPARED_LEVEL - GREEN_DRAGON_TELE_PREPARED_HP
+                            ),
+                        );
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::StatAtMost { id: 3, max: 5 },
+                    arm: Proof::StatAtMost {
+                        id: 3,
+                        max: GREEN_DRAGON_TELE_PREPARED_HP,
+                    },
                     budget_ticks: 200,
                 },
             },
+            bank_fletcher_watch(
+                "confirm the prepared teleport retains 70 Hitpoints before Start",
+                Proof::Stat {
+                    id: 3,
+                    min: GREEN_DRAGON_TELE_PREPARED_HP,
+                },
+            ),
         ],
     );
 }
@@ -3619,10 +3648,13 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
     scenario
 }
 
-/// Upstream `caseFleeAndRecover` trigger translated to native fixture steps:
-/// zero carried food and `~1hp` are acknowledged before the wilderness hop.
-/// The supported escape must walk south, cast Varrock, restock/heal at
-/// Edgeville, return to the field and produce later Strength XP.
+/// The pinned source requires both no food and HP below `panicHp` to select
+/// `Escape`; no food by itself selects the direct `BankRun`. This prepared
+/// fixture uses the upstream max-stat profile, configures `panicHp=98`, and
+/// enters the field at a safe 70/99 HP instead of reproducing the upstream
+/// regression's death-prone 1-HP seed. The supported escape must walk south,
+/// cast Varrock, restock/heal at Edgeville, return to the field and produce
+/// later Strength XP.
 pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
     let mut scenario = remaining_prepared_combat_bank_scenario(
         "green_dragon_tele_prepared",
@@ -3644,7 +3676,7 @@ pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
         GREEN_DRAGON_TELE_PREPARED_INJECT,
         "lobster",
         40,
-        REMAINING_COMBAT_PREPARED_LEVEL,
+        GREEN_DRAGON_TELE_PREPARED_LEVEL,
         GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE,
         GREEN_DRAGON_TELE_QUALIFICATION_WATCH_TICKS,
         &[
@@ -3721,7 +3753,7 @@ pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
         },
     );
     insert_setstat_drain_before_hostile_tele(&mut scenario);
-    prepare_low_hp_empty_food_before_hostile_teleport(&mut scenario);
+    prepare_safe_empty_food_escape_before_hostile_teleport(&mut scenario);
     scenario
 }
 

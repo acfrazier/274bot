@@ -6428,10 +6428,7 @@ export default class NativeStop extends LoopingBot {{
         assert_eq!(FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD, 1);
         assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK, 25);
         let fire_spec = combat_spec(fire_bank).unwrap();
-        assert_eq!(
-            fire_spec.food_count,
-            FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
-        );
+        assert_eq!(fire_spec.food_count, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD);
         assert_eq!(fire_spec.loot, CombatLoot::BigBones);
         let fire_trip = combat_bank_spec(fire_bank).unwrap();
         assert!(fire_trip.require_combat);
@@ -6504,7 +6501,7 @@ export default class NativeStop extends LoopingBot {{
             validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
         );
 
-        let mut tele_levels = levels.to_vec();
+        let mut tele_levels = bank_levels.to_vec();
         tele_levels.push(("magic", 25));
         let tele = branch_obs(
             GREEN_DRAGON_FIELD,
@@ -6512,7 +6509,7 @@ export default class NativeStop extends LoopingBot {{
             &green_gear,
             &[("strength", 0), ("magic", 0)],
             &tele_levels,
-            &[("hitpoints", 5)],
+            &[("hitpoints", 70)],
             &[],
             &[],
             false,
@@ -6522,9 +6519,21 @@ export default class NativeStop extends LoopingBot {{
         let mut fed = tele.clone();
         fed.item_ids.insert(LOBSTER_ID, 1);
         assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fed).is_err());
-        let mut healthy = tele.clone();
-        healthy.effective_levels.insert("hitpoints".into(), 70);
-        assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &healthy).is_err());
+        let mut fragile = tele.clone();
+        fragile.effective_levels.insert("hitpoints".into(), 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fragile).is_err(),
+            "the prepared teleport rejects the death-prone upstream 1-HP regression seed"
+        );
+        let mut outside_configured_panic = tele.clone();
+        outside_configured_panic
+            .effective_levels
+            .insert("hitpoints".into(), 99);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &outside_configured_panic)
+                .is_err(),
+            "full 99/99 HP would bypass Escape and take the direct BankRun"
+        );
 
         let mut fire_gear = armour.to_vec();
         fire_gear.push((RUNE_SCIMITAR_ID, 1));
@@ -6584,6 +6593,74 @@ export default class NativeStop extends LoopingBot {{
             missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
             assert!(validate_case_baseline(case, &missing_armour).is_err());
         }
+    }
+
+    #[test]
+    fn prepared_green_teleport_rejects_a_death_recovery_cycle() {
+        let case = CoreCase::GreenDragonTelePrepared;
+        let spec = combat_spec(case).unwrap();
+        let bank = combat_bank_spec(case).unwrap();
+        let levels = [
+            ("attack", 99),
+            ("strength", 99),
+            ("defence", 99),
+            ("hitpoints", 99),
+            ("magic", 25),
+        ];
+        let gear = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+            (RUNE_SCIMITAR_ID, 1),
+            (DRAGONFIRE_SHIELD_ID, 1),
+        ];
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &gear,
+            &[("strength", 0), ("magic", 0)],
+            &levels,
+            &[("hitpoints", 70)],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        let mut landed = baseline.clone();
+        landed.tile = Some(VARROCK_TELE_LAND);
+        landed.xp.insert("magic".into(), 35);
+        let mut died = landed.clone();
+        died.chat.push((1, "Oh dear you are dead!".into()));
+        let mut deposited = died.clone();
+        deposited.tile = Some(GREEN_DRAGON_BANK);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.bank_ids.insert(LOBSTER_ID, 40);
+        let mut restocked = deposited.clone();
+        restocked
+            .item_ids
+            .insert(LOBSTER_ID, GREEN_DRAGON_BANK_RESTOCK);
+        restocked.bank_ids.insert(LOBSTER_ID, 20);
+        let mut closed = restocked.clone();
+        closed.bank_open = false;
+        closed.bank_loaded = false;
+        closed.bank_generation = 2;
+        let mut returned = closed.clone();
+        returned.tile = Some(GREEN_DRAGON_FIELD);
+        let mut further = returned.clone();
+        further.xp.insert("strength".into(), 1);
+
+        let mut cycle = CombatBankCycle::default();
+        for observation in [
+            &landed, &died, &deposited, &restocked, &closed, &returned, &further,
+        ] {
+            cycle.observe(spec, bank, &baseline, observation);
+        }
+        assert!(
+            !cycle.qualified(spec, bank),
+            "death recovery must not qualify the prepared teleport cycle"
+        );
     }
 
     #[test]

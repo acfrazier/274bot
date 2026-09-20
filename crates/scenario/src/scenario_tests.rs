@@ -2642,7 +2642,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         ("green_dragon_special_prepared", "GreenDragon", 70),
         ("green_dragon_potions_prepared", "GreenDragon", 70),
         ("green_dragon_bank_prepared", "GreenDragon", 99),
-        ("green_dragon_tele_prepared", "GreenDragon", 70),
+        ("green_dragon_tele_prepared", "GreenDragon", 99),
         ("fire_giant_bank_prepared", "FireGiant", 99),
     ];
     for (name, card, level) in names_cards_and_levels {
@@ -2745,9 +2745,19 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
 
     let green_tele = get("green_dragon_tele_prepared").unwrap();
     let green_tele_start = start_idx(&green_tele);
+    let green_tele_inject =
+        settings_inject_map(green_tele.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        green_tele_inject.get("panicHp"),
+        Some(&Value::from(98.0)),
+        "the prepared teleport uses the source's configured panic threshold"
+    );
     assert!(green_tele.steps[..green_tele_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::StatAtMost { id: 3, max: 5 }));
+        .any(|step| step.wait.arm == Proof::Stat { id: 3, min: 70 }));
+    assert!(green_tele.steps[..green_tele_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::StatAtMost { id: 3, max: 70 }));
     assert!(green_tele.steps[..green_tele_start].iter().any(|step| {
         step.wait.arm
             == Proof::ItemIdAtMost {
@@ -2755,6 +2765,23 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
                 count: 0,
             }
     }));
+    let safe_trigger = green_tele.steps[..green_tele_start]
+        .iter()
+        .find(|step| {
+            step.name
+                == "prepare and acknowledge 70 of 99 Hitpoints for the configured panic trigger"
+        })
+        .expect("prepared teleport has a high-HP panic trigger");
+    let StepKind::Perform { send } = &safe_trigger.kind else {
+        panic!("the high-HP panic trigger is one native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "~hit 29"));
+    assert!(
+        !emitted_has(&client, "~1hp"),
+        "the prepared teleport must never expose the player at one hitpoint"
+    );
 
     let fire_bank = get("fire_giant_bank_prepared").unwrap();
     let fire_bank_inject = settings_inject_map(fire_bank.settings.script_settings_inject).unwrap();
