@@ -10,7 +10,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
-    use ratatui::layout::{Position, Rect};
+use ratatui::layout::{Position, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
@@ -107,9 +107,11 @@ impl<'a> ChatView<'a> {
             return DEFAULT_HEIGHT;
         }
         let content_rows = usize::from(paint.title.is_some()) + paint.lines.len();
+        let footer_rows = usize::from(paint.footer.is_some());
         let rows = 2usize
             .saturating_add(chrome_rows)
             .saturating_add(content_rows)
+            .saturating_add(footer_rows)
             .saturating_add(1)
             .saturating_add(paint.buttons.len());
         u16::try_from(rows)
@@ -134,10 +136,11 @@ struct PaintChromeLayout {
 }
 
 #[derive(Debug)]
-struct PaintLayout {
+pub(crate) struct PaintLayout {
     content: Rect,
     chrome: Vec<PaintChromeLayout>,
     buttons: Vec<PaintButtonLayout>,
+    footer: Option<Rect>,
 }
 
 /// Compute the paint rows once for both rendering and pointer dispatch.
@@ -180,29 +183,29 @@ pub(crate) fn paint_chrome_rows(
     rows
 }
 
-fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayout {
+pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayout {
     let inner = Block::default().borders(Borders::ALL).inner(area);
     let paint = view.script_paint.expect("paint_layout requires paint");
     let chrome_source = paint_chrome_rows(paint);
     let buttons = view.paint_buttons();
-    let chrome_rows = chrome_source.len().min(usize::from(inner.height));
-    let visible_count = buttons.len().min(
-        usize::from(inner.height)
-            .saturating_sub(chrome_rows)
-            .max(1),
-    );
+    let footer_rows = u16::from(paint.footer.is_some());
+    let mut budget = inner.height.saturating_sub(footer_rows);
+    let chrome_take = chrome_source.len().min(usize::from(budget));
+    budget = budget.saturating_sub(chrome_take as u16);
+    let visible_count = buttons.len().min(usize::from(budget));
     if inner.width == 0 {
         return PaintLayout {
             content: inner,
             chrome: Vec::new(),
             buttons: Vec::new(),
+            footer: None,
         };
     }
 
     let mut y = inner.y;
     let chrome: Vec<PaintChromeLayout> = chrome_source
         .into_iter()
-        .take(chrome_rows)
+        .take(chrome_take)
         .map(|(_key, _name, text)| {
             let row = Rect::new(inner.x, y, inner.width, 1);
             y = y.saturating_add(1);
@@ -216,8 +219,18 @@ fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayo
             }
         })
         .collect();
+    let footer = if footer_rows > 0 {
+        Some(Rect::new(
+            inner.x,
+            inner.y + inner.height - 1,
+            inner.width,
+            1,
+        ))
+    } else {
+        None
+    };
     let focus = state.paint_choice.min(buttons.len().saturating_sub(1));
-    let first = if buttons.is_empty() {
+    let first = if visible_count == 0 {
         0
     } else {
         focus
@@ -225,12 +238,19 @@ fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayo
             .saturating_sub(visible_count)
             .min(buttons.len().saturating_sub(visible_count))
     };
-    let buttons_y = inner.y + inner.height - visible_count as u16;
+    let buttons_y = inner.y + inner.height - footer_rows - visible_count as u16;
+    let content_bottom = if visible_count > 0 {
+        buttons_y.saturating_sub(1)
+    } else if footer_rows > 0 {
+        inner.y + inner.height - footer_rows - 1
+    } else {
+        inner.y + inner.height
+    };
     let content = Rect::new(
         inner.x,
         y,
         inner.width,
-        buttons_y.saturating_sub(y).saturating_sub(1),
+        content_bottom.saturating_sub(y),
     );
     let buttons = if visible_count == 0 {
         Vec::new()
@@ -259,6 +279,7 @@ fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayo
         content,
         chrome,
         buttons,
+        footer,
     }
 }
 
@@ -478,13 +499,9 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
                 .render(layout.content, buf);
-            if let Some(footer) = &paint.footer {
-                let footer_row = inner.y + inner.height.saturating_sub(1);
-                if footer_row >= inner.y {
-                    Paragraph::new(footer.clone()).render(
-                        Rect::new(inner.x, footer_row, inner.width, 1),
-                        buf,
-                    );
+            if let Some(footer_row) = layout.footer {
+                if let Some(footer) = &paint.footer {
+                    Paragraph::new(footer.clone()).render(footer_row, buf);
                 }
             }
             for button in layout.buttons {
@@ -954,5 +971,103 @@ mod tests {
         };
         assert_eq!(action, ChatAction::PaintChrome(1));
         assert_eq!(sent.len(), 1);
+    }
+
+    fn typical_jive_paint() -> script::shim::ScriptPaint {
+        script::shim::ScriptPaint {
+            generation: 1,
+            strip: Some(script::shim::PaintChromeBand {
+                id: "k".into(),
+                names: vec!["Statistics".into(), "Options".into()],
+                selected: "Statistics".into(),
+                ..Default::default()
+            }),
+            rail: Some(script::shim::PaintChromeBand {
+                id: "k".into(),
+                names: vec!["Overview".into(), "Supplies".into()],
+                selected: "Overview".into(),
+                ..Default::default()
+            }),
+            footer: Some("Jive scripts".into()),
+            lines: vec!["Runtime: 5m".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "go".into(),
+                label: "Go bank".into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn paint_layout_footer_row_sits_below_buttons_not_on_body() {
+        let paint = typical_jive_paint();
+        let view = ChatView {
+            lines: &[],
+            modal_texts: &[],
+            options: &[],
+            has_continue: false,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let state = ChatState::default();
+        let area = Rect::new(0, 0, 48, 12);
+        let layout = super::paint_layout(&view, &state, area);
+        let footer = layout.footer.expect("footer row");
+        let button = layout
+            .buttons
+            .first()
+            .expect("button row when height allows");
+        assert!(
+            button.row.y < footer.y,
+            "button y={} must be above footer y={}",
+            button.row.y,
+            footer.y
+        );
+        assert_ne!(button.row.y, footer.y);
+    }
+
+    #[test]
+    fn paint_layout_cramped_height_omits_buttons_without_phantom_hits() {
+        let paint = typical_jive_paint();
+        let view = ChatView {
+            lines: &[],
+            modal_texts: &[],
+            options: &[],
+            has_continue: false,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let state = ChatState::default();
+        let area = Rect::new(0, 0, 40, 6);
+        let layout = super::paint_layout(&view, &state, area);
+        assert!(
+            layout.buttons.is_empty(),
+            "cramped pane must not force a button row over chrome"
+        );
+        assert!(
+            !layout.chrome.is_empty(),
+            "strip+rail chrome still advertises visible rows"
+        );
+        let options_row = layout.chrome[1].row.y;
+        let footer_y = layout.footer.expect("footer reserved").y;
+        let mut sent = Vec::new();
+        let mut state = ChatState::default();
+        let footer_click = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_click(area, 4, footer_y)
+        };
+        assert_eq!(
+            footer_click,
+            ChatAction::None,
+            "footer row is not a chrome/button hit target"
+        );
+        assert!(sent.is_empty());
+        let mut state = ChatState::default();
+        let strip_select = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_click(area, 4, options_row)
+        };
+        assert_eq!(strip_select, ChatAction::PaintChrome(1));
+        assert_eq!(sent, vec![ChatAction::PaintChrome(1)]);
     }
 }

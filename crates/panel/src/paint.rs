@@ -68,6 +68,68 @@ fn text_width(ui: &Ui, font_sz: f32, text: &str) -> f32 {
     ui.current_font().calc_text_size(font_sz, f32::MAX, 0.0, text)[0]
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct StripSlot {
+    x: f32,
+    w: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StripSegments {
+    tabs: Vec<StripSlot>,
+    status: StripSlot,
+    brand: StripSlot,
+}
+
+/// Title-row slots: tabs from the left, brand hard right, status in the gap
+/// (mirrors frozen `paintLogic.stripSegments`).
+fn strip_segments(w: f32, tab_widths: &[f32], brand_width: f32, pad: f32) -> StripSegments {
+    let mut tabs = Vec::with_capacity(tab_widths.len());
+    let mut x = pad;
+    for &tw in tab_widths {
+        tabs.push(StripSlot { x, w: tw });
+        x += tw;
+    }
+    let brand_x = x.max(w - pad - brand_width);
+    StripSegments {
+        tabs,
+        status: StripSlot {
+            x,
+            w: (brand_x - x).max(0.0),
+        },
+        brand: StripSlot {
+            x: brand_x,
+            w: brand_width,
+        },
+    }
+}
+
+fn clip_text_to_width(ui: &Ui, font_sz: f32, text: &str, max_w: f32) -> String {
+    if text.is_empty() || max_w <= 0.0 {
+        return String::new();
+    }
+    if text_width(ui, font_sz, text) <= max_w {
+        return text.to_string();
+    }
+    const ELL: &str = "…";
+    let mut end = text.len();
+    while end > 0 {
+        let clipped = format!("{}{}", &text[..end], ELL);
+        if text_width(ui, font_sz, &clipped) <= max_w {
+            return clipped;
+        }
+        end = text[..end]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        if end == 0 {
+            break;
+        }
+    }
+    ELL.to_string()
+}
+
 struct CanvasGpu {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -91,6 +153,10 @@ pub struct PaintOverlay {
     button_hits: Vec<[f32; 4]>,
     /// Chrome hit targets: `(store key, advertised name, rect)`.
     chrome_hits: Vec<(String, String, [f32; 4])>,
+    #[cfg(test)]
+    strip_status_label_rect: Option<[f32; 4]>,
+    #[cfg(test)]
+    strip_brand_label_rect: Option<[f32; 4]>,
     /// Screen-space canvas dest `(x, y, w, h)` this frame, if any.
     canvas_dest: Option<[f32; 4]>,
     /// Applet-space dirty rect this frame, if any.
@@ -112,6 +178,10 @@ impl PaintOverlay {
             button_labels: Vec::new(),
             button_hits: Vec::new(),
             chrome_hits: Vec::new(),
+            #[cfg(test)]
+            strip_status_label_rect: None,
+            #[cfg(test)]
+            strip_brand_label_rect: None,
             canvas_dest: None,
             canvas_dirty: None,
             last_ops: Vec::new(),
@@ -165,6 +235,11 @@ impl PaintOverlay {
         self.button_labels.clear();
         self.button_hits.clear();
         self.chrome_hits.clear();
+        #[cfg(test)]
+        {
+            self.strip_status_label_rect = None;
+            self.strip_brand_label_rect = None;
+        }
         self.canvas_dest = None;
         self.canvas_dirty = None;
 
@@ -294,11 +369,28 @@ impl PaintOverlay {
         let mut content_top = y + header_h;
         if let Some(strip) = &paint.strip {
             let mid = y + header_h * 0.5;
-            let mut tx = x + pad;
-            for name in &strip.names {
-                let tw = (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0);
-                let box_y = y + 2.0 * s;
-                let box_h = (header_h - 4.0 * s).max(1.0);
+            let text_y = mid - font_sz * 0.35;
+            let box_y = y + 2.0 * s;
+            let box_h = (header_h - 4.0 * s).max(1.0);
+            let brand = strip
+                .brand
+                .as_deref()
+                .or(paint.title.as_deref())
+                .unwrap_or("");
+            let brand_reserve = if brand.is_empty() {
+                header_h
+            } else {
+                text_width(ui, font_sz, brand) + pad + header_h
+            };
+            let tab_widths: Vec<f32> = strip
+                .names
+                .iter()
+                .map(|name| (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0))
+                .collect();
+            let seg = strip_segments(w, &tab_widths, brand_reserve, pad);
+            for (name, slot) in strip.names.iter().zip(seg.tabs.iter()) {
+                let tx = x + slot.x;
+                let tw = slot.w;
                 let hit = [tx, box_y, tx + tw, box_y + box_h];
                 let active = strip.selected == *name;
                 let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
@@ -310,7 +402,7 @@ impl PaintOverlay {
                 dl.add_text_with_font(
                     font,
                     font_sz,
-                    [tx + 7.0 * s, mid - font_sz * 0.35],
+                    [tx + 7.0 * s, text_y],
                     if active { ACCENT } else { TEXT_DIM },
                     name,
                     0.0,
@@ -322,37 +414,58 @@ impl PaintOverlay {
                 if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                     chrome_click = Some((key, name.clone()));
                 }
-                tx += tw + 2.0 * s;
             }
             if let Some(status) = &strip.status {
-                let status_w = text_width(ui, font_sz, status);
-                dl.add_text_with_font(
-                    font,
-                    font_sz,
-                    [toggle[0] - status_w - pad, mid - font_sz * 0.35],
-                    STATUS_FG,
-                    status,
-                    0.0,
-                    None,
-                );
+                if seg.status.w > 0.0 {
+                    let slot_x = x + seg.status.x;
+                    let clipped = clip_text_to_width(ui, font_sz, status, seg.status.w);
+                    let draw_w = text_width(ui, font_sz, &clipped);
+                    let status_x = slot_x + (seg.status.w - draw_w).max(0.0);
+                    let _status_clip = dl.push_clip_rect(
+                        [slot_x, y],
+                        [slot_x + seg.status.w, y + header_h],
+                        true,
+                    );
+                    dl.add_text_with_font(
+                        font,
+                        font_sz,
+                        [status_x, text_y],
+                        STATUS_FG,
+                        &clipped,
+                        0.0,
+                        None,
+                    );
+                    #[cfg(test)]
+                    if !clipped.is_empty() {
+                        self.strip_status_label_rect =
+                            Some([status_x, text_y, status_x + draw_w, text_y + font_sz]);
+                    }
+                }
             }
-            let brand = strip
-                .brand
-                .as_deref()
-                .or(paint.title.as_deref())
-                .unwrap_or("");
             if !brand.is_empty() {
+                let slot_x = x + seg.brand.x;
                 let brand_w = text_width(ui, font_sz, brand);
+                let brand_x = slot_x + (seg.brand.w - brand_w).max(0.0);
+                let _brand_clip = dl.push_clip_rect(
+                    [slot_x, y],
+                    [slot_x + seg.brand.w, y + header_h],
+                    true,
+                );
                 dl.add_text_with_font(
                     font,
                     font_sz,
-                    [toggle[0] - brand_w - pad * 2.0, mid - font_sz * 0.35],
+                    [brand_x, text_y],
                     ACCENT,
                     brand,
                     0.0,
                     None,
                 );
                 self.lines.push(brand.to_string());
+                #[cfg(test)]
+                {
+                    self.strip_brand_label_rect =
+                        Some([brand_x, text_y, brand_x + brand_w, text_y + font_sz]);
+                }
             }
             dl.add_text_with_font(
                 font,
@@ -1182,7 +1295,7 @@ mod tests {
         assert!(half_hit[3] <= half_chat[1] + half_chat[3] + 0.5);
     }
 
-    fn jive_strip_paint() -> ScriptPaint {
+    fn jive_strip_paint(status: &str) -> ScriptPaint {
         ScriptPaint {
             title: Some("JiveCrafting".into()),
             generation: 3,
@@ -1190,11 +1303,73 @@ mod tests {
                 id: "k".into(),
                 names: vec!["Statistics".into(), "Options".into()],
                 selected: "Statistics".into(),
-                status: Some("ok".into()),
+                status: Some(status.into()),
                 brand: Some("JiveCrafting".into()),
             }),
             lines: vec!["Overview row".into()],
             ..Default::default()
+        }
+    }
+
+    fn label_rects_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+        a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+    }
+
+    fn frame_strip_fixture(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        p: &ScriptPaint,
+        min: [f32; 2],
+        size: [f32; 2],
+    ) {
+        prepare_frame(ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(p), min, size);
+                });
+        }
+        ctx.render();
+    }
+
+    #[test]
+    fn strip_segments_reserves_brand_before_toggle() {
+        let seg = super::strip_segments(506.0, &[60.0, 50.0], 90.0, 8.0);
+        assert!(seg.status.w > 0.0);
+        assert_eq!(seg.brand.x + seg.brand.w, 506.0 - 8.0);
+        let tight = super::strip_segments(253.0, &[30.0, 25.0], 45.0, 4.0);
+        assert!(tight.brand.x >= tight.status.x);
+    }
+
+    #[test]
+    fn strip_status_brand_label_rects_disjoint_native_and_half_grid() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        for status in ["ok", "banking supplies run"] {
+            for (min, size) in [([10.0, 20.0], [765.0, 503.0]), ([0.0, 0.0], [382.5, 251.5])] {
+                let mut overlay = PaintOverlay::new();
+                let p = jive_strip_paint(status);
+                frame_strip_fixture(&mut ctx, &mut overlay, &p, min, size);
+                let status_rect = overlay
+                    .strip_status_label_rect
+                    .expect("status label rect");
+                let brand_rect = overlay.strip_brand_label_rect.expect("brand label rect");
+                assert!(
+                    !label_rects_overlap(status_rect, brand_rect),
+                    "status {status:?} overlaps brand at scale {size:?}: {status_rect:?} vs {brand_rect:?}"
+                );
+                for (_key, _name, hit) in &overlay.chrome_hits {
+                    assert!(
+                        hit[2] <= brand_rect[0] + 0.5,
+                        "tab hit must stay left of brand: {hit:?} brand_x={}",
+                        brand_rect[0]
+                    );
+                }
+            }
         }
     }
 
@@ -1203,7 +1378,7 @@ mod tests {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         let mut overlay = PaintOverlay::new();
-        let p = jive_strip_paint();
+        let p = jive_strip_paint("ok");
         let half = [382.5_f32, 251.5];
         prepare_frame(&mut ctx);
         {
