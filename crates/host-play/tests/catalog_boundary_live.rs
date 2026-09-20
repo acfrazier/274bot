@@ -9494,6 +9494,105 @@ export default class NativeStop extends LoopingBot {{
         observation
     }
 
+    #[test]
+    fn combat_bank_restock_requires_same_session_pack_gain_and_loaded_bank_decrease() {
+        let case = CoreCase::GreenDragonBankPrepared;
+        let spec = combat_spec(case).expect("prepared GreenDragon combat spec");
+        let bank = combat_bank_spec(case).expect("prepared GreenDragon bank spec");
+
+        let observe_candidate = |baseline_bank: &[(i32, i32)],
+                                 candidate_food: i32,
+                                 candidate_bank_food: i32,
+                                 candidate_generation: u64,
+                                 candidate_loaded: bool| {
+            // The live baseline deliberately has no loaded bank rows even
+            // though the native seed has stocked the server-side bank.
+            let baseline = bank_obs(
+                case,
+                GREEN_DRAGON_FIELD,
+                &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+                baseline_bank,
+                &[("strength", 0)],
+                &[],
+                false,
+                None,
+                0,
+                false,
+            );
+            let deposited = bank_obs(
+                case,
+                GREEN_DRAGON_BANK,
+                &[(LOBSTER_ID, 25)],
+                &[
+                    (LOBSTER_ID, 40),
+                    (DRAGON_BONES_ID, 1),
+                    (GREEN_DRAGONHIDE_ID, 2),
+                ],
+                &[("strength", 40)],
+                &[],
+                false,
+                None,
+                1,
+                true,
+            );
+            let mut candidate = bank_obs(
+                case,
+                GREEN_DRAGON_BANK,
+                &[(LOBSTER_ID, candidate_food)],
+                &[
+                    (LOBSTER_ID, candidate_bank_food),
+                    (DRAGON_BONES_ID, 1),
+                    (GREEN_DRAGONHIDE_ID, 2),
+                ],
+                &[("strength", 40)],
+                &[],
+                false,
+                None,
+                candidate_generation,
+                true,
+            );
+            candidate.bank_loaded = candidate_loaded;
+
+            let mut cycle = CombatBankCycle::default();
+            cycle.observe(spec, bank, &baseline, &deposited);
+            assert!(
+                cycle.banked.is_some(),
+                "fresh loaded deposit is captured first"
+            );
+            cycle.observe(spec, bank, &baseline, &candidate);
+            cycle
+        };
+
+        let hidden_seed = observe_candidate(&[], 27, 38, 1, true);
+        assert!(
+            hidden_seed.restocked,
+            "a real withdrawal must qualify when the pre-Start bank was unloaded"
+        );
+
+        let loaded_baseline = observe_candidate(&[(LOBSTER_ID, 40)], 27, 38, 1, true);
+        assert!(
+            loaded_baseline.restocked,
+            "the existing loaded-baseline withdrawal remains accepted"
+        );
+
+        assert!(
+            !observe_candidate(&[], 27, 40, 1, true).restocked,
+            "pack gain without a decrease from the captured bank stock is not a withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 25, 38, 1, true).restocked,
+            "bank decrease without a pack gain is not a withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 27, 38, 2, true).restocked,
+            "a later bank generation cannot prove the captured session's withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 27, 38, 1, false).restocked,
+            "unloaded bank rows cannot prove a withdrawal"
+        );
+    }
+
     /// Every bank cell has to execute its card's own trip: the pack stock that
     /// belongs in the bank actually lands there, the card's restock line is met
     /// from that bank's own stock, the modal closes on a later session, the trip

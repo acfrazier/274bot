@@ -54,6 +54,14 @@ const COMBAT_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(300);
 /// combat receipts run near two dirty increments/second; 750 keeps the named
 /// 300s wall as the controlling bound instead of the ordinary 150-dirty arm.
 const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
+/// Measured GreenDragon pressure reached its loaded deposit 268s after the
+/// post-Start baseline, before the roughly 320-tile return and resumed combat.
+const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
+/// FireGiant adds the source's barrel exit, 118-tile bank leg, longer
+/// bank-to-Waterfall re-entry, obstacle sequence, and resumed combat.
+const FIRE_GIANT_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
+/// Keep the same 2.5 dirty increments/second allowance as the 300s/750 arm.
+const BANK_QUALIFICATION_WATCH_TICKS: u32 = 1500;
 pub(crate) const RUNE_SCIMITAR_ID: i32 = 1333;
 pub(crate) const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 const DEFENCE_STAT: i32 = 1;
@@ -941,15 +949,19 @@ fn prepared_combat_core_scenario(
     scenario
 }
 
-fn apply_combat_qualification_budget(scenario: &mut Scenario) {
-    scenario.settings.deadline = COMBAT_QUALIFICATION_DEADLINE;
+fn apply_combat_qualification_budget(
+    scenario: &mut Scenario,
+    deadline: Duration,
+    watch_ticks: u32,
+) {
+    scenario.settings.deadline = deadline;
     let start = scenario
         .steps
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("combat qualification has a Start step");
     for step in &mut scenario.steps[start + 1..] {
-        step.wait.budget_ticks = step.wait.budget_ticks.max(COMBAT_QUALIFICATION_WATCH_TICKS);
+        step.wait.budget_ticks = step.wait.budget_ticks.max(watch_ticks);
     }
 }
 
@@ -2081,7 +2093,11 @@ fn green_dragon_special_scenario_with_preparation(
         ],
     );
     if preparation.is_some() {
-        apply_combat_qualification_budget(&mut scenario);
+        apply_combat_qualification_budget(
+            &mut scenario,
+            COMBAT_QUALIFICATION_DEADLINE,
+            COMBAT_QUALIFICATION_WATCH_TICKS,
+        );
     }
     scenario
 }
@@ -2197,7 +2213,11 @@ fn green_dragon_potions_scenario_with_preparation(
         ],
     );
     if preparation.is_some() {
-        apply_combat_qualification_budget(&mut scenario);
+        apply_combat_qualification_budget(
+            &mut scenario,
+            COMBAT_QUALIFICATION_DEADLINE,
+            COMBAT_QUALIFICATION_WATCH_TICKS,
+        );
     }
     scenario
 }
@@ -2814,6 +2834,8 @@ fn remaining_prepared_combat_bank_scenario(
     bank_alias: &'static str,
     bank_food_count: i32,
     prepared_level: i32,
+    deadline: Duration,
+    watch_ticks: u32,
     watches: &[(&'static str, Proof)],
 ) -> Scenario {
     let mut scenario = combat_bank_scenario_with_preparation(
@@ -2839,7 +2861,7 @@ fn remaining_prepared_combat_bank_scenario(
             wear: TIER40_RUNE_ARMOUR_WEAR,
         }),
     );
-    apply_combat_qualification_budget(&mut scenario);
+    apply_combat_qualification_budget(&mut scenario, deadline, watch_ticks);
     scenario
 }
 
@@ -3448,6 +3470,8 @@ pub(crate) fn green_dragon_bank_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
+        GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE,
+        BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch earned dragon bones or hide enter a fresh Edgeville bank",
@@ -3617,6 +3641,8 @@ pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
         "lobster",
         40,
         REMAINING_COMBAT_PREPARED_LEVEL,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch Magic XP from the prepared Varrock teleport after Start",
@@ -3847,6 +3873,8 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
+        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch the prepared barrel wash-up before the bank walk",

@@ -5684,8 +5684,9 @@ impl CombatBankCycle {
         if let Some(banked) = &self.banked {
             if let Some(food) = bank.restock {
                 self.restocked |= open
+                    && now.bank_generation == banked.bank_generation
                     && now.item_id(food) > self.food_at_deposit
-                    && now.bank_item_id(food) < baseline.bank_item_id(food);
+                    && now.bank_item_id(food) < banked.bank_item_id(food);
             }
             self.closed |=
                 !now.bank_open && !now.bank_loaded && now.bank_generation > banked.bank_generation;

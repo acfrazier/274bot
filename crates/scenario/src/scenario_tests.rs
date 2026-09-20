@@ -2648,10 +2648,15 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
+        let (deadline_secs, min_watch_ticks) = match name {
+            "green_dragon_bank_prepared" => (600, 1500),
+            "fire_giant_bank_prepared" => (600, 1500),
+            _ => (300, 750),
+        };
         assert_eq!(
             scenario.settings.deadline,
-            Duration::from_secs(300),
-            "{name}: combat/travel qualification wall budget"
+            Duration::from_secs(deadline_secs),
+            "{name}: named combat/travel qualification wall budget"
         );
         assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
         let start = scenario
@@ -2680,8 +2685,8 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         assert!(
             scenario.steps[start + 1..]
                 .iter()
-                .all(|step| step.wait.budget_ticks >= 750),
-            "{name}: post-Start dirty budgets must not pre-empt the 300s wall"
+                .all(|step| step.wait.budget_ticks >= min_watch_ticks),
+            "{name}: post-Start dirty budgets must not pre-empt the named wall"
         );
     }
 
