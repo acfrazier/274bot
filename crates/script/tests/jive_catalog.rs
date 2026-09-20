@@ -10,10 +10,10 @@ use script::load::first_unloadable_for_card;
 use script::{CacheMeta, JsCache, JsLibrary, LoadIsolate, ScriptKind, ScriptSource};
 
 fn frozen_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../.superpowers/release-0.1.8/reference/rs2b0t-beecd9126b")
-        .canonicalize()
-        .expect("frozen rs2b0t-beecd9126b")
+    let root =
+        PathBuf::from(std::env::var_os("RS2B0T").expect("set absolute RS2B0T for catalog checks"));
+    assert!(root.is_absolute(), "RS2B0T must be an absolute source path");
+    root.canonicalize().expect("RS2B0T source directory")
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -125,6 +125,7 @@ fn card_path(root: &Path, folder: &str, file: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires an external rs2b0t checkout via absolute RS2B0T"]
 fn first_unloadable_jive_crafting_and_enchanter_none() {
     let root = frozen_root();
     let crafting = card_path(&root, "JiveCrafting", "JiveCrafting.ts");
@@ -145,6 +146,7 @@ fn first_unloadable_jive_crafting_and_enchanter_none() {
 }
 
 #[test]
+#[ignore = "requires an external rs2b0t checkout via absolute RS2B0T"]
 fn jive_chests_first_leftover_is_not_jive_js() {
     let root = frozen_root();
     let chests = card_path(&root, "JiveChests", "JiveChests.ts");
@@ -197,6 +199,7 @@ fn spawn_frozen_card(name: &str) -> (LoadIsolate, serde_json::Map<String, serde_
 }
 
 #[test]
+#[ignore = "requires an external rs2b0t checkout via absolute RS2B0T"]
 fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
     let (iso, bag) = spawn_frozen_card("JiveCrafting");
     assert_eq!(
@@ -280,6 +283,7 @@ fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
 }
 
 #[test]
+#[ignore = "requires an external rs2b0t checkout via absolute RS2B0T"]
 fn jive_enchanter_full_module_onpaint_uses_real_settings_and_select() {
     let (iso, bag) = spawn_frozen_card("JiveEnchanter");
     assert_eq!(
