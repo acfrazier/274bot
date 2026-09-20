@@ -160,7 +160,10 @@ enum Phase {
 enum WalkSettle {
     Pending,
     Arrived,
-    Miss,
+    /// `walk_wait` settled false: matched `walk_outcome_failed` for this request.
+    Failed,
+    /// Reach 90s bound elapsed while `walk_wait` is still pending.
+    Timeout,
 }
 
 struct ReachRuntime {
@@ -439,7 +442,8 @@ fn next(token: u64) -> Value {
 fn walk_step(rt: &mut ReachRuntime, obs: &Observation) -> Value {
     match walk_settle(rt) {
         WalkSettle::Pending => rt.wait(),
-        WalkSettle::Arrived | WalkSettle::Miss => match rt.phase {
+        WalkSettle::Failed if rt.phase == Phase::Clear => rt.finish("unreachable", None),
+        WalkSettle::Arrived | WalkSettle::Failed | WalkSettle::Timeout => match rt.phase {
             Phase::CloseIn => rt.finish("retry", None),
             Phase::WalkStand | Phase::Clear => match talk_target(&obs.npcs, &rt.npc_name) {
                 Some(npc) => {
@@ -544,10 +548,10 @@ fn walk_settle(rt: &ReachRuntime) -> WalkSettle {
         {
             WalkSettle::Arrived
         } else {
-            WalkSettle::Miss
+            WalkSettle::Failed
         }
     } else if rt.bound_reached() {
-        WalkSettle::Miss
+        WalkSettle::Timeout
     } else {
         WalkSettle::Pending
     }
@@ -1083,6 +1087,60 @@ mod tests {
         let done = next_token(&talk_again);
         assert_eq!(done["status"], "unreachable");
         assert_ne!(done["kind"], "walk-near");
+    }
+
+    #[test]
+    fn clear_correlated_fail_is_unreachable_without_another_talk() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let talk = begin_named("Traiborn", 5, 5, None);
+        let fresh = [ChatLineInput {
+            seq: 8,
+            text: "I can't reach that!",
+            type_: 0,
+            username: None,
+        }];
+        snap.tick = 2;
+        snap.chat_lines = &fresh;
+        observe(&snap, NativeFactsInput::default());
+        let clear = next_token(&talk);
+        assert_eq!(clear["kind"], "walk-near");
+        let request_id = clear["request_id"].as_u64().unwrap();
+        snap.tick = 3;
+        observe(&snap, fail_native(request_id, 8, 5, 1));
+        let step = next_token(&clear);
+        assert_eq!(step["status"], "unreachable");
+        assert_ne!(step["kind"], "npc", "correlated Clear fail must not Talk again");
+    }
+
+    #[test]
+    fn clear_caller_timeout_still_talks_once() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let talk = begin_named("Traiborn", 5, 5, None);
+        let fresh = [ChatLineInput {
+            seq: 8,
+            text: "I can't reach that!",
+            type_: 0,
+            username: None,
+        }];
+        snap.tick = 2;
+        snap.chat_lines = &fresh;
+        observe(&snap, NativeFactsInput::default());
+        let clear = next_token(&talk);
+        assert_eq!(clear["kind"], "walk-near");
+        expire_deadline_for_test();
+        let step = next_token(&clear);
+        assert_eq!(step["kind"], "npc");
+        assert_ne!(step["status"], "unreachable");
     }
 
     #[test]

@@ -440,6 +440,47 @@ fn one_clear_walk_then_second_cant_reach_is_unreachable() {
 }
 
 #[test]
+fn clear_correlated_fail_is_unreachable_without_another_npc() {
+    let iso = spawn(NPC_DIALOG);
+    let actions = ["Talk-to".to_string()];
+    let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts().len(), 1);
+    let first = [ChatLineInput {
+        seq: 8,
+        text: "I can't reach that!",
+        type_: 0,
+        username: None,
+    }];
+    snap.tick = 2;
+    snap.chat_lines = &first;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let request_id = match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 8,
+            z: 5,
+            radius: 1,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("expected Clear walk-near, got {other:?}"),
+    };
+    snap.tick = 3;
+    post_native(&iso, &snap, fail_native(request_id, 8, 5, 1));
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "Clear correlated fail must not emit another npc"
+    );
+    iso.join();
+}
+
+#[test]
 fn nearest_same_name_talk_uses_posted_index() {
     let iso = spawn(NPC_DIALOG);
     let actions = ["Talk-to".to_string()];
