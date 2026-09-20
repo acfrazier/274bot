@@ -1769,10 +1769,13 @@ fn scan_key_options(
                     .map(|(vals, _)| vals)
                     .unwrap_or_default();
             }
-            if leftover.starts_with('(') {
-                if ident == "presetBuyableNames" {
+            if ident == "presetBuyableNames" {
+                if take_empty_call_expression(leftover).is_some() {
                     return resolve_preset_buyable_names(file_src, sources).unwrap_or_default();
                 }
+                return Vec::new();
+            }
+            if leftover.starts_with('(') {
                 return Vec::new();
             }
             if leftover.starts_with('.') {
@@ -1969,7 +1972,10 @@ fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String, bool)> {
         let wrap_end = find_matching_bracket(inner, '[', ']')?;
         let inside = inner[1..wrap_end].trim_start();
         let inside = inside.strip_prefix("...")?.trim_start();
-        let (items, _) = take_ident(inside)?;
+        let (items, after_items) = take_ident(inside)?;
+        if !after_items.trim().is_empty() {
+            return None;
+        }
         (items.to_string(), &inner[wrap_end + 1..])
     } else {
         let (items, after) = take_ident(inner)?;
@@ -1984,10 +1990,16 @@ fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String, bool)> {
     inner = inner.strip_prefix('.')?.trim_start();
     inner = inner.strip_prefix("map")?.trim_start();
     inner = inner.strip_prefix('(')?.trim_start();
-    inner = inner.strip_prefix('(').unwrap_or(inner).trim_start();
-    let (param, after) = take_ident(inner)?;
-    inner = after.trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    let (param, after) = if let Some(after_paren) = inner.strip_prefix('(') {
+        let after_paren = after_paren.trim_start();
+        let (param, after) = take_ident(after_paren)?;
+        let after = after.trim_start().strip_prefix(')')?.trim_start();
+        (param, after)
+    } else {
+        let (param, after) = take_ident(inner)?;
+        (param, after.trim_start())
+    };
+    inner = after;
     inner = inner.strip_prefix("=>")?.trim_start();
     let (recv, after) = take_ident(inner)?;
     if recv != param {
@@ -1996,9 +2008,11 @@ fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String, bool)> {
     inner = after.trim_start();
     inner = inner.strip_prefix('.')?.trim_start();
     inner = inner.strip_prefix("key")?.trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
-    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    inner = inner.strip_prefix(')')?.trim_start();
     if !inner.is_empty() {
+        return None;
+    }
+    if !value_expression_complete(&s[end + 1..]) {
         return None;
     }
     Some((prefix, items, sort_keys_by_label))
@@ -2009,12 +2023,11 @@ fn skip_bounded_alch_label_sort(after: &str) -> Option<&str> {
     let rest = after.strip_prefix('.')?.trim_start();
     let rest = rest.strip_prefix("sort")?.trim_start();
     let rest = rest.strip_prefix('(')?.trim_start();
-    let rest = rest.strip_prefix('(').unwrap_or(rest).trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
     let (a, rest) = take_ident(rest)?;
     let rest = rest.trim_start().strip_prefix(',')?.trim_start();
     let (b, rest) = take_ident(rest)?;
-    let rest = rest.trim_start();
-    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
+    let rest = rest.trim_start().strip_prefix(')')?.trim_start();
     let rest = rest.strip_prefix("=>")?.trim_start();
     let (lhs, rest) = take_ident(rest)?;
     if lhs != a {
@@ -2034,9 +2047,34 @@ fn skip_bounded_alch_label_sort(after: &str) -> Option<&str> {
     if cmp_recv != b || cmp_field != "label" {
         return None;
     }
-    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
-    let rest = rest.strip_prefix(')').unwrap_or(rest).trim_start();
+    let rest = rest.strip_prefix(')')?.trim_start();
+    let rest = rest.strip_prefix(')')?.trim_start();
     Some(rest)
+}
+
+/// `presetBuyableNames()` with no args and no trailing expression suffix.
+fn take_empty_call_expression(after: &str) -> Option<&str> {
+    let rest = after.trim_start().strip_prefix('(')?.trim_start();
+    let rest = rest.strip_prefix(')')?;
+    if value_expression_complete(rest) {
+        Some(rest)
+    } else {
+        None
+    }
+}
+
+/// Remainder after a finished value: empty, terminator, or the next declaration.
+fn value_expression_complete(after: &str) -> bool {
+    let rest = after.trim_start();
+    if rest.is_empty() || rest.starts_with(';') || rest.starts_with(',') || rest.starts_with('}') {
+        return true;
+    }
+    rest.starts_with("export")
+        || rest.starts_with("const ")
+        || rest.starts_with("function ")
+        || rest.starts_with("let ")
+        || rest.starts_with("var ")
+        || rest.starts_with("import")
 }
 
 struct ShopDbRecord {
@@ -2074,28 +2112,38 @@ fn resolve_preset_buyable_names(
     Some(names.into_iter().collect())
 }
 
+const SHOP_DB_SOURCE_KEYS: [&str; 2] = ["./src/bot/data/shopdb.ts", "./src/bot/data/shopdb.js"];
+
+/// Load `SHOP_DB` from the registered catalog root at the known data path.
+pub(crate) fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, root: &Path) {
+    let ts = root.join("src/bot/data/shopdb.ts");
+    let js = root.join("src/bot/data/shopdb.js");
+    let text = std::fs::read_to_string(&ts)
+        .ok()
+        .or_else(|| std::fs::read_to_string(&js).ok());
+    let Some(text) = text else {
+        return;
+    };
+    sources
+        .entry(SHOP_DB_SOURCE_KEYS[0].into())
+        .or_insert_with(|| text.clone());
+    sources.entry(SHOP_DB_SOURCE_KEYS[1].into()).or_insert(text);
+}
+
 fn shop_db_source_text(sources: Option<&HashMap<String, String>>, file_src: &str) -> Option<String> {
     if let Some(map) = sources {
-        for (path, text) in map {
-            if path.contains("shopdb") {
-                return Some(text.clone());
+        for key in SHOP_DB_SOURCE_KEYS {
+            if let Some(text) = lookup_source(map, key) {
+                return Some(text);
             }
         }
+        if const_eq_rhs(file_src, "SHOP_DB").is_some() {
+            return Some(file_src.to_string());
+        }
+        return None;
     }
     if const_eq_rhs(file_src, "SHOP_DB").is_some() {
         return Some(file_src.to_string());
-    }
-    if let Ok(root) = std::env::var("RS2B0T") {
-        let path = PathBuf::from(root).join("src/bot/data/shopdb.ts");
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            return Some(text);
-        }
-    }
-    if let Some(root) = rs2b0t_root() {
-        let path = root.join("src/bot/data/shopdb.ts");
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            return Some(text);
-        }
     }
     None
 }
@@ -2115,7 +2163,7 @@ fn parse_shop_db_records(src: &str) -> Option<Vec<ShopDbRecord>> {
             continue;
         }
         let Some((_, key_end)) = scan_quoted(rest) else {
-            break;
+            return None;
         };
         let after_key = &rest[key_end..];
         let after_colon = after_key.trim_start().strip_prefix(':')?.trim_start();
@@ -2648,6 +2696,207 @@ export const SETTINGS = {
             items.options
         );
         assert!(items.item_option_spec.is_none());
+    }
+
+    #[test]
+    fn unsupported_alch_wrapper_shapes_stay_unresolved() {
+        let fodder = r#"
+const ALCH_RATE = 0.6;
+const FODDER = [{ obj: 'maple_longbow' }, { obj: 'yew_longbow', label: 'Yew longbow' }];
+export const CUSTOM_ALCH_KEY = 'custom';
+export const ALCH_ITEMS = FODDER.flatMap(({ obj, label }) => {
+    const rec = ITEM_DB.find(r => r.obj === obj);
+    return rec ? [{ key: obj, id: rec.id, name: rec.name, label: label ?? rec.name, alchValue: Math.floor(rec.cost * ALCH_RATE) }] : [];
+}).sort((a, b) => b.alchValue - a.alchValue);
+"#;
+        let filter = format!(
+            r#"{fodder}
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...[...ALCH_ITEMS.filter(x => true)].sort((a,b)=>a.label.localeCompare(b.label)).map(i=>i.key)];
+export const SETTINGS = {{
+    items: {{ type: 'string[]', default: [], options: ALCH_OPTIONS }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&filter);
+        let items = setting(&schema, "items");
+        assert!(items.options.is_empty());
+        assert!(
+            items.item_option_spec.is_none(),
+            "filter remainder must not parse as ALCH_ITEMS: {:?}",
+            items.item_option_spec
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+
+        let concat = format!(
+            r#"{fodder}
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...[...ALCH_ITEMS].sort((a,b)=>a.label.localeCompare(b.label)).map(i=>i.key)].concat(evil);
+export const SETTINGS = {{
+    items: {{ type: 'string[]', default: [], options: ALCH_OPTIONS }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&concat);
+        let items = setting(&schema, "items");
+        assert!(
+            items.item_option_spec.is_none(),
+            "trailing .concat must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+    }
+
+    #[test]
+    fn preset_buyable_names_requires_empty_call_and_full_expression() {
+        let db = r#"
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Vial of water"}]}
+};
+"#;
+        let args = format!(
+            r#"{db}
+export const SETTINGS = {{
+    buyItems: {{ type: 'string[]', default: [], options: presetBuyableNames(x) }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&args);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "presetBuyableNames(x) must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+
+        let concat = format!(
+            r#"{db}
+export const SETTINGS = {{
+    buyItems: {{ type: 'string[]', default: [], options: presetBuyableNames().concat(x) }},
+    later: {{ type: 'string', options: ['KeepMe'] }}
+}};
+"#
+        );
+        let schema = settings_schema_from_source(&concat);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "presetBuyableNames().concat must stay unresolved"
+        );
+        assert_eq!(setting(&schema, "later").options, ["KeepMe"]);
+    }
+
+    #[test]
+    fn incomplete_shop_db_parse_stays_empty() {
+        let src = r#"
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Vial of water"}]},
+    junk
+};
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let schema = settings_schema_from_source(src);
+        assert!(
+            setting(&schema, "buyItems").options.is_empty(),
+            "partial SHOP_DB must not publish a keeper union"
+        );
+    }
+
+    #[test]
+    fn shop_db_sources_use_explicit_keys_and_never_ambient() {
+        let iso = crate::IsolatedEnv::enter("shopdb-parser-ambient");
+        let foreign = iso.dir.join("foreign-root");
+        std::fs::create_dir_all(foreign.join("src/bot/data")).unwrap();
+        std::fs::write(
+            foreign.join("src/bot/data/shopdb.ts"),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"ZZZ_FOREIGN_TONIC"}]}
+};
+"#,
+        )
+        .unwrap();
+        iso.set_rs2b0t(&foreign);
+        persist_rs2b0t_root(&foreign).expect("persist foreign root");
+
+        let shop = r#"
+import { presetBuyableNames } from './shopPresets.js';
+export const SHOP_PRESETS = [{ label: 'A', keeper: 'Aemad' }];
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() }
+};
+"#;
+        let isolated = settings_schema_from_source(shop);
+        assert!(
+            setting(&isolated, "buyItems").options.is_empty(),
+            "source-only parse must not read ambient shopdb: {:?}",
+            setting(&isolated, "buyItems").options
+        );
+
+        let mut empty = HashMap::new();
+        empty.insert("./ShopBuyout/ShopBuyout.js".into(), shop.to_string());
+        let cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &empty,
+        )
+        .expect("partial sources parse");
+        assert!(
+            setting(&cards[0].settings_schema, "buyItems")
+                .options
+                .is_empty(),
+            "Some(partial) must not borrow another catalog: {:?}",
+            setting(&cards[0].settings_schema, "buyItems").options
+        );
+
+        let mut decoy = empty.clone();
+        decoy.insert(
+            "./injected/shopdb-extra.ts".into(),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Wrong Name"}]}
+};
+"#
+            .into(),
+        );
+        let decoy_cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &decoy,
+        )
+        .expect("decoy sources parse");
+        assert!(
+            setting(&decoy_cards[0].settings_schema, "buyItems")
+                .options
+                .is_empty(),
+            "contains(shopdb) first-hit must not select a non-explicit key"
+        );
+
+        let mut exact = empty;
+        exact.insert(
+            "./src/bot/data/shopdb.ts".into(),
+            r#"export const SHOP_DB = {
+    "adventurershop": {"keepers":["Aemad"],"items":[{"name":"Right Name"}]}
+};
+"#
+            .into(),
+        );
+        let exact_cards = parse_registry_with_sources(
+            r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: () => new ShopBuyout() });
+"#,
+            &exact,
+        )
+        .expect("exact shopdb key parses");
+        assert_eq!(
+            setting(&exact_cards[0].settings_schema, "buyItems").options,
+            ["Right Name"]
+        );
     }
 
     /// Bounded frozen same-dir walk. Not UI proof. Requires `$RS2B0T`.

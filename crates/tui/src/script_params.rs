@@ -1033,6 +1033,7 @@ mod tests {
                     key: "dragonhide_body".into(),
                     label: Some("Green d'hide body".into()),
                 }],
+                sort_keys_by_label: false,
             }),
         }];
         let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);

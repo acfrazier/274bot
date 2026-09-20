@@ -984,6 +984,51 @@ mod tests {
         assert!(!a.values.iter().any(|k| k == "castlewars_armour_body"));
         assert!(!b.values.iter().any(|k| k == "castlewars_armour_body"));
         assert!(def.options.is_empty());
+        assert!(!def.item_option_spec.as_ref().unwrap().sort_keys_by_label);
+    }
+
+    #[test]
+    fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let spec = ItemOptionSpec {
+            prefix: vec!["custom".into()],
+            candidates: vec![
+                cand("maple_longbow", None),
+                cand("rune_platebody", None),
+                cand("dragonhide_body", Some("Green d'hide body")),
+                cand("not_a_real_selected_item", None),
+            ],
+            sort_keys_by_label: true,
+        };
+        let def = item_def(spec);
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
+        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+        let want_keys = ["custom", "dragonhide_body", "maple_longbow", "rune_platebody"];
+        let want_labels = [
+            "custom",
+            "Green d'hide body",
+            "Maple longbow",
+            "Rune platebody",
+        ];
+        assert_eq!(
+            a.values.iter().map(String::as_str).collect::<Vec<_>>(),
+            want_keys
+        );
+        assert_eq!(
+            a.labels.iter().map(String::as_str).collect::<Vec<_>>(),
+            want_labels
+        );
+        assert_eq!(b.values, a.values);
+        assert_eq!(b.labels, a.labels);
+        assert!(!a.values.iter().any(|k| k == "not_a_real_selected_item"));
+        assert!(!b.values.iter().any(|k| k == "not_a_real_selected_item"));
+        assert_ne!(
+            a.values[1], "rune_platebody",
+            "label sort must not use richest-first"
+        );
     }
 
     #[test]

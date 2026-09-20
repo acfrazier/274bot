@@ -1291,3 +1291,121 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+fn write_shop_catalog(root: &Path, item_name: Option<&str>) {
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("ShopBuyout")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import ShopBuyout, { SETTINGS } from './ShopBuyout/ShopBuyout.js';
+ScriptRegistry.register({
+    name: 'ShopBuyout',
+    settingsSchema: SETTINGS,
+    create: () => new ShopBuyout()
+});
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("ShopBuyout/ShopBuyout.ts"),
+        r#"
+import { SHOP_PRESETS, presetBuyableNames } from './shopPresets.js';
+export const SETTINGS = {
+    buyItems: { type: 'string[]', default: [], options: presetBuyableNames() },
+    later: { type: 'string', options: ['KeepMe'] }
+};
+export default class ShopBuyout extends LoopingBot { override loop() {} }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("ShopBuyout/shopPresets.ts"),
+        r#"
+export const SHOP_PRESETS = [
+    { label: 'A', keeper: 'Aemad' }
+];
+export function presetBuyableNames(): string[] { return []; }
+"#,
+    )
+    .unwrap();
+    if let Some(name) = item_name {
+        std::fs::create_dir_all(root.join("src/bot/data")).unwrap();
+        std::fs::write(
+            root.join("src/bot/data/shopdb.ts"),
+            format!(
+                r#"export const SHOP_DB = {{
+    "adventurershop": {{"keepers":["Aemad"],"items":[{{"name":"{name}"}}]}}
+}};
+"#
+            ),
+        )
+        .unwrap();
+    }
+}
+
+fn shop_buy_items(lib: &JsLibrary) -> &[String] {
+    &lib.get(ScriptSource::Catalog, "ShopBuyout")
+        .expect("ShopBuyout card")
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "buyItems")
+        .expect("buyItems")
+        .options
+}
+
+#[test]
+fn register_rs2b0t_loads_shopdb_from_registered_root() {
+    let iso = script::IsolatedEnv::enter("register-shopdb-root");
+    let intended = iso.dir.join("intended");
+    let ambient = iso.dir.join("ambient");
+    write_shop_catalog(&intended, Some("RootA Elixir"));
+    write_shop_catalog(&ambient, Some("RootB Tonic"));
+    iso.set_rs2b0t(&ambient);
+
+    let dir = scratch("register_shopdb_intended");
+    let mut lib = test_library(&dir);
+    lib.register_rs2b0t(&intended, &dir.join("rs2b0t-path"))
+        .expect("register intended root");
+    let opts = shop_buy_items(&lib);
+    assert_eq!(opts, &["RootA Elixir".to_string()]);
+    assert!(!opts.iter().any(|n| n == "RootB Tonic"));
+}
+
+#[test]
+fn register_rs2b0t_missing_shopdb_stays_empty() {
+    let iso = script::IsolatedEnv::enter("register-shopdb-missing");
+    let intended = iso.dir.join("intended");
+    let ambient = iso.dir.join("ambient");
+    write_shop_catalog(&intended, None);
+    write_shop_catalog(&ambient, Some("RootB Tonic"));
+    iso.set_rs2b0t(&ambient);
+
+    let dir = scratch("register_shopdb_missing");
+    let mut lib = test_library(&dir);
+    lib.register_rs2b0t(&intended, &dir.join("rs2b0t-path"))
+        .expect("register without shopdb");
+    let opts = shop_buy_items(&lib);
+    assert!(
+        opts.is_empty(),
+        "missing registered shopdb must not borrow ambient: {opts:?}"
+    );
+}
+
+#[test]
+fn diff_catalog_loads_shopdb_from_refresh_root() {
+    let iso = script::IsolatedEnv::enter("diff-shopdb-root");
+    let intended = iso.dir.join("intended");
+    let ambient = iso.dir.join("ambient");
+    write_shop_catalog(&intended, Some("RootA Elixir"));
+    write_shop_catalog(&ambient, Some("RootB Tonic"));
+    iso.set_rs2b0t(&ambient);
+
+    let dir = scratch("diff_shopdb_intended");
+    let mut lib = test_library(&dir);
+    let diff = lib.diff_catalog(&intended).expect("diff intended root");
+    lib.apply_catalog_diff(diff);
+    let opts = shop_buy_items(&lib);
+    assert_eq!(opts, &["RootA Elixir".to_string()]);
+    assert!(!opts.iter().any(|n| n == "RootB Tonic"));
+}
