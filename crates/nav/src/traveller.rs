@@ -1763,6 +1763,15 @@ impl FollowRun {
         mut hop: WalkHop,
         here: WorldTile,
     ) -> Poll {
+        // A preceding transport may land directly on this walk's final
+        // tile (cellar shifts can land one tile off their packed `to`).
+        // Complete only on full endpoint equality, including level: an
+        // intermediate/clipped self-aim still has route left to follow.
+        if hop.tiles().last().copied() == Some(here) {
+            fire_leg(options, &hop.leg(), LegPhase::Done);
+            self.leg_index += 1;
+            return Poll::LegDone;
+        }
         if self.hops >= self.max_hops {
             fire_leg(options, &hop.leg(), LegPhase::Failed);
             return Poll::Terminal(TravelOutcome::GaveUp {
@@ -4415,6 +4424,164 @@ mod tests {
             other => panic!("expected Arrived at cellar offset, got {other:?}"),
         }
         assert_eq!(rec.loc_ops, 1, "already-open must not re-click");
+    }
+
+    #[test]
+    fn follow_cellar_offset_completes_finished_walk_then_uses_keyed_door() {
+        let mut c = scene_client();
+        c.map_build_base_x = 3114;
+        c.map_build_base_z = 9848;
+        plant_loc(&mut c, 1755, "Ladder", "Climb-up", 2, 4);
+        plant_inv_item(&mut c, 983);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            build_base: Some((3114, 9848)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let packed_landing = WorldTile {
+            x: 3116,
+            z: 3452,
+            level: 0,
+        };
+        let offset_landing = WorldTile {
+            x: 3116,
+            z: 3451,
+            level: 0,
+        };
+        let mut ladder = trapdoor_edge();
+        ladder.at = WorldTile {
+            x: 3116,
+            z: 9852,
+            level: 0,
+        };
+        ladder.to = packed_landing;
+        ladder.loc_id = 1755;
+        ladder.open_loc_id = None;
+        let door_to = WorldTile {
+            x: 3115,
+            z: 3449,
+            level: 0,
+        };
+        let mut door = door_edge();
+        door.at = WorldTile {
+            x: 3115,
+            z: 3450,
+            level: 0,
+        };
+        door.to = door_to;
+        door.loc_id = 1804;
+        door.option = 0;
+        door.dir = Some(DoorDir::S);
+        door.open_loc_id = Some(1535);
+        door.item_req = vec![(983, 1)];
+        let route = Route {
+            legs: vec![
+                Leg::Transport { edge: ladder },
+                Leg::Walk {
+                    tiles: vec![packed_landing, offset_landing],
+                },
+                Leg::Transport { edge: door },
+            ],
+            dest: door_to,
+            ticks: 4.5,
+        };
+        let mut phases = Vec::new();
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_leg: Some(Box::new(|leg: &Leg, phase: LegPhase| {
+                phases.push((leg.clone(), phase));
+            })),
+            ..TravelOptions::default()
+        };
+
+        let first = t.follow(&mut rec, &snap, route.clone(), &mut options);
+        assert_eq!(
+            first,
+            None,
+            "Climb-up on cellar ladder; scene={:?} driver_base={:?} loc_ops={}",
+            (snap.scene().base_x, snap.scene().base_z),
+            rec.build_base,
+            rec.loc_ops,
+        );
+        assert_eq!(rec.loc_ops, 1, "one ladder interact");
+
+        c.map_build_base_z = 3448;
+        rec.build_base = Some((3114, 3448));
+        plant_loc(&mut c, 1804, "Door", "Open", 1, 2);
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "the offset landing must continue into the keyed door hop"
+        );
+        let run = t.follow.as_ref().expect("follow still settling the door");
+        assert_eq!(run.leg_index, 2, "ladder and completed walk are done");
+        assert_eq!(run.hops, 0, "the completed walk consumes no hop");
+        assert_eq!(rec.walked, Vec::<(i32, i32)>::new(), "no bogus walk send");
+        assert_eq!(rec.loc_uses, 1, "use brass key 983 on door 1804");
+
+        plant_player(&mut c, 1, 1);
+        bump_rebuild(&mut c, &mut snap);
+        let outcome = t.follow(&mut rec, &snap, route, &mut options);
+        assert_eq!(outcome, Some(TravelOutcome::Arrived { at: door_to }));
+        drop(options);
+        assert_eq!(phases.len(), 6, "start/done for all three legs");
+        assert!(matches!(
+            &phases[0],
+            (Leg::Transport { .. }, LegPhase::Start)
+        ));
+        assert!(matches!(
+            &phases[1],
+            (Leg::Transport { .. }, LegPhase::Done)
+        ));
+        assert!(matches!(&phases[2], (Leg::Walk { .. }, LegPhase::Start)));
+        assert!(matches!(&phases[3], (Leg::Walk { .. }, LegPhase::Done)));
+        assert!(matches!(
+            &phases[4],
+            (Leg::Transport { .. }, LegPhase::Start)
+        ));
+        assert!(matches!(
+            &phases[5],
+            (Leg::Transport { .. }, LegPhase::Done)
+        ));
+    }
+
+    #[test]
+    fn follow_does_not_complete_unsent_walk_at_endpoint_on_other_level() {
+        let mut c = scene_client();
+        let snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let here = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let off_level = WorldTile { level: 1, ..here };
+        let route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![here, off_level],
+            }],
+            dest: off_level,
+            ticks: 0.5,
+        };
+        let mut options = TravelOptions::default();
+
+        assert_eq!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Refused {
+                at: here,
+                reason: SendReason::LevelMismatch,
+            }),
+            "matching endpoint coordinates on another level are not complete"
+        );
+        assert!(rec.walked.is_empty(), "no off-level walk is sent");
     }
 
     /// Agility forcemove holds the player after they land on `to`. Completing
@@ -7817,6 +7984,7 @@ mod tests {
         pause_buttons: usize,
         reject_far: bool,
         route: Option<(i32, i32)>,
+        build_base: Option<(i32, i32)>,
         sink: Sink,
     }
 
@@ -7874,7 +8042,7 @@ mod tests {
         }
 
         fn build_base(&self) -> (i32, i32) {
-            (3200, 3200)
+            self.build_base.unwrap_or((3200, 3200))
         }
 
         fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
