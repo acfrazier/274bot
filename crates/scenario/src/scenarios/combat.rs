@@ -57,6 +57,11 @@ const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
 /// Measured GreenDragon pressure reached its loaded deposit 268s after the
 /// post-Start baseline, before the roughly 320-tile return and resumed combat.
 const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
+/// Default-table loot fills more pack slots than the explicit inject sibling;
+/// measured pressure trip + return needs a longer wall while keeping 2.5 dirty/s.
+const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE: Duration =
+    Duration::from_secs(720);
+const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_WATCH_TICKS: u32 = 1800;
 /// The measured GreenDragon teleport/Edgeville/return path predicts 475.2s
 /// including fresh post-return XP and route margin.
 const GREEN_DRAGON_TELE_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(480);
@@ -3728,8 +3733,8 @@ pub(crate) fn green_dragon_bank_default_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
-        GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE,
-        BANK_QUALIFICATION_WATCH_TICKS,
+        GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+        GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_WATCH_TICKS,
         &[
             (
                 "watch earned Dragon bones in pack after the selected defeat",

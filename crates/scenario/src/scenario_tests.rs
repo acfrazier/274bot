@@ -2655,7 +2655,8 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
         let (deadline_secs, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" | "green_dragon_bank_default_prepared" => (600, 1500),
+            "green_dragon_bank_prepared" => (600, 1500),
+            "green_dragon_bank_default_prepared" => (720, 1800),
             "green_dragon_tele_prepared" => (480, 1200),
             "fire_giant_bank_prepared" => (600, 1500),
             _ => (300, 750),
