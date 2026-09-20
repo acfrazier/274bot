@@ -167,6 +167,7 @@ pub fn derive_transports(
     );
     membergate_edges(content_root, &ids, &mut graph, &mut skipped, collision);
     magicguild_door_edges(content_root, &ids, &positions, &mut graph, collision);
+    rangingguild_door_edges(content_root, &ids, &positions, &mut graph);
     ladder_stair_edges(
         content_root,
         &ids,
@@ -264,6 +265,8 @@ pub(crate) const CELLAR_SHIFT: i32 = 6400;
 const SKILL_AGILITY: i32 = 16;
 /// Standard RS2 skill id for Magic (Server `PlayerStat`).
 const SKILL_MAGIC: i32 = 6;
+/// Standard RS2 skill id for Ranged (Server `PlayerStat`).
+const SKILL_RANGED: i32 = 4;
 /// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
 /// a wire-only placeholder that is never indexed into
 /// [`TransportGraph::at`].
@@ -5078,6 +5081,279 @@ fn magicguild_oploc_jumps_to_opener(text: &str) -> bool {
 fn magicguild_opener_jump(rest: &str) -> bool {
     let flat: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
     flat.starts_with(&format!("@{MAGICGUILD_OPEN_LABEL}(")) && flat.ends_with(");")
+}
+
+/// Named Ranging Guild door (`ranging_guild_door`). Not an inherited
+/// closed gate and not a Magic Guild `door_far_side` copy: the 289 opener
+/// is a shape-9 diagonal wall that `~forcemove`s to a stand then
+/// `p_teleport`s relative to that stand. `at` is the origin stand, `to`
+/// the teleport dest; `dir` and `open_loc_id` stay `None` (the 3-tick
+/// `loc_1532` add is visual, not a swing leaf).
+const RANGINGGUILD_DOOR_NAME: &str = "ranging_guild_door";
+const RANGINGGUILD_DOOR_ID: i32 = 2514;
+const RANGINGGUILD_DOOR_SHAPE: i32 = 9; // LocShape::WALL_DIAGONAL
+const RANGINGGUILD_EXIT_HALFPLANE: &str =
+    "coordx(coord)>coordx(loc_coord)|coordz(coord)<coordz(loc_coord)";
+const RANGINGGUILD_EXIT_FORCE: (i32, i32, i32) = (1, 0, -1);
+const RANGINGGUILD_EXIT_TELE: (i32, i32, i32) = (-2, 0, 2);
+const RANGINGGUILD_ENTER_FORCE: (i32, i32, i32) = (-1, 0, 1);
+const RANGINGGUILD_ENTER_TELE: (i32, i32, i32) = (2, 0, -2);
+
+fn rangingguild_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+) {
+    let Some(loc_id) = rangingguild_resolved_loc_id(content_root, ids) else {
+        return;
+    };
+    let Some((exit_force, exit_tele, enter_force, enter_tele)) =
+        rangingguild_parse_opener(content_root)
+    else {
+        return;
+    };
+    let Some(placement) = rangingguild_unique_placement(positions, loc_id) else {
+        return;
+    };
+    let loc = WorldTile {
+        x: placement.x,
+        z: placement.z,
+        level: placement.level,
+    };
+    let enter_at = rangingguild_apply(loc, enter_force);
+    let enter_to = rangingguild_apply(enter_at, enter_tele);
+    let exit_at = rangingguild_apply(loc, exit_force);
+    let exit_to = rangingguild_apply(exit_at, exit_tele);
+    for (at, to, skill_req) in [
+        (enter_at, enter_to, vec![(SKILL_RANGED, 40)]),
+        (exit_at, exit_to, vec![]),
+    ] {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at,
+            to,
+            loc_id,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req,
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        });
+    }
+}
+
+fn rangingguild_resolved_loc_id(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> Option<i32> {
+    let &id = ids.get(RANGINGGUILD_DOOR_NAME)?;
+    if id != RANGINGGUILD_DOOR_ID {
+        return None;
+    }
+    let text = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("minigames")
+            .join("game_ranging")
+            .join("configs")
+            .join("ranging.loc"),
+    )
+    .ok()?;
+    named_loc_has_open(&text, RANGINGGUILD_DOOR_NAME).then_some(id)
+}
+
+fn rangingguild_unique_placement(
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_id: i32,
+) -> Option<&Placement> {
+    let ps = positions.get(&loc_id)?;
+    let [placement] = ps.as_slice() else {
+        return None;
+    };
+    (placement.level == 0
+        && placement.shape == RANGINGGUILD_DOOR_SHAPE
+        && placement.angle == 0)
+        .then_some(placement)
+}
+
+fn rangingguild_apply(tile: WorldTile, (dx, d_level, dz): (i32, i32, i32)) -> WorldTile {
+    WorldTile {
+        x: tile.x + dx,
+        z: tile.z + dz,
+        level: tile.level + d_level,
+    }
+}
+
+fn rangingguild_parse_opener(
+    content_root: &Path,
+) -> Option<((i32, i32, i32), (i32, i32, i32), (i32, i32, i32), (i32, i32, i32))>
+{
+    let script = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("minigames")
+            .join("game_ranging")
+            .join("scripts")
+            .join("ranging_guild_door.rs2"),
+    )
+    .ok()?;
+    let mut blocks = script_blocks(&script)
+        .into_iter()
+        .filter(|(op, name, _)| op == "oploc1" && name == RANGINGGUILD_DOOR_NAME);
+    let (_, _, body) = blocks.next()?;
+    if blocks.next().is_some() {
+        return None;
+    }
+    let body = rangingguild_strip_line_comments(&body);
+    let (cond, exit_arm, enter_arm) = rangingguild_split_leading_if(&body)?;
+    if rangingguild_flatten(&cond) != RANGINGGUILD_EXIT_HALFPLANE {
+        return None;
+    }
+    if rangingguild_flatten(&exit_arm).contains("stat(ranged)") {
+        return None;
+    }
+    if !rangingguild_flatten(&exit_arm).contains("return;") {
+        return None;
+    }
+    let exit_force = rangingguild_unique_delta(&exit_arm, "forcemove", "loc_coord")?;
+    let exit_tele = rangingguild_unique_delta(&exit_arm, "p_teleport", "coord")?;
+    if exit_force != RANGINGGUILD_EXIT_FORCE || exit_tele != RANGINGGUILD_EXIT_TELE {
+        return None;
+    }
+    if rangingguild_stat_ranged_lt(&enter_arm) != Some(40) {
+        return None;
+    }
+    let enter_force = rangingguild_unique_delta(&enter_arm, "forcemove", "loc_coord")?;
+    let enter_tele = rangingguild_unique_delta(&enter_arm, "p_teleport", "coord")?;
+    if enter_force != RANGINGGUILD_ENTER_FORCE || enter_tele != RANGINGGUILD_ENTER_TELE {
+        return None;
+    }
+    Some((exit_force, exit_tele, enter_force, enter_tele))
+}
+
+fn rangingguild_strip_line_comments(text: &str) -> String {
+    let mut out = String::new();
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if !line.is_empty() {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn rangingguild_flatten(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn rangingguild_split_leading_if(text: &str) -> Option<(String, String, String)> {
+    let start = text.find(|c: char| !c.is_whitespace())?;
+    let rest = &text[start..];
+    if !rest.starts_with("if") {
+        return None;
+    }
+    let after_if = start + 2;
+    if let Some(c) = text[after_if..].chars().next() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            return None;
+        }
+    }
+    let paren = text[after_if..]
+        .find('(')
+        .map(|i| after_if + i)?;
+    if !text[after_if..paren].chars().all(char::is_whitespace) {
+        return None;
+    }
+    let cond_close = rangingguild_match(text, paren, '(', ')')?;
+    let after_cond = cond_close + 1;
+    let brace = text[after_cond..]
+        .find('{')
+        .map(|i| after_cond + i)?;
+    if !text[after_cond..brace].chars().all(char::is_whitespace) {
+        return None;
+    }
+    let body_close = rangingguild_match(text, brace, '{', '}')?;
+    Some((
+        text[paren + 1..cond_close].to_string(),
+        text[brace + 1..body_close].to_string(),
+        text[body_close + 1..].to_string(),
+    ))
+}
+
+fn rangingguild_match(text: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, ch) in text[open_idx..].char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(open_idx + i);
+            }
+        }
+    }
+    None
+}
+
+fn rangingguild_unique_delta(arm: &str, name: &str, base: &str) -> Option<(i32, i32, i32)> {
+    let calls = call_args_all(arm, name);
+    if calls.len() != 1 {
+        return None;
+    }
+    let args = &calls[0];
+    if args.len() != 1 {
+        return None;
+    }
+    rangingguild_movecoord_delta(&args[0], base)
+}
+
+fn rangingguild_movecoord_delta(expr: &str, base: &str) -> Option<(i32, i32, i32)> {
+    let args = call_args(expr, "movecoord")?;
+    if args.len() != 4 {
+        return None;
+    }
+    let got = args[0].trim();
+    let got = got.strip_suffix("()").unwrap_or(got);
+    if got != base {
+        return None;
+    }
+    Some((
+        int_or_null(&args[1])?,
+        int_or_null(&args[2])?,
+        int_or_null(&args[3])?,
+    ))
+}
+
+fn rangingguild_stat_ranged_lt(arm: &str) -> Option<i32> {
+    let flat = rangingguild_flatten(arm);
+    let mut rest = flat.as_str();
+    let mut found = None;
+    while let Some((_, after)) = rest.split_once("stat(ranged)<") {
+        if after.starts_with('=') {
+            return None;
+        }
+        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let level: i32 = digits.parse().ok()?;
+        if found.is_some() {
+            return None;
+        }
+        found = Some(level);
+        rest = after;
+    }
+    if flat.matches("stat(ranged)").count() != 1 {
+        return None;
+    }
+    found
 }
 
 fn magicguild_door_open_ids(content_root: &Path, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
@@ -11371,6 +11647,389 @@ if($entering = true & stat(magic) < 66) {
                 Leg::Transport { edge } if edge.loc_id == 1722
             )),
             "bank → shop climbs 1722: {enter:?}"
+        );
+    }
+
+    const RANGINGGUILD_OUTSIDE: WorldTile = WorldTile {
+        x: 2657,
+        z: 3439,
+        level: 0,
+    };
+    const RANGINGGUILD_INSIDE: WorldTile = WorldTile {
+        x: 2659,
+        z: 3437,
+        level: 0,
+    };
+    const RANGINGGUILD_LOC: WorldTile = WorldTile {
+        x: 2658,
+        z: 3438,
+        level: 0,
+    };
+
+    fn write_rangingguild_source(fx: &Fixture, script: &str) {
+        fx.write(
+            "pack/loc.pack",
+            "\
+2514=ranging_guild_door
+1532=loc_1532
+",
+        );
+        fx.write(
+            "scripts/minigames/game_ranging/configs/ranging.loc",
+            "\
+[ranging_guild_door]
+name=Guild door
+desc=The door to the Ranging Guild.
+model=basic_wall
+active=yes
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2",
+            script,
+        );
+    }
+
+    fn write_rangingguild_placement(fx: &Fixture, loc_lines: &str) {
+        fx.write(
+            "maps/m41_53.jm2",
+            &format!(
+                "\
+==== MAP ====
+0 33 47: h1 u50
+0 34 46: h1 u50
+0 35 45: h1 u50
+
+==== LOC ====
+{loc_lines}
+"
+            ),
+        );
+    }
+
+    fn rangingguild_opener_script() -> &'static str {
+        "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    sound_synth(door_open, 1, 0);
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    loc_change(inviswall, 3);
+    loc_add(movecoord($loc_coord, $x, 0, $z), loc_1532, modulo(add($angle, 1), 4), $shape, 3);
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+sound_synth(door_open, 1, 0);
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), loc_1532, modulo(add($angle, 1), 4), $shape, 3);
+p_teleport(movecoord(coord, 2, 0, -2));
+"
+    }
+
+    fn ranging_state(level: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_RANGED, level)]),
+            ..crate::world_state::WorldState::empty()
+        }
+    }
+
+    fn rangingguild_doors(graph: &TransportGraph) -> Vec<&TransportEdge> {
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2514)
+            .collect()
+    }
+
+    fn rangingguild_usable_from<'a>(
+        graph: &'a TransportGraph,
+        stand: WorldTile,
+    ) -> Vec<&'a TransportEdge> {
+        rangingguild_doors(graph)
+            .into_iter()
+            .filter(|e| {
+                e.at.level == stand.level
+                    && (e.at.x - stand.x).abs().max((e.at.z - stand.z).abs()) <= 1
+            })
+            .collect()
+    }
+
+    fn assert_rangingguild_records(graph: &TransportGraph) {
+        let doors = rangingguild_doors(graph);
+        assert_eq!(doors.len(), 2, "exactly the reciprocal pair: {doors:?}");
+        let enter = doors
+            .iter()
+            .find(|e| e.at == RANGINGGUILD_OUTSIDE && e.to == RANGINGGUILD_INSIDE)
+            .unwrap_or_else(|| panic!("enter stand→landing missing: {doors:?}"));
+        let exit = doors
+            .iter()
+            .find(|e| e.at == RANGINGGUILD_INSIDE && e.to == RANGINGGUILD_OUTSIDE)
+            .unwrap_or_else(|| panic!("exit stand→landing missing: {doors:?}"));
+        for (e, skill) in [
+            (*enter, vec![(SKILL_RANGED, 40)]),
+            (*exit, Vec::<(i32, i32)>::new()),
+        ] {
+            assert_eq!(e.option, 1, "{e:?}");
+            assert_eq!(e.ticks, 1, "{e:?}");
+            assert_eq!(e.dir, None, "{e:?}");
+            assert_eq!(e.open_loc_id, None, "visual loc_1532 is not a leaf {e:?}");
+            assert_eq!(e.skill_req, skill, "{e:?}");
+            assert!(
+                e.item_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.varp_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && !e.members_req,
+                "{e:?}"
+            );
+        }
+        assert_ne!(
+            enter.at, RANGINGGUILD_LOC,
+            "at must be the origin stand, not the loc tile"
+        );
+        assert_ne!(exit.at, RANGINGGUILD_LOC);
+    }
+
+    fn derive_rangingguild_fixture(script: &str, loc_lines: &str) -> TransportGraph {
+        let fx = Fixture::new();
+        write_rangingguild_source(&fx, script);
+        write_rangingguild_placement(&fx, loc_lines);
+        let defs = loc_defs(&[(2514, 1, 1), (1532, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2514]));
+        derive_transports(fx.path(), &defs, &wc)
+    }
+
+    /// Named-override diagonal wall: origin stands are the script
+    /// forcemove tiles, landings are the coord-relative teleports, enter
+    /// only carries Ranged 40, and loc_1532 stays a visual.
+    #[test]
+    fn derive_transports_emits_rangingguild_door_stand_teleport_pair() {
+        let graph = derive_rangingguild_fixture(
+            rangingguild_opener_script(),
+            "0 34 46: 2514 9\n",
+        );
+        assert_rangingguild_records(&graph);
+    }
+
+    /// Missing opener, missing/moved 40-check, inverted half-plane,
+    /// changed or swapped offset pairs, commented-out required forms,
+    /// extra contradictory calls, shape 0, angle drift, or a second
+    /// level-0 2514 must emit nothing. Player-relative `p_teleport`
+    /// cannot invent a `to` the way [`parse_landing`] skips it.
+    #[test]
+    fn derive_transports_omits_unproven_rangingguild_door_forms() {
+        let canonical = rangingguild_opener_script();
+        let placement = "0 34 46: 2514 9\n";
+        let cases = [
+            ("missing opener", "", placement),
+            (
+                "missing ranged gate",
+                &canonical.replace("if(stat(ranged) < 40) {\n    return;\n}\n", ""),
+                placement,
+            ),
+            (
+                "gate on exit",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    if(stat(ranged) < 40) {
+        return;
+    }
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "inverted half-plane",
+                &canonical.replace(
+                    "coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)",
+                    "coordx(coord) < coordx(loc_coord) | coordz(coord) > coordz(loc_coord)",
+                ),
+                placement,
+            ),
+            (
+                "swapped forcemove offsets",
+                &canonical
+                    .replace("movecoord(loc_coord, 1, 0, -1)", "TMP_EXIT_FORCEMOVE")
+                    .replace(
+                        "movecoord(loc_coord, -1, 0, 1)",
+                        "movecoord(loc_coord, 1, 0, -1)",
+                    )
+                    .replace("TMP_EXIT_FORCEMOVE", "movecoord(loc_coord, -1, 0, 1)"),
+                placement,
+            ),
+            (
+                "changed teleport offsets",
+                &canonical.replace(
+                    "p_teleport(movecoord(coord, -2, 0, 2))",
+                    "p_teleport(movecoord(coord, 2, 0, -2))",
+                ),
+                placement,
+            ),
+            (
+                "commented forcemove",
+                &canonical.replace(
+                    "~forcemove(movecoord(loc_coord, 1, 0, -1));",
+                    "// ~forcemove(movecoord(loc_coord, 1, 0, -1));",
+                ),
+                placement,
+            ),
+            (
+                "commented ranged gate",
+                &canonical.replace(
+                    "if(stat(ranged) < 40) {\n    return;\n}",
+                    "// if(stat(ranged) < 40) {\n//     return;\n// }",
+                ),
+                placement,
+            ),
+            (
+                "additional contradictory teleport",
+                &canonical.replace(
+                    "p_teleport(movecoord(coord, -2, 0, 2));",
+                    "p_teleport(movecoord(coord, -2, 0, 2));\n    p_teleport(movecoord(coord, 2, 0, -2));",
+                ),
+                placement,
+            ),
+            (
+                "player-relative landing without loc forcemove",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            ("shape 0", canonical, "0 34 46: 2514 0\n"),
+            ("angle change", canonical, "0 34 46: 2514 9 1\n"),
+            (
+                "duplicate level-0 placement",
+                canonical,
+                "0 34 46: 2514 9\n0 35 45: 2514 9\n",
+            ),
+        ];
+        for (label, script, loc_lines) in cases {
+            let graph = derive_rangingguild_fixture(script, loc_lines);
+            assert!(
+                rangingguild_doors(&graph).is_empty(),
+                "{label} must omit 2514, got {:?}",
+                rangingguild_doors(&graph)
+            );
+        }
+    }
+
+    /// Reciprocal stands are Chebyshev 2 apart, so radius 1 admits only
+    /// the hop whose `at` is this stand. A shared `at=loc` pair would
+    /// expose both hops from either landing.
+    #[test]
+    fn rangingguild_door_radius1_admits_only_the_reciprocal_stand() {
+        let graph = derive_rangingguild_fixture(
+            rangingguild_opener_script(),
+            "0 34 46: 2514 9\n",
+        );
+        assert_rangingguild_records(&graph);
+        let from_outside = rangingguild_usable_from(&graph, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside.len(), 1, "{from_outside:?}");
+        assert_eq!(from_outside[0].at, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside[0].to, RANGINGGUILD_INSIDE);
+        assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
+        let from_inside = rangingguild_usable_from(&graph, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside.len(), 1, "{from_inside:?}");
+        assert_eq!(from_inside[0].at, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside[0].to, RANGINGGUILD_OUTSIDE);
+        assert!(from_inside[0].skill_req.is_empty());
+        assert_eq!(
+            (RANGINGGUILD_OUTSIDE.x - RANGINGGUILD_INSIDE.x)
+                .abs()
+                .max((RANGINGGUILD_OUTSIDE.z - RANGINGGUILD_INSIDE.z).abs()),
+            2,
+            "stands must stay outside INTERACT_RADIUS 1 of each other"
+        );
+    }
+
+    #[test]
+    fn derive_transports_rangingguild_door_pair_from_real_content() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        assert_rangingguild_records(graph);
+        let from_outside = rangingguild_usable_from(graph, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside.len(), 1, "{from_outside:?}");
+        assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
+        let from_inside = rangingguild_usable_from(graph, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside.len(), 1, "{from_inside:?}");
+        assert!(from_inside[0].skill_req.is_empty());
+    }
+
+    /// Graph evidence only: Seers → JUDGE_STAND enters through 2514 at
+    /// the outside stand when Ranged is 70; empty / 39 stay NoPath.
+    #[test]
+    fn ranging_guild_seers_judge_route_uses_derived_door() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let Some((graph, wc)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let seers = WorldTile {
+            x: 2722,
+            z: 3493,
+            level: 0,
+        };
+        let judge = WorldTile {
+            x: 2670,
+            z: 3418,
+            level: 0,
+        };
+        let opts = FindOptions {
+            allow_wilderness: true,
+            allow_teleports: false,
+            ..FindOptions::default()
+        };
+        let empty = crate::world_state::WorldState::empty();
+        let low = ranging_state(39);
+        let ok = ranging_state(70);
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &low),
+                Err(RouteError::NoPath)
+            ),
+            "ranged 39 cannot enter"
+        );
+        let enter = find_with(wc, graph, seers, judge, opts, &ok)
+            .unwrap_or_else(|e| panic!("ranged 70 Seers → judge ({e:?})"));
+        assert_eq!(enter.dest, judge);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 2514
+                        && edge.at == RANGINGGUILD_OUTSIDE
+                        && edge.to == RANGINGGUILD_INSIDE
+                        && edge.skill_req == vec![(SKILL_RANGED, 40)]
+                        && edge.dir.is_none()
+                        && edge.open_loc_id.is_none()
+            )),
+            "enter hops 2514 at the outside stand: {enter:?}"
         );
     }
 }
