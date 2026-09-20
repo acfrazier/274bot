@@ -6390,6 +6390,167 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &seeded_newt).is_err());
     }
 
+    #[test]
+    fn prepared_remaining_combat_cases_keep_branch_specific_strict_specs() {
+        let special = CoreCase::parse("green_dragon_special_prepared").unwrap();
+        assert_eq!(special.card_name(), "GreenDragon");
+        let special_spec = combat_spec(special).unwrap();
+        assert_eq!(special_spec.consumable, CombatConsumable::Special);
+        assert_eq!(special_spec.food_count, 12);
+        assert!(combat_bank_spec(special).is_none());
+
+        let potions = CoreCase::parse("green_dragon_potions_prepared").unwrap();
+        assert_eq!(potions.card_name(), "GreenDragon");
+        let potions_spec = combat_spec(potions).unwrap();
+        assert_eq!(potions_spec.consumable, CombatConsumable::Potions);
+        assert_eq!(potions_spec.food_count, 12);
+        assert!(combat_bank_spec(potions).is_none());
+
+        let green_bank = CoreCase::parse("green_dragon_bank_prepared").unwrap();
+        let green_bank_spec = combat_spec(green_bank).unwrap();
+        assert_eq!(green_bank_spec.food_count, 26);
+        assert_eq!(green_bank_spec.loot, CombatLoot::DragonBonesOrHide);
+        let green_trip = combat_bank_spec(green_bank).unwrap();
+        assert!(green_trip.require_combat);
+        assert_eq!(green_trip.deposit, &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID]);
+
+        let tele = CoreCase::parse("green_dragon_tele_prepared").unwrap();
+        let tele_spec = combat_spec(tele).unwrap();
+        assert_eq!(tele_spec.food_count, 0);
+        assert_eq!(tele_spec.loot, CombatLoot::None);
+        let tele_trip = combat_bank_spec(tele).unwrap();
+        assert!(!tele_trip.require_combat);
+        assert!(tele_trip.via_magic);
+        assert_eq!(tele_trip.via, Some(VARROCK_TELE_LAND));
+
+        let fire_bank = CoreCase::parse("fire_giant_bank_prepared").unwrap();
+        assert_eq!(fire_bank.card_name(), "FireGiant");
+        let fire_spec = combat_spec(fire_bank).unwrap();
+        assert_eq!(fire_spec.food_count, 24);
+        assert_eq!(fire_spec.loot, CombatLoot::BigBones);
+        let fire_trip = combat_bank_spec(fire_bank).unwrap();
+        assert!(fire_trip.require_combat);
+        assert_eq!(fire_trip.via, Some(FIRE_GIANT_WASH));
+    }
+
+    #[test]
+    fn prepared_remaining_combat_baselines_fail_closed_on_exact_profile_and_branch_trigger() {
+        let armour = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+        ];
+        let levels = [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ];
+        let mut potions_gear = armour.to_vec();
+        potions_gear.push((DRAGONFIRE_SHIELD_ID, 1));
+        let potions = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, 12),
+                (RUNE_SCIMITAR_ID, 1),
+                (SUPER_ATTACK_3_ID, 1),
+                (SUPER_STRENGTH_3_ID, 1),
+            ],
+            &potions_gear,
+            &[("strength", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &potions).unwrap();
+        let mut missing_potion = potions.clone();
+        missing_potion.item_ids.remove(&SUPER_ATTACK_3_ID);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &missing_potion).is_err()
+        );
+
+        let mut green_gear = armour.to_vec();
+        green_gear.extend([(RUNE_SCIMITAR_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)]);
+        let green_bank = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, 26)],
+            &green_gear,
+            &[("strength", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonBankPrepared, &green_bank).unwrap();
+        let mut seeded_dragon_loot = green_bank.clone();
+        seeded_dragon_loot.item_ids.insert(DRAGON_BONES_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
+        );
+
+        let mut tele_levels = levels.to_vec();
+        tele_levels.push(("magic", 25));
+        let tele = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &green_gear,
+            &[("strength", 0), ("magic", 0)],
+            &tele_levels,
+            &[("hitpoints", 5)],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonTelePrepared, &tele).unwrap();
+        let mut fed = tele.clone();
+        fed.item_ids.insert(LOBSTER_ID, 1);
+        assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fed).is_err());
+        let mut healthy = tele.clone();
+        healthy.effective_levels.insert("hitpoints".into(), 70);
+        assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &healthy).is_err());
+
+        let mut fire_gear = armour.to_vec();
+        fire_gear.push((RUNE_SCIMITAR_ID, 1));
+        let fire_bank = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[(LOBSTER_ID, 24), (GLARIALS_AMULET_ID, 1), (ROPE_ID, 1)],
+            &fire_gear,
+            &[("strength", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::FireGiantBankPrepared, &fire_bank).unwrap();
+        let mut seeded_big_bones = fire_bank.clone();
+        seeded_big_bones.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::FireGiantBankPrepared, &seeded_big_bones).is_err()
+        );
+
+        for (case, baseline) in [
+            (CoreCase::GreenDragonPotionsPrepared, potions),
+            (CoreCase::GreenDragonBankPrepared, green_bank),
+            (CoreCase::GreenDragonTelePrepared, tele),
+            (CoreCase::FireGiantBankPrepared, fire_bank),
+        ] {
+            let mut wrong_level = baseline.clone();
+            wrong_level.levels.insert("defence".into(), 69);
+            assert!(validate_case_baseline(case, &wrong_level).is_err());
+            let mut missing_armour = baseline;
+            missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
+            assert!(validate_case_baseline(case, &missing_armour).is_err());
+        }
+    }
+
     fn combat_npc(
         index: usize,
         name: &str,
@@ -7929,10 +8090,10 @@ export default class NativeStop extends LoopingBot {{
             ],
             &[("strength", 0)],
             &[
-                ("attack", 60),
-                ("strength", 40),
-                ("defence", 40),
-                ("hitpoints", 40),
+                ("attack", 70),
+                ("strength", 70),
+                ("defence", 70),
+                ("hitpoints", 70),
             ],
             &[],
             &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 1000)],
@@ -8008,7 +8169,7 @@ export default class NativeStop extends LoopingBot {{
     }
 
     #[test]
-    fn prepared_special_baseline_is_exact_and_preserves_original_special_profile() {
+    fn prepared_special_baseline_is_exact_and_preserves_original_special_case() {
         let case = CoreCase::GreenDragonSpecialPrepared;
         assert_eq!(
             CoreCase::parse("green_dragon_special_prepared").unwrap(),
@@ -8023,10 +8184,10 @@ export default class NativeStop extends LoopingBot {{
         validate_case_baseline(case, &baseline).unwrap();
 
         for (stat, expected) in [
-            ("attack", 60),
-            ("strength", 40),
-            ("defence", 40),
-            ("hitpoints", 40),
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
         ] {
             for actual in [expected - 1, expected + 1] {
                 let mut wrong = baseline.clone();
@@ -8088,10 +8249,10 @@ export default class NativeStop extends LoopingBot {{
             (RUNE_FULL_HELM_ID, 1),
         ];
         let levels = [
-            ("attack", 60),
-            ("strength", 40),
-            ("defence", 40),
-            ("hitpoints", 40),
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
         ];
         let engaged = branch_obs(
             GREEN_DRAGON_FIELD,

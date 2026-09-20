@@ -41,8 +41,18 @@ const RANGE_AMMO: i32 = 200;
 pub(crate) const ROCK_CRAB_FOOD: i32 = 8;
 const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 const GREEN_DRAGON_FOOD: i32 = 12;
+const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
+const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const FIRE_GIANT_FOOD: i32 = 12;
+const FIRE_GIANT_BANK_PREPARED_FOOD: i32 = 24;
+const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 26;
 pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
+const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
+const COMBAT_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(300);
+/// Runner dirty-snapshot increments, not engine ticks or wall seconds. Live
+/// combat receipts run near two dirty increments/second; 750 keeps the named
+/// 300s wall as the controlling bound instead of the ordinary 150-dirty arm.
+const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
 pub(crate) const RUNE_SCIMITAR_ID: i32 = 1333;
 pub(crate) const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 const DEFENCE_STAT: i32 = 1;
@@ -648,6 +658,36 @@ const FIRE_GIANT_PREPARED_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Rune scimitar"),
     },
 ];
+const FIRE_GIANT_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Fire Giant food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "escapeTele",
+        value: ScriptInjectValue::Str("Barrel (free)"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(FIRE_GIANT_BANK_PREPARED_RESTOCK as f64),
+    },
+];
 const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "combatStyle",
@@ -694,6 +734,52 @@ const GREEN_DRAGON_TELE_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "escape",
         value: ScriptInjectValue::Str("Teleport to Varrock"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
+const GREEN_DRAGON_TELE_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Teleport to Varrock"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_RESTOCK as f64),
     },
     ScriptSettingInject {
         id: "solveClues",
@@ -811,7 +897,7 @@ struct CombatCorePlan {
 
 #[derive(Clone, Copy)]
 struct PreparedCombatPlan {
-    defence: i32,
+    level: i32,
     extra_give: &'static [(&'static str, i32, i32)],
     wear: &'static [(&'static str, i32)],
 }
@@ -850,6 +936,18 @@ fn prepared_combat_core_scenario(
     scenario
 }
 
+fn apply_combat_qualification_budget(scenario: &mut Scenario) {
+    scenario.settings.deadline = COMBAT_QUALIFICATION_DEADLINE;
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat qualification has a Start step");
+    for step in &mut scenario.steps[start + 1..] {
+        step.wait.budget_ticks = step.wait.budget_ticks.max(COMBAT_QUALIFICATION_WATCH_TICKS);
+    }
+}
+
 fn combat_core_scenario_with_preparation(
     plan: CombatCorePlan,
     preparation: Option<PreparedCombatPlan>,
@@ -877,6 +975,9 @@ fn combat_core_scenario_with_preparation(
         min: 1,
     };
     let mut steps = script_live_seed_steps();
+    let combat_level = preparation
+        .map(|prepared| prepared.level)
+        .unwrap_or(COMBAT_ATTACK_LEVEL);
     if let Some(prereq) = complete_quest {
         steps.extend(quest_prereq_steps(prereq));
     }
@@ -884,11 +985,11 @@ fn combat_core_scenario_with_preparation(
         name: "prepare melee stats, food and gear on the safe tile before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
-                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat attack {combat_level}"));
+                cheat(c, &format!("setstat strength {combat_level}"));
+                cheat(c, &format!("setstat hitpoints {combat_level}"));
                 if let Some(preparation) = preparation {
-                    cheat(c, &format!("setstat defence {}", preparation.defence));
+                    cheat(c, &format!("setstat defence {}", preparation.level));
                 }
                 if thieving > 0 {
                     cheat(c, &format!("setstat thieving {thieving}"));
@@ -915,39 +1016,39 @@ fn combat_core_scenario_with_preparation(
         wait: Wait {
             arm: Proof::Stat {
                 id: 0,
-                min: COMBAT_ATTACK_LEVEL,
+                min: combat_level,
             },
             budget_ticks: 200,
         },
     });
     steps.push(bank_fletcher_watch(
-        "acknowledge prepared Attack 40",
+        "acknowledge prepared Attack profile",
         Proof::Stat {
             id: 0,
-            min: COMBAT_ATTACK_LEVEL,
+            min: combat_level,
         },
     ));
     steps.push(bank_fletcher_watch(
-        "acknowledge prepared Strength 40",
+        "acknowledge prepared Strength profile",
         Proof::Stat {
             id: STRENGTH_STAT,
-            min: COMBAT_ATTACK_LEVEL,
+            min: combat_level,
         },
     ));
     if let Some(preparation) = preparation {
         steps.push(bank_fletcher_watch(
-            "acknowledge prepared Defence 40",
+            "acknowledge prepared Defence profile",
             Proof::Stat {
                 id: DEFENCE_STAT,
-                min: preparation.defence,
+                min: preparation.level,
             },
         ));
     }
     steps.push(bank_fletcher_watch(
-        "acknowledge prepared Hitpoints 40",
+        "acknowledge prepared Hitpoints profile",
         Proof::Stat {
             id: 3,
-            min: COMBAT_ATTACK_LEVEL,
+            min: combat_level,
         },
     ));
     if thieving > 0 {
@@ -1893,7 +1994,7 @@ pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
             agility: 0,
         },
         PreparedCombatPlan {
-            defence: COMBAT_ATTACK_LEVEL,
+            level: COMBAT_ATTACK_LEVEL,
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         },
@@ -1904,6 +2005,7 @@ fn green_dragon_special_scenario_with_preparation(
     name: &'static str,
     preparation: Option<PreparedCombatPlan>,
 ) -> Scenario {
+    let prepared_level = preparation.map(|prepared| prepared.level);
     let plan = CombatCorePlan {
         name,
         card: "GreenDragon",
@@ -1941,17 +2043,18 @@ fn green_dragon_special_scenario_with_preparation(
         hostile_teleport..hostile_teleport,
         [
             Step {
-                name: "prepare and acknowledge Attack 60 for the Dragon dagger before Start",
+                name: "prepare and acknowledge the Dragon-dagger Attack profile before Start",
                 kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        cheat(c, &format!("setstat attack {DRAGON_DAGGER_ATTACK_LEVEL}"));
+                    send: Box::new(move |c, _| {
+                        let attack = prepared_level.unwrap_or(DRAGON_DAGGER_ATTACK_LEVEL);
+                        cheat(c, &format!("setstat attack {attack}"));
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Stat {
                         id: 0,
-                        min: DRAGON_DAGGER_ATTACK_LEVEL,
+                        min: prepared_level.unwrap_or(DRAGON_DAGGER_ATTACK_LEVEL),
                     },
                     budget_ticks: 200,
                 },
@@ -1972,6 +2075,9 @@ fn green_dragon_special_scenario_with_preparation(
             ),
         ],
     );
+    if preparation.is_some() {
+        apply_combat_qualification_budget(&mut scenario);
+    }
     scenario
 }
 
@@ -1983,16 +2089,19 @@ pub(crate) fn green_dragon_special_prepared_scenario() -> Scenario {
     green_dragon_special_scenario_with_preparation(
         "green_dragon_special_prepared",
         Some(PreparedCombatPlan {
-            defence: COMBAT_ATTACK_LEVEL,
+            level: REMAINING_COMBAT_PREPARED_LEVEL,
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         }),
     )
 }
 
-pub(crate) fn green_dragon_potions_scenario() -> Scenario {
-    let mut scenario = combat_core_scenario(CombatCorePlan {
-        name: "green_dragon_potions",
+fn green_dragon_potions_scenario_with_preparation(
+    name: &'static str,
+    preparation: Option<PreparedCombatPlan>,
+) -> Scenario {
+    let plan = CombatCorePlan {
+        name,
         card: "GreenDragon",
         tele: GREEN_DRAGON_FIELD,
         radius: 22,
@@ -2015,7 +2124,12 @@ pub(crate) fn green_dragon_potions_scenario() -> Scenario {
         complete_quest: None,
         thieving: 0,
         agility: 0,
-    });
+    };
+    let mut scenario = if let Some(preparation) = preparation {
+        prepared_combat_core_scenario(plan, preparation)
+    } else {
+        combat_core_scenario(plan)
+    };
     let hostile_teleport = scenario
         .steps
         .iter()
@@ -2070,7 +2184,25 @@ pub(crate) fn green_dragon_potions_scenario() -> Scenario {
             ),
         ],
     );
+    if preparation.is_some() {
+        apply_combat_qualification_budget(&mut scenario);
+    }
     scenario
+}
+
+pub(crate) fn green_dragon_potions_scenario() -> Scenario {
+    green_dragon_potions_scenario_with_preparation("green_dragon_potions", None)
+}
+
+pub(crate) fn green_dragon_potions_prepared_scenario() -> Scenario {
+    green_dragon_potions_scenario_with_preparation(
+        "green_dragon_potions_prepared",
+        Some(PreparedCombatPlan {
+            level: REMAINING_COMBAT_PREPARED_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        }),
+    )
 }
 
 /// FireGiant melee already inside the east dungeon room. Approach, barrel
@@ -2134,7 +2266,7 @@ pub(crate) fn fire_giant_prepared_scenario() -> Scenario {
             agility: 0,
         },
         PreparedCombatPlan {
-            defence: COMBAT_ATTACK_LEVEL,
+            level: COMBAT_ATTACK_LEVEL,
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         },
@@ -2262,6 +2394,56 @@ const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Dragonfire shield"),
     },
 ];
+const GREEN_DRAGON_BANK_PREPARED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Green Dragon trip food"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "usePotions",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "escape",
+        value: ScriptInjectValue::Str("Flee to bank"),
+    },
+    ScriptSettingInject {
+        id: "foodReserve",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_PREPARED_FOOD as f64),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(GREEN_DRAGON_BANK_PREPARED_RESTOCK as f64),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "weapon",
+        value: ScriptInjectValue::Str("Rune scimitar"),
+    },
+    ScriptSettingInject {
+        id: "shield",
+        value: ScriptInjectValue::Str("Dragonfire shield"),
+    },
+];
 
 /// HillGiant's always-on trip end, reached on the first loot slot so the cell
 /// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
@@ -2338,18 +2520,65 @@ fn combat_bank_scenario(
     bank_food_count: i32,
     watches: &[(&'static str, Proof)],
 ) -> Scenario {
+    combat_bank_scenario_with_preparation(
+        name,
+        card,
+        tele,
+        radius,
+        food_alias,
+        food_id,
+        food_count,
+        weapon_alias,
+        weapon_id,
+        extra_give,
+        loot_empty,
+        inject,
+        thieving,
+        bank_alias,
+        bank_food_count,
+        watches,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn combat_bank_scenario_with_preparation(
+    name: &'static str,
+    card: &'static str,
+    tele: WorldTile,
+    radius: i32,
+    food_alias: &'static str,
+    food_id: i32,
+    food_count: i32,
+    weapon_alias: &'static str,
+    weapon_id: i32,
+    extra_give: &'static [(&'static str, i32, i32)],
+    loot_empty: &'static [i32],
+    inject: &'static [ScriptSettingInject],
+    thieving: i32,
+    bank_alias: &'static str,
+    bank_food_count: i32,
+    watches: &[(&'static str, Proof)],
+    preparation: Option<PreparedCombatPlan>,
+) -> Scenario {
     let xp = Proof::StatXpGain {
         id: STRENGTH_STAT,
         min: 1,
     };
     let mut steps = script_live_seed_steps();
+    let combat_level = preparation
+        .map(|prepared| prepared.level)
+        .unwrap_or(COMBAT_ATTACK_LEVEL);
     steps.push(Step {
         name: "prepare melee stats, trip stock and bank stock on the safe tile before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
-                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
-                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat attack {combat_level}"));
+                cheat(c, &format!("setstat strength {combat_level}"));
+                cheat(c, &format!("setstat hitpoints {combat_level}"));
+                if let Some(preparation) = preparation {
+                    cheat(c, &format!("setstat defence {}", preparation.level));
+                }
                 if thieving > 0 {
                     cheat(c, &format!("setstat thieving {thieving}"));
                 }
@@ -2359,11 +2588,19 @@ fn combat_bank_scenario(
                 // `give`: the native `::give` handler clamps to at least
                 // one (`Math.max(1, …)`), so `give cake 0` seeded the Cake
                 // the ardy_fighter_bank baseline is supposed to lack.
-                if food_count > 0 {
+                // Full-pack prepared cells wear their kit first, then stock
+                // food below. Giving all armour plus 24/26 food in one debug
+                // command batch would exceed the native 28-slot pack.
+                if food_count > 0 && preparation.is_none() {
                     cheat(c, &format!("give {food_alias} {food_count}"));
                 }
                 for &(alias, _, count) in extra_give {
                     cheat(c, &format!("give {alias} {count}"));
+                }
+                if let Some(preparation) = preparation {
+                    for &(alias, _, count) in preparation.extra_give {
+                        cheat(c, &format!("give {alias} {count}"));
+                    }
                 }
                 if bank_food_count > 0 {
                     cheat(c, &format!("givebank {bank_alias} {bank_food_count}"));
@@ -2374,35 +2611,44 @@ fn combat_bank_scenario(
         wait: Wait {
             arm: Proof::Stat {
                 id: 0,
-                min: COMBAT_ATTACK_LEVEL,
+                min: combat_level,
             },
             budget_ticks: 200,
         },
     });
     for (step_name, arm) in [
         (
-            "acknowledge prepared Attack 40",
+            "acknowledge prepared Attack profile",
             Proof::Stat {
                 id: 0,
-                min: COMBAT_ATTACK_LEVEL,
+                min: combat_level,
             },
         ),
         (
-            "acknowledge prepared Strength 40",
+            "acknowledge prepared Strength profile",
             Proof::Stat {
                 id: STRENGTH_STAT,
-                min: COMBAT_ATTACK_LEVEL,
+                min: combat_level,
             },
         ),
         (
-            "acknowledge prepared Hitpoints 40",
+            "acknowledge prepared Hitpoints profile",
             Proof::Stat {
                 id: 3,
-                min: COMBAT_ATTACK_LEVEL,
+                min: combat_level,
             },
         ),
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    if let Some(preparation) = preparation {
+        steps.push(bank_fletcher_watch(
+            "acknowledge prepared Defence profile",
+            Proof::Stat {
+                id: DEFENCE_STAT,
+                min: preparation.level,
+            },
+        ));
     }
     if thieving > 0 {
         steps.push(bank_fletcher_watch(
@@ -2413,7 +2659,7 @@ fn combat_bank_scenario(
             },
         ));
     }
-    if food_count > 0 {
+    if food_count > 0 && preparation.is_none() {
         steps.push(bank_fletcher_watch(
             "acknowledge the trip's carried food before Start",
             Proof::ItemId {
@@ -2427,6 +2673,14 @@ fn combat_bank_scenario(
             "acknowledge prepared extra gear before Start",
             Proof::ItemId { id, count },
         ));
+    }
+    if let Some(preparation) = preparation {
+        for &(_, id, count) in preparation.extra_give {
+            steps.push(bank_fletcher_watch(
+                "acknowledge prepared tier-40 armour before Start",
+                Proof::ItemId { id, count },
+            ));
+        }
     }
     for &id in loot_empty {
         steps.push(bank_fletcher_watch(
@@ -2445,6 +2699,29 @@ fn combat_bank_scenario(
         "wield and acknowledge the weapon before the hostile-field teleport",
         weapon_id,
     ));
+    if let Some(preparation) = preparation {
+        for &(label, id) in preparation.wear {
+            steps.push(wear_combat_item_step(label, id));
+        }
+        if food_count > 0 {
+            steps.push(Step {
+                name: "stock prepared full-pack food after wearing the combat kit",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, &format!("give {food_alias} {food_count}"));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ItemId {
+                        id: food_id,
+                        count: food_count,
+                    },
+                    budget_ticks: 200,
+                },
+            });
+        }
+    }
     steps.push(Step {
         name: "teleport into the hostile field only after preparation is acknowledged",
         kind: StepKind::Perform {
@@ -2467,8 +2744,11 @@ fn combat_bank_scenario(
     // Bank-first cells deliberately start with banking (no food and/or seeded
     // deposit cargo). Their ordered watches require combat after the return;
     // waiting for incidental auto-retaliation XP here gates the wrong phase.
-    const COMBAT_BANK_SKIPS_PREFIGHT_XP: &[&str] =
-        &["chaos_druid_bank", "moss_giant_bank_start"];
+    const COMBAT_BANK_SKIPS_PREFIGHT_XP: &[&str] = &[
+        "chaos_druid_bank",
+        "moss_giant_bank_start",
+        "green_dragon_tele_prepared",
+    ];
     if !COMBAT_BANK_SKIPS_PREFIGHT_XP.contains(&name) {
         steps.push(bank_fletcher_watch(
             "watch Strength XP from the selected melee style after Start",
@@ -2499,6 +2779,51 @@ fn combat_bank_scenario(
             ..Default::default()
         },
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn remaining_prepared_combat_bank_scenario(
+    name: &'static str,
+    card: &'static str,
+    tele: WorldTile,
+    radius: i32,
+    food_alias: &'static str,
+    food_id: i32,
+    food_count: i32,
+    weapon_alias: &'static str,
+    weapon_id: i32,
+    extra_give: &'static [(&'static str, i32, i32)],
+    loot_empty: &'static [i32],
+    inject: &'static [ScriptSettingInject],
+    bank_alias: &'static str,
+    bank_food_count: i32,
+    watches: &[(&'static str, Proof)],
+) -> Scenario {
+    let mut scenario = combat_bank_scenario_with_preparation(
+        name,
+        card,
+        tele,
+        radius,
+        food_alias,
+        food_id,
+        food_count,
+        weapon_alias,
+        weapon_id,
+        extra_give,
+        loot_empty,
+        inject,
+        0,
+        bank_alias,
+        bank_food_count,
+        watches,
+        Some(PreparedCombatPlan {
+            level: REMAINING_COMBAT_PREPARED_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        }),
+    );
+    apply_combat_qualification_budget(&mut scenario);
+    scenario
 }
 
 /// Custom Bones loot with burial disabled exercises AutoFighter's BankRun
@@ -2908,6 +3233,41 @@ fn wear_shield_before_hostile_teleport(scenario: &mut Scenario) {
     );
 }
 
+fn prepare_low_hp_empty_food_before_hostile_teleport(scenario: &mut Scenario) {
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat bank has a hostile-field teleport");
+    scenario.steps.splice(
+        hostile_teleport..hostile_teleport,
+        [
+            bank_fletcher_watch(
+                "confirm the prepared escape profile carries no food before Start",
+                Proof::ItemIdAtMost {
+                    id: LOBSTER_ID,
+                    count: 0,
+                },
+            ),
+            Step {
+                name: "prepare and acknowledge the upstream panic-health trigger before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        cheat(c, "~1hp");
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::StatAtMost { id: 3, max: 5 },
+                    budget_ticks: 200,
+                },
+            },
+        ],
+    );
+}
+
 fn acknowledge_dormant_rocks_before_start(scenario: &mut Scenario) {
     let start = scenario
         .steps
@@ -3050,6 +3410,68 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
     scenario
 }
 
+/// Prepared earned-kill full-bank witness. Twenty-six carried Lobsters leave
+/// exactly two slots for the dragon's guaranteed bones and hide; the canonical
+/// `packFull && foodCount <= foodReserve` branch then deposits those earned
+/// drops, draws one banked Lobster to the configured 27, returns and fights.
+pub(crate) fn green_dragon_bank_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "green_dragon_bank_prepared",
+        "GreenDragon",
+        GREEN_DRAGON_FIELD,
+        22,
+        "lobster",
+        LOBSTER_ID,
+        GREEN_DRAGON_BANK_PREPARED_FOOD,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
+        &[("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1)],
+        GREEN_DRAGON_LOOT_EMPTY,
+        GREEN_DRAGON_BANK_PREPARED_INJECT,
+        "lobster",
+        40,
+        &[
+            (
+                "watch earned dragon bones or hide enter a fresh Edgeville bank",
+                Proof::BankItemIdAny {
+                    ids: &GREEN_DRAGON_BANK_DEPOSIT,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the inventory-pressure trip draw Lobster to 27",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: GREEN_DRAGON_BANK_PREPARED_RESTOCK,
+                },
+            ),
+            (
+                "watch prepared GreenDragon close its bank",
+                Proof::BankClosed,
+            ),
+            (
+                "watch prepared return to the dragon field after banking",
+                Proof::ArrivedNear {
+                    x: GREEN_DRAGON_FIELD.x,
+                    z: GREEN_DRAGON_FIELD.z,
+                    level: GREEN_DRAGON_FIELD.level,
+                    radius: 22,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    wear_shield_before_hostile_teleport(&mut scenario);
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    scenario
+}
+
 /// `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
 /// Edgeville booth restock and a return past the ditch. A south-walk flee
 /// without the teleport fails this cell.
@@ -3148,6 +3570,109 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
             },
         }],
     );
+    scenario
+}
+
+/// Upstream `caseFleeAndRecover` trigger translated to native fixture steps:
+/// zero carried food and `~1hp` are acknowledged before the wilderness hop.
+/// The supported escape must walk south, cast Varrock, restock/heal at
+/// Edgeville, return to the field and produce later Strength XP.
+pub(crate) fn green_dragon_tele_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "green_dragon_tele_prepared",
+        "GreenDragon",
+        GREEN_DRAGON_FIELD,
+        22,
+        "lobster",
+        LOBSTER_ID,
+        0,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
+        &[
+            ("antidragonbreathshield", DRAGONFIRE_SHIELD_ID, 1),
+            ("lawrune", LAW_RUNE_ID, VARROCK_TELE_LAW),
+            ("airrune", AIR_RUNE_ID, VARROCK_TELE_AIR),
+            ("firerune", FIRE_RUNE_ID, VARROCK_TELE_FIRE),
+        ],
+        GREEN_DRAGON_LOOT_EMPTY,
+        GREEN_DRAGON_TELE_PREPARED_INJECT,
+        "lobster",
+        40,
+        &[
+            (
+                "watch Magic XP from the prepared Varrock teleport after Start",
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: 1,
+                },
+            ),
+            (
+                "watch the prepared Varrock teleport land",
+                Proof::ArrivedNear {
+                    x: VARROCK_TELE_LAND.x,
+                    z: VARROCK_TELE_LAND.z,
+                    level: VARROCK_TELE_LAND.level,
+                    radius: 8,
+                },
+            ),
+            (
+                "watch the prepared escape restock Lobster to 20",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: GREEN_DRAGON_BANK_RESTOCK,
+                },
+            ),
+            (
+                "watch prepared GreenDragon close its bank after teleporting",
+                Proof::BankClosed,
+            ),
+            (
+                "watch prepared return to the dragon field after teleporting",
+                Proof::ArrivedNear {
+                    x: GREEN_DRAGON_FIELD.x,
+                    z: GREEN_DRAGON_FIELD.z,
+                    level: GREEN_DRAGON_FIELD.level,
+                    radius: 22,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared escape return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    wear_shield_before_hostile_teleport(&mut scenario);
+    let hostile_teleport = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("combat bank has a hostile-field teleport");
+    scenario.steps.insert(
+        hostile_teleport,
+        Step {
+            name: "prepare and acknowledge Magic 25 for the prepared Varrock teleport",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    cheat(c, &format!("setstat magic {VARROCK_TELE_MAGIC}"));
+                    true
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat {
+                    id: MAGIC_STAT,
+                    min: VARROCK_TELE_MAGIC,
+                },
+                budget_ticks: 200,
+            },
+        },
+    );
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
+    prepare_low_hp_empty_food_before_hostile_teleport(&mut scenario);
     scenario
 }
 
@@ -3276,5 +3801,85 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
         ],
     );
     insert_waterfall_quest(&mut scenario);
+    scenario
+}
+
+/// Prepared earned-kill full-bank witness. The worn combat kit leaves the pack
+/// at 24 Lobsters plus the amulet and rope; a Fire giant's earned Big bones and
+/// ordinary drop fill it, causing the canonical full-pack BankRun. The witness
+/// still requires the barrel, fresh Big-bones deposit, food draw and re-entry.
+pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
+    let mut scenario = remaining_prepared_combat_bank_scenario(
+        "fire_giant_bank_prepared",
+        "FireGiant",
+        FIRE_GIANT_ROOM,
+        10,
+        "lobster",
+        LOBSTER_ID,
+        FIRE_GIANT_BANK_PREPARED_FOOD,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
+        &[
+            ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
+            ("rope", ROPE_ID, 1),
+        ],
+        FIRE_GIANT_LOOT_EMPTY,
+        FIRE_GIANT_BANK_PREPARED_INJECT,
+        "lobster",
+        40,
+        &[
+            (
+                "watch the prepared barrel wash-up before the bank walk",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_WASH.x,
+                    z: FIRE_GIANT_WASH.z,
+                    level: FIRE_GIANT_WASH.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch earned Big bones enter a fresh Ardougne West bank",
+                Proof::BankItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch the prepared barrel trip reach Ardougne West",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_BANK.x,
+                    z: FIRE_GIANT_BANK.z,
+                    level: FIRE_GIANT_BANK.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch the prepared full-pack trip draw Lobster to 26",
+                Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: FIRE_GIANT_BANK_PREPARED_RESTOCK,
+                },
+            ),
+            ("watch prepared FireGiant close its bank", Proof::BankClosed),
+            (
+                "watch prepared re-entry to the fire-giant room after banking",
+                Proof::ArrivedNear {
+                    x: FIRE_GIANT_ROOM.x,
+                    z: FIRE_GIANT_ROOM.z,
+                    level: FIRE_GIANT_ROOM.level,
+                    radius: 10,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the prepared FireGiant return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    insert_waterfall_quest(&mut scenario);
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
     scenario
 }

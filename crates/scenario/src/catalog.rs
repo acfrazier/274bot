@@ -214,6 +214,10 @@ const REGISTRY: &[Entry] = &[
         "green_dragon_potions",
         scenarios::green_dragon_potions_scenario,
     ),
+    Entry::new(
+        "green_dragon_potions_prepared",
+        scenarios::green_dragon_potions_prepared_scenario,
+    ),
     Entry::new("fire_giant", scenarios::fire_giant_scenario),
     Entry::new(
         "fire_giant_prepared",
@@ -235,12 +239,24 @@ const REGISTRY: &[Entry] = &[
     Entry::new("ardy_fighter_bank", scenarios::ardy_fighter_bank_scenario),
     Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
     Entry::new("green_dragon_bank", scenarios::green_dragon_bank_scenario),
+    Entry::new(
+        "green_dragon_bank_prepared",
+        scenarios::green_dragon_bank_prepared_scenario,
+    ),
     Entry::new("green_dragon_tele", scenarios::green_dragon_tele_scenario),
+    Entry::new(
+        "green_dragon_tele_prepared",
+        scenarios::green_dragon_tele_prepared_scenario,
+    ),
     Entry::new(
         "fire_giant_approach",
         scenarios::fire_giant_approach_scenario,
     ),
     Entry::new("fire_giant_bank", scenarios::fire_giant_bank_scenario),
+    Entry::new(
+        "fire_giant_bank_prepared",
+        scenarios::fire_giant_bank_prepared_scenario,
+    ),
     Entry::new("aio_teleport", scenarios::aio_teleport_scenario),
     Entry::new(
         "aio_teleport_falador",

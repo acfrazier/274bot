@@ -1538,6 +1538,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "green_dragon_special",
             "green_dragon_special_prepared",
             "green_dragon_potions",
+            "green_dragon_potions_prepared",
             "fire_giant",
             "fire_giant_prepared",
             "ardy_fighter",
@@ -1550,9 +1551,12 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "ardy_fighter_bank",
             "rock_crab_bank",
             "green_dragon_bank",
+            "green_dragon_bank_prepared",
             "green_dragon_tele",
+            "green_dragon_tele_prepared",
             "fire_giant_approach",
             "fire_giant_bank",
+            "fire_giant_bank_prepared",
             "aio_teleport",
             "aio_teleport_falador",
             "aio_teleport_no_staff",
@@ -2622,6 +2626,164 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+}
+
+#[test]
+fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets() {
+    const DEFENCE: i32 = 1;
+    let start_idx = |scenario: &Scenario| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("prepared case starts the card")
+    };
+    let names_and_cards = [
+        ("green_dragon_special_prepared", "GreenDragon"),
+        ("green_dragon_potions_prepared", "GreenDragon"),
+        ("green_dragon_bank_prepared", "GreenDragon"),
+        ("green_dragon_tele_prepared", "GreenDragon"),
+        ("fire_giant_bank_prepared", "FireGiant"),
+    ];
+    for (name, card) in names_and_cards {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(scenario.settings.start_script, Some(card), "{name}");
+        assert_eq!(
+            scenario.settings.deadline,
+            Duration::from_secs(300),
+            "{name}: combat/travel qualification wall budget"
+        );
+        assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap_or_else(|| panic!("{name} starts the card"));
+        assert!(
+            scenario.steps[..start].iter().any(|step| {
+                step.wait.arm
+                    == Proof::Stat {
+                        id: DEFENCE,
+                        min: 70,
+                    }
+            }),
+            "{name}: exact prepared profile includes Defence 70"
+        );
+        for id in [RUNE_CHAINBODY_ID, 1079, 1163] {
+            assert!(
+                scenario.steps[..start]
+                    .iter()
+                    .any(|step| step.wait.arm == Proof::EquipmentId { id }),
+                "{name}: prepared armour {id} is worn before Start"
+            );
+        }
+        assert!(
+            scenario.steps[start + 1..]
+                .iter()
+                .all(|step| step.wait.budget_ticks >= 750),
+            "{name}: post-Start dirty budgets must not pre-empt the 300s wall"
+        );
+    }
+
+    let green_bank = get("green_dragon_bank_prepared").unwrap();
+    let green_bank_inject =
+        settings_inject_map(green_bank.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        green_bank_inject.get("foodReserve"),
+        Some(&Value::from(26.0))
+    );
+    assert_eq!(
+        green_bank_inject.get("foodWithdraw"),
+        Some(&Value::from(27.0))
+    );
+    let green_bank_start = start_idx(&green_bank);
+    assert!(green_bank.steps[..green_bank_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 26,
+            }
+    }));
+    let green_food = green_bank.steps[..green_bank_start]
+        .iter()
+        .position(|step| {
+            step.wait.arm
+                == Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: 26,
+                }
+        })
+        .unwrap();
+    for id in [1113, 1079, 1163] {
+        let worn = green_bank.steps[..green_bank_start]
+            .iter()
+            .position(|step| step.wait.arm == Proof::EquipmentId { id })
+            .unwrap();
+        assert!(
+            worn < green_food,
+            "green full-pack food is stocked only after armour frees pack slots"
+        );
+    }
+    for id in GREEN_DRAGON_BANK_DEPOSIT {
+        assert!(green_bank.steps[..green_bank_start]
+            .iter()
+            .any(|step| { step.wait.arm == Proof::ItemIdAtMost { id, count: 0 } }));
+    }
+
+    let green_tele = get("green_dragon_tele_prepared").unwrap();
+    let green_tele_start = start_idx(&green_tele);
+    assert!(green_tele.steps[..green_tele_start]
+        .iter()
+        .any(|step| step.wait.arm == Proof::StatAtMost { id: 3, max: 5 }));
+    assert!(green_tele.steps[..green_tele_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 0,
+            }
+    }));
+
+    let fire_bank = get("fire_giant_bank_prepared").unwrap();
+    let fire_bank_inject = settings_inject_map(fire_bank.settings.script_settings_inject).unwrap();
+    assert_eq!(
+        fire_bank_inject.get("foodWithdraw"),
+        Some(&Value::from(26.0))
+    );
+    let fire_start = start_idx(&fire_bank);
+    assert!(fire_bank.steps[..fire_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 24,
+            }
+    }));
+    let fire_food = fire_bank.steps[..fire_start]
+        .iter()
+        .position(|step| {
+            step.wait.arm
+                == Proof::ItemId {
+                    id: LOBSTER_ID,
+                    count: 24,
+                }
+        })
+        .unwrap();
+    for id in [1113, 1079, 1163] {
+        let worn = fire_bank.steps[..fire_start]
+            .iter()
+            .position(|step| step.wait.arm == Proof::EquipmentId { id })
+            .unwrap();
+        assert!(
+            worn < fire_food,
+            "fire full-pack food is stocked only after armour frees pack slots"
+        );
+    }
+    assert!(fire_bank.steps[..fire_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: BIG_BONES_ID,
+                count: 0,
+            }
+    }));
 }
 
 /// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
@@ -7511,7 +7673,7 @@ fn prepared_green_special_composes_exact_armour_stats_and_special_prerequisites(
         original.settings.script_settings_inject
     );
     assert_eq!(prepared.settings.start_script, Some("GreenDragon"));
-    assert_eq!(prepared.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(prepared.settings.deadline, Duration::from_secs(300));
     assert_eq!(
         prepared.proof,
         Proof::StatXpGain {
@@ -7528,10 +7690,10 @@ fn prepared_green_special_composes_exact_armour_stats_and_special_prerequisites(
     let before = &prepared.steps[..start];
     let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
     for (id, level) in [
-        (ATTACK_STAT, 60),
-        (STRENGTH_STAT, 40),
-        (DEFENCE_STAT, 40),
-        (HITPOINTS_STAT, 40),
+        (ATTACK_STAT, 70),
+        (STRENGTH_STAT, 70),
+        (DEFENCE_STAT, 70),
+        (HITPOINTS_STAT, 70),
     ] {
         assert!(
             arms.contains(&Proof::Stat { id, min: level }),
@@ -7590,9 +7752,9 @@ fn prepared_green_special_composes_exact_armour_stats_and_special_prerequisites(
     );
 
     let attack_step =
-        &before[position("prepare and acknowledge Attack 60 for the Dragon dagger before Start")];
+        &before[position("prepare and acknowledge the Dragon-dagger Attack profile before Start")];
     let StepKind::Perform { send } = &attack_step.kind else {
-        panic!("Attack 60 preparation is a native fixture operation");
+        panic!("Dragon-dagger Attack preparation is a native fixture operation");
     };
     let mut attack_client = native_seed_client();
     let snapshot = GameSnapshot::new();
@@ -7600,15 +7762,15 @@ fn prepared_green_special_composes_exact_armour_stats_and_special_prerequisites(
     assert!(send(&mut attack_client, &snapshot));
     let attack_written =
         String::from_utf8_lossy(&attack_client.out.data()[before_write..attack_client.out.pos]);
-    assert!(attack_written.contains("setstat attack 60"));
+    assert!(attack_written.contains("setstat attack 70"));
 
     let mut client = native_seed_client();
     let (_, written) = send_combat_seed("green_dragon_special_prepared", &mut client);
     for command in [
-        "setstat attack 40",
-        "setstat strength 40",
-        "setstat defence 40",
-        "setstat hitpoints 40",
+        "setstat attack 70",
+        "setstat strength 70",
+        "setstat defence 70",
+        "setstat hitpoints 70",
         "give lobster 12",
         "give dragon_dagger 1",
         "give antidragonbreathshield 1",
