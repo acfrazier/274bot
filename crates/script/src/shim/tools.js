@@ -28,6 +28,18 @@ function tools(kind) {
     return posted(kind).map(asTool).filter(Boolean);
 }
 
+function asTier(row) {
+    if (!row || typeof row !== 'object') return null;
+    if (typeof row.name !== 'string' || !row.name.trim()) return null;
+    if (typeof row.level !== 'number' || !Number.isFinite(row.level)) return null;
+    return { name: row.name, level: row.level };
+}
+
+function tierSnapshot(tiers) {
+    if (!Array.isArray(tiers)) return [];
+    return tiers.map(asTier).filter(Boolean);
+}
+
 export const AXES = tools('axes').map((t) => ({ name: t.name, id: t.id }));
 export const PICKAXES = tools('pickaxes').map((t) => ({ name: t.name, id: t.id }));
 
@@ -331,6 +343,64 @@ export function toolKitLabel() {
 
 export function bestPickaxe(level, available) {
     return bestFrom('pickaxes', level, available);
+}
+
+function bestFromTierList(level, snapshot, available) {
+    if (typeof available !== 'function') return null;
+    let index = -1;
+    let accepted = false;
+    let row = null;
+    let rowIndex = null;
+    let levelOk = undefined;
+    let pending = null;
+    for (;;) {
+        const payload = {
+            op: 'best_tiers',
+            index,
+            accepted,
+            has_next: index + 1 < snapshot.length,
+        };
+        if (row) {
+            payload.row = row;
+            payload.row_index = rowIndex;
+        }
+        if (levelOk !== undefined) payload.level_ok = levelOk;
+        const step = call(payload);
+        if (step.kind === 'need_row') {
+            pending = snapshot[step.index];
+            row = pending ? { name: pending.name, level: pending.level } : null;
+            rowIndex = step.index;
+            levelOk = undefined;
+            continue;
+        }
+        if (step.kind === 'need_level') {
+            levelOk = Number(level) >= (pending.level ?? 0);
+            continue;
+        }
+        if (step.kind === 'skip') {
+            index = step.index;
+            accepted = false;
+            row = null;
+            rowIndex = null;
+            levelOk = undefined;
+            pending = null;
+            continue;
+        }
+        if (step.kind === 'done') return step.name;
+        if (step.kind !== 'probe') return null;
+        index = step.index;
+        accepted = available(step.name) === true;
+        if (!accepted) {
+            row = null;
+            rowIndex = null;
+            levelOk = undefined;
+            pending = null;
+        }
+    }
+}
+
+export function bestFromTiers(level, tiers, available) {
+    return bestFromTierList(level, tierSnapshot(tiers), available);
 }
 
 export function bankHasBetterGatherTool() {

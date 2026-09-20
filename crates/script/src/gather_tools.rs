@@ -44,6 +44,17 @@ pub fn best_axe(_level: i32, mut available: impl FnMut(&str) -> bool) -> Option<
         .find_map(|tool| available(tool.name).then_some(tool.name))
 }
 
+/// First best-first tier whose use level is met and `available` accepts.
+pub fn best_from_tiers<'a>(
+    level: i32,
+    tiers: &'a [(&'a str, i32)],
+    mut available: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
+    tiers
+        .iter()
+        .find_map(|(name, need)| (level >= *need && available(name)).then_some(*name))
+}
+
 fn named(name: &str) -> Option<&'static GatherTool> {
     let name = name.trim();
     AXES.iter().chain(PICKAXES).find(|tool| tool.name == name)
@@ -155,6 +166,7 @@ fn feature_error(feature: &str) -> Value {
 pub fn dispatch(payload: &Value) -> Value {
     match payload.get("op").and_then(Value::as_str) {
         Some("best") => best_step(payload),
+        Some("best_tiers") => best_tiers_step(payload),
         Some("can_wield") => can_wield_step(payload),
         Some("has_all") => has_all_step(payload),
         Some("has_req") => has_req_step(payload),
@@ -166,6 +178,36 @@ pub fn dispatch(payload: &Value) -> Value {
 /// `bestAxe` / `bestPickaxe`: walk the shim's `tools(kind)` snapshot in order.
 /// Mining rows ask for a fresh JS `Number(level) >= (use_level ?? 0)` at each
 /// reached gate; axes never request that conversion.
+/// `bestFromTiers`: walk caller tiers in order; every row asks for a fresh
+/// JS `Number(level) >= tier.level` before probing availability.
+fn best_tiers_step(payload: &Value) -> Value {
+    let index = i64_field(payload, "index", -1);
+    let accepted = bool_field(payload, "accepted").unwrap_or(false);
+    if accepted {
+        return match row_name(payload) {
+            Some(name) => json!({"kind": "done", "name": name}),
+            None => json!({"kind": "none"}),
+        };
+    }
+    let next = index + 1;
+    let has_row = row_index(payload) == Some(next) && payload.get("row").is_some();
+    if !has_row {
+        if bool_field(payload, "has_next").unwrap_or(false) {
+            return need_row(next);
+        }
+        return json!({"kind": "none"});
+    }
+    match bool_field(payload, "level_ok") {
+        None => return need_level(next),
+        Some(false) => return skip(next),
+        Some(true) => {}
+    }
+    match row_name(payload) {
+        Some(name) => json!({"kind": "probe", "index": next, "name": name}),
+        None => skip(next),
+    }
+}
+
 fn best_step(payload: &Value) -> Value {
     let index = i64_field(payload, "index", -1);
     let accepted = bool_field(payload, "accepted").unwrap_or(false);
@@ -382,6 +424,39 @@ mod tests {
     }
 
     #[test]
+    fn best_from_tiers_keeps_order_level_gate_and_short_circuit() {
+        let bows = [
+            ("Magic shortbow", 50),
+            ("Yew shortbow", 40),
+            ("Shortbow", 1),
+        ];
+        assert_eq!(
+            best_from_tiers(40, &bows, |n| n == "Yew shortbow"),
+            Some("Yew shortbow")
+        );
+        assert_eq!(best_from_tiers(39, &bows, |_| true), Some("Shortbow"));
+        assert_eq!(best_from_tiers(0, &bows, |_| true), None);
+        let mut calls = Vec::new();
+        assert_eq!(
+            best_from_tiers(99, &bows, |n| {
+                calls.push(n.to_string());
+                false
+            }),
+            None
+        );
+        assert_eq!(calls, ["Magic shortbow", "Yew shortbow", "Shortbow"]);
+        let mut hit_calls = Vec::new();
+        assert_eq!(
+            best_from_tiers(50, &bows, |n| {
+                hit_calls.push(n.to_string());
+                n == "Yew shortbow"
+            }),
+            Some("Yew shortbow")
+        );
+        assert_eq!(hit_calls, ["Magic shortbow", "Yew shortbow"]);
+    }
+
+    #[test]
     fn best_axe_has_no_woodcutting_gate_and_keeps_black() {
         assert_eq!(
             best_axe(1, |name| name == "Rune axe" || name == "Steel axe"),
@@ -423,6 +498,49 @@ mod tests {
 
     fn best_start(has_next: bool) -> Value {
         dispatch(&json!({"op": "best", "index": -1, "accepted": false, "has_next": has_next}))
+    }
+
+    fn tiers_start(has_next: bool) -> Value {
+        dispatch(&json!({
+            "op": "best_tiers", "index": -1, "accepted": false, "has_next": has_next,
+        }))
+    }
+
+    #[test]
+    fn tier_step_owns_level_before_probe_and_acceptance() {
+        assert_eq!(tiers_start(true), json!({"kind": "need_row", "index": 0}));
+        assert_eq!(
+            dispatch(&json!({
+                "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
+            })),
+            json!({"kind": "need_level", "index": 0})
+        );
+        assert_eq!(
+            dispatch(&json!({
+                "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
+                "level_ok": false,
+            })),
+            json!({"kind": "skip", "index": 0}),
+            "a failed level gate never probes"
+        );
+        assert_eq!(
+            dispatch(&json!({
+                "op": "best_tiers", "index": -1, "accepted": false, "has_next": true,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
+                "level_ok": true,
+            })),
+            json!({"kind": "probe", "index": 0, "name": "Yew shortbow"})
+        );
+        assert_eq!(
+            dispatch(&json!({
+                "op": "best_tiers", "index": 0, "accepted": true,
+                "row_index": 0, "row": {"name": "Yew shortbow", "level": 40},
+            })),
+            json!({"kind": "done", "name": "Yew shortbow"})
+        );
+        assert_eq!(tiers_start(false), json!({"kind": "none"}));
     }
 
     #[test]
