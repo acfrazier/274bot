@@ -2218,6 +2218,7 @@ fn bounded_guardian_fact(status: &RandomStatus) -> catalog_core::BoundedGuardian
 /// Catalog/paired observer hook shared by the slot pump. Lifecycle and guardian
 /// facts are produced only while the catalog watch is configured; paired
 /// snapshot conversion runs only while the pair watch is configured.
+#[allow(clippy::too_many_arguments)]
 fn observe_slot_catalog_and_paired(
     catalog: &catalog_core::CoreWatch,
     paired: &paired_core::PairWatch,
