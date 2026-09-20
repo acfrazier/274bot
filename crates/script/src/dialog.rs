@@ -8,6 +8,7 @@
 //! `npc` / `continue` / `answer` verbs.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -157,9 +158,7 @@ enum Phase {
 }
 
 struct DialogRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     kind: Kind,
@@ -172,15 +171,12 @@ struct DialogRuntime {
     due_tick: u64,
     ack_modal_id: i32,
     interrupted: bool,
-    deadline: Option<Instant>,
 }
 
 impl DialogRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             kind: Kind::Drive,
@@ -193,40 +189,27 @@ impl DialogRuntime {
             due_tick: 0,
             ack_modal_id: -1,
             interrupted: false,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -241,13 +224,13 @@ impl DialogRuntime {
         self.due_tick = 0;
         self.ack_modal_id = -1;
         self.interrupted = false;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn done(&mut self, result: bool, reason: &str, log: Option<String>) -> Value {
         let token = self.token;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         with_log(
             json!({
                 "kind": "done",
@@ -308,21 +291,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -485,7 +468,7 @@ fn wait_continue_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     if continue_acked(rt, obs) {
         rt.phase = Phase::WaitContinueTick;
         rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-        rt.deadline = None;
+        rt.clock.deadline = None;
         return rt.wait();
     }
     if rt.bound_reached() {
@@ -498,7 +481,7 @@ fn wait_choice_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     if choice_acked(rt, obs) {
         rt.phase = Phase::WaitChoiceTicks;
         rt.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
-        rt.deadline = None;
+        rt.clock.deadline = None;
         return rt.wait();
     }
     if rt.bound_reached() {
@@ -510,7 +493,7 @@ fn wait_choice_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
 fn wait_gap(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     if obs.dialog_ready() {
         rt.phase = Phase::Drive;
-        rt.deadline = None;
+        rt.clock.deadline = None;
         return drive_step(rt, obs);
     }
     if obs.bank_open || rt.bound_reached() {
@@ -555,7 +538,7 @@ fn drive_step(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
     rt.steps += 1;
     rt.phase = Phase::WaitContinueTick;
     rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-    rt.deadline = None;
+    rt.clock.deadline = None;
     rt.wait()
 }
 
@@ -816,7 +799,7 @@ mod tests {
             wait_continue_ack(&mut runtime, &observation)["kind"],
             "wait"
         );
-        runtime.deadline = Some(runtime.now() - Duration::from_millis(1));
+        runtime.clock.deadline = Some(runtime.now() - Duration::from_millis(1));
         let timed = wait_continue_ack(&mut runtime, &observation);
         assert_eq!(timed["kind"], "done");
         assert_eq!(timed["result"], false);

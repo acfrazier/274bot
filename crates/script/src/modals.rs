@@ -5,6 +5,7 @@
 //! and the bool-vs-void result stay here. A queued close is not accepted.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -58,60 +59,42 @@ impl NativeObservation {
 }
 
 struct ModalsRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     kind: Kind,
     before: i32,
-    deadline: Option<Instant>,
 }
 
 impl ModalsRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             kind: Kind::Close,
             before: -1,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -119,14 +102,14 @@ impl ModalsRuntime {
         self.phase = Phase::Idle;
         self.kind = Kind::Close;
         self.before = -1;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn done(&mut self, result: bool, reason: &str) -> Value {
         let token = self.token;
         let kind = self.kind;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         match kind {
             Kind::CloseIfOpen => json!({
                 "kind": "done",
@@ -157,21 +140,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -310,7 +293,7 @@ mod tests {
         let token = begin["token"].as_u64().unwrap();
         RUNTIME.with(|rt| {
             let now = rt.borrow().now();
-            rt.borrow_mut().deadline = Some(now - Duration::from_millis(1));
+            rt.borrow_mut().clock.deadline = Some(now - Duration::from_millis(1));
         });
         let timed = dispatch(&json!({ "op": "next", "token": token }));
         assert_eq!(timed["kind"], "done");

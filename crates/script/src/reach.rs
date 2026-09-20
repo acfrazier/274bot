@@ -6,6 +6,7 @@
 //! the existing FlatBuffer walk and npc verbs.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -167,9 +168,7 @@ enum WalkSettle {
 }
 
 struct ReachRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     npc_name: String,
@@ -184,15 +183,12 @@ struct ReachRuntime {
     npc_index: i32,
     npc_tile: Tile,
     interrupted: bool,
-    deadline: Option<Instant>,
 }
 
 impl ReachRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             npc_name: String::new(),
@@ -215,40 +211,27 @@ impl ReachRuntime {
                 level: 0,
             },
             interrupted: false,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -272,13 +255,13 @@ impl ReachRuntime {
         self.npc_action.clear();
         self.npc_index = -1;
         self.interrupted = false;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn finish(&mut self, status: &str, log: Option<String>) -> Value {
         let token = self.token;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         with_log(
             json!({
                 "kind": "done",
@@ -320,21 +303,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -670,7 +653,7 @@ fn with_log(mut value: Value, log: Option<String>) -> Value {
 pub(crate) fn expire_deadline_for_test() {
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
-        rt.deadline = Some(
+        rt.clock.deadline = Some(
             rt.now()
                 .checked_sub(Duration::from_millis(1))
                 .unwrap_or_else(Instant::now),

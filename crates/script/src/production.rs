@@ -10,6 +10,7 @@
 //! one tick and guess the count dialog is open.
 
 use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -144,9 +145,7 @@ enum Phase {
 }
 
 struct ProductionRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     kind: Kind,
@@ -158,15 +157,12 @@ struct ProductionRuntime {
     component_id: i32,
     /// Main modal id observed when the anvil op was sent.
     panel_before: i32,
-    deadline: Option<Instant>,
 }
 
 impl ProductionRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             kind: Kind::MakeX,
@@ -174,40 +170,27 @@ impl ProductionRuntime {
             count: 0,
             component_id: -1,
             panel_before: -1,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -217,13 +200,13 @@ impl ProductionRuntime {
         self.count = 0;
         self.component_id = -1;
         self.panel_before = -1;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn done(&mut self, result: bool, reason: &str) -> Value {
         let token = self.token;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         json!({
             "kind": "done",
             "token": token,
@@ -273,21 +256,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -457,7 +440,7 @@ fn next(token: u64) -> Value {
             if !probe.ingame {
                 let token = rt.token;
                 rt.phase = Phase::Idle;
-                rt.deadline = None;
+                rt.clock.deadline = None;
                 return json!({ "kind": "aborted", "token": token });
             }
             match rt.kind {
@@ -633,7 +616,7 @@ mod tests {
         rt.kind = Kind::MakeX;
         rt.count = 28;
         rt.phase = Phase::WaitCountOpen;
-        rt.deadline = Some(Instant::now() - Duration::from_millis(1));
+        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
         let closed = probe(&products, None, false, -1);
         let step = make_x_step(&mut rt, &closed);
         assert_eq!(step["kind"], "done");
@@ -669,13 +652,13 @@ mod tests {
     fn pause_and_hold_freeze_the_count_deadline() {
         let mut rt = ProductionRuntime::new();
         rt.arm(COUNT_OPEN_MS);
-        let before = rt.deadline.expect("armed");
+        let before = rt.clock.deadline.expect("armed");
         rt.set_freeze(true, false);
         assert!(rt.frozen());
         std::thread::sleep(Duration::from_millis(5));
         rt.set_freeze(false, false);
         assert!(!rt.frozen());
-        assert!(rt.deadline.expect("still armed") > before);
+        assert!(rt.clock.deadline.expect("still armed") > before);
         rt.set_freeze(false, true);
         assert!(rt.frozen(), "guardian hold freezes too");
     }
@@ -695,7 +678,7 @@ mod tests {
         assert!(rt.match_name.is_empty());
         assert_eq!(rt.count, 0);
         assert_eq!(rt.component_id, -1);
-        assert!(rt.deadline.is_none());
+        assert!(rt.clock.deadline.is_none());
     }
 
     #[test]
@@ -728,7 +711,7 @@ mod tests {
         rt.kind = Kind::MakeFromPanelMax;
         rt.panel_before = 3000;
         rt.phase = Phase::WaitPanel;
-        rt.deadline = Some(Instant::now() - Duration::from_millis(1));
+        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
         let still = probe(&[], Some(rows.as_slice()), false, 3000);
         let step = panel_step(&mut rt, &still);
         assert_eq!(step["kind"], "done");

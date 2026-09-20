@@ -11,6 +11,7 @@
 //! only counted once the posted container counts moved.
 
 use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -147,9 +148,7 @@ enum Phase {
 }
 
 struct ShopRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     kind: Kind,
@@ -172,16 +171,12 @@ struct ShopRuntime {
     pressed: bool,
     /// Remaining `Shop.open`/`Shop.close` attempts.
     attempts_left: u32,
-    /// Remaining close attempts are bounded by the armed deadline.
-    deadline: Option<Instant>,
 }
 
 impl ShopRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             kind: Kind::Buy,
@@ -194,40 +189,27 @@ impl ShopRuntime {
             held_now: 0,
             pressed: false,
             attempts_left: 0,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -242,14 +224,14 @@ impl ShopRuntime {
         self.held_now = 0;
         self.pressed = false;
         self.attempts_left = 0;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn done(&mut self, result: bool, reason: &str) -> Value {
         let token = self.token;
         let quantity = self.transferred;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         json!({
             "kind": "done",
             "token": token,
@@ -313,21 +295,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -618,7 +600,7 @@ fn next(token: u64) -> Value {
             if !probe.ingame {
                 let token = rt.token;
                 rt.phase = Phase::Idle;
-                rt.deadline = None;
+                rt.clock.deadline = None;
                 return json!({ "kind": "aborted", "token": token });
             }
             match rt.kind {
@@ -873,7 +855,7 @@ mod tests {
         assert_eq!(rt.transferred, 0);
         // Past the window the batch settles exactly one more tick (the tick
         // the frozen loop waits for its batch to land in) before it counts.
-        rt.deadline = Some(Instant::now() - Duration::from_millis(1));
+        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
         let step = transfer_step(&mut rt, &probe);
         assert_eq!(step["kind"], "wait");
         // Only a recount that is still empty stalls the transfer.
@@ -913,7 +895,7 @@ mod tests {
         assert_eq!(rt.attempts_left, OPEN_ATTEMPTS);
         // Each expired window re-presses once, for the frozen three attempts.
         for attempt in 1..OPEN_ATTEMPTS {
-            rt.deadline = Some(Instant::now() - Duration::from_millis(1));
+            rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
             let step = open_step(&mut rt, &probe);
             assert_eq!(step["kind"], "npc", "attempt {attempt} re-presses Trade");
             assert_eq!(step["action"], "Trade");
@@ -922,7 +904,7 @@ mod tests {
             assert_eq!(step["kind"], "wait", "one press per window");
         }
         // The last window closes the call as a timeout, not another press.
-        rt.deadline = Some(Instant::now() - Duration::from_millis(1));
+        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
         let step = open_step(&mut rt, &probe);
         assert_eq!(step["kind"], "done");
         assert_eq!(step["result"], false);
@@ -1143,13 +1125,13 @@ mod tests {
     fn pause_and_hold_freeze_the_settlement_deadline() {
         let mut rt = ShopRuntime::new();
         rt.arm(SETTLE_MS);
-        let before = rt.deadline.expect("armed");
+        let before = rt.clock.deadline.expect("armed");
         rt.set_freeze(true, false);
         assert!(rt.frozen());
         std::thread::sleep(Duration::from_millis(5));
         rt.set_freeze(false, false);
         assert!(!rt.frozen());
-        assert!(rt.deadline.expect("still armed") > before);
+        assert!(rt.clock.deadline.expect("still armed") > before);
         rt.set_freeze(false, true);
         assert!(rt.frozen(), "guardian hold freezes too");
     }
@@ -1170,7 +1152,7 @@ mod tests {
         assert_eq!(rt.requested, 0);
         assert_eq!(rt.transferred, 0);
         assert_eq!(rt.attempts_left, 0);
-        assert!(rt.deadline.is_none());
+        assert!(rt.clock.deadline.is_none());
         assert!(rt.name.is_empty());
     }
 }

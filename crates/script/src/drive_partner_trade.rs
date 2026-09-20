@@ -7,6 +7,7 @@
 //! copy of `drivePartnerTrade.ts` or PartnerTrade policy.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -130,9 +131,7 @@ struct Projection {
 }
 
 struct ExchangeRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     role: Role,
@@ -141,7 +140,6 @@ struct ExchangeRuntime {
     seen_partner: Option<String>,
     metric_before: i32,
     next_name: usize,
-    deadline: Option<Instant>,
     decline_reason: String,
     nested_token: u64,
     inactive_since: Option<Instant>,
@@ -151,9 +149,7 @@ struct ExchangeRuntime {
 impl ExchangeRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             role: Role::Giver,
@@ -162,7 +158,6 @@ impl ExchangeRuntime {
             seen_partner: None,
             metric_before: 0,
             next_name: 0,
-            deadline: None,
             decline_reason: String::new(),
             nested_token: 0,
             inactive_since: None,
@@ -171,35 +166,23 @@ impl ExchangeRuntime {
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -210,7 +193,7 @@ impl ExchangeRuntime {
         self.seen_partner = None;
         self.metric_before = 0;
         self.next_name = 0;
-        self.deadline = None;
+        self.clock.deadline = None;
         self.decline_reason.clear();
         self.nested_token = 0;
         self.inactive_since = None;
@@ -233,21 +216,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -612,7 +595,7 @@ fn giver_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Project
         let name = projection.names[rt.next_name].clone();
         rt.next_name += 1;
         rt.phase = Phase::Offer;
-        if rt.deadline.is_none() {
+        if rt.clock.deadline.is_none() {
             rt.arm(TRADE_OFFER_WAIT_MS);
         }
         return offer_all(rt, &name);
@@ -621,7 +604,7 @@ fn giver_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Project
         return start_decline(rt, "nothing to offer");
     }
     rt.phase = Phase::Offer;
-    if rt.deadline.is_none() {
+    if rt.clock.deadline.is_none() {
         rt.arm(TRADE_OFFER_WAIT_MS);
     }
     if rt.bound_reached() {
@@ -641,7 +624,7 @@ fn receiver_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Proj
     let count = matched_count(&projection.their);
     if count <= 0 {
         rt.phase = Phase::Receive;
-        if rt.deadline.is_none() {
+        if rt.clock.deadline.is_none() {
             rt.arm(TRADE_OFFER_WAIT_MS);
         }
         if rt.bound_reached() {
@@ -666,7 +649,7 @@ fn on_confirm(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projecti
     match rt.role {
         Role::Giver if projection.my_offer_ready == Some(false) => {
             rt.phase = Phase::Offer;
-            if rt.deadline.is_none() {
+            if rt.clock.deadline.is_none() {
                 rt.arm(TRADE_OFFER_WAIT_MS);
             }
             if rt.bound_reached() {
@@ -678,7 +661,7 @@ fn on_confirm(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projecti
             if matched_count(&projection.their) <= 0 && rt.phase != Phase::WaitConfirm =>
         {
             rt.phase = Phase::Receive;
-            if rt.deadline.is_none() {
+            if rt.clock.deadline.is_none() {
                 rt.arm(TRADE_OFFER_WAIT_MS);
             }
             if rt.bound_reached() {
@@ -879,7 +862,7 @@ fn settle_close(rt: &mut ExchangeRuntime, projection: &Projection) -> Value {
     }
     let token = rt.token;
     rt.phase = Phase::Idle;
-    rt.deadline = None;
+    rt.clock.deadline = None;
     rt.settle_after_tick = None;
     json!({
         "kind": "complete",
@@ -893,7 +876,7 @@ fn finish_declined(rt: &mut ExchangeRuntime, reason: &str) -> Value {
     let token = rt.token;
     let reason = reason.to_string();
     rt.phase = Phase::Idle;
-    rt.deadline = None;
+    rt.clock.deadline = None;
     rt.inactive_since = None;
     rt.settle_after_tick = None;
     json!({
@@ -929,13 +912,13 @@ mod tests {
     fn pause_and_hold_freeze_the_offer_deadline() {
         let mut rt = ExchangeRuntime::new();
         rt.arm(TRADE_OFFER_WAIT_MS);
-        let before = rt.deadline.expect("armed");
+        let before = rt.clock.deadline.expect("armed");
         rt.set_freeze(true, false);
         assert!(rt.frozen());
         std::thread::sleep(Duration::from_millis(5));
         rt.set_freeze(false, false);
         assert!(!rt.frozen());
-        assert!(rt.deadline.expect("still armed") > before);
+        assert!(rt.clock.deadline.expect("still armed") > before);
         rt.set_freeze(false, true);
         assert!(rt.frozen(), "guardian hold freezes too");
     }
@@ -951,7 +934,7 @@ mod tests {
         assert_eq!(rt.token, before.wrapping_add(1));
         assert_eq!(rt.phase, Phase::Idle);
         assert_eq!(rt.metric_before, 0);
-        assert!(rt.deadline.is_none());
+        assert!(rt.clock.deadline.is_none());
         assert!(rt.seen_partner.is_none());
     }
 

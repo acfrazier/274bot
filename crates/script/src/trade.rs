@@ -9,6 +9,7 @@
 //! changed partner fail closed.
 
 use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -187,9 +188,7 @@ enum Phase {
 }
 
 struct TradeRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
+    clock: InstantTaskClock,
     token: u64,
     phase: Phase,
     kind: Kind,
@@ -203,15 +202,12 @@ struct TradeRuntime {
     offer_open: bool,
     confirm_open: bool,
     removals: u32,
-    deadline: Option<Instant>,
 }
 
 impl TradeRuntime {
     const fn new() -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
+            clock: InstantTaskClock::new(),
             token: 0,
             phase: Phase::Idle,
             kind: Kind::Request,
@@ -225,40 +221,27 @@ impl TradeRuntime {
             offer_open: false,
             confirm_open: false,
             removals: 0,
-            deadline: None,
         }
     }
 
     fn frozen(&self) -> bool {
-        self.paused || self.held
+        self.clock.frozen()
     }
 
     fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+        self.clock.now()
     }
 
     fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
+        self.clock.set_freeze(paused, held);
     }
 
     fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+        self.clock.arm(window);
     }
 
     fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+        self.clock.bound_reached()
     }
 
     fn abort_runtime(&mut self) {
@@ -274,13 +257,13 @@ impl TradeRuntime {
         self.offer_open = false;
         self.confirm_open = false;
         self.removals = 0;
-        self.deadline = None;
+        self.clock.deadline = None;
     }
 
     fn done(&mut self, result: bool, reason: &str) -> Value {
         let token = self.token;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         json!({
             "kind": "done",
             "token": token,
@@ -347,7 +330,7 @@ impl TradeRuntime {
     fn finish_ops(&mut self, mut step: Value, result: bool, reason: &str) -> Value {
         let token = self.token;
         self.phase = Phase::Idle;
-        self.deadline = None;
+        self.clock.deadline = None;
         step["kind"] = json!("done");
         step["token"] = json!(token);
         step["result"] = json!(result);
@@ -381,21 +364,21 @@ pub fn on_snapshot(snap: &SnapshotReader<'_>) {
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
+        let held = rt.borrow().clock.held;
         rt.borrow_mut().set_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
+        let paused = rt.borrow().clock.paused;
         rt.borrow_mut().set_freeze(paused, held);
     });
 }
@@ -899,13 +882,13 @@ mod tests {
     fn pause_and_hold_freeze_the_settlement_deadline() {
         let mut rt = TradeRuntime::new();
         rt.arm(SETTLE_MS);
-        let before = rt.deadline.expect("armed");
+        let before = rt.clock.deadline.expect("armed");
         rt.set_freeze(true, false);
         assert!(rt.frozen());
         std::thread::sleep(Duration::from_millis(5));
         rt.set_freeze(false, false);
         assert!(!rt.frozen());
-        assert!(rt.deadline.expect("still armed") > before);
+        assert!(rt.clock.deadline.expect("still armed") > before);
         rt.set_freeze(false, true);
         assert!(rt.frozen(), "guardian hold freezes too");
     }
@@ -922,7 +905,7 @@ mod tests {
         assert_eq!(rt.token, before.wrapping_add(1));
         assert_eq!(rt.phase, Phase::Idle);
         assert_eq!(rt.amount, 0);
-        assert!(rt.deadline.is_none());
+        assert!(rt.clock.deadline.is_none());
         assert!(rt.name.is_empty());
         assert!(rt.selected.is_none());
     }

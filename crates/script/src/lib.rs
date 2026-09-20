@@ -118,6 +118,8 @@ mod shop;
 #[cfg(feature = "load")]
 mod special;
 #[cfg(feature = "load")]
+mod task_clock;
+#[cfg(feature = "load")]
 mod teleport;
 #[cfg(feature = "load")]
 mod trade;
