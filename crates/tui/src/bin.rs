@@ -1034,6 +1034,19 @@ impl TuiSession {
                         }
                     }
                 }
+                ChatAction::PaintChrome(index) => {
+                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
+                        let rows = super::chat::paint_chrome_rows(paint);
+                        if let Some((key, select_name, _)) = rows.get(index) {
+                            play.script_paint_select(
+                                &name,
+                                key,
+                                select_name,
+                                paint.generation,
+                            );
+                        }
+                    }
+                }
                 ChatAction::None => {}
             }
         }

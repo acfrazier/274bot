@@ -4289,6 +4289,16 @@ impl Session {
         }
     }
 
+    /// Persistent strip/rail/tabs selection on the focused slot.
+    pub fn script_paint_select(&mut self, key: &str, select_name: &str, generation: u64) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if let Some(play) = self.play.as_ref() {
+            play.script_paint_select(&name, key, select_name, generation);
+        }
+    }
+
     /// Overlay generation for the path overlay's rising-edge refresh.
     pub fn route_gen(&self) -> u64 {
         self.route_gen

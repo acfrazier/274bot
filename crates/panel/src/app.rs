@@ -950,12 +950,19 @@ fn overlay_script_paint(
 ) {
     match slot {
         Some(slot) => {
-            if let Some((id, generation)) =
+            if let Some((hit, generation)) =
                 state
                     .paint
                     .frame(ui, Some(gpu), slot.script_paint.as_ref(), min, size)
             {
-                state.session.script_paint_click(&id, generation);
+                match hit {
+                    crate::paint::PaintFrameHit::Button(id) => {
+                        state.session.script_paint_click(&id, generation);
+                    }
+                    crate::paint::PaintFrameHit::Select { key, name } => {
+                        state.session.script_paint_select(&key, &name, generation);
+                    }
+                }
             }
         }
         None => state.paint.release_canvas(gpu),

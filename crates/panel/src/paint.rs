@@ -10,7 +10,7 @@ use script::canvas::{self, CanvasOp};
 use script::shim::ScriptPaint;
 
 use crate::game_view::{FrameGpu, APPLET_H, APPLET_W};
-use crate::theme::{ACCENT, BG_DEEP, TEXT};
+use crate::theme::{ACCENT, BG_DEEP, TEXT, TEXT_DIM};
 
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
 /// chat on the 765×503 stage.
@@ -21,6 +21,25 @@ const PAD_X: f32 = 6.0;
 const HEADER_Y: f32 = 2.0;
 const LINE_STEP: f32 = 14.0;
 const ROW_H_FLOOR: f32 = 16.0;
+
+/// Source paint chrome at 1× applet space (see frozen `Paint.ts`).
+const TITLE_H_1X: f32 = 20.0;
+const TAB_H_1X: f32 = 18.0;
+const TAB_INSET_1X: f32 = 3.0;
+const TAB_TRAIL_1X: f32 = 2.0;
+const FOOTER_LINE_1X: f32 = 16.0;
+const RAIL_W_1X: f32 = 72.0;
+const STRIP_TAB_PAD_1X: f32 = 14.0;
+const STATUS_FG: [f32; 4] = [0.435, 0.878, 0.545, 1.0];
+
+/// One script-paint interaction the overlay detected this frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaintFrameHit {
+    /// One-shot paint button (`paintClick`).
+    Button(String),
+    /// Persistent strip/rail/tabs selection (`paint_select`).
+    Select { key: String, name: String },
+}
 
 /// Map the applet-space chatbox onto the Game Image's display rect
 /// (`min` = the Image widget's top-left corner, `size` = its display
@@ -45,6 +64,10 @@ pub fn paint_uniform_scale(size: [f32; 2]) -> f32 {
         .max(0.01)
 }
 
+fn text_width(ui: &Ui, font_sz: f32, text: &str) -> f32 {
+    ui.current_font().calc_text_size(font_sz, f32::MAX, 0.0, text)[0]
+}
+
 struct CanvasGpu {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -66,6 +89,8 @@ pub struct PaintOverlay {
     button_labels: Vec<String>,
     /// Screen-space button rects `(min, max)` for GPU-less click tests.
     button_hits: Vec<[f32; 4]>,
+    /// Chrome hit targets: `(store key, advertised name, rect)`.
+    chrome_hits: Vec<(String, String, [f32; 4])>,
     /// Screen-space canvas dest `(x, y, w, h)` this frame, if any.
     canvas_dest: Option<[f32; 4]>,
     /// Applet-space dirty rect this frame, if any.
@@ -86,6 +111,7 @@ impl PaintOverlay {
             lines: Vec::new(),
             button_labels: Vec::new(),
             button_hits: Vec::new(),
+            chrome_hits: Vec::new(),
             canvas_dest: None,
             canvas_dirty: None,
             last_ops: Vec::new(),
@@ -134,15 +160,23 @@ impl PaintOverlay {
         paint: Option<&ScriptPaint>,
         min: [f32; 2],
         size: [f32; 2],
-    ) -> Option<(String, u64)> {
+    ) -> Option<(PaintFrameHit, u64)> {
         self.lines.clear();
         self.button_labels.clear();
         self.button_hits.clear();
+        self.chrome_hits.clear();
         self.canvas_dest = None;
         self.canvas_dirty = None;
 
-        let structured =
-            paint.filter(|p| p.title.is_some() || !p.lines.is_empty() || !p.buttons.is_empty());
+        let structured = paint.filter(|p| {
+            p.title.is_some()
+                || !p.lines.is_empty()
+                || !p.buttons.is_empty()
+                || p.strip.is_some()
+                || p.rail.as_ref().is_some_and(|r| !r.names.is_empty())
+                || p.footer.is_some()
+                || !p.tabs.is_empty()
+        });
         let canvas_ops = paint.map(|p| p.canvas.as_slice()).unwrap_or(&[]);
 
         if structured.is_none() && canvas_ops.is_empty() {
@@ -220,8 +254,24 @@ impl PaintOverlay {
         let header_y = HEADER_Y * s;
         let line_step = (LINE_STEP * s).max(1.0);
         let font_sz = (ui.current_font_size() * s).max(1.0);
-        let height = if self.collapsed { row_h } else { h };
-        if ui.is_mouse_hovering_rect([x, y], [x + w, y + row_h])
+        let title_h = (TITLE_H_1X * s).max(1.0);
+        let tab_row_h = ((TAB_INSET_1X + TAB_H_1X + TAB_TRAIL_1X) * s).max(1.0);
+        let footer_h = if paint.footer.is_some() {
+            (FOOTER_LINE_1X * s).max(1.0)
+        } else {
+            0.0
+        };
+        let has_strip = paint.strip.is_some();
+        let header_h = if has_strip { title_h } else { row_h };
+        let height = if self.collapsed { header_h } else { h };
+        let toggle = [x + w - header_h, y, x + w, y + header_h];
+        if has_strip {
+            if ui.is_mouse_hovering_rect([toggle[0], toggle[1]], [toggle[2], toggle[3]])
+                && ui.is_mouse_clicked(MouseButton::Left)
+            {
+                self.collapsed = !self.collapsed;
+            }
+        } else if ui.is_mouse_hovering_rect([x, y], [x + w, y + row_h])
             && ui.is_mouse_clicked(MouseButton::Left)
         {
             self.collapsed = !self.collapsed;
@@ -238,31 +288,194 @@ impl PaintOverlay {
         dl.add_rect([x, y], [x + w, y + height], ACCENT)
             .thickness(s)
             .build();
-        let glyph = if self.collapsed { "+" } else { "–" };
-        let header = match &paint.title {
-            Some(t) => format!("{glyph} {t}"),
-            None => glyph.to_string(),
-        };
         let font = ui.current_font();
-        dl.add_text_with_font(
-            font,
-            font_sz,
-            [x + pad, y + header_y],
-            ACCENT,
-            &header,
-            0.0,
-            None,
-        );
-        let mut clicked = None;
-        if !self.collapsed {
-            if let Some(title) = &paint.title {
-                self.lines.push(title.clone());
+        let glyph = if self.collapsed { "+" } else { "–" };
+        let mut chrome_click: Option<(String, String)> = None;
+        let mut content_top = y + header_h;
+        if let Some(strip) = &paint.strip {
+            let mid = y + header_h * 0.5;
+            let mut tx = x + pad;
+            for name in &strip.names {
+                let tw = (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0);
+                let box_y = y + 2.0 * s;
+                let box_h = (header_h - 4.0 * s).max(1.0);
+                let hit = [tx, box_y, tx + tw, box_y + box_h];
+                let active = strip.selected == *name;
+                let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
+                if active || hovered {
+                    dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
+                        .filled(true)
+                        .build();
+                }
+                dl.add_text_with_font(
+                    font,
+                    font_sz,
+                    [tx + 7.0 * s, mid - font_sz * 0.35],
+                    if active { ACCENT } else { TEXT_DIM },
+                    name,
+                    0.0,
+                    None,
+                );
+                let key = format!("strip:{}", strip.id);
+                self.chrome_hits
+                    .push((key.clone(), name.clone(), hit));
+                if hovered && ui.is_mouse_clicked(MouseButton::Left) {
+                    chrome_click = Some((key, name.clone()));
+                }
+                tx += tw + 2.0 * s;
             }
-            let mut ty = y + row_h;
+            if let Some(status) = &strip.status {
+                let status_w = text_width(ui, font_sz, status);
+                dl.add_text_with_font(
+                    font,
+                    font_sz,
+                    [toggle[0] - status_w - pad, mid - font_sz * 0.35],
+                    STATUS_FG,
+                    status,
+                    0.0,
+                    None,
+                );
+            }
+            let brand = strip
+                .brand
+                .as_deref()
+                .or(paint.title.as_deref())
+                .unwrap_or("");
+            if !brand.is_empty() {
+                let brand_w = text_width(ui, font_sz, brand);
+                dl.add_text_with_font(
+                    font,
+                    font_sz,
+                    [toggle[0] - brand_w - pad * 2.0, mid - font_sz * 0.35],
+                    ACCENT,
+                    brand,
+                    0.0,
+                    None,
+                );
+                self.lines.push(brand.to_string());
+            }
+            dl.add_text_with_font(
+                font,
+                font_sz,
+                [toggle[0] + 7.0 * s, y + header_y],
+                TEXT_DIM,
+                glyph,
+                0.0,
+                None,
+            );
+        } else {
+            let header = match &paint.title {
+                Some(t) => format!("{glyph} {t}"),
+                None => glyph.to_string(),
+            };
+            dl.add_text_with_font(
+                font,
+                font_sz,
+                [x + pad, y + header_y],
+                ACCENT,
+                &header,
+                0.0,
+                None,
+            );
+        }
+        let mut button_click: Option<String> = None;
+        if !self.collapsed {
+            if !has_strip {
+                if let Some(title) = &paint.title {
+                    self.lines.push(title.clone());
+                }
+            }
+            for band in &paint.tabs {
+                if band.names.is_empty() {
+                    continue;
+                }
+                let ty = content_top + TAB_INSET_1X * s;
+                let mut tx = x + 4.0 * s;
+                for name in &band.names {
+                    let tw = (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0);
+                    let hit = [tx, ty, tx + tw, ty + TAB_H_1X * s];
+                    let active = band.selected == *name;
+                    let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
+                    if active || hovered {
+                        dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
+                            .filled(true)
+                            .build();
+                    }
+                    dl.add_text_with_font(
+                        font,
+                        font_sz,
+                        [tx + 7.0 * s, ty + TAB_H_1X * s * 0.45],
+                        if active { ACCENT } else { TEXT_DIM },
+                        name,
+                        0.0,
+                        None,
+                    );
+                    let key = format!("tabs:{}", band.id);
+                    self.chrome_hits
+                        .push((key.clone(), name.clone(), hit));
+                    if hovered && ui.is_mouse_clicked(MouseButton::Left) {
+                        chrome_click = Some((key, name.clone()));
+                    }
+                    tx += tw + 2.0 * s;
+                }
+                content_top += tab_row_h;
+            }
+            let content_bottom = y + height - footer_h;
+            let rail_w = paint
+                .rail
+                .as_ref()
+                .filter(|r| !r.names.is_empty())
+                .map(|_| (RAIL_W_1X * s).max(1.0))
+                .unwrap_or(0.0);
+            let body_left = x + pad + rail_w;
+            let body_w = (w - pad * 2.0 - rail_w).max(1.0);
+            if let Some(rail) = paint.rail.as_ref() {
+                if !rail.names.is_empty() {
+                    let rail_body_h = (content_bottom - content_top).max(1.0);
+                    let slot_h = (rail_body_h / rail.names.len() as f32).max(line_step);
+                    for (i, name) in rail.names.iter().enumerate() {
+                        let ry = content_top + slot_h * i as f32;
+                        let hit = [
+                            x + 2.0 * s,
+                            ry,
+                            x + rail_w - 2.0 * s,
+                            (ry + slot_h).min(content_bottom),
+                        ];
+                        let active = rail.selected == *name;
+                        let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
+                        if active || hovered {
+                            dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
+                                .filled(true)
+                                .build();
+                        }
+                        if active {
+                            dl.add_rect([hit[0], hit[1]], [hit[0] + 2.0 * s, hit[3]], ACCENT)
+                                .filled(true)
+                                .build();
+                        }
+                        dl.add_text_with_font(
+                            font,
+                            font_sz,
+                            [hit[0] + 6.0 * s, ry + slot_h * 0.35],
+                            if active { TEXT } else { TEXT_DIM },
+                            name,
+                            0.0,
+                            None,
+                        );
+                        let key = format!("rail:{}", rail.id);
+                        self.chrome_hits
+                            .push((key.clone(), name.clone(), hit));
+                        if hovered && ui.is_mouse_clicked(MouseButton::Left) {
+                            chrome_click = Some((key, name.clone()));
+                        }
+                    }
+                }
+            }
+            let mut ty = content_top;
             for row in &paint.lines {
                 self.lines.push(row.clone());
-                if ty + line_step <= y + height {
-                    dl.add_text_with_font(font, font_sz, [x + pad, ty], TEXT, row, 0.0, None);
+                if ty + line_step <= content_bottom {
+                    dl.add_text_with_font(font, font_sz, [body_left, ty], TEXT, row, 0.0, None);
                     ty += line_step;
                 }
             }
@@ -272,26 +485,46 @@ impl PaintOverlay {
                 (fp[0] * s).max(0.0),
                 (fp[1] * s).max(0.0),
             ]));
-            let btn_w = (w - pad * 2.0).max(1.0);
             for btn in &paint.buttons {
                 self.button_labels.push(btn.label.clone());
-                if ty + row_h <= y + height {
-                    ui.set_cursor_screen_pos([x + pad, ty]);
-                    let hit = [x + pad, ty, x + w - pad, ty + row_h];
+                if ty + row_h <= content_bottom {
+                    ui.set_cursor_screen_pos([body_left, ty]);
+                    let hit = [body_left, ty, body_left + body_w, ty + row_h];
                     self.button_hits.push(hit);
                     let pressed = ui.button_with_size(
                         format!("{}##paint-{}", btn.label, btn.id),
-                        [btn_w, row_h],
+                        [body_w, row_h],
                     );
                     let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                     if pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)) {
-                        clicked = Some((btn.id.clone(), paint.generation));
+                        button_click = Some(btn.id.clone());
                     }
                     ty += row_h;
                 }
             }
+            if let Some(footer) = &paint.footer {
+                let footer_w = text_width(ui, font_sz, footer);
+                dl.add_text_with_font(
+                    font,
+                    font_sz,
+                    [x + w - pad - footer_w, content_bottom + footer_h * 0.25],
+                    TEXT_DIM,
+                    footer,
+                    0.0,
+                    None,
+                );
+            }
         }
-        clicked
+        if chrome_click.is_some() {
+            chrome_click.map(|(key, name)| {
+                (
+                    PaintFrameHit::Select { key, name },
+                    paint.generation,
+                )
+            })
+        } else {
+            button_click.map(|id| (PaintFrameHit::Button(id), paint.generation))
+        }
     }
 
     fn sync_canvas_texture(
@@ -382,7 +615,9 @@ mod tests {
     use dear_imgui_rs::FramePrepareOptions;
     use script::shim::ScriptPaint;
 
-    use super::{chatbox_rect, paint_uniform_scale, PaintOverlay, CHATBOX, PAD_X};
+    use super::{
+        chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X,
+    };
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -593,7 +828,10 @@ mod tests {
         ctx.render();
         assert_eq!(
             clicked,
-            Some(("gobank".to_string(), p.generation)),
+            Some((
+                PaintFrameHit::Button("gobank".to_string()),
+                p.generation
+            )),
             "clicking the button dispatches the advertised id with the rendered generation"
         );
         assert!(!overlay.collapsed, "button click is not collapse");
@@ -942,6 +1180,80 @@ mod tests {
         assert!(half_hit[2] <= half_chat[0] + half_chat[2] + 0.5);
         assert!(half_hit[1] >= half_chat[1] - 0.5);
         assert!(half_hit[3] <= half_chat[1] + half_chat[3] + 0.5);
+    }
+
+    fn jive_strip_paint() -> ScriptPaint {
+        ScriptPaint {
+            title: Some("JiveCrafting".into()),
+            generation: 3,
+            strip: Some(script::shim::PaintChromeBand {
+                id: "k".into(),
+                names: vec!["Statistics".into(), "Options".into()],
+                selected: "Statistics".into(),
+                status: Some("ok".into()),
+                brand: Some("JiveCrafting".into()),
+            }),
+            lines: vec!["Overview row".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn strip_chrome_click_maps_scaled_hit_to_paint_select() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = jive_strip_paint();
+        let half = [382.5_f32, 251.5];
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                });
+        }
+        ctx.render();
+        assert!(
+            overlay.chrome_hits.iter().any(|(k, n, _)| k == "strip:k" && n == "Options"),
+            "strip advertises both page targets"
+        );
+        let hit = overlay
+            .chrome_hits
+            .iter()
+            .find(|(_, n, _)| n == "Options")
+            .map(|(_, _, r)| *r)
+            .expect("Options hit rect");
+        let center = [(hit[0] + hit[2]) / 2.0, (hit[1] + hit[3]) / 2.0];
+        prepare_frame(&mut ctx);
+        ctx.io_mut().add_mouse_pos_event(center);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        let mut clicked = None;
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    clicked = overlay.frame(ui, None, Some(&p), [0.0, 0.0], half);
+                });
+        }
+        ctx.render();
+        assert_eq!(
+            clicked,
+            Some((
+                PaintFrameHit::Select {
+                    key: "strip:k".into(),
+                    name: "Options".into(),
+                },
+                p.generation
+            ))
+        );
     }
 
     #[test]

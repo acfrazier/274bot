@@ -1619,6 +1619,33 @@ impl Play {
         slot.paint_click(id);
     }
 
+    /// Persistent strip/rail/tabs selection for `name`. No-op when there is
+    /// no slot, the slot is not Running, `key` or `name` is empty,
+    /// `generation` does not match the last forwarded frame, or that frame
+    /// does not advertise `name` under `key`. Never walks, pauses, or stops.
+    pub fn script_paint_select(&self, name: &str, key: &str, select_name: &str, generation: u64) {
+        if key.is_empty() || select_name.is_empty() {
+            return;
+        }
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return;
+        };
+        let slot = slot.lock().unwrap();
+        if slot.state() != script::RunState::Running {
+            return;
+        }
+        let Some(paint) = slot.paint() else {
+            return;
+        };
+        if paint.generation != generation {
+            return;
+        }
+        if !script_runtime::script_paint_select_advertised(&paint, key, select_name) {
+            return;
+        }
+        slot.paint_select(key, select_name);
+    }
+
     /// `name`'s script lifecycle state; `Idle` when the slot has none.
     pub fn script_state(&self, name: &str) -> script::RunState {
         script_slot(&self.scripts, name)

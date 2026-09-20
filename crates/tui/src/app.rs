@@ -335,10 +335,10 @@ impl TuiApp {
     fn chat_on_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
         match chat.on_key(key) {
-            action
-            @ (ChatAction::Continue | ChatAction::Answer(_) | ChatAction::PaintButton(_)) => {
-                Some(AppAction::Chat(action))
-            }
+            action @ (ChatAction::Continue
+            | ChatAction::Answer(_)
+            | ChatAction::PaintButton(_)
+            | ChatAction::PaintChrome(_)) => Some(AppAction::Chat(action)),
             ChatAction::None => None,
         }
     }
@@ -805,7 +805,8 @@ impl TuiApp {
             match chat.on_click(self.chat_area, col, row) {
                 action @ (ChatAction::Continue
                 | ChatAction::Answer(_)
-                | ChatAction::PaintButton(_)) => return AppAction::Chat(action),
+                | ChatAction::PaintButton(_)
+                | ChatAction::PaintChrome(_)) => return AppAction::Chat(action),
                 ChatAction::None => {}
             }
         }

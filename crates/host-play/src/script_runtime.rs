@@ -3092,6 +3092,34 @@ pub(super) fn publish_script_paint(
     }
 }
 
+/// Whether `paint` advertises `select_name` on the persistent chrome store
+/// `key` (`strip:{id}`, `rail:{id}`, or `tabs:{id}`).
+pub(super) fn script_paint_select_advertised(
+    paint: &script::shim::ScriptPaint,
+    key: &str,
+    select_name: &str,
+) -> bool {
+    if select_name.is_empty() {
+        return false;
+    }
+    if let Some(id) = key.strip_prefix("strip:") {
+        return paint.strip.as_ref().is_some_and(|band| {
+            band.id == id && band.names.iter().any(|n| n == select_name)
+        });
+    }
+    if let Some(id) = key.strip_prefix("rail:") {
+        return paint.rail.as_ref().is_some_and(|band| {
+            band.id == id && band.names.iter().any(|n| n == select_name)
+        });
+    }
+    if let Some(id) = key.strip_prefix("tabs:") {
+        return paint.tabs.iter().any(|band| {
+            band.id == id && band.names.iter().any(|n| n == select_name)
+        });
+    }
+    false
+}
+
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route (found off-pump over the shared
 /// [`NavWorld`]); the slot pump polls [`Traveller::follow`] with a clone of

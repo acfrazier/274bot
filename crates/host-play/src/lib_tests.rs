@@ -3812,6 +3812,67 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
 }
 
 #[test]
+fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_paint_select("alice", "strip:k", "Options", 0);
+    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
+        .unwrap();
+    play.script_paint_select("alice", "strip:k", "", 0);
+    play.script_paint_select("alice", "strip:k", "Options", 0);
+    play.script_paint_select("alice", "strip:k", "Nope", 0);
+    play.script_pause("alice");
+    play.script_paint_select("alice", "strip:k", "Options", 0);
+    assert_eq!(play.script_state("alice"), script::RunState::Paused);
+    play.script_stop("alice");
+    play.script_paint_select("alice", "strip:k", "Options", 0);
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+}
+
+#[test]
+fn script_paint_select_adverts_fixture_chrome() {
+    use script::shim::{PaintChromeBand, ScriptPaint};
+    let paint = ScriptPaint {
+        generation: 7,
+        strip: Some(PaintChromeBand {
+            id: "k".into(),
+            names: vec!["Statistics".into(), "Options".into()],
+            selected: "Statistics".into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert!(script_runtime::script_paint_select_advertised(
+        &paint,
+        "strip:k",
+        "Options"
+    ));
+    assert!(!script_runtime::script_paint_select_advertised(
+        &paint,
+        "strip:k",
+        "Nope"
+    ));
+    assert!(!script_runtime::script_paint_select_advertised(
+        &paint,
+        "tabs:mg",
+        "Loot"
+    ));
+    assert_eq!(paint.generation, 7);
+}
+
+#[test]
 fn script_start_unknown_slot_errors_without_phantom_entry() {
     let play = run_with_io(
         &PlayOptions {
