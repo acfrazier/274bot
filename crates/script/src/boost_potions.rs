@@ -301,6 +301,121 @@ fn plan_exhausted(payload: &Value) -> Value {
     json!({ "kind": "fallback", "flask": potion.flask(), "want": DEFAULT_WANT })
 }
 
+/// One planned flask recommendation. `short` is table-owned for
+/// [`planned_potions`] and optional on a caller-supplied sip plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PotionPlan {
+    pub skill: String,
+    pub short: Option<String>,
+    pub flask: String,
+    pub doses: Vec<String>,
+    pub want: u32,
+}
+
+/// One carry row used by [`planned_potions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedCarry {
+    pub item: String,
+    pub qty: u32,
+}
+
+/// One skill observation used by [`potion_to_sip`]. Missing rows stay absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PotionLevel {
+    pub skill: String,
+    pub base: f64,
+    pub effective: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PotionToSipError {
+    InvalidArgs,
+    MissingObservation,
+}
+
+/// Recommend the melee pair. First matching carry dose wins; otherwise flask `(3)`, `want: 1`.
+///
+/// This is a withdraw-form recommendation. It does not observe inventory or drink.
+pub fn planned_potions(carry: &[PlannedCarry]) -> Vec<PotionPlan> {
+    BOOST_POTIONS
+        .iter()
+        .map(|potion| {
+            let matched = carry.iter().find_map(|row| {
+                let key = row.item.trim().to_lowercase();
+                (0..DOSE_COUNTS.len()).find_map(|dose| {
+                    if potion.dose_matches(dose, &key) {
+                        potion.dose_name(dose).map(|flask| (flask, row.qty))
+                    } else {
+                        None
+                    }
+                })
+            });
+            let (flask, want) = matched.unwrap_or_else(|| (potion.flask(), DEFAULT_WANT as u32));
+            PotionPlan {
+                skill: potion.skill.to_string(),
+                short: Some(potion.short.to_string()),
+                flask,
+                doses: potion.doses(),
+                want,
+            }
+        })
+        .collect()
+}
+
+/// First held plan whose levels are faded. `held == 0` skips that plan.
+///
+/// A held plan with no matching level row is [`PotionToSipError::MissingObservation`].
+/// An explicit `base == 0` row is a known observation and uses current `boost_faded`.
+pub fn potion_to_sip(
+    plans: &[PotionPlan],
+    held: &[f64],
+    levels: &[PotionLevel],
+) -> Result<Option<PotionPlan>, PotionToSipError> {
+    if held.len() != plans.len() {
+        return Err(PotionToSipError::InvalidArgs);
+    }
+    for &count in held {
+        if !count.is_finite() || count < 0.0 {
+            return Err(PotionToSipError::InvalidArgs);
+        }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for level in levels {
+        if !level.base.is_finite() || !level.effective.is_finite() {
+            return Err(PotionToSipError::InvalidArgs);
+        }
+        if seen
+            .iter()
+            .any(|skill| skill.eq_ignore_ascii_case(&level.skill))
+        {
+            return Err(PotionToSipError::InvalidArgs);
+        }
+        seen.push(level.skill.as_str());
+    }
+    if plans.is_empty() {
+        return Ok(None);
+    }
+    for (plan, &count) in plans.iter().zip(held.iter()) {
+        if count == 0.0 {
+            continue;
+        }
+        let Some(level) = levels
+            .iter()
+            .find(|level| level.skill.eq_ignore_ascii_case(&plan.skill))
+        else {
+            return Err(PotionToSipError::MissingObservation);
+        };
+        if boost_faded(
+            JsNumber::Finite(level.base),
+            JsNumber::Finite(level.effective),
+            JsNumber::Finite(BOOST_FLOOR),
+        ) {
+            return Ok(Some(plan.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// Whether the caller's pack holds the potion: the frozen `s.held(plan) > 0`.
 ///
 /// The shim reports `s.held(plan)` as a marshaled number, so the predicate
@@ -833,5 +948,79 @@ mod tests {
         assert_eq!(JsNumber::from_json(&json!(true)), None);
         assert_eq!(JsNumber::from_json(&Value::Null), None);
         assert_eq!(JsNumber::from_json(&json!(2)), Some(JsNumber::Finite(2.0)));
+    }
+
+    #[test]
+    fn planned_potions_value_matches_first_dose_then_fallback() {
+        let defaults = planned_potions(&[]);
+        assert_eq!(defaults[0].flask, "Super attack(3)");
+        assert_eq!(defaults[0].want, 1);
+        assert_eq!(defaults[0].short.as_deref(), Some("Att"));
+        assert_eq!(defaults[1].flask, "Super strength(3)");
+        let named = planned_potions(&[
+            PlannedCarry {
+                item: " Super Attack(4) ".into(),
+                qty: 3,
+            },
+            PlannedCarry {
+                item: "Lobster".into(),
+                qty: 10,
+            },
+        ]);
+        assert_eq!(named[0].flask, "Super attack(4)");
+        assert_eq!(named[0].want, 3);
+        assert_eq!(named[1].flask, "Super strength(3)");
+        assert_eq!(named[1].want, 1);
+    }
+
+    #[test]
+    fn potion_to_sip_does_not_treat_missing_levels_as_zero() {
+        let plans = planned_potions(&[]);
+        assert_eq!(potion_to_sip(&[], &[], &[]).unwrap(), None);
+        assert_eq!(
+            potion_to_sip(&plans, &[0.0, 0.0], &[]).unwrap(),
+            None,
+            "empty packs skip without needing levels"
+        );
+        assert_eq!(
+            potion_to_sip(&plans, &[1.0, 1.0], &[]),
+            Err(PotionToSipError::MissingObservation)
+        );
+        let later_due = potion_to_sip(
+            &plans,
+            &[1.0, 1.0],
+            &[PotionLevel {
+                skill: "strength".into(),
+                base: 70.0,
+                effective: 70.0,
+            }],
+        );
+        assert_eq!(
+            later_due,
+            Err(PotionToSipError::MissingObservation),
+            "a held unknown earlier plan is not skipped for a later due plan"
+        );
+        let explicit_zero = potion_to_sip(
+            &plans,
+            &[1.0, 1.0],
+            &[
+                PotionLevel {
+                    skill: "Attack".into(),
+                    base: 0.0,
+                    effective: 0.0,
+                },
+                PotionLevel {
+                    skill: "strength".into(),
+                    base: 70.0,
+                    effective: 70.0,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            explicit_zero.as_ref().map(|plan| plan.skill.as_str()),
+            Some("strength"),
+            "present base 0 is a known false, not a missing observation"
+        );
     }
 }

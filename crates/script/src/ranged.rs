@@ -13,7 +13,50 @@
 //! the `<= 0` decision and accepts finite JSON numbers, null→0, missing→NaN,
 //! and IEEE string tags from that shim.
 
+use api::game_data::GameItem;
 use serde_json::Value;
+
+/// Thrown dart when `weapon` matches a selected `*_dart` name; otherwise bow-shaped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeLoadout {
+    pub weapon: String,
+    pub projectile: String,
+    pub thrown: bool,
+}
+
+/// First selected item whose alias ends `_dart` and whose name matches
+/// `weapon.trim().to_lowercase()`. Unknown weapons, including Dragon dart,
+/// stay bow-shaped: raw weapon, raw ammo, `thrown: false`.
+pub fn range_loadout_of<'a, I>(items: I, weapon: &str, ammo: &str) -> RangeLoadout
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let wanted = weapon.trim().to_lowercase();
+    for (alias, name) in items {
+        if alias.ends_with("_dart") && name.to_lowercase() == wanted {
+            return RangeLoadout {
+                weapon: name.to_string(),
+                projectile: name.to_string(),
+                thrown: true,
+            };
+        }
+    }
+    RangeLoadout {
+        weapon: weapon.to_string(),
+        projectile: ammo.to_string(),
+        thrown: false,
+    }
+}
+
+pub fn range_loadout_of_items(items: &[GameItem], weapon: &str, ammo: &str) -> RangeLoadout {
+    range_loadout_of(
+        items.iter().filter_map(|item| {
+            Some((item.alias.as_deref()?, item.name.as_deref()?))
+        }),
+        weapon,
+        ammo,
+    )
+}
 
 /// True when no projectile remains equipped, carried, or on the ground.
 ///
@@ -97,6 +140,43 @@ mod tests {
         // i32::MAX+ path and large f64 must stay non-empty (not saturating i32).
         assert!(!range_supply_empty((i32::MAX as f64) + 1.0, 0.0, 0.0));
         assert!(!range_supply_empty(1e20, 0.0, 0.0));
+    }
+
+    #[test]
+    fn dart_shape_uses_canonical_name_and_unknown_stays_bow() {
+        let items = [("bronze_dart", "Bronze dart"), ("maple_shortbow", "Maple shortbow")];
+        assert_eq!(
+            range_loadout_of(items, "Bronze dart", "Iron arrow"),
+            RangeLoadout {
+                weapon: "Bronze dart".into(),
+                projectile: "Bronze dart".into(),
+                thrown: true,
+            }
+        );
+        assert_eq!(
+            range_loadout_of(items, "  BRONZE DART ", "Iron arrow").weapon,
+            "Bronze dart"
+        );
+        assert_eq!(
+            range_loadout_of(items, "Maple shortbow", "Iron arrow"),
+            RangeLoadout {
+                weapon: "Maple shortbow".into(),
+                projectile: "Iron arrow".into(),
+                thrown: false,
+            }
+        );
+        assert_eq!(
+            range_loadout_of(items, "Dragon dart", "Iron arrow"),
+            RangeLoadout {
+                weapon: "Dragon dart".into(),
+                projectile: "Iron arrow".into(),
+                thrown: false,
+            }
+        );
+        assert_eq!(
+            range_loadout_of(items, "", "Iron arrow").projectile,
+            "Iron arrow"
+        );
     }
 
     #[test]

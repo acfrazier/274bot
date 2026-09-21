@@ -258,23 +258,19 @@ pub(super) fn wire_runtime(
     runtime
         .register_function("__rs2b0t_food_of", move |args: &[serde_json::Value]| {
             let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
-            let food = args
+            let names = args
                 .first()
                 .and_then(|v| v.get("carry"))
                 .and_then(|v| v.as_array())
-                .and_then(|rows| {
-                    rows.iter().find_map(|row| {
-                        let name = row.get("item")?.as_str()?;
-                        selected_food
-                            .as_deref()
-                            .and_then(|data| {
-                                data.fixed_food_heals()
-                                    .find(|(known, _)| known.eq_ignore_ascii_case(name))
-                            })
-                            .map(|(known, _)| serde_json::json!(known))
-                    })
-                });
-            Ok(food.unwrap_or(fallback))
+                .into_iter()
+                .flatten()
+                .filter_map(|row| row.get("item").and_then(|v| v.as_str()));
+            Ok(
+                match crate::loadout_plan::food_of_name(selected_food.as_deref(), names) {
+                    Some(name) => serde_json::json!(name),
+                    None => fallback,
+                },
+            )
         })
         .map_err(|e| format!("register food: {e}"))?;
     runtime
@@ -863,6 +859,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("shim: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
+    super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     let content = format!(
@@ -1246,6 +1243,52 @@ api.escapeRunesFor = function (input) {
     return helperErr('invalid-args');
   }
   return supplyV2('escapeRunesFor', input);
+};
+function loadoutV2(op, input) {
+  return globalThis.__rs2b0t_loadout_v2(op, input);
+}
+api.foodOf = function (input) {
+  if (!input || typeof input !== 'object' || typeof input.fallback !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return loadoutV2('foodOf', input);
+};
+api.gearOf = function (input) {
+  if (!input || typeof input !== 'object') return helperErr('invalid-args');
+  return loadoutV2('gearOf', input);
+};
+api.suppliesOf = function (input) {
+  if (!input || typeof input !== 'object') return helperErr('invalid-args');
+  return loadoutV2('suppliesOf', input);
+};
+api.weaponOf = function (input) {
+  if (!input || typeof input !== 'object') return helperErr('invalid-args');
+  return loadoutV2('weaponOf', input);
+};
+api.rangeLoadoutOf = function (input) {
+  if (!input || typeof input.weapon !== 'string' || typeof input.ammo !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return loadoutV2('rangeLoadoutOf', input);
+};
+api.boostFaded = function (input) {
+  if (!input || typeof input.base !== 'number' || typeof input.effective !== 'number') {
+    return helperErr('invalid-args');
+  }
+  if (input.floor !== undefined && typeof input.floor !== 'number') {
+    return helperErr('invalid-args');
+  }
+  return loadoutV2('boostFaded', input);
+};
+api.plannedPotions = function (input) {
+  if (!input || !Array.isArray(input.carry)) return helperErr('invalid-args');
+  return loadoutV2('plannedPotions', input);
+};
+api.potionToSip = function (input) {
+  if (!input || !Array.isArray(input.plans) || !Array.isArray(input.held) || !Array.isArray(input.levels)) {
+    return helperErr('invalid-args');
+  }
+  return loadoutV2('potionToSip', input);
 };
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;

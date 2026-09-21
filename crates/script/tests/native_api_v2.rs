@@ -881,3 +881,42 @@ export async function tick(api) {
     );
     iso.join();
 }
+
+#[test]
+fn v2_loadout_potion_methods_are_named_helper_results_not_a_namespace() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const loadout = { worn: { righthand: 'Rune scimitar' }, carry: [{ item: 'Lobster', qty: 2 }] };
+  globalThis.__probe = {
+    food: api.foodOf({ loadout, fallback: 'Trout' }),
+    gear: api.gearOf({ loadout }),
+    supplies: api.suppliesOf({ loadout }),
+    weapon: api.weaponOf({ loadout, fallback: null }),
+    range: api.rangeLoadoutOf({ weapon: 'Bronze dart', ammo: 'Iron arrow' }),
+    faded: api.boostFaded({ base: 70, effective: 70 }),
+    planned: api.plannedPotions({ carry: [{ item: 'Super attack(4)', qty: 1 }] }),
+    sip: api.potionToSip({ plans: [], held: [], levels: [] }),
+    namespace: api.loadout,
+  };
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["food"]["ok"], true, "{probe:?}");
+    assert_eq!(probe["food"]["value"], "Lobster");
+    assert_eq!(probe["gear"]["value"][0], "Rune scimitar");
+    assert_eq!(probe["supplies"]["value"][0]["qty"], 2);
+    assert_eq!(probe["weapon"]["value"], "Rune scimitar");
+    assert_eq!(probe["range"]["value"]["thrown"], true);
+    assert_eq!(probe["faded"]["value"], true);
+    assert_eq!(probe["planned"]["value"][0]["flask"], "Super attack(4)");
+    assert_eq!(probe["sip"]["ok"], true);
+    assert!(probe["sip"]["value"].is_null());
+    assert!(probe["namespace"].is_null());
+    iso.join();
+}

@@ -575,28 +575,59 @@ pub fn loadout_to_compat(row: &Loadout) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+/// Hat-first worn names, then unassigned, after trim and empty filter.
+pub fn project_gear<'a, I>(worn: impl Fn(&str) -> Option<&'a str>, unassigned: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut out = Vec::new();
+    for slot in WORN_SLOTS {
+        if let Some(item) = worn(slot).map(str::trim).filter(|item| !item.is_empty()) {
+            out.push(item.to_string());
+        }
+    }
+    for item in unassigned {
+        let item = item.trim();
+        if !item.is_empty() {
+            out.push(item.to_string());
+        }
+    }
+    out
+}
+
+/// Trimmed righthand, otherwise the caller fallback (including empty).
+pub fn project_weapon(righthand: Option<&str>, fallback: Option<&str>) -> Option<String> {
+    if let Some(name) = righthand.map(str::trim).filter(|name| !name.is_empty()) {
+        return Some(name.to_string());
+    }
+    fallback.map(str::to_string)
+}
+
+/// One carry row after trim. Empty item names are dropped.
+pub fn carry_entry(item: &str, qty: u32) -> Option<CarryEntry> {
+    let item = item.trim();
+    if item.is_empty() {
+        None
+    } else {
+        Some(CarryEntry::new(item, qty))
+    }
+}
+
 pub fn gear_of(loadout: &serde_json::Value) -> Vec<String> {
     if loadout.is_null() {
         return Vec::new();
     }
-    let mut out = Vec::new();
-    if let Some(worn) = loadout.get("worn").and_then(|v| v.as_object()) {
-        for slot in WORN_SLOTS {
-            if let Some(item) = worn.get(slot).and_then(|v| v.as_str()).map(str::trim) {
-                if !item.is_empty() {
-                    out.push(item.to_string());
-                }
-            }
-        }
-    }
-    if let Some(rows) = loadout.get("unassigned").and_then(|v| v.as_array()) {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                out.push(item.to_string());
-            }
-        }
-    }
-    out
+    let worn = loadout.get("worn").and_then(|v| v.as_object());
+    let unassigned = loadout
+        .get("unassigned")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.as_str());
+    project_gear(
+        |slot| worn.and_then(|map| map.get(slot).and_then(|v| v.as_str())),
+        unassigned,
+    )
 }
 
 pub fn supplies_of(loadout: &serde_json::Value) -> Vec<CarryEntry> {
@@ -609,33 +640,26 @@ pub fn supplies_of(loadout: &serde_json::Value) -> Vec<CarryEntry> {
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            let item = row
-                .get("item")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())?;
+            let item = row.get("item").and_then(|v| v.as_str())?;
             let qty = row
                 .get("qty")
                 .and_then(|v| v.as_u64())
                 .filter(|n| *n > 0)
                 .unwrap_or(1) as u32;
-            Some(CarryEntry::new(item, qty))
+            carry_entry(item, qty)
         })
         .collect()
 }
 
 pub fn weapon_of(loadout: &serde_json::Value, fallback: Option<&str>) -> serde_json::Value {
-    if let Some(name) = loadout
-        .get("worn")
-        .and_then(|v| v.get("righthand"))
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return serde_json::Value::String(name.to_string());
-    }
-    match fallback {
-        Some(name) => serde_json::Value::String(name.to_string()),
+    match project_weapon(
+        loadout
+            .get("worn")
+            .and_then(|v| v.get("righthand"))
+            .and_then(|v| v.as_str()),
+        fallback,
+    ) {
+        Some(name) => serde_json::Value::String(name),
         None => serde_json::Value::Null,
     }
 }

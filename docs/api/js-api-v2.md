@@ -153,6 +153,38 @@ integration; the Rust fact module is shared when that lands.
 
 Example: `crates/script/examples/supply_helpers_v2.ts`.
 
+## Loadout and potion helpers
+
+Eight sync `HelperResult` methods. They recommend food, worn names, carry
+rows, a weapon, a dart/bow shape, and a melee flask pair. They do not drink,
+equip, withdraw, or invent `snapshot.loadout`. Callers supply a loadout
+literal and read `api.snapshot.inv` / `api.snapshot.stats`.
+
+v1 JSON helpers (`__rs2b0t_food_of`, `__rs2b0t_gear_of`,
+`__rs2b0t_supplies_of`, `__rs2b0t_weapon_of`, `__rs2b0t_boost_potions_step`)
+and the current ranged.js shim stay unchanged, including callback/identity
+quirks. New typed calls do not go through that JSON dispatch.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `foodOf({ loadout, fallback })` | first `fixed_food_heals` carry name, else fallback | `invalid-args`, `missing-selected-data` |
+| `gearOf({ loadout })` | hat-first `WORN_SLOTS` then unassigned | `invalid-args` |
+| `suppliesOf({ loadout })` | `{item, qty}[]`; omitted qty defaults to 1 | `invalid-args` |
+| `weaponOf({ loadout, fallback? })` | trimmed righthand or fallback/`null` | `invalid-args` |
+| `rangeLoadoutOf({ weapon, ammo })` | dart shape or raw bow-shaped | `invalid-args`, `missing-selected-data` |
+| `boostFaded({ base, effective, floor? })` | floor-band boolean; omitted floor `0.1` | `invalid-args` |
+| `plannedPotions({ carry })` | Super attack then Super strength value copies | `invalid-args` |
+| `potionToSip({ plans, held, levels })` | first due plan or `null` | `invalid-args`, `missing-observation` |
+
+`foodOf` does not restore ambiguous eat-table foods. Missing levels are not
+treated as zero: a held plan without a matching level row is
+`missing-observation` and is not skipped for a later due plan. Explicit
+`base: 0` remains a known observation. Carry `qty` / plan `want` must be a
+positive integer `<= 4294967295` when supplied; planned carry `qty` is
+required.
+
+Example: `crates/script/examples/loadout_potion_v2.ts`.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that

@@ -307,6 +307,31 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  clicked: number;\n");
     out.push_str("  timed_out: number;\n");
     out.push_str("}\n\n");
+    out.push_str("/** Caller-supplied carry row. Omitted qty defaults to 1 on loadout helpers. */\n");
+    out.push_str("export interface LoadoutCarry {\n");
+    out.push_str("  item: string;\n");
+    out.push_str("  qty?: number;\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Caller-supplied loadout. Not a NativeSnapshot field. */\n");
+    out.push_str("export interface LoadoutInput {\n");
+    out.push_str("  name?: string;\n");
+    out.push_str("  worn?: Record<string, string>;\n");
+    out.push_str("  carry?: LoadoutCarry[];\n");
+    out.push_str("  unassigned?: string[];\n");
+    out.push_str("}\n\n");
+    out.push_str("/** Recommended flask form. short is present on plannedPotions values. */\n");
+    out.push_str("export interface PotionPlan {\n");
+    out.push_str("  skill: string;\n");
+    out.push_str("  short?: string;\n");
+    out.push_str("  flask: string;\n");
+    out.push_str("  doses: string[];\n");
+    out.push_str("  want: number;\n");
+    out.push_str("}\n\n");
+    out.push_str("export interface RangeLoadout {\n");
+    out.push_str("  weapon: string;\n");
+    out.push_str("  projectile: string;\n");
+    out.push_str("  thrown: boolean;\n");
+    out.push_str("}\n\n");
     out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
     out.push_str("export interface NativeApi {\n");
     out.push_str("  readonly tick: number;\n");
@@ -339,6 +364,14 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;\n");
     out.push_str("  runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;\n");
     out.push_str("  escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;\n");
+    out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
+    out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
+    out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
+    out.push_str("  weaponOf(input: { loadout: LoadoutInput | null; fallback?: string | null }): HelperResult<string | null>;\n");
+    out.push_str("  rangeLoadoutOf(input: { weapon: string; ammo: string }): HelperResult<RangeLoadout>;\n");
+    out.push_str("  boostFaded(input: { base: number; effective: number; floor?: number }): HelperResult<boolean>;\n");
+    out.push_str("  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;\n");
+    out.push_str("  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;\n");
     out.push_str("}\n");
 }
 
