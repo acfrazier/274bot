@@ -15,8 +15,8 @@ use host_play::catalog_core::{
     ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
     ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
     ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
-    HoldSpotObservation, HoldSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
-    HOLD_SPOT_V2_STOP,
+    HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
+    ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, RETREAT_SPOT_V2_STOP,
 };
 
 fn thiever_observation() -> Observation {
@@ -2888,5 +2888,297 @@ fn hold_spot_rejects_forged_walk_to_npc_attack() {
     assert!(
         watch.qualify().is_err(),
         "forged Attack holdNext step cannot pass"
+    );
+}
+
+fn retreat_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn retreat_dest() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3203,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn retreat_receipt(
+    here: LineOfSightTile,
+    dest: LineOfSightTile,
+    kind: &str,
+) -> RetreatSpotScriptReceipt {
+    RetreatSpotScriptReceipt {
+        here,
+        dest,
+        kind: kind.into(),
+    }
+}
+
+fn retreat_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.retreat = RetreatSpotObservation {
+        available: true,
+        here: Some(retreat_here()),
+        ..RetreatSpotObservation::default()
+    };
+    observation
+}
+
+fn retreat_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = retreat_here();
+    let dest = retreat_dest();
+    observation.retreat.here = Some(here);
+    observation.retreat.dest = Some(dest);
+    observation.retreat.receipt = Some(retreat_receipt(here, dest, "walk-to"));
+    observation
+}
+
+fn retreat_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn retreat_spot_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("retreat_spot_v2_ts").expect("named retreat spot cell");
+    assert!(case.copies_retreat_spot());
+    assert!(!case.copies_hold_spot());
+    assert!(!case.copies_fight_field());
+    assert!(!case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = retreat_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = retreat_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        retreat_stop(joined, RETREAT_SPOT_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("host here, joined dest/kind receipt, and named stop");
+}
+
+#[test]
+fn retreat_spot_rejects_noquery_nodest_already_on_dest_and_wrong_stop() {
+    let case = CoreCase::parse("retreat_spot_v2_ts").expect("named retreat spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = retreat_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        retreat_stop(baseline.clone(), RETREAT_SPOT_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_dest = retreat_joined(baseline.clone());
+    no_dest.retreat.dest = None;
+    no_dest.retreat.receipt = None;
+    no_dest.script_lifecycle =
+        retreat_stop(no_dest.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_dest, false);
+    assert!(watch.qualify().is_err(), "no-dest success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut already = retreat_joined(baseline.clone());
+    let here = retreat_here();
+    already.retreat.dest = Some(here);
+    if let Some(receipt) = already.retreat.receipt.as_mut() {
+        receipt.dest = here;
+    }
+    already.script_lifecycle =
+        retreat_stop(already.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", already, false);
+    assert!(
+        watch.qualify().is_err(),
+        "already-on-dest success cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = retreat_joined(baseline.clone());
+    if let Some(receipt) = mismatch.retreat.receipt.as_mut() {
+        receipt.here.x = 0;
+    }
+    mismatch.script_lifecycle =
+        retreat_stop(mismatch.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script here disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = retreat_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        retreat_stop(joined, "some other stop"),
+        false,
+    );
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn retreat_spot_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("retreat_spot_v2_ts").expect("named retreat spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = retreat_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = retreat_ready();
+    missing.retreat.available = false;
+    missing.retreat.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+}
+
+#[test]
+fn retreat_spot_join_agrees_on_here_dest_not_host_here_alone() {
+    let case = CoreCase::parse("retreat_spot_v2_ts").expect("named retreat spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = retreat_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut mismatch = retreat_joined(baseline.clone());
+    if let Some(receipt) = mismatch.retreat.receipt.as_mut() {
+        receipt.dest = LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        };
+    }
+    mismatch.script_lifecycle =
+        retreat_stop(mismatch.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "host dest vs File dest disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = retreat_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        retreat_stop(joined, RETREAT_SPOT_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on here and dest");
+}
+
+#[test]
+fn retreat_spot_rejects_forged_walk_npc_attack() {
+    let case = CoreCase::parse("retreat_spot_v2_ts").expect("named retreat spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = retreat_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut walk_kind = retreat_joined(baseline.clone());
+    if let Some(receipt) = walk_kind.retreat.receipt.as_mut() {
+        receipt.kind = "walk".into();
+    }
+    walk_kind.script_lifecycle =
+        retreat_stop(walk_kind.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", walk_kind, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged walk retreatNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut npc_kind = retreat_joined(baseline.clone());
+    if let Some(receipt) = npc_kind.retreat.receipt.as_mut() {
+        receipt.kind = "npc".into();
+    }
+    npc_kind.script_lifecycle =
+        retreat_stop(npc_kind.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", npc_kind, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged npc retreatNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut attack = retreat_joined(baseline);
+    if let Some(receipt) = attack.retreat.receipt.as_mut() {
+        receipt.kind = "Attack".into();
+    }
+    attack.script_lifecycle =
+        retreat_stop(attack.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", attack, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged Attack retreatNext step cannot pass"
     );
 }
