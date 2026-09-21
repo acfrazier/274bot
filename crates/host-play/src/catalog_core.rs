@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -613,6 +613,7 @@ pub enum CoreCase {
     FightFieldV2,
     HoldSpotV2,
     RetreatSpotV2,
+    WalkSpotV2,
 }
 
 impl CoreCase {
@@ -752,6 +753,7 @@ impl CoreCase {
             "fight_field_v2_ts" => Ok(Self::FightFieldV2),
             "hold_spot_v2_ts" => Ok(Self::HoldSpotV2),
             "retreat_spot_v2_ts" => Ok(Self::RetreatSpotV2),
+            "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -894,6 +896,7 @@ impl CoreCase {
             Self::FightFieldV2 => "fight_field_v2_ts",
             Self::HoldSpotV2 => "hold_spot_v2_ts",
             Self::RetreatSpotV2 => "retreat_spot_v2_ts",
+            Self::WalkSpotV2 => "walk_spot_v2_ts",
         }
     }
 
@@ -1004,6 +1007,7 @@ impl CoreCase {
             Self::FightFieldV2 => "fight_field_v2",
             Self::HoldSpotV2 => "hold_spot_v2",
             Self::RetreatSpotV2 => "retreat_spot_v2",
+            Self::WalkSpotV2 => "walk_spot_v2",
         }
     }
 
@@ -1036,6 +1040,10 @@ impl CoreCase {
 
     pub fn copies_retreat_spot(self) -> bool {
         matches!(self, Self::RetreatSpotV2)
+    }
+
+    pub fn copies_walk_spot(self) -> bool {
+        matches!(self, Self::WalkSpotV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1077,6 +1085,13 @@ impl CoreCase {
     pub fn retreat_spot_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::RetreatSpotV2 => Some(RETREAT_SPOT_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn walk_spot_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::WalkSpotV2 => Some(WALK_SPOT_V2_STOP),
             _ => None,
         }
     }
@@ -1197,6 +1212,9 @@ pub struct Observation {
     /// Compact here/dest/kind retreat-spot witness. Empty unless the active Core
     /// case asked for retreat spot. Never a world copy.
     pub retreat: RetreatSpotObservation,
+    /// Compact here/dest/kind walk-spot witness. Empty unless the active Core
+    /// case asked for walk spot. Never a world copy.
+    pub walk: WalkSpotObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1712,6 +1730,7 @@ impl Observation {
             fight: FightFieldObservation::default(),
             hold: HoldSpotObservation::default(),
             retreat: RetreatSpotObservation::default(),
+            walk: WalkSpotObservation::default(),
         }
     }
 
@@ -2015,6 +2034,27 @@ impl Observation {
         let receipt = paint.and_then(parse_retreat_spot_receipt_from_paint);
         let dest = receipt.as_ref().map(|row| row.dest);
         self.retreat = RetreatSpotObservation {
+            available: scene.available,
+            here,
+            dest,
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint dest/kind receipt. Never copies
+    /// the collision grid or world.
+    pub fn attach_walk_spot(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_walk_spot_receipt_from_paint);
+        let dest = receipt.as_ref().map(|row| row.dest);
+        self.walk = WalkSpotObservation {
             available: scene.available,
             here,
             dest,
@@ -2416,6 +2456,11 @@ pub const RETREAT_SPOT_V2_STOP: &str = "retreat spot qualification complete";
 pub const RETREAT_SPOT_RECEIPT_PREFIX: &str = "retreat-spot-receipt:";
 pub const RETREAT_SPOT_MIN_CHEB: i32 = 2;
 pub const RETREAT_SPOT_MAX_CHEB: i32 = 6;
+pub const WALK_SPOT_V2_STOP: &str = "walk spot qualification complete";
+pub const WALK_SPOT_RECEIPT_PREFIX: &str = "walk-spot-receipt:";
+/// Chebyshev 12 is Hold's walk-back. This cell requires a longer walk-in.
+pub const WALK_SPOT_MIN_CHEB: i32 = 13;
+pub const WALK_SPOT_MAX_CHEB: i32 = 20;
 pub const LOS_WALK_SCENERY: i32 = 0x100;
 pub const LOS_V_N: i32 = 0x400;
 pub const LOS_V_E: i32 = 0x1000;
@@ -3457,6 +3502,142 @@ impl RetreatSpotDeliveryCycle {
     }
 }
 
+fn parse_walk_spot_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<WalkSpotScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(WALK_SPOT_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+fn walk_spot_kind_forbidden(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk-to")
+        || kind.eq_ignore_ascii_case("walk-near")
+        || kind.eq_ignore_ascii_case("npc")
+        || kind.eq_ignore_ascii_case("attack")
+        || kind.eq_ignore_ascii_case("set-safespot")
+}
+
+fn walk_spot_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk")
+}
+
+fn walk_spot_chebyshev(here: LineOfSightTile, dest: LineOfSightTile) -> i32 {
+    (here.x - dest.x).abs().max((here.z - dest.z).abs())
+}
+
+fn walk_spot_dest_ok(here: LineOfSightTile, dest: LineOfSightTile) -> bool {
+    here.level == dest.level && (here.x != dest.x || here.z != dest.z) && {
+        let d = walk_spot_chebyshev(here, dest);
+        d > 12 && d >= WALK_SPOT_MIN_CHEB && d <= WALK_SPOT_MAX_CHEB
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WalkSpotScriptReceipt {
+    pub here: LineOfSightTile,
+    pub dest: LineOfSightTile,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WalkSpotObservation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub receipt: Option<WalkSpotScriptReceipt>,
+}
+
+impl Default for WalkSpotObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            dest: None,
+            receipt: None,
+        }
+    }
+}
+
+pub fn walk_spot_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.walk.available
+        && baseline.walk.here.is_some()
+}
+
+fn walk_spot_receipt_joined(now: &WalkSpotObservation) -> bool {
+    let (Some(here), Some(dest), Some(receipt)) = (now.here, now.dest, now.receipt.as_ref()) else {
+        return false;
+    };
+    now.available
+        && receipt.here == here
+        && receipt.dest == dest
+        && walk_spot_dest_ok(here, dest)
+        && walk_spot_kind_ok(&receipt.kind)
+        && !walk_spot_kind_forbidden(&receipt.kind)
+}
+
+/// Post-Start witness: joined here/dest receipt, walk radius 0, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct WalkSpotDeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub receipt: Option<WalkSpotScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl WalkSpotDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if walk_spot_receipt_joined(&now.walk) {
+            self.here = now.walk.here;
+            self.dest = now.walk.dest;
+            self.kind = now.walk.receipt.as_ref().map(|row| row.kind.clone());
+            self.receipt = now.walk.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (Some(here), Some(dest), Some(kind), Some(receipt)) = (
+            self.here,
+            self.dest,
+            self.kind.as_deref(),
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.dest == dest
+            && receipt.kind == kind
+            && walk_spot_dest_ok(here, dest)
+            && walk_spot_kind_ok(kind)
+            && !walk_spot_kind_forbidden(kind)
+    }
+}
+
 fn empty_worn(observation: &Observation) -> bool {
     observation.equipment_ids.values().copied().sum::<i32>() == 0
 }
@@ -4407,6 +4588,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::FightFieldV2 => fight_field_baseline_ready(baseline),
         CoreCase::HoldSpotV2 => hold_spot_baseline_ready(baseline),
         CoreCase::RetreatSpotV2 => retreat_spot_baseline_ready(baseline),
+        CoreCase::WalkSpotV2 => walk_spot_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -4778,6 +4960,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RetreatSpotV2 => {
             "ingame && scene_state==2 && SceneView.available, here on the published plane"
         }
+        CoreCase::WalkSpotV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane, dest Chebyshev 13-20"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -4853,6 +5038,7 @@ pub struct CoreWitness {
     pub fight_field_cycle: FightFieldDeliveryCycle,
     pub hold_spot_cycle: HoldSpotDeliveryCycle,
     pub retreat_spot_cycle: RetreatSpotDeliveryCycle,
+    pub walk_spot_cycle: WalkSpotDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -10158,6 +10344,7 @@ impl CoreWitness {
             fight_field_cycle: FightFieldDeliveryCycle::default(),
             hold_spot_cycle: HoldSpotDeliveryCycle::default(),
             retreat_spot_cycle: RetreatSpotDeliveryCycle::default(),
+            walk_spot_cycle: WalkSpotDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -10400,6 +10587,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::RetreatSpotV2) {
             self.retreat_spot_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::WalkSpotV2) {
+            self.walk_spot_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -10667,6 +10857,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::WalkSpotV2 => {
+                if let Some(expected) = self.case.walk_spot_stop_reason() {
+                    self.walk_spot_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -10887,6 +11083,7 @@ impl CoreWitness {
             CoreCase::FightFieldV2 => self.fight_field_cycle.qualified(),
             CoreCase::HoldSpotV2 => self.hold_spot_cycle.qualified(),
             CoreCase::RetreatSpotV2 => self.retreat_spot_cycle.qualified(),
+            CoreCase::WalkSpotV2 => self.walk_spot_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -10988,6 +11185,7 @@ impl CoreWitness {
             "fight_field_cycle": self.fight_field_cycle,
             "hold_spot_cycle": self.hold_spot_cycle,
             "retreat_spot_cycle": self.retreat_spot_cycle,
+            "walk_spot_cycle": self.walk_spot_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -11325,6 +11523,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_retreat_spot(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_walk = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_walk_spot()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_walk_spot(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -11348,6 +11553,9 @@ impl CoreWatch {
             }
             if copies_retreat {
                 observation.attach_retreat_spot(snapshot, paint);
+            }
+            if copies_walk {
+                observation.attach_walk_spot(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -11443,6 +11651,21 @@ impl CoreWatch {
                 case.copies_retreat_spot()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_retreat_spot(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the walk-spot File card. Callers attach paint and
+    /// compact here/dest only then.
+    pub fn copies_walk_spot(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_walk_spot()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_walk_spot(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

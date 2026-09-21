@@ -316,7 +316,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "actor_observation_v2.ts"
         | "fight_field_v2.ts"
         | "hold_spot_v2.ts"
-        | "retreat_spot_v2.ts" => {
+        | "retreat_spot_v2.ts"
+        | "walk_spot_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -892,5 +893,13 @@ mod tests {
         assert!(v2.ends_with("retreat_spot_v2.ts"), "{}", v2.display());
         assert!(live_example_path("retreat_spot_v2").is_none());
         assert!(live_example_path("RetreatSpot.ts").is_none());
+    }
+
+    #[test]
+    fn walk_spot_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("walk_spot_v2.ts").expect("checked-in walk spot v2 example");
+        assert!(v2.ends_with("walk_spot_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("walk_spot_v2").is_none());
+        assert!(live_example_path("WalkSpot.ts").is_none());
     }
 }
