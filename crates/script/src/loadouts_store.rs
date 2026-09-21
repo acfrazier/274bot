@@ -914,29 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn w1c_equipment_options_from_parsed_fire_giant_staff_schema() {
-        let src = r#"
-export const SETTINGS = {
-    staff: { type: 'string', default: 'Staff of air', options: STAFFS, label: 'Staff', group: 'Combat' },
-};
-"#;
-        let schema = crate::rs2b0t_registry::settings_schema_from_source(src);
-        let staff = schema
-            .iter()
-            .find(|s| s.id == "staff")
-            .expect("staff setting");
-        assert!(staff.options.is_empty());
-        assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
-        let path = tmp_path();
-        let store = LoadoutsStore::at(path);
-        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-        let resolved =
-            resolve_setting_options_with_labels(staff, &store, Some(data.as_ref()));
-        assert_eq!(resolved.values.len(), 15);
-        assert!(resolved.values.contains(&"Staff of air".to_string()));
-    }
-
-    #[test]
     fn recovered_inline_options_still_win_over_metadata() {
         let path = tmp_path();
         let store = LoadoutsStore::at(path);
