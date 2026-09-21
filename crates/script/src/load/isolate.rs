@@ -1691,6 +1691,7 @@ fn tick_loop(
                     })
                     .collect();
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
+                crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 let (enqueued, settled) = take_wait_facts(&mut runtime);
                 append_wait_facts(&mut reqs, enqueued, settled);
                 if !reqs.is_empty() {

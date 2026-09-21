@@ -6228,7 +6228,6 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     })
                     .collect(),
                 request_id: row.request_id(),
-                inspect_ack_seq: row.inspect_ack_seq(),
             }),
             "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
                 seq: row.inspect_ack_seq(),
@@ -6698,7 +6697,6 @@ fn interact_off<'b>(
             allow_wilderness,
             allow_bank_fetch,
             request_id,
-            inspect_ack_seq,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -6718,9 +6716,6 @@ fn interact_off<'b>(
             }
             if *request_id != 0 {
                 b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
-            }
-            if *inspect_ack_seq != 0 {
-                b.push_slot_always(VT_IN_INSPECT_ACK_SEQ, *inspect_ack_seq);
             }
             if let Some(off) = avoid_off {
                 b.push_slot_always(VT_IN_AVOID, off);

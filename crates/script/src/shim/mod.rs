@@ -1051,8 +1051,6 @@ pub enum InteractReq {
         avoid: Vec<InspectAvoidWire>,
         #[serde(default)]
         request_id: u64,
-        #[serde(default)]
-        inspect_ack_seq: u64,
     },
     /// Isolate-applied inspect consume-ack. Not a public JS request.
     /// Host rejects generation mismatch, seq 0, and seq above the posted ring.

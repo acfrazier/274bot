@@ -960,7 +960,7 @@ const OPTIONAL = {
   'open-stand': ['name','stand_op','choose'],
   'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
-  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id','inspect_ack_seq'],
+  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
 };
 function host() {
   return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
@@ -1094,7 +1094,6 @@ const api = {
       allow_bank_fetch: o.allow_bank_fetch === true,
       avoid: o.avoid || [],
       request_id: token,
-      inspect_ack_seq: fn({ op: 'ack_seq' }),
     });
     return token;
   },

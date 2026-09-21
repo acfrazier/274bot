@@ -410,7 +410,8 @@ table Interact {
   // Explicit inspect FindOptions.allow_teleports. Walk still encodes "tele".
   allow_teleports: bool = false;
   avoid: [AvoidRect];
-  // Isolate-applied inspect seq ack. 0 = no new observation.
+  // Obsolete on inspect-route (leave default 0; do not renumber). Typed
+  // inspect-ack still uses this slot for the isolate-applied seq.
   inspect_ack_seq: ulong = 0;
   // Inspect session generation from the applied snapshot. Required on
   // inspect-ack so a caller cannot free terminals from another session.

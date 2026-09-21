@@ -767,6 +767,12 @@ export function tick(api) {
     to: { x: 3, z: 4, level: 0 },
     request_id: 0,
   });
+  api.request({
+    op: 'inspect-route',
+    from: { x: 1, z: 2, level: 0 },
+    to: { x: 3, z: 4, level: 0 },
+    request_id: 99,
+  });
   globalThis.__invented = api.inspectSettled(99);
   globalThis.__zero = api.inspectSettled(0);
 }
@@ -801,7 +807,6 @@ export function tick(api) {
             allow_bank_fetch,
             avoid,
             request_id,
-            inspect_ack_seq,
         } => {
             assert_eq!((*from_x, *from_z, *from_level), (2763, 3233, 0));
             assert_eq!((*x, *z, *level), (2803, 3208, 0));
@@ -819,7 +824,6 @@ export function tick(api) {
                     level: None,
                 }]
             );
-            let _ = inspect_ack_seq;
         }
         other => panic!("expected inspect-route, got {other:?}"),
     }

@@ -105,6 +105,7 @@ pub(super) struct InspectNav {
     pub prev: Option<InspectTerminal>,
     pub held: Option<InspectTerminal>,
     pub observed_seq: u64,
+    pub executing: bool,
     pub live_world: Option<Arc<NavWorld>>,
 }
 
@@ -137,21 +138,30 @@ impl InspectNav {
         self.replaced_id = id;
     }
 
-    fn published_count(&self) -> usize {
-        usize::from(self.latest.is_some())
-            + usize::from(self.prev.is_some())
+    fn slot_unobserved(term: Option<&InspectTerminal>, observed_seq: u64) -> bool {
+        term.is_some_and(|t| t.seq > observed_seq)
+    }
+
+    fn unobserved_count(&self) -> usize {
+        usize::from(Self::slot_unobserved(self.latest.as_ref(), self.observed_seq))
+            + usize::from(Self::slot_unobserved(self.prev.as_ref(), self.observed_seq))
             + usize::from(self.held.is_some())
     }
 
-    /// Admission is proven from isolate `UNSETTLED_MAX=3`:
-    /// published(latest+prev+held) + running + (replace-pending publish) +
-    /// the new request ≤ CAPACITY. Refusing here is backpressure, not a
-    /// silent drop of an already-accepted terminal.
+    /// Count only unobserved retention plus the jobs that will still
+    /// produce a terminal. Observed ring history is not capacity.
     fn can_admit(&self, replacing_pending: bool) -> bool {
-        let reserved = usize::from(self.running_id != 0)
-            + usize::from(replacing_pending)
-            + 1;
-        self.published_count() + reserved <= CAPACITY
+        let reserved = usize::from(self.executing) + usize::from(replacing_pending) + 1;
+        self.unobserved_count() + reserved <= CAPACITY
+    }
+
+    fn is_duplicate(&self, request_id: u64) -> bool {
+        request_id != 0
+            && (self.running_id == request_id
+                || self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| p.request_id == request_id))
     }
 
     fn max_ackable_seq(&self) -> u64 {
@@ -176,9 +186,11 @@ impl InspectNav {
             return;
         }
         if !self.can_wrap() {
-            if self.held.is_none() {
-                self.held = Some(term);
-            }
+            assert!(
+                self.held.is_none(),
+                "inspect publish overflow: accepted terminal with wrap blocked and held occupied"
+            );
+            self.held = Some(term);
             return;
         }
         self.prev = self.latest.take();
@@ -243,7 +255,6 @@ pub(super) struct InspectRequest {
     pub allow_bank_fetch: bool,
     pub avoid: Vec<AvoidRect>,
     pub request_id: u64,
-    pub inspect_ack_seq: u64,
     pub invalid_args: bool,
 }
 
@@ -284,9 +295,7 @@ pub(super) fn queue_inspect(
     let Some(world) = world.clone() else {
         let mut all = navs.lock().unwrap();
         let bot = all.entry(name.to_string()).or_default();
-        bot.inspect
-            .apply_ack(req.inspect_ack_seq, bot.inspect.generation);
-        if req.request_id == 0 {
+        if bot.inspect.is_duplicate(req.request_id) {
             return;
         }
         if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
@@ -302,9 +311,7 @@ pub(super) fn queue_inspect(
     let token = {
         let mut all = navs.lock().unwrap();
         let bot = all.entry(name.to_string()).or_default();
-        bot.inspect
-            .apply_ack(req.inspect_ack_seq, bot.inspect.generation);
-        if req.request_id == 0 {
+        if bot.inspect.is_duplicate(req.request_id) {
             return;
         }
         if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
@@ -349,7 +356,9 @@ pub(super) fn queue_inspect(
             search_budget_stand: None,
             search_budget_post: None,
         };
-        bot.inspect.accepted_id = req.request_id;
+        if req.request_id != 0 {
+            bot.inspect.accepted_id = req.request_id;
+        }
         bot.inspect.live_world = Some(Arc::clone(&capture.world));
         if bot.inspect.worker.is_some() {
             bot.inspect.pending = Some(capture);
@@ -430,10 +439,12 @@ fn inspect_worker(navs: Arc<Mutex<HashMap<String, NavBot>>>, name: String, worke
                 bot.inspect.worker = None;
                 bot.inspect.running_id = 0;
                 bot.inspect.pending_id = 0;
+                bot.inspect.executing = false;
                 return;
             };
             bot.inspect.pending_id = 0;
             bot.inspect.running_id = request.request_id;
+            bot.inspect.executing = true;
             request
         };
         wait_capture_barrier(&request);
@@ -450,8 +461,7 @@ fn inspect_worker(navs: Arc<Mutex<HashMap<String, NavBot>>>, name: String, worke
         {
             return;
         }
-        let identity_ok = request.request_id != 0
-            && request.generation == bot.inspect.generation
+        let identity_ok = request.generation == bot.inspect.generation
             && bot
                 .inspect
                 .live_world
@@ -460,7 +470,10 @@ fn inspect_worker(navs: Arc<Mutex<HashMap<String, NavBot>>>, name: String, worke
             && request.request_id == bot.inspect.running_id;
         if identity_ok {
             bot.inspect.publish(terminal);
-        } else if bot.inspect.running_id == request.request_id && bot.inspect.pending.is_none() {
+        } else if request.request_id != 0
+            && bot.inspect.running_id == request.request_id
+            && bot.inspect.pending.is_none()
+        {
             bot.inspect.publish(InspectTerminal::refusal(
                 request.request_id,
                 request.generation,
@@ -470,16 +483,16 @@ fn inspect_worker(navs: Arc<Mutex<HashMap<String, NavBot>>>, name: String, worke
         if bot.inspect.pending.is_none() {
             bot.inspect.worker = None;
             bot.inspect.running_id = 0;
+            bot.inspect.executing = false;
             return;
         }
     }
 }
 
 fn refuse_locked(bot: &mut NavBot, request_id: u64, reason: &str) {
-    if request_id == 0 {
-        return;
+    if request_id != 0 {
+        bot.inspect.accepted_id = request_id;
     }
-    bot.inspect.accepted_id = request_id;
     bot.inspect
         .publish(InspectTerminal::refusal(request_id, bot.inspect.generation, reason));
 }
@@ -489,6 +502,7 @@ pub(super) fn reset_inspect(bot: &mut NavBot) {
     bot.inspect.pending = None;
     bot.inspect.pending_id = 0;
     bot.inspect.running_id = 0;
+    bot.inspect.executing = false;
     bot.inspect.clear_published();
 }
 
@@ -999,7 +1013,6 @@ mod tests {
             allow_bank_fetch: false,
             avoid: Vec::new(),
             request_id,
-            inspect_ack_seq: 0,
             invalid_args: false,
         }
     }
@@ -1673,26 +1686,9 @@ mod tests {
     }
 
     #[test]
-    fn request_id_zero_is_ack_only() {
-        let mut nav = InspectNav::default();
-        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
-        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
-        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
-        let prev_seq = nav.prev.as_ref().unwrap().seq;
+    fn request_id_zero_publishes_preview() {
         let world = world_with(TransportGraph::default(), vec![]);
-        let navs = Arc::new(Mutex::new({
-            let mut m = HashMap::new();
-            m.insert(
-                "p".into(),
-                NavBot {
-                    inspect: nav,
-                    ..Default::default()
-                },
-            );
-            m
-        }));
-        let mut ack_only = req(tile(0, 0, 0), tile(1, 1, 0), 0);
-        ack_only.inspect_ack_seq = prev_seq;
+        let navs = Arc::new(Mutex::new(HashMap::new()));
         queue_inspect(
             &navs,
             "p",
@@ -1701,13 +1697,166 @@ mod tests {
             vec![],
             None,
             None,
-            ack_only,
+            req(tile(0, 0, 0), tile(2, 2, 1), 0),
         );
-        let all = navs.lock().unwrap();
-        let bot = all.get("p").unwrap();
-        assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 3);
+        let term = wait_latest(&navs, 0);
+        assert_eq!(term.request_id, 0);
+        assert!(!term.ok);
+        assert_eq!(term.reason, "NoPath");
+        assert!(term.seq != 0);
+    }
+
+    #[test]
+    fn can_admit_counts_only_unobserved_after_full_ack() {
+        let mut nav = InspectNav::default();
+        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
+        assert!(!nav.can_admit(false));
+        let prev = nav.prev.as_ref().unwrap().seq;
+        nav.apply_ack(prev, 0);
+        let latest = nav.latest.as_ref().unwrap().seq;
+        nav.apply_ack(latest, 0);
+        assert_eq!(nav.unobserved_count(), 0);
+        assert!(nav.can_admit(false));
+        nav.executing = true;
+        assert!(nav.can_admit(false), "acked ring + running still admits pending");
+        nav.executing = true;
+        assert!(nav.can_admit(true));
+    }
+
+    #[test]
+    fn admission_refuse_does_not_accept_when_unobserved_full() {
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        for id in 1..=3 {
+            queue_inspect(
+                &navs,
+                "p",
+                &Some(Arc::clone(&world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), tile(1, 1, 0), id),
+            );
+            let _ = wait_latest(&navs, id);
+        }
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(2, 2, 0), 4),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.accepted_id, 3);
+            assert!(bot.inspect.pending.is_none());
+            assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
+        }
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("p").unwrap();
+            let latest = bot.inspect.latest.as_ref().unwrap().seq;
+            bot.inspect.apply_ack(latest, bot.inspect.generation);
+        }
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(3, 3, 0), 5),
+        );
+        let term = wait_latest(&navs, 5);
+        assert_eq!(term.request_id, 5);
+    }
+
+    #[test]
+    fn duplicate_running_id_does_not_double_reserve() {
+        clear_barrier();
+        let barrier = InspectBarrier::new();
+        install_barrier(Arc::clone(&barrier));
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(1, 1, 0), 81),
+        );
+        barrier.wait_entered();
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(2, 2, 0), 81),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.running_id, 81);
+            assert!(bot.inspect.pending.is_none());
+            assert_eq!(bot.inspect.pending_id, 0);
+        }
+        barrier.release();
+        let _ = wait_latest(&navs, 81);
+        clear_barrier();
+    }
+
+    #[test]
+    fn reset_rejects_old_generation_ack() {
+        let mut nav = InspectNav::default();
+        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
+        let old_seq = nav.prev.as_ref().unwrap().seq;
+        let old_gen = nav.generation;
+        let mut bot = NavBot {
+            inspect: nav,
+            ..Default::default()
+        };
+        reset_inspect(&mut bot);
+        bot.inspect.publish(InspectTerminal::refusal(11, bot.inspect.generation, "NoPath"));
+        bot.inspect.publish(InspectTerminal::refusal(12, bot.inspect.generation, "NoPath"));
+        bot.inspect.publish(InspectTerminal::refusal(13, bot.inspect.generation, "NoPath"));
+        assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 13);
+        bot.inspect.apply_ack(old_seq, old_gen);
+        assert_eq!(
+            bot.inspect.held.as_ref().unwrap().request_id,
+            13,
+            "old-session ACK cannot free the new generation"
+        );
+        let prev = bot.inspect.prev.as_ref().unwrap().seq;
+        bot.inspect.apply_ack(prev, bot.inspect.generation);
         assert!(bot.inspect.held.is_none());
-        assert_eq!(bot.inspect.accepted_id, 0);
+        assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 13);
+    }
+
+    #[test]
+    #[should_panic(expected = "inspect publish overflow")]
+    fn publish_overflow_panics_when_held_full() {
+        let mut nav = InspectNav::default();
+        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
+        assert!(!nav.can_admit(false));
+        nav.publish(InspectTerminal::refusal(4, 0, "NoPath"));
     }
 
     fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
@@ -1824,10 +1973,17 @@ mod tests {
     }
 
     fn inspect_begin(iso: &script::LoadIsolate) -> u64 {
-        iso.probe("globalThis.rustyscript.functions.__rs2b0t_inspect({op:'begin'})")
-            .unwrap()
-            .as_u64()
-            .expect("token")
+        inspect_begin_at(iso, tile(0, 0, 0), tile(1, 1, 0))
+    }
+
+    fn inspect_begin_at(iso: &script::LoadIsolate, from: WorldTile, to: WorldTile) -> u64 {
+        iso.probe(&format!(
+            "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'begin',from:{{x:{},z:{},level:{}}},to:{{x:{},z:{},level:{}}},allow_wilderness:true}})",
+            from.x, from.z, from.level, to.x, to.z, to.level
+        ))
+        .unwrap()
+        .as_u64()
+        .expect("token")
     }
 
     fn inspect_settled(iso: &script::LoadIsolate, token: u64) -> bool {
@@ -1858,6 +2014,29 @@ mod tests {
             .collect()
     }
 
+    fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script::LoadIsolate) {
+        let acks = drain_inspect_acks(iso);
+        let mut all = navs.lock().unwrap();
+        let bot = all.get_mut("p").unwrap();
+        for (seq, generation) in acks {
+            bot.inspect.apply_ack(seq, generation);
+        }
+    }
+
+    fn post_and_apply(
+        iso: &script::LoadIsolate,
+        navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+        tick: u64,
+    ) {
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            tick,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        apply_isolate_acks(navs, iso);
+    }
+
     #[test]
     fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
         clear_barrier();
@@ -1871,12 +2050,13 @@ export function tick() {}
             vec![],
         )
         .unwrap();
-        let a = inspect_begin(&iso);
-        let b = inspect_begin(&iso);
-        let barrier = InspectBarrier::new();
-        install_barrier(Arc::clone(&barrier));
         let world = world_with(TransportGraph::default(), vec![]);
         let navs = Arc::new(Mutex::new(HashMap::new()));
+
+        let a = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 1, 0));
+        let b = inspect_begin_at(&iso, tile(0, 0, 0), tile(2, 2, 0));
+        let barrier = InspectBarrier::new();
+        install_barrier(Arc::clone(&barrier));
         queue_inspect(
             &navs,
             "p",
@@ -1898,7 +2078,7 @@ export function tick() {}
             None,
             req(tile(0, 0, 0), tile(2, 2, 0), b),
         );
-        let c_token = inspect_begin(&iso);
+        let c = inspect_begin_at(&iso, tile(0, 0, 0), tile(3, 3, 0));
         queue_inspect(
             &navs,
             "p",
@@ -1907,13 +2087,13 @@ export function tick() {}
             vec![],
             None,
             None,
-            req(tile(0, 0, 0), tile(3, 3, 0), c_token),
+            req(tile(0, 0, 0), tile(3, 3, 0), c),
         );
         {
             let all = navs.lock().unwrap();
             let bot = all.get("p").unwrap();
             assert_eq!(bot.inspect.running_id, a);
-            assert_eq!(bot.inspect.pending_id, c_token);
+            assert_eq!(bot.inspect.pending_id, c);
             assert_eq!(bot.inspect.replaced_id, b);
             assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, b);
             assert_eq!(bot.inspect.latest.as_ref().unwrap().reason, "stale");
@@ -1928,7 +2108,7 @@ export function tick() {}
         assert!(inspect_settled(&iso, b));
         assert_eq!(inspect_value(&iso, b)["reason"], "stale");
         assert!(!inspect_settled(&iso, a), "A must not stale before own drain");
-        assert!(!inspect_settled(&iso, c_token));
+        assert!(!inspect_settled(&iso, c));
         let acks = drain_inspect_acks(&iso);
         assert!(!acks.is_empty(), "ACK must flush without a new inspect request");
         {
@@ -1940,7 +2120,7 @@ export function tick() {}
         }
         barrier.release();
         let _ = wait_latest(&navs, a);
-        let _ = wait_latest(&navs, c_token);
+        let _ = wait_latest(&navs, c);
         iso.post_snapshot(encode_inspect_bytes(
             &navs.lock().unwrap().get("p").unwrap().inspect,
             2,
@@ -1948,95 +2128,182 @@ export function tick() {}
         ));
         let _ = iso.probe("true").unwrap();
         assert!(inspect_settled(&iso, a));
-        assert!(inspect_settled(&iso, c_token));
+        assert!(inspect_settled(&iso, c));
         assert_eq!(inspect_value(&iso, a)["request_id"], a);
-        assert_eq!(inspect_value(&iso, c_token)["request_id"], c_token);
-        let more = drain_inspect_acks(&iso);
-        assert!(!more.is_empty());
+        assert_eq!(inspect_value(&iso, c)["request_id"], c);
+        apply_isolate_acks(&navs, &iso);
+        assert!(navs.lock().unwrap().get("p").unwrap().inspect.worker.is_none());
+
+        clear_barrier();
+        let sustain = InspectBarrier::new();
+        install_barrier(Arc::clone(&sustain));
+        let d = inspect_begin_at(&iso, tile(0, 0, 0), tile(4, 4, 0));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(4, 4, 0), d),
+        );
+        sustain.wait_entered();
+        let e = inspect_begin_at(&iso, tile(0, 0, 0), tile(5, 5, 0));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(5, 5, 0), e),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.running_id, d);
+            assert_eq!(bot.inspect.pending_id, e);
+            assert!(
+                bot.inspect.can_admit(false) || bot.inspect.pending.is_some(),
+                "fully acked ring must still admit running+pending"
+            );
+        }
+        sustain.release();
+        let _ = wait_latest(&navs, d);
+        let _ = wait_latest(&navs, e);
+        post_and_apply(&iso, &navs, 3);
+        assert!(inspect_settled(&iso, d));
+        assert!(inspect_settled(&iso, e));
+
+        clear_barrier();
+        let f = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 2, 0));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(1, 2, 0), f),
+        );
+        let _ = wait_latest(&navs, f);
+        let g = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 3, 0));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(1, 3, 0), g),
+        );
+        let _ = wait_latest(&navs, g);
+        let h = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 4, 0));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(1, 4, 0), h),
+        );
+        let _ = wait_latest(&navs, h);
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, h);
+        }
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            4,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(inspect_settled(&iso, f));
+        assert!(inspect_settled(&iso, g));
+        assert!(!inspect_settled(&iso, h), "held is not posted until ack");
+        let flush_acks = drain_inspect_acks(&iso);
+        assert!(!flush_acks.is_empty());
         {
             let mut all = navs.lock().unwrap();
             let bot = all.get_mut("p").unwrap();
-            for (seq, generation) in more {
+            for (seq, generation) in flush_acks {
                 bot.inspect.apply_ack(seq, generation);
             }
-            assert!(bot.inspect.worker.is_none());
+            assert!(bot.inspect.held.is_none());
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, h);
         }
-
-        let mut burst = InspectNav::default();
-        for id in 11..=13 {
-            burst.publish(InspectTerminal::refusal(id, 0, "NoPath"));
-        }
-        assert_eq!(burst.held.as_ref().unwrap().request_id, 13);
-        let w1 = inspect_begin(&iso);
-        let w2 = inspect_begin(&iso);
-        iso.post_snapshot(encode_inspect_bytes(&burst, 3, false));
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            5,
+            false,
+        ));
         let _ = iso.probe("true").unwrap();
-        // Tokens differ from published ids; use host ids as begin tokens on a
-        // fresh isolate would. Re-bind: settle by posting ids equal to tokens.
-        let _ = (w1, w2);
-        let iso2 = script::LoadIsolate::spawn(
-            src.into(),
-            script::LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        let t1 = inspect_begin(&iso2);
-        let t2 = inspect_begin(&iso2);
-        let t3 = inspect_begin(&iso2);
-        let mut aligned = InspectNav::default();
-        aligned.publish(InspectTerminal::refusal(t1, 0, "NoPath"));
-        aligned.publish(InspectTerminal::refusal(t2, 0, "NoPath"));
-        aligned.publish(InspectTerminal::refusal(t3, 0, "NoPath"));
-        iso2.post_snapshot(encode_inspect_bytes(&aligned, 4, false));
-        let _ = iso2.probe("true").unwrap();
-        assert!(inspect_settled(&iso2, t1));
-        assert!(inspect_settled(&iso2, t2));
-        assert!(!inspect_settled(&iso2, t3), "held is not posted until ack");
-        let burst_acks = drain_inspect_acks(&iso2);
-        assert!(!burst_acks.is_empty());
-        for (seq, generation) in burst_acks {
-            aligned.apply_ack(seq, generation);
-        }
-        assert_eq!(aligned.latest.as_ref().unwrap().request_id, t3);
-        assert!(aligned.held.is_none());
-        iso2.post_snapshot(encode_inspect_bytes(&aligned, 5, false));
-        let _ = iso2.probe("true").unwrap();
-        assert!(inspect_settled(&iso2, t3));
-        assert_eq!(inspect_value(&iso2, t3)["reason"], "NoPath");
-        let _ = drain_inspect_acks(&iso2);
+        assert!(inspect_settled(&iso, h));
+        apply_isolate_acks(&navs, &iso);
 
-        let extra_a = t1.wrapping_add(50);
-        let extra_b = t1.wrapping_add(51);
-        let extra_c = t1.wrapping_add(52);
-        aligned.publish(InspectTerminal::refusal(extra_a, 0, "invalid-args"));
-        aligned.publish(InspectTerminal::refusal(extra_b, 0, "NoPath"));
-        assert_eq!(aligned.latest.as_ref().unwrap().request_id, extra_a);
-        assert_eq!(aligned.prev.as_ref().unwrap().request_id, t3);
-        assert_eq!(aligned.held.as_ref().unwrap().request_id, extra_b);
-        let before_latest = aligned.latest.as_ref().unwrap().request_id;
-        aligned.publish(InspectTerminal::refusal(extra_c, 0, "spawn-failed"));
-        assert_eq!(
-            aligned.latest.as_ref().unwrap().request_id,
-            before_latest,
-            "wrap-blocked publish must not drop the posted ring"
+        let held_before_id0 = navs
+            .lock()
+            .unwrap()
+            .get("p")
+            .unwrap()
+            .inspect
+            .latest
+            .as_ref()
+            .map(|t| t.request_id);
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(6, 6, 0), 0),
         );
-        assert_eq!(aligned.held.as_ref().unwrap().request_id, extra_b);
-        assert!(!aligned.can_admit(false));
+        let zero = wait_latest(&navs, 0);
+        assert_eq!(zero.request_id, 0);
+        assert_ne!(zero.seq, 0);
+        assert!(!inspect_settled(&iso, 0));
+        post_and_apply(&iso, &navs, 6);
+        let _ = held_before_id0;
 
-        let hold_iso = script::LoadIsolate::spawn(
-            src.into(),
-            script::LoadShape::NativeTick,
-            vec![],
+        let before_invented = navs.lock().unwrap().get("p").unwrap().inspect.accepted_id;
+        iso.probe(
+            "globalThis.__rs_api.request({op:'inspect-route',from:{x:0,z:0,level:0},to:{x:1,z:1,level:0},request_id:99})",
         )
         .unwrap();
-        let hold_tok = inspect_begin(&hold_iso);
-        hold_iso.post_snapshot(encode_inspect_bytes(&InspectNav::default(), 6, true));
-        let _ = hold_iso.probe("true").unwrap();
-        assert!(!inspect_settled(&hold_iso, hold_tok));
+        iso.on_game_tick(7);
+        let leaked = iso
+            .drain_interacts()
+            .into_iter()
+            .any(|req| matches!(req, script::shim::InteractReq::InspectRoute { request_id: 99, .. }));
+        assert!(!leaked, "invented token must not reach the host queue");
+        assert!(inspect_settled(&iso, 99));
+        assert_eq!(
+            navs.lock().unwrap().get("p").unwrap().inspect.accepted_id,
+            before_invented
+        );
+
+        let hold_tok = inspect_begin(&iso);
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            8,
+            true,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(!inspect_settled(&iso, hold_tok));
 
         clear_barrier();
         let reset_barrier = InspectBarrier::new();
         install_barrier(Arc::clone(&reset_barrier));
+        let live = inspect_begin_at(&iso, tile(0, 0, 0), tile(7, 7, 0));
         queue_inspect(
             &navs,
             "p",
@@ -2045,24 +2312,33 @@ export function tick() {}
             vec![],
             None,
             None,
-            req(tile(0, 0, 0), tile(4, 4, 0), 90),
+            req(tile(0, 0, 0), tile(7, 7, 0), live),
         );
         reset_barrier.wait_entered();
+        let stale_ack = {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            (
+                bot.inspect.latest.as_ref().map(|t| t.seq).unwrap_or(1),
+                bot.inspect.generation,
+            )
+        };
         {
             let mut all = navs.lock().unwrap();
             reset_inspect(all.get_mut("p").unwrap());
-            let bot = all.get("p").unwrap();
+            let bot = all.get_mut("p").unwrap();
             assert!(bot.inspect.worker.is_some());
             assert_eq!(
                 Arc::strong_count(bot.inspect.worker.as_ref().unwrap()),
                 2,
                 "live worker token stays after reset"
             );
+            bot.inspect.apply_ack(stale_ack.0, stale_ack.1);
+            assert_eq!(bot.inspect.observed_seq, 0);
+            assert!(bot.inspect.latest.is_none());
         }
         reset_barrier.release();
         clear_barrier();
         iso.join();
-        iso2.join();
-        hold_iso.join();
     }
 }

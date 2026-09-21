@@ -6,8 +6,16 @@
 //! that *that* request was replaced (`replaced_id` / `replaced_prev_id`). A
 //! later unrelated snapshot is not acknowledgment of a queued-but-not-drained
 //! request.
+//!
+//! Token identity lives here: `inspectBegin` registers a waiter and the
+//! canonical preview arguments. A public `inspect-route` reaches the host
+//! only after this module authorizes the token. Invented or stale ids never
+//! consume host jobs. `request_id` 0 is snapshot-only (no waiter). Typed
+//! `InspectAck` is isolate-generated after apply; it is never taken from
+//! `api.request`.
 
 use crate::isolate_fb::{InspectHopReader, SnapshotReader};
+use crate::shim::{InspectAvoidWire, InteractReq};
 use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
 use serde_json::{json, Value};
@@ -120,11 +128,96 @@ struct HostInspect {
     replaced_prev_id: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RouteSpec {
+    from: (i32, i32, i32),
+    to: (i32, i32, i32),
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_bank_fetch: bool,
+    avoid: Vec<(i32, i32, i32, i32, Option<i32>)>,
+}
+
+impl RouteSpec {
+    fn from_begin(input: &Value) -> Self {
+        let opts = input.get("opts").unwrap_or(&Value::Null);
+        let from = input.get("from").or_else(|| opts.get("from"));
+        let to = input.get("to").or_else(|| opts.get("to"));
+        let avoid = input
+            .get("avoid")
+            .or_else(|| opts.get("avoid"))
+            .or_else(|| opts.get("avoidZones"));
+        Self {
+            from: tile_xyz(from),
+            to: tile_xyz(to),
+            allow_teleports: json_bool(
+                input
+                    .get("allow_teleports")
+                    .or_else(|| opts.get("allow_teleports"))
+                    .or_else(|| opts.get("useTeleportCatalog"))
+                    .or_else(|| opts.get("policy").and_then(|p| p.get("useTeleports"))),
+            ),
+            allow_wilderness: json_bool(
+                input
+                    .get("allow_wilderness")
+                    .or_else(|| opts.get("allow_wilderness")),
+            ),
+            allow_bank_fetch: json_bool(
+                input
+                    .get("allow_bank_fetch")
+                    .or_else(|| opts.get("allow_bank_fetch")),
+            ),
+            avoid: avoid_spec(avoid),
+        }
+    }
+
+    fn from_route(req: &InteractReq) -> Option<Self> {
+        let InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            avoid,
+            ..
+        } = req
+        else {
+            return None;
+        };
+        Some(Self {
+            from: (*from_x, *from_z, *from_level),
+            to: (*x, *z, *level),
+            allow_teleports: *allow_teleports,
+            allow_wilderness: *allow_wilderness,
+            allow_bank_fetch: *allow_bank_fetch,
+            avoid: avoid
+                .iter()
+                .map(|zone| match zone {
+                    InspectAvoidWire::Rect {
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        level,
+                    } => (*min_x, *max_x, *min_z, *max_z, *level),
+                    InspectAvoidWire::Unsupported => (1, 0, 0, 0, None),
+                })
+                .collect(),
+        })
+    }
+}
+
 struct Waiter {
     token: u64,
     seq_at_begin: u64,
     clock: InstantTaskClock,
     terminal: Option<Terminal>,
+    spec: RouteSpec,
+    queued: bool,
 }
 
 struct PendingAck {
@@ -284,6 +377,7 @@ impl InspectSlot {
     }
 
     fn begin(&mut self, input: &Value) -> u64 {
+        let spec = RouteSpec::from_begin(input);
         if begin_invalid(input) {
             let token = self.alloc();
             self.push_settled(Waiter {
@@ -294,6 +388,8 @@ impl InspectSlot {
                     request_id: token,
                     ..Terminal::invalid_args()
                 }),
+                spec,
+                queued: false,
             });
             return token;
         }
@@ -307,6 +403,8 @@ impl InspectSlot {
                     request_id: token,
                     ..Terminal::stale()
                 }),
+                spec,
+                queued: false,
             });
             return token;
         }
@@ -321,8 +419,54 @@ impl InspectSlot {
             seq_at_begin: self.host.latest_seq,
             clock,
             terminal: None,
+            spec,
+            queued: false,
         });
         token
+    }
+
+    fn settle_invalid(&mut self, token: u64) {
+        if let Some(pos) = self.unsettled.iter().position(|w| w.token == token) {
+            let mut waiter = self.unsettled.remove(pos);
+            waiter.terminal = Some(Terminal {
+                request_id: token,
+                ..Terminal::invalid_args()
+            });
+            self.push_settled(waiter);
+        }
+    }
+
+    fn authorize_route(&mut self, req: &InteractReq) -> bool {
+        let InteractReq::InspectRoute { request_id, .. } = req else {
+            return true;
+        };
+        if route_args_invalid(req) {
+            if *request_id == 0 {
+                return true;
+            }
+            if self.unsettled.iter().any(|w| w.token == *request_id) {
+                self.settle_invalid(*request_id);
+            }
+            return false;
+        }
+        if *request_id == 0 {
+            return true;
+        }
+        let Some(spec) = RouteSpec::from_route(req) else {
+            return false;
+        };
+        let Some(pos) = self.unsettled.iter().position(|w| w.token == *request_id) else {
+            return false;
+        };
+        if self.unsettled[pos].queued {
+            return false;
+        }
+        if self.unsettled[pos].spec != spec {
+            self.settle_invalid(*request_id);
+            return false;
+        }
+        self.unsettled[pos].queued = true;
+        true
     }
 
     fn alloc(&self) -> u64 {
@@ -532,6 +676,98 @@ fn json_u64(value: Option<&Value>) -> u64 {
                 .and_then(|n| u64::try_from(n).ok())
         })
         .unwrap_or(0)
+}
+
+fn json_bool(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn tile_xyz(tile: Option<&Value>) -> (i32, i32, i32) {
+    let Some(tile) = tile else {
+        return (0, 0, 0);
+    };
+    (
+        json_i32(tile.get("x")),
+        json_i32(tile.get("z")),
+        json_i32(tile.get("level")),
+    )
+}
+
+fn avoid_spec(value: Option<&Value>) -> Vec<(i32, i32, i32, i32, Option<i32>)> {
+    let Some(zones) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    zones
+        .iter()
+        .map(|zone| {
+            let min_x = json_i32(zone.get("minX").or_else(|| zone.get("min_x")));
+            let max_x = json_i32(zone.get("maxX").or_else(|| zone.get("max_x")));
+            let min_z = json_i32(zone.get("minZ").or_else(|| zone.get("min_z")));
+            let max_z = json_i32(zone.get("maxZ").or_else(|| zone.get("max_z")));
+            let level = zone.get("level").and_then(|level| {
+                if level.is_null() {
+                    None
+                } else {
+                    Some(json_i32(Some(level)))
+                }
+            });
+            (min_x, max_x, min_z, max_z, level)
+        })
+        .collect()
+}
+
+fn route_args_invalid(req: &InteractReq) -> bool {
+    let InteractReq::InspectRoute {
+        level,
+        from_level,
+        avoid,
+        ..
+    } = req
+    else {
+        return false;
+    };
+    if !(0..=3).contains(from_level) || !(0..=3).contains(level) {
+        return true;
+    }
+    if avoid.len() > 16 {
+        return true;
+    }
+    for zone in avoid {
+        match zone {
+            InspectAvoidWire::Unsupported => return true,
+            InspectAvoidWire::Rect {
+                min_x,
+                max_x,
+                min_z,
+                max_z,
+                level,
+            } => {
+                if min_x > max_x || min_z > max_z {
+                    return true;
+                }
+                if let Some(level) = level {
+                    if !(0..=3).contains(level) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Drop JS-forged `inspect-ack` and unauthorized `inspect-route` before the
+/// isolate encodes the host FlatBuffer. Snapshot-only `request_id` 0 is
+/// forwarded after the same argument checks; invented tokens never leave.
+pub(crate) fn filter_public_inspect_wire(reqs: &mut Vec<InteractReq>) {
+    SLOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        reqs.retain(|req| match req {
+            InteractReq::InspectAck { .. } => false,
+            InteractReq::InspectRoute { .. } => slot.authorize_route(req),
+            _ => true,
+        });
+    });
 }
 
 pub(crate) fn on_snapshot(snap: &SnapshotReader<'_>) {
@@ -1044,5 +1280,98 @@ mod tests {
             "reset drops the matcher; leftover token is unknown-stale"
         );
         assert_eq!(value(token)["reason"], "stale");
+    }
+
+    fn route(
+        request_id: u64,
+        from: (i32, i32, i32),
+        to: (i32, i32, i32),
+    ) -> InteractReq {
+        InteractReq::InspectRoute {
+            x: to.0,
+            z: to.1,
+            level: to.2,
+            from_x: from.0,
+            from_z: from.1,
+            from_level: from.2,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: false,
+            avoid: Vec::new(),
+            request_id,
+        }
+    }
+
+    #[test]
+    fn invented_token_is_dropped_before_host_queue() {
+        on_reset();
+        let mut reqs = vec![
+            route(99, (1, 2, 0), (3, 4, 0)),
+            InteractReq::InspectAck {
+                seq: 4,
+                generation: 1,
+            },
+        ];
+        filter_public_inspect_wire(&mut reqs);
+        assert!(reqs.is_empty(), "invented token and JS ACK never leave");
+        assert!(settled(99));
+        assert_eq!(value(99)["reason"], "stale");
+    }
+
+    #[test]
+    fn registered_token_queues_once_and_rejects_mismatched_opts() {
+        on_reset();
+        let token = dispatch(&json!({
+            "op": "begin",
+            "from": { "x": 1, "z": 2, "level": 0 },
+            "to": { "x": 3, "z": 4, "level": 0 },
+            "allow_wilderness": true,
+        }))
+        .as_u64()
+        .unwrap();
+        let mut first = vec![route(token, (1, 2, 0), (3, 4, 0))];
+        filter_public_inspect_wire(&mut first);
+        assert_eq!(first.len(), 1);
+        let mut dup = vec![route(token, (1, 2, 0), (3, 4, 0))];
+        filter_public_inspect_wire(&mut dup);
+        assert!(dup.is_empty(), "duplicate must not consume a second job");
+        on_reset();
+        let token = dispatch(&json!({
+            "op": "begin",
+            "from": { "x": 1, "z": 2, "level": 0 },
+            "to": { "x": 3, "z": 4, "level": 0 },
+            "allow_wilderness": true,
+        }))
+        .as_u64()
+        .unwrap();
+        let mut mismatch = vec![route(token, (9, 9, 0), (3, 4, 0))];
+        filter_public_inspect_wire(&mut mismatch);
+        assert!(mismatch.is_empty());
+        assert!(settled(token));
+        assert_eq!(value(token)["reason"], "invalid-args");
+    }
+
+    #[test]
+    fn snapshot_only_zero_is_forwarded_without_waiter() {
+        on_reset();
+        let mut reqs = vec![route(0, (1, 2, 0), (3, 4, 0))];
+        filter_public_inspect_wire(&mut reqs);
+        assert_eq!(reqs.len(), 1);
+        assert!(!settled(0));
+        let mut bad = vec![InteractReq::InspectRoute {
+            x: 1,
+            z: 1,
+            level: 9,
+            from_x: 0,
+            from_z: 0,
+            from_level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            avoid: Vec::new(),
+            request_id: 0,
+        }];
+        filter_public_inspect_wire(&mut bad);
+        assert_eq!(bad.len(), 1, "id0 invalid-args still reaches host publish");
     }
 }

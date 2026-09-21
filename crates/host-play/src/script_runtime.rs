@@ -1163,6 +1163,13 @@ pub(super) fn dispatch_script_interact_cached(
             eprintln!("[script {name}] interact {req:?}");
         }
     }
+    for req in &reqs {
+        if let InteractReq::InspectAck { seq, generation } = req {
+            if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+                bot.inspect.apply_ack(*seq, *generation);
+            }
+        }
+    }
     for req in reqs {
         match req {
             InteractReq::OpenBooth {
@@ -1353,7 +1360,6 @@ pub(super) fn dispatch_script_interact_cached(
                 allow_bank_fetch,
                 avoid,
                 request_id,
-                inspect_ack_seq,
             } => {
                 let mut invalid_args = false;
                 let mut rects = Vec::new();
@@ -1405,7 +1411,6 @@ pub(super) fn dispatch_script_interact_cached(
                         allow_bank_fetch,
                         avoid: rects,
                         request_id,
-                        inspect_ack_seq,
                         invalid_args,
                     },
                 );

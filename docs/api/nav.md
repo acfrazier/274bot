@@ -223,18 +223,28 @@ never latches a bank session, and never changes ordinary walk policies.
 - **v2** `api.inspectBegin({ from, to, allow_* , avoid })` returns an
   isolate token. Query `inspectSettled` / `inspectValue`, or observe
   `snapshot.route_inspect_*`. `api.request({ op: 'inspect-route', from, to,
-  request_id })` with `request_id: 0` is snapshot-only (ack-only if
-  `inspect_ack_seq` is set; no job). Caller-invented nonzero ids are
-  isolate-stale; they are not isolate tokens.
+  request_id })` with `request_id: 0` is snapshot-only: the host still
+  runs a real preview into `route_inspect_*` and does not create a
+  waiter. Caller-invented nonzero ids are isolate-stale and never reach
+  the host job queue. Token identity is the isolate waiter; admission
+  identity is host unobserved retention plus the running/pending
+  reservation. Begin arguments are registered in Rust; a later
+  `inspect-route` with mismatched opts is `invalid-args` and is not
+  queued.
 - **Bound:** isolate unsettled waiters max 3. Host storage is a 2-deep
-  published ring plus one held slot (CAPACITY=3). Admission refuses a
-  new request when published + running + replace-pending + the new
-  request would exceed that cap. Held is released only when the isolate
-  apply-acks a posted `seq` (`inspect-ack` Interact, or piggybacked
-  `inspect_ack_seq` on a later inspect-route) for the current
-  generation. Snapshot send is not observation. Future/unseen seq and
-  generation mismatch are rejected. ACK is sent when the isolate applies
-  a terminal even if no later inspect request occurs.
+  published ring plus one held slot (CAPACITY=3). Admission counts only
+  unobserved terminals (`seq > observed_seq`, plus `held`) plus the
+  executing job, a pending-replace publish, and the new request.
+  Observed history is not capacity. A legitimate request that cannot be
+  reserved is refused with an explicit terminal when a wrap-safe slot
+  exists; otherwise the isolate settles locally (`stale` /
+  `invalid-args`) before queueing. Snapshot-only overload leaves the
+  previous `route_inspect_*` latest and does not start a job. Held
+  flushes only from typed isolate `inspect-ack` after the snapshot is
+  applied, carrying that terminal's generation. Snapshot send is not
+  observation. Old-session ACK cannot free a new generation. ACK is
+  sent when the isolate applies a terminal even if no later inspect
+  request occurs.
 - Conditional `allow_bank_fetch` preview labels `bank_planned` only after
   a PRE-state stand proof (or wear-only). Published hops are the post-state
   from→to transports, never bank steps or Traveller actions.
