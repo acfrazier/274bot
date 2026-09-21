@@ -152,9 +152,69 @@ export class Fight {
 }
 
 export class Retreat {
-    constructor() {
+    constructor(host, site) {
+        this.host = host;
+        this.site = site;
+        const started = retreatCall({ op: 'begin' });
+        this.token = started.token;
+    }
+
+    validate() {
+        const out = retreatCall({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        return out === true || out?.value === true;
+    }
+
+    async execute() {
+        this.host.fight?.interruptWatch();
+        let reply = null;
+        for (;;) {
+            const step = retreatCall({
+                op: 'next',
+                token: this.token,
+                reply,
+                ...projection(this.host, this.site),
+            });
+            reply = null;
+            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+                return;
+            }
+            switch (step.kind) {
+                case 'log':
+                    this.host.log?.(step.message);
+                    break;
+                case 'status':
+                    this.host.setStatus?.(step.message);
+                    break;
+                case 'set-safespot':
+                    this.host.setSafespotIndex?.(step.index);
+                    break;
+                case 'walk-to':
+                    queue({ op: 'walk-to', x: step.x, z: step.z, level: step.level });
+                    break;
+                case 'sustain':
+                    await Sustain.run();
+                    break;
+                case 'delay-ticks':
+                    await Execution.delayTicks(Number(step.n) || 1);
+                    break;
+                case 'wait':
+                    await Execution.delayTicks(1);
+                    break;
+                default:
+                    return;
+            }
+        }
+    }
+}
+
+function retreatCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_retreat
+        : undefined;
+    if (typeof fn !== 'function') {
         throw notImpl('Retreat');
     }
+    return fn(payload);
 }
 
 function holdCall(payload) {

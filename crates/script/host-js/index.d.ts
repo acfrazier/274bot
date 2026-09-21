@@ -537,6 +537,10 @@ export interface NativeApi {
   holdValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
   /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */
   holdNext(input: { token: number; reply?: unknown } & Record<string, unknown>): HoldStep;
+  retreatBegin(input?: object): HelperResult<{ token: number }>;
+  retreatValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
+  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */
+  retreatNext(input: { token: number; reply?: unknown } & Record<string, unknown>): RetreatStep;
 }
 
 export type FightStep =
@@ -545,6 +549,11 @@ export type FightStep =
   | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }
   | { ok: false; error: string };
 export type HoldStep =
+  | { ok: true; status: 'continue'; token: number; kind: string }
+  | { ok: true; status: 'done'; token: number; kind: 'yield' }
+  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
+  | { ok: false; error: string };
+export type RetreatStep =
   | { ok: true; status: 'continue'; token: number; kind: string }
   | { ok: true; status: 'done'; token: number; kind: 'yield' }
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }

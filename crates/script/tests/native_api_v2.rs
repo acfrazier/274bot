@@ -1076,3 +1076,78 @@ export function tick(api) {
     assert_ne!(unexpected["status"], "done");
     iso.join();
 }
+
+#[test]
+fn v2_retreat_next_names_yield_and_does_not_map_aborted_to_anonymous_done() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const began = api.retreatBegin();
+  globalThis.__begin = began;
+  const token = began.value.token;
+  const bad = api.retreatNext({ token: token + 1 });
+  globalThis.__bad = bad;
+  const first = api.retreatNext({
+    token,
+    died: false,
+    targetIdx: null,
+    hpFraction: 0.4,
+    panicHp: 0.1,
+    retreatHp: 0.5,
+    hasFood: false,
+    style: 'melee',
+    safespotIndex: 0,
+    key: 't',
+    target: 'Goblin',
+    alsoHunt: [],
+    safespots: [{x:1,z:1,level:0}],
+    meleeAnchor: {x:2,z:2,level:0},
+    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
+  });
+  globalThis.__first = first;
+  const unexpected = api.retreatNext({
+    token,
+    reply: { eatOk: true },
+    died: false,
+    targetIdx: null,
+    hpFraction: 0.4,
+    panicHp: 0.1,
+    retreatHp: 0.5,
+    hasFood: false,
+    style: 'melee',
+    safespotIndex: 0,
+    key: 't',
+    target: 'Goblin',
+    alsoHunt: [],
+    safespots: [{x:1,z:1,level:0}],
+    meleeAnchor: {x:2,z:2,level:0},
+    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
+  });
+  globalThis.__unexpected = unexpected;
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let begin = iso.probe("globalThis.__begin").unwrap();
+    assert_eq!(begin["ok"], true, "{begin:?}");
+    let bad = iso.probe("globalThis.__bad").unwrap();
+    assert_eq!(bad["ok"], false, "{bad:?}");
+    assert_eq!(bad["kind"], "aborted", "{bad:?}");
+    assert_eq!(bad["status"], "aborted", "{bad:?}");
+    assert_ne!(bad["status"], "done");
+    assert_ne!(bad["kind"], "yield");
+    let first = iso.probe("globalThis.__first").unwrap();
+    assert_eq!(first["ok"], true, "{first:?}");
+    if first["status"] == "done" {
+        assert_eq!(first["kind"], "yield", "{first:?}");
+    } else {
+        assert_eq!(first["status"], "continue", "{first:?}");
+    }
+    let unexpected = iso.probe("globalThis.__unexpected").unwrap();
+    assert_eq!(unexpected["ok"], false, "{unexpected:?}");
+    assert_eq!(unexpected["kind"], "aborted", "{unexpected:?}");
+    assert_ne!(unexpected["kind"], "yield");
+    assert_ne!(unexpected["status"], "done");
+    iso.join();
+}

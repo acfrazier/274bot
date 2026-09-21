@@ -662,8 +662,8 @@ export default class T extends LoopingBot {
         serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
     assert!(
-        probe["retreat"].as_str().unwrap_or("").contains("not impl"),
-        "{probe:?}"
+        probe["retreat"].is_null() || !probe["retreat"].as_str().unwrap_or("").contains("not impl"),
+        "Retreat isolate is live: {probe:?}"
     );
     assert!(
         probe["walkToSpot"]

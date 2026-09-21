@@ -384,6 +384,10 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  holdValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
     out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
     out.push_str("  holdNext(input: { token: number; reply?: unknown } & Record<string, unknown>): HoldStep;\n");
+    out.push_str("  retreatBegin(input?: object): HelperResult<{ token: number }>;\n");
+    out.push_str("  retreatValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
+    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
+    out.push_str("  retreatNext(input: { token: number; reply?: unknown } & Record<string, unknown>): RetreatStep;\n");
     out.push_str("}\n\n");
     out.push_str("export type FightStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
@@ -391,6 +395,11 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }\n");
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type HoldStep =\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
+    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
+    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str("  | { ok: false; error: string };\n");
+    out.push_str("export type RetreatStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
     out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
