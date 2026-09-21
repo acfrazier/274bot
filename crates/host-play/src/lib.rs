@@ -2228,6 +2228,7 @@ fn observe_slot_catalog_and_paired(
     session_boundary: bool,
     lifecycle_receipt: impl FnOnce() -> Option<script::ScriptLifecycleReceipt>,
     guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
+    inspect: Option<catalog_core::RouteInspectPublished>,
 ) {
     if catalog.configured() {
         let script_lifecycle = lifecycle_receipt();
@@ -2243,6 +2244,7 @@ fn observe_slot_catalog_and_paired(
             script_lifecycle,
             guardian,
             session_boundary,
+            inspect,
         );
     }
     if paired.configured() {
@@ -2549,6 +2551,13 @@ fn spawn_slot_thread(
                             // `status` is last frame's client_frame publication.
                             // Snapshot observe runs before this frame copies it
                             // onto the slot row.
+                            let inspect = if obs_catalog_core.copies_route_inspect() {
+                                slot_navs.lock().unwrap().get(name).and_then(|bot| {
+                                    bot.inspect.published_core_facts()
+                                })
+                            } else {
+                                None
+                            };
                             observe_slot_catalog_and_paired(
                                 &obs_catalog_core,
                                 &obs_paired_core,
@@ -2562,6 +2571,7 @@ fn spawn_slot_thread(
                                     })
                                 },
                                 || bounded_guardian_fact(status),
+                                inspect,
                             );
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();

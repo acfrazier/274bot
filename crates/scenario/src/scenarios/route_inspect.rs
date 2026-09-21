@@ -1,7 +1,9 @@
 use super::script_basics::script_live_seed_steps;
 use crate::*;
 
-/// Frozen `config.ts` @ rs2b0t `beecd912`.
+/// Frozen field tile from `config.ts` @ rs2b0t `beecd912`. Not a v1 seed or
+/// harness PASS predicate (field sit / fallback arrival is Core FAIL).
+#[allow(dead_code)]
 pub(crate) const BRIMHAVEN_FIELD: WorldTile = WorldTile {
     x: 2698,
     z: 3206,
@@ -20,7 +22,7 @@ pub(crate) const BRIMHAVEN_PIER: WorldTile = WorldTile {
 
 /// Bank-cycle return can exceed ordinary script gold deadlines.
 const BRIMHAVEN_INSPECT_V1_DEADLINE: Duration = Duration::from_secs(900);
-const BRIMHAVEN_INSPECT_V1_FIELD_WATCH: u32 = 3600;
+const BRIMHAVEN_INSPECT_V1_PIER_WATCH: u32 = 3600;
 
 /// Matches `route_inspect_brimhaven_v2.ts` `STOP_OK`.
 pub(crate) const ROUTE_INSPECT_BRIMHAVEN_V2_STOP: &str =
@@ -29,19 +31,22 @@ pub(crate) const ROUTE_INSPECT_BRIMHAVEN_V2_STOP: &str =
 const ROUTE_INSPECT_V2_DEADLINE: Duration = Duration::from_secs(360);
 const ROUTE_INSPECT_V2_WATCH: u32 = 240;
 
-/// Headed catalog witness for frozen `BrimhavenMossGiants` `sailToField` /
-/// `Navigator.findPath` after a legitimate bank return.
+/// Headed catalog witness for frozen `BrimhavenMossGiants` Travel→Bank→
+/// `sailToField` / `Navigator.findPath`.
 ///
-/// Harness proof is [`Proof::ArrivedNear`] on the field tile after the script's
-/// own bank cycle. The acceptance line `planned route uses Captain Barnaby` is
-/// emitted via `bot.log` (not game chat); root must capture script log or paint
-/// for that predicate.
+/// Seed is the reference-aligned empty pack at the Ardougne SE bank, with
+/// lobster+coins in the bank only. No afterStart seed or tele. Scenario
+/// position proof is pier progress after Start — the bank seed cannot
+/// satisfy it. Accepted Barnaby inspect is the catalog Core witness, not
+/// `Proof::Chat` / invented game chat. Frozen fallback without accept must
+/// FAIL that Core predicate. Fatality is a run failure; this card does not
+/// claim DeathRecovery (matrix still records it BLOCKED).
 pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
-    let field = Proof::ArrivedNear {
-        x: BRIMHAVEN_FIELD.x,
-        z: BRIMHAVEN_FIELD.z,
-        level: BRIMHAVEN_FIELD.level,
-        radius: 14,
+    let pier = Proof::ArrivedNear {
+        x: BRIMHAVEN_PIER.x,
+        z: BRIMHAVEN_PIER.z,
+        level: BRIMHAVEN_PIER.level,
+        radius: 8,
     };
     let watch = |name, arm, budget| Step {
         name,
@@ -52,7 +57,7 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "prepare island bank-cycle trip stock before Start",
+        name: "prepare empty pack and Ardougne bank food+coins before Start",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(c, "setvar tutorial 1000");
@@ -63,51 +68,45 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
                 cheat(c, "setstat hitpoints 40");
                 cheat(c, "setstat defence 40");
                 cheat(c, "~clearinv");
-                cheat(c, "give bronze_scimitar 1");
-                cheat(c, "give bones 28");
                 cheat(c, "givebank lobster 28");
                 cheat(c, "givebank coins 500");
                 true
             }),
         },
         wait: Wait {
-            arm: Proof::Item {
-                name: "Bones",
-                count: 28,
+            arm: Proof::ItemAtMost {
+                name: "Lobster",
+                count: 0,
             },
             budget_ticks: 120,
         },
     });
     steps.push(Step {
-        name: "tele to the Brimhaven moss field before Start",
+        name: "tele to the Ardougne SE bank before Start",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(
                     c,
-                    &tele_args(
-                        BRIMHAVEN_FIELD.level,
-                        BRIMHAVEN_FIELD.x,
-                        BRIMHAVEN_FIELD.z,
-                    ),
+                    &tele_args(BRIMHAVEN_BANK.level, BRIMHAVEN_BANK.x, BRIMHAVEN_BANK.z),
                 );
                 true
             }),
         },
         wait: Wait {
             arm: Proof::ArrivedNear {
-                x: BRIMHAVEN_FIELD.x,
-                z: BRIMHAVEN_FIELD.z,
-                level: BRIMHAVEN_FIELD.level,
-                radius: 14,
+                x: BRIMHAVEN_BANK.x,
+                z: BRIMHAVEN_BANK.z,
+                level: BRIMHAVEN_BANK.level,
+                radius: 6,
             },
             budget_ticks: 120,
         },
     });
     steps.push(start_catalog_step());
     steps.push(watch(
-        "watch return to the field after bank-cycle route inspect and sail",
-        field,
-        BRIMHAVEN_INSPECT_V1_FIELD_WATCH,
+        "watch ordinary walk progress toward Captain Barnaby pier after bank restock and inspect",
+        pier,
+        BRIMHAVEN_INSPECT_V1_PIER_WATCH,
     ));
 
     Scenario {
@@ -117,7 +116,7 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: field,
+        proof: pier,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
@@ -134,9 +133,9 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
 /// Headed File-card v2 witness on the same pier→field inspect geometry.
 ///
 /// Inspect `ok` + Barnaby `locName` and snapshot `request_id:0` consumption
-/// are validated inside the example (paint + self-stop). The scenario only
-/// binds pre-Start placement and post-inspect ordinary walk arrival at the
-/// bank stand (distinct from the seeded pier tile).
+/// are validated inside the example (paint + self-stop) together with an
+/// actual bank-tile check. Membership stays the selected profile's
+/// `map_members` fact; this fixture does not flip a global option.
 pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
     let bank_arrival = Proof::ArrivedNear {
         x: BRIMHAVEN_BANK.x,

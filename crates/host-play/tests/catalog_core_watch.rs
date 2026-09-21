@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use host_play::catalog_core::{
     firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
-    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, NATURE_RUNE_ID, OAK_LOGS_ID,
+    RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
+    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, NATURE_RUNE_ID, OAK_LOGS_ID,
     RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
     UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
@@ -1004,4 +1005,166 @@ fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_co
     watch
         .qualify()
         .expect("shop buy, same-arrow bank, modal close+continue, and out-of-coins stop");
+}
+
+fn brimhaven_v1_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(BRIMHAVEN_INSPECT_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("agility".into(), 30);
+    observation
+}
+
+fn with_hop(mut observation: Observation, seq: u64, request_id: u64, ok: bool, loc: &str) -> Observation {
+    observation.route_inspect_seq = seq;
+    observation.route_inspect_generation = seq;
+    observation.route_inspect_request_id = request_id;
+    observation.route_inspect_ok = ok;
+    observation.route_inspect_hops = vec![RouteInspectHopFact {
+        loc_name: loc.into(),
+    }];
+    observation
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_seed_and_fallback_cannot_pass() {
+    assert_eq!(
+        CoreCase::parse("brimhaven_moss_inspect_v1").unwrap(),
+        CoreCase::BrimhavenMossInspectV1
+    );
+    assert_eq!(
+        CoreCase::BrimhavenMossInspectV1.card_name(),
+        "BrimhavenMossGiants"
+    );
+    assert!(CoreCase::BrimhavenMossInspectV1.copies_route_inspect());
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "repeating the empty-pack bank seed must not qualify"
+    );
+
+    let mut field = baseline.clone();
+    field.tile = Some(BRIMHAVEN_INSPECT_FIELD);
+    watch.observe("catalogtest", field, false);
+    assert!(
+        watch.qualify().is_err(),
+        "field arrival without restock or accepted inspect must not qualify"
+    );
+
+    let mut restocked = baseline.clone();
+    restocked.bank_open = true;
+    restocked.bank_loaded = true;
+    restocked.bank_generation = baseline.bank_generation + 1;
+    restocked.item_ids.insert(LOBSTER_ID, 20);
+    restocked.item_ids.insert(COINS_ID, 60);
+    restocked.items.insert("Lobster".into(), 20);
+    restocked.items.insert("Coins".into(), 60);
+    watch.observe("catalogtest", restocked.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "restock alone is not inspect qualification"
+    );
+
+    let fallback = with_hop(restocked.clone(), 3, 1, false, "");
+    let mut fallback = fallback;
+    fallback.tile = Some(BRIMHAVEN_INSPECT_FIELD);
+    fallback.route_inspect_reason = "route validation exhausted".into();
+    watch.observe("catalogtest", fallback, false);
+    assert!(
+        watch.qualify().is_err(),
+        "frozen fallback without accepted Barnaby inspect must not qualify"
+    );
+
+    let stale = with_hop(restocked.clone(), 0, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", stale, false);
+    assert!(
+        watch.qualify().is_err(),
+        "a stale or unpublished inspect seq cannot stand in for a fresh result"
+    );
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_requires_restock_then_fresh_barnaby_then_walk() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut restocked = baseline.clone();
+    restocked.bank_open = true;
+    restocked.bank_loaded = true;
+    restocked.bank_generation = baseline.bank_generation + 1;
+    restocked.item_ids.insert(LOBSTER_ID, 20);
+    restocked.item_ids.insert(COINS_ID, 60);
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let accepted = with_hop(restocked.clone(), 4, 7, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "accepted inspect without ordinary walk progress is incomplete"
+    );
+
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("ordered restock, fresh Barnaby inspect, and pier-ward walk");
+}
+
+#[test]
+fn route_inspect_brimhaven_v2_requires_token_then_id0_then_bank_tile() {
+    assert_eq!(
+        CoreCase::parse("route_inspect_brimhaven_v2_ts").unwrap(),
+        CoreCase::RouteInspectBrimhavenV2
+    );
+    assert!(CoreCase::RouteInspectBrimhavenV2.copies_route_inspect());
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RouteInspectBrimhavenV2, "catalogtest");
+    let baseline = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(BRIMHAVEN_INSPECT_PIER),
+        ..Observation::default()
+    };
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "pier seed must not qualify"
+    );
+
+    let token = with_hop(baseline.clone(), 2, 11, true, "Captain Barnaby");
+    watch.observe("catalogtest", token.clone(), false);
+    assert!(watch.qualify().is_err(), "token inspect alone is incomplete");
+
+    let snap0 = with_hop(token.clone(), 3, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", snap0.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "id0 result without distinct-tile walk is incomplete"
+    );
+
+    let mut arrived = snap0;
+    arrived.tile = Some(BRIMHAVEN_INSPECT_BANK);
+    watch.observe("catalogtest", arrived, false);
+    watch
+        .qualify()
+        .expect("token, request_id 0, and actual bank tile");
 }

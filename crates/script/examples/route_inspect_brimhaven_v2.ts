@@ -11,6 +11,7 @@ const WRONG_BOAT = { minX: 2780, maxX: 3040, minZ: 3130, maxZ: 3330 };
 const STOP_OK = 'route inspect brimhaven qualification complete';
 const WALK_TICK_LIMIT = 120;
 const INSPECT_TICK_LIMIT = 80;
+const READY_TICK_LIMIT = 80;
 
 type Phase =
     | 'inspect-begin'
@@ -25,6 +26,8 @@ type Phase =
 let phase: Phase = 'inspect-begin';
 let token = 0;
 let phaseSince = 0;
+let readySince = 0;
+let clockArmed = false;
 let inspectOk = false;
 let inspectBarnaby = false;
 let snap0Ok = false;
@@ -40,6 +43,10 @@ function hopHasBarnaby(
     );
 }
 
+function ready(api: NativeApi): boolean {
+    return api.snapshot?.ingame === true && api.snapshot.scene_state === 2;
+}
+
 function fail(api: NativeApi, reason: string): void {
     phase = 'fail';
     api.log(`route_inspect_brimhaven_v2: ${reason}`);
@@ -52,18 +59,37 @@ function paint(api: NativeApi): void {
         .title('Route inspect Brimhaven v2')
         .row('phase', phase)
         .row('token', token)
-        .row('inspect ok', inspectOk)
-        .row('inspect barnaby', inspectBarnaby)
-        .row('snap0 ok', snap0Ok)
-        .row('snap0 barnaby', snap0Barnaby)
+        .row('inspect ok', inspectOk ? 'yes' : 'no')
+        .row('inspect barnaby', inspectBarnaby ? 'yes' : 'no')
+        .row('snap0 ok', snap0Ok ? 'yes' : 'no')
+        .row('snap0 barnaby', snap0Barnaby ? 'yes' : 'no')
         .row('tick', api.tick)
         .end();
 }
 
+function chebyshev(
+    here: { x: number; z: number; level: number } | null | undefined,
+    dest: { x: number; z: number; level: number },
+): number {
+    if (!here || here.level !== dest.level) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return Math.max(Math.abs(here.x - dest.x), Math.abs(here.z - dest.z));
+}
+
 export function tick(api: NativeApi): void {
-    if (!api.snapshot?.ingame) {
-        fail(api, 'not in game');
+    if (!ready(api)) {
+        if (!readySince) {
+            readySince = api.tick;
+        }
+        if (api.tick - readySince > READY_TICK_LIMIT) {
+            fail(api, 'not ready: ingame && scene_state==2 never arrived');
+        }
         return;
+    }
+    if (!clockArmed) {
+        phaseSince = api.tick;
+        clockArmed = true;
     }
     paint(api);
     if (phase === 'done' || phase === 'fail') {
@@ -183,6 +209,10 @@ export function tick(api: NativeApi): void {
             }
             if (api.snapshot.walk_outcome_failed) {
                 fail(api, 'ordinary walk after inspect failed');
+                return;
+            }
+            if (chebyshev(api.snapshot.here, BANK) > 6) {
+                fail(api, 'ordinary walk outcome advanced without arriving at the bank tile');
                 return;
             }
             phase = 'done';

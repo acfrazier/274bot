@@ -92,7 +92,7 @@ pub(super) struct InspectCapture {
 }
 
 #[derive(Default)]
-pub(super) struct InspectNav {
+pub(crate) struct InspectNav {
     pub generation: u64,
     pub worker: Option<Arc<()>>,
     pub pending: Option<InspectCapture>,
@@ -126,6 +126,20 @@ pub(crate) struct PostedInspect {
 }
 
 impl InspectNav {
+    /// Read-only copy of the already-published latest terminal for Core JSON.
+    /// Callers must invoke this only for the active inspect case.
+    pub(crate) fn published_core_facts(&self) -> Option<crate::catalog_core::RouteInspectPublished> {
+        let latest = self.latest.as_ref()?;
+        Some(crate::catalog_core::RouteInspectPublished {
+            seq: latest.seq,
+            generation: latest.generation,
+            request_id: latest.request_id,
+            ok: latest.ok,
+            reason: latest.reason.clone(),
+            hop_loc_names: latest.hops.iter().map(|hop| hop.loc_name.clone()).collect(),
+        })
+    }
+
     fn next_seq(&self) -> u64 {
         let cur = self.latest.as_ref().map(|t| t.seq).unwrap_or(0);
         if cur == u64::MAX {
