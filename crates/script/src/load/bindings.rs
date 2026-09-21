@@ -321,11 +321,6 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register combat keep names: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_supply_v2", |args: &[serde_json::Value]| {
-            Ok(crate::supply_v2::dispatch(args))
-        })
-        .map_err(|e| format!("register supply v2: {e}"))?;
     let selected_spells = game_data.clone();
     runtime
         .register_function(
@@ -1217,14 +1212,10 @@ api.prayerClear = function () {
   return runPrayerMachine({ op: 'begin-clear' });
 };
 function supplyV2(op, input) {
-  return globalThis.rustyscript.functions.__rs2b0t_supply_v2({ op: op, input: input });
-}
-function isItemRowArray(value) {
-  return Array.isArray(value)
-    || (value && typeof value === 'object' && typeof value.length === 'number');
+  return globalThis.__rs2b0t_supply_v2(op, input);
 }
 api.foodCount = function (input) {
-  if (!input || !isItemRowArray(input.items) || typeof input.foodName !== 'string') {
+  if (!input || !Array.isArray(input.items) || typeof input.foodName !== 'string') {
     return helperErr('invalid-args');
   }
   return supplyV2('foodCount', input);

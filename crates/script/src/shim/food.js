@@ -60,9 +60,10 @@ export function isFoodItem(name, foodName) {
 
 export function foodCount(items, foodName) {
     if (!Array.isArray(items)) return 0;
+    if (items.length === 0) return 0;
     const fn = globalThis.__rs2b0t_food_count;
     if (typeof fn === 'function') {
-        return fn(items, String(foodName));
+        return fn(items, foodName);
     }
     return items.filter((item) => item && isFoodItem(item.name, foodName)).length;
 }

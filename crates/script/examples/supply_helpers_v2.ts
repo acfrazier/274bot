@@ -5,7 +5,7 @@ export const apiVersion = 2;
 
 export function tick(api: NativeApi): void {
     const sharkSlots = api.foodCount({
-        items: Array.from(api.snapshot.inv),
+        items: api.snapshot.inv,
         foodName: 'Shark',
     });
     const breadHeal = api.foodHealAmount({ foodName: 'Bread' });

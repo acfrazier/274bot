@@ -138,6 +138,10 @@ keep their existing JSON helper paths where applicable; `foodCount` and
 | Method | OK | Errors |
 | --- | --- | --- |
 | `foodCount({ items, foodName })` | slot count | `invalid-args`, `missing-selected-data` |
+
+`foodCount` takes a real `ItemRow[]`. `api.snapshot.inv` is the host array view
+(`Array.isArray` is true); pass it directly. Arbitrary `{ length }` objects are
+`invalid-args`. `Array.from(api.snapshot.inv)` is optional, not required.
 | `foodHealAmount({ foodName })` | fixed heal | `unknown-food`, `missing-selected-data` |
 | `combatKeepNames({ food, … })` | string[] | `invalid-args`, `missing-selected-data` |
 | `runesPerCast({ spellName, wielded })` | costs or `null` | `invalid-args`, `missing-selected-data` |

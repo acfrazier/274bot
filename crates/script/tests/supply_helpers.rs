@@ -1,12 +1,30 @@
 use client::io::ClientRevision;
+use script::isolate_fb::ItemRowInput;
 use script::{LoadIsolate, LoadShape};
 
+fn item(name: &'static str, id: i32, slot: i32) -> ItemRowInput<'static> {
+    ItemRowInput {
+        name: Some(name),
+        count: 1,
+        id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot,
+    }
+}
+
 fn post_base(iso: &LoadIsolate, tick: u64) {
+    post_inv(iso, tick, &[]);
+}
+
+fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
     let mut input = script::isolate_fb::SnapshotInput {
         tick,
         here: None,
         ingame: true,
-        inv: &[],
+        inv,
         inv_size: 28,
         stats: &[],
         booths: &[],
@@ -318,4 +336,184 @@ export function tick(api) {
     iso.join();
     assert_eq!(value["food"]["error"], "missing-selected-data");
     assert_eq!(value["escape"]["error"], "missing-selected-data");
+}
+
+#[test]
+fn new_supply_v2_is_not_a_rustyscript_json_callback() {
+    let value = probe_v2(
+        r#"
+export const apiVersion = 2;
+        export function tick(api) {
+  const typed = globalThis.__rs2b0t_supply_v2('foodCount', { items: [], foodName: 'Shark' });
+  let jsonStyle = null;
+  try {
+    jsonStyle = globalThis.rustyscript.functions.__rs2b0t_supply_v2({
+      op: 'foodCount',
+      input: { items: [], foodName: 'Shark' },
+    });
+  } catch (e) {
+    jsonStyle = { ok: false, error: String(e && (e.message || e)) };
+  }
+  globalThis.__probe = JSON.stringify({
+    food: typeof api.foodCount,
+    typedOk: typed && typed.ok === true,
+    jsonStyleOk: jsonStyle && jsonStyle.ok === true,
+    bindingsHasJsonRegister: false,
+  });
+}
+"#,
+        ClientRevision::R274,
+    );
+    let bindings = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/load/bindings.rs"
+    ));
+    assert!(
+        !bindings.contains("register_function(\"__rs2b0t_supply_v2\""),
+        "new JSON register_function for supply v2 is forbidden"
+    );
+    assert_eq!(value["food"], "function");
+    assert_eq!(value["typedOk"], true, "{value:?}");
+    assert_eq!(value["jsonStyleOk"], false, "{value:?}");
+}
+
+#[test]
+fn v1_food_count_preserves_falsy_skip_and_empty_name_match() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let value = probe_compat(
+            r#"
+import { foodCount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        const boom = {
+            toString() { throw new Error('foodName boom'); },
+            valueOf() { throw new Error('foodName boom'); },
+        };
+        let emptyBoom = 'threw';
+        let namedBoom = '';
+        try { emptyBoom = foodCount([], boom); } catch (e) { emptyBoom = String(e.message || e); }
+        try { foodCount([{ name: null }], boom); } catch (e) { namedBoom = String(e.message || e); }
+        globalThis.__probe = JSON.stringify({
+            oddEmpty: foodCount([true, 1, 'x', false, 0, '', null, undefined], ''),
+            oddShark: foodCount([true, 1, 'x', false, 0, '', null, undefined], 'Shark'),
+            undefName: foodCount([{ name: undefined }, { name: null }, {}], ''),
+            numberNameEmpty: foodCount([{ name: 0 }], ''),
+            numberNameZero: foodCount([{ name: 0 }], 0),
+            emptyBoom,
+            namedBoom,
+        });
+    }
+}
+"#,
+            revision,
+        );
+        assert_eq!(value["oddEmpty"], 3, "{value:?}");
+        assert_eq!(value["oddShark"], 0, "{value:?}");
+        assert_eq!(value["undefName"], 3, "{value:?}");
+        assert_eq!(value["numberNameEmpty"], 0, "{value:?}");
+        assert_eq!(value["numberNameZero"], 1, "{value:?}");
+        assert_eq!(value["emptyBoom"], 0, "{value:?}");
+        assert!(
+            value["namedBoom"].as_str().unwrap_or("").contains("boom"),
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
+fn v2_snapshot_inv_and_invalid_optional_types() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = api::game_data::for_revision(revision).unwrap();
+        let iso = LoadIsolate::spawn_with_game_data(
+            r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({
+    fromInv: api.foodCount({ items: api.snapshot.inv, foodName: 'Shark' }),
+    arrayLike: api.foodCount({ items: { length: 1, 0: { name: 'Shark' } }, foodName: 'Shark' }),
+    styleNum: api.combatKeepNames({ food: 'Lobster', style: 1 }),
+    extraNum: api.combatKeepNames({ food: 'Lobster', extra: ['Coins', 1] }),
+    wieldedNum: api.runesPerCast({ spellName: 'Wind Strike', wielded: ['Staff of air', 1] }),
+    keepFoodNum: api.combatKeepNames({ food: 1 }),
+    runesMissingWielded: api.runesPerCast({ spellName: 'Wind Strike' }),
+  });
+}
+"#
+            .into(),
+            LoadShape::NativeTick,
+            vec![],
+            data,
+        )
+        .unwrap();
+        let inv = [
+            item("Shark", 385, 0),
+            item("Shark", 385, 1),
+            item("Coins", 995, 2),
+        ];
+        post_inv(&iso, 1, &inv);
+        iso.on_game_tick(1);
+        let value: serde_json::Value =
+            serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap())
+                .unwrap();
+        iso.join();
+        assert_eq!(value["fromInv"]["ok"], true, "{value:?}");
+        assert_eq!(value["fromInv"]["value"], 2, "{value:?}");
+        assert_eq!(value["arrayLike"]["error"], "invalid-args", "{value:?}");
+        assert_eq!(value["styleNum"]["error"], "invalid-args", "{value:?}");
+        assert_eq!(value["extraNum"]["error"], "invalid-args", "{value:?}");
+        assert_eq!(value["wieldedNum"]["error"], "invalid-args", "{value:?}");
+        assert_eq!(value["keepFoodNum"]["error"], "invalid-args", "{value:?}");
+        assert_eq!(
+            value["runesMissingWielded"]["error"],
+            "invalid-args",
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
+fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("supply_helpers_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    let js = script::transpile_ts(&src).expect("transpile supply_helpers_v2.ts");
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = api::game_data::for_revision(revision).unwrap();
+        let iso = LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
+            .unwrap();
+        let inv = [
+            item("Shark", 385, 0),
+            item("Shark", 385, 1),
+            item("Trout", 333, 2),
+        ];
+        post_inv(&iso, 1, &inv);
+        iso.on_game_tick(1);
+        let err = iso.probe("globalThis.__rs2b0t_host.lastError || ''").unwrap();
+        let logs = iso.drain_logs();
+        iso.join();
+        assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?} logs={logs:?}");
+        let last = logs
+            .iter()
+            .rev()
+            .find(|line| line.contains("sharkSlots"))
+            .unwrap_or_else(|| panic!("example logged helper results; logs={logs:?}"));
+        let row: serde_json::Value = serde_json::from_str(last).unwrap();
+        assert_eq!(row["sharkSlots"]["ok"], true, "{row:?}");
+        assert_eq!(row["sharkSlots"]["value"], 2, "{row:?}");
+        assert_eq!(row["breadHeal"]["ok"], true, "{row:?}");
+        assert_eq!(row["breadHeal"]["value"], 4, "{row:?}");
+        assert_eq!(
+            row["keep"]["value"],
+            serde_json::json!(["lobster", "Mind rune", "Air rune"]),
+            "{row:?}"
+        );
+        assert_eq!(
+            row["runes"]["value"],
+            serde_json::json!([{ "rune": "Mind rune", "count": 1 }]),
+            "{row:?}"
+        );
+        assert_eq!(row["escape"]["value"]["label"], "Varrock teleport", "{row:?}");
+        assert_eq!(row["escape"]["value"]["level"], 25, "{row:?}");
+    }
 }
