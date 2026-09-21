@@ -411,8 +411,8 @@ impl ResolvedSettingOptions {
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
 /// pulls names from the store; a high-alchemy item spec is resolved from
 /// borrowed selected facts without mutating the schema. Recognized imported
-/// catalog tables are a last-resort host metadata lookup. Revision-fact
-/// equipment idents stay empty until W1 publishes them.
+/// catalog tables are a last-resort host metadata lookup. W1c equipment idents
+/// resolve from borrowed `equipment_names` facts; `AXES` / `DROP_DB` stay empty.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
@@ -438,7 +438,7 @@ pub fn resolve_setting_options_with_labels(
     }
     if let Some(from) = def.options_from.as_deref() {
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
-            return ResolvedSettingOptions::default();
+            return resolve_w1c_equipment_options(from, game_data);
         }
         if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
             return ResolvedSettingOptions::from_values(
@@ -447,6 +447,52 @@ pub fn resolve_setting_options_with_labels(
         }
     }
     ResolvedSettingOptions::default()
+}
+
+fn equipment_row_is_selectable(row: &api::game_data::EquipmentNameEntry) -> bool {
+    row.disposition == "resolved"
+        && row.id.is_some()
+        && row
+            .alias
+            .as_ref()
+            .is_some_and(|alias| !alias.trim().is_empty())
+}
+
+fn resolve_w1c_equipment_options(
+    ident: &str,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let Some(families) = crate::rs2b0t_registry::w1c_equipment_option_families(ident) else {
+        return ResolvedSettingOptions::default();
+    };
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions::default();
+    };
+    let Some(facts) = data.equipment_names() else {
+        return ResolvedSettingOptions::default();
+    };
+    let mut values = Vec::new();
+    let mut labels = Vec::new();
+    for family in families {
+        let Some(rows) = facts.family(family) else {
+            continue;
+        };
+        for row in rows {
+            if !equipment_row_is_selectable(row) {
+                continue;
+            }
+            let key = row.requested_name.clone();
+            let label = row
+                .selected_name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&key)
+                .to_string();
+            values.push(key);
+            labels.push(label);
+        }
+    }
+    ResolvedSettingOptions { values, labels }
 }
 
 fn resolve_item_option_spec(
@@ -760,14 +806,11 @@ mod tests {
         assert!(opts.contains(&"Custom".into()), "{opts:?}");
     }
 
-    #[test]
-    fn revision_fact_equipment_options_stay_empty() {
-        let path = tmp_path();
-        let store = LoadoutsStore::at(path);
-        let def = SettingDef {
-            id: "staff".into(),
+    fn equipment_from(ident: &str) -> SettingDef {
+        SettingDef {
+            id: ident.to_ascii_lowercase(),
             ty: "string".into(),
-            default: Some("Staff of air".into()),
+            default: None,
             label: None,
             min: None,
             max: None,
@@ -776,16 +819,121 @@ mod tests {
             option_labels: Vec::new(),
             group: None,
             show_if: None,
-            options_from: Some("STAFFS".into()),
+            options_from: Some(ident.into()),
             csv_toggle: None,
             help: None,
             item_option_spec: None,
-        };
-        let opts = resolve_setting_options(&def, &store, None);
-        assert!(
-            opts.is_empty(),
-            "W1 equipment arrays must not invent names: {opts:?}"
+        }
+    }
+
+    #[test]
+    fn w1c_equipment_options_closed_without_game_data() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = equipment_from("STAFFS");
+        assert!(resolve_setting_options(&def, &store, None).is_empty());
+        assert!(resolve_setting_options(&equipment_from("AXES"), &store, None).is_empty());
+    }
+
+    #[test]
+    fn w1c_equipment_options_match_curated_families_on_both_pins() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        for ident in [
+            "STAFFS",
+            "BOWS",
+            "CROSSBOWS",
+            "DARTS",
+            "ARROWS",
+            "MELEE_WEAPONS",
+        ] {
+            let def = equipment_from(ident);
+            let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
+            let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+            assert_eq!(a, b, "{ident} must match across pins");
+            assert_eq!(a.values.len(), a.labels.len());
+            assert!(!a.values.is_empty(), "{ident} must have resolved rows");
+        }
+        let staffs = resolve_setting_options_with_labels(
+            &equipment_from("STAFFS"),
+            &store,
+            Some(r274.as_ref()),
         );
+        assert_eq!(staffs.values.len(), 15);
+        assert_eq!(staffs.values[0], "Staff");
+        assert_eq!(staffs.values.last().map(String::as_str), Some("Mystic fire staff"));
+        assert_eq!(staffs.label_for("Staff of air"), "Staff of air");
+
+        let bows = resolve_setting_options(&equipment_from("BOWS"), &store, Some(r274.as_ref()));
+        assert_eq!(bows.len(), 12);
+        assert_eq!(bows[0], "Shortbow");
+        assert_eq!(bows.last().map(String::as_str), Some("Magic longbow"));
+
+        let crossbows =
+            resolve_setting_options(&equipment_from("CROSSBOWS"), &store, Some(r274.as_ref()));
+        assert_eq!(crossbows, vec!["Crossbow".to_string()]);
+        assert!(
+            !crossbows.iter().any(|n| n.contains("Karil")),
+            "absent crossbow tiers must not appear: {crossbows:?}"
+        );
+
+        let arrows =
+            resolve_setting_options(&equipment_from("ARROWS"), &store, Some(r274.as_ref()));
+        assert_eq!(arrows.len(), 6);
+        assert!(
+            !arrows.iter().any(|n| n == "Dragon arrow"),
+            "Dragon arrow is absent under exact join: {arrows:?}"
+        );
+
+        let bolts = resolve_setting_options(&equipment_from("BOLTS"), &store, Some(r274.as_ref()));
+        assert!(
+            bolts.is_empty(),
+            "bolt tiers stay absent; generic Bolts must not be invented: {bolts:?}"
+        );
+
+        let ranged = resolve_setting_options_with_labels(
+            &equipment_from("RANGED_WEAPONS"),
+            &store,
+            Some(r274.as_ref()),
+        );
+        assert_eq!(ranged.values.len(), 19, "12 bows + 7 darts");
+        assert_eq!(ranged.values[0], "Shortbow");
+        assert_eq!(ranged.values[12], "Bronze dart");
+        let rock = resolve_setting_options(&equipment_from("ROCK_CRAB_RANGED_WEAPONS"), &store, Some(r274.as_ref()));
+        assert_eq!(rock, ranged.values);
+
+        assert!(
+            resolve_setting_options(&equipment_from("AXES"), &store, Some(r274.as_ref())).is_empty()
+        );
+        assert!(
+            resolve_setting_options(&equipment_from("DROP_DB"), &store, Some(r274.as_ref()))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn w1c_equipment_options_from_parsed_fire_giant_staff_schema() {
+        let src = r#"
+export const SETTINGS = {
+    staff: { type: 'string', default: 'Staff of air', options: STAFFS, label: 'Staff', group: 'Combat' },
+};
+"#;
+        let schema = crate::rs2b0t_registry::settings_schema_from_source(src);
+        let staff = schema
+            .iter()
+            .find(|s| s.id == "staff")
+            .expect("staff setting");
+        assert!(staff.options.is_empty());
+        assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let resolved =
+            resolve_setting_options_with_labels(staff, &store, Some(data.as_ref()));
+        assert_eq!(resolved.values.len(), 15);
+        assert!(resolved.values.contains(&"Staff of air".to_string()));
     }
 
     #[test]

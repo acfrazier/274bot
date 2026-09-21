@@ -815,6 +815,24 @@ pub(crate) fn is_revision_fact_option_ident(ident: &str) -> bool {
     )
 }
 
+/// W1c `equipment_names` families backing a frozen settings `options` /
+/// `optionsFrom` ident. `RANGED_WEAPONS` and `ROCK_CRAB_RANGED_WEAPONS` mirror
+/// `.superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/ranged.ts`
+/// (`[...BOWS, ...DARTS]`). `AXES` and `DROP_DB` stay outside W1c.
+pub(crate) fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static str]> {
+    Some(match ident {
+        "STAFFS" => &["staffs"],
+        "BOWS" => &["bows"],
+        "CROSSBOWS" => &["crossbows"],
+        "DARTS" => &["darts"],
+        "ARROWS" => &["arrows"],
+        "BOLTS" => &["bolts"],
+        "MELEE_WEAPONS" => &["melee_weapons"],
+        "RANGED_WEAPONS" | "ROCK_CRAB_RANGED_WEAPONS" => &["bows", "darts"],
+        _ => return None,
+    })
+}
+
 /// Host-owned finite option tables for imported / parent-dir identifiers
 /// whose bodies are not in the same-directory settings blob. Values are
 /// copied from the frozen rs2b0t pin; this is not a JS evaluator.
@@ -2607,10 +2625,24 @@ export const SETTINGS = {
         let staff = setting(&schema, "staff");
         assert!(
             staff.options.is_empty(),
-            "W1 equipment must stay unpublished: {:?}",
+            "W1 equipment must stay unpublished at parse time: {:?}",
             staff.options
         );
         assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
+    }
+
+    #[test]
+    fn w1c_equipment_union_idents_match_frozen_ranged_ts() {
+        assert_eq!(
+            super::w1c_equipment_option_families("RANGED_WEAPONS"),
+            Some(&["bows", "darts"][..])
+        );
+        assert_eq!(
+            super::w1c_equipment_option_families("ROCK_CRAB_RANGED_WEAPONS"),
+            Some(&["bows", "darts"][..])
+        );
+        assert!(super::w1c_equipment_option_families("AXES").is_none());
+        assert!(super::w1c_equipment_option_families("DROP_DB").is_none());
     }
 
     #[test]
