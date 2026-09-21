@@ -2474,6 +2474,39 @@ mod tests {
             )
             .is_ok()
         );
+        // Level-scoped avoid applies only on the matching plane.
+        let level0_block = AvoidRect {
+            min_x: 2,
+            max_x: 2,
+            min_z: 2,
+            max_z: 2,
+            level: Some(0),
+        };
+        assert!(matches!(
+            find_with_avoid(
+                &wc,
+                &g,
+                tile(0, 0, 0),
+                tile(2, 2, 0),
+                opts,
+                &empty,
+                &[level0_block],
+            ),
+            Err(RouteError::NoPath)
+        ));
+        assert!(
+            find_with_avoid(
+                &wc,
+                &g,
+                tile(0, 0, 1),
+                tile(2, 2, 1),
+                opts,
+                &empty,
+                &[level0_block],
+            )
+            .is_ok(),
+            "level-0 avoid must not block the same x/z on another plane"
+        );
     }
 
     #[test]
@@ -2553,6 +2586,31 @@ mod tests {
             ),
             "teleport landing on an avoided tile is refused from outside"
         );
+        // Nonempty avoid that misses the landing still permits the teleport hop (not a walk-around).
+        let tp_allowed = find_with_avoid(
+            &wc_tp,
+            &g_tp,
+            tile(0, 0, 0),
+            dest,
+            FindOptions {
+                allow_teleports: true,
+                ..FindOptions::default()
+            },
+            &spell_state(),
+            &[avoid_box(1, 1, 1, 1)],
+        )
+        .unwrap();
+        assert_eq!(tp_allowed.dest, dest);
+        let tp_leg = tp_allowed
+            .legs
+            .iter()
+            .find_map(|l| match l {
+                Leg::Transport { edge } => Some(edge),
+                _ => None,
+            })
+            .expect("walled bake requires the teleport leg, not a walk detour");
+        assert_eq!(tp_leg.kind, TransportKind::Teleport);
+        assert_eq!(tp_leg.to, dest);
         // Essence return landing is gated the same way.
         let wc_mine = mine_bake();
         let session = crate::essence::essence_session_for_wizard(553).unwrap();
@@ -2570,7 +2628,7 @@ mod tests {
                 tile(2912, 4833, 0),
                 aubury,
                 FindOptions {
-                    essence: Some(session),
+                    essence: Some(session.clone()),
                     ..FindOptions::default()
                 },
                 &empty,
@@ -2578,6 +2636,32 @@ mod tests {
             ),
             Err(RouteError::NoPath)
         ));
+        // Avoid the mine pad only; the return landing stays clear.
+        let pad = tile(2912, 4833, 0);
+        let essence_allowed = find_with_avoid(
+            &wc_mine,
+            &TransportGraph::default(),
+            pad,
+            aubury,
+            FindOptions {
+                essence: Some(session),
+                ..FindOptions::default()
+            },
+            &empty,
+            &[avoid_box(pad.x, pad.x, pad.z, pad.z)],
+        )
+        .unwrap();
+        assert_eq!(essence_allowed.dest, aubury);
+        let return_leg = essence_allowed
+            .legs
+            .iter()
+            .find_map(|l| match l {
+                Leg::Transport { edge } => Some(edge),
+                _ => None,
+            })
+            .expect("mine exit must use the essence return hop");
+        assert_eq!(return_leg.kind, TransportKind::EssenceExit);
+        assert_eq!(return_leg.to, aubury);
     }
 
     #[test]
