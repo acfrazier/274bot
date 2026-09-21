@@ -3251,6 +3251,10 @@ pub(super) fn with_script_snapshot_input<R>(
             accepted_id: inspect.accepted_id,
             replaced_id: inspect.replaced_id,
             replaced_prev_id: inspect.replaced_prev_id,
+            refused_id: inspect.refused_id,
+            refused_id_2: inspect.refused_id_2,
+            refused_id_3: inspect.refused_id_3,
+            unobserved: inspect.unobserved,
         },
     };
     f(&input, native)

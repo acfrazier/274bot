@@ -21,8 +21,8 @@ use std::thread;
 
 const MAX_AVOID: usize = 16;
 /// Isolate unsettled-waiter cap. Host published storage plus admission
-/// equal this bound: RING(2)+HELD(1)=3. A fourth isolate begin is already
-/// local-stale; the host must not accept a fourth terminal.
+/// equal this bound: RING(2)+HELD(1)=3. Registered overflow posts a
+/// refuse identity; it does not accept a fourth terminal.
 const RING: usize = 2;
 const HELD: usize = 1;
 const CAPACITY: usize = RING + HELD;
@@ -101,6 +101,7 @@ pub(super) struct InspectNav {
     pub accepted_id: u64,
     pub replaced_id: u64,
     pub replaced_prev_id: u64,
+    pub refused: [u64; 3],
     pub latest: Option<InspectTerminal>,
     pub prev: Option<InspectTerminal>,
     pub held: Option<InspectTerminal>,
@@ -118,6 +119,10 @@ pub(crate) struct PostedInspect {
     pub(super) accepted_id: u64,
     pub(super) replaced_id: u64,
     pub(super) replaced_prev_id: u64,
+    pub(super) refused_id: u64,
+    pub(super) refused_id_2: u64,
+    pub(super) refused_id_3: u64,
+    pub(super) unobserved: u64,
 }
 
 impl InspectNav {
@@ -162,6 +167,26 @@ impl InspectNav {
                     .pending
                     .as_ref()
                     .is_some_and(|p| p.request_id == request_id))
+    }
+
+    fn note_refused(&mut self, id: u64) {
+        if id == 0 || self.refused.contains(&id) {
+            return;
+        }
+        if let Some(slot) = self.refused.iter_mut().find(|slot| **slot == 0) {
+            *slot = id;
+            return;
+        }
+        self.refused[0] = self.refused[1];
+        self.refused[1] = self.refused[2];
+        self.refused[2] = id;
+    }
+
+    /// Registered token that cannot reserve storage: identity-only refuse.
+    /// Does not overwrite unobserved ring/held terminals. Snapshot-only 0
+    /// has no waiter and leaves the previous published latest in place.
+    fn refuse_unreserved(&mut self, request_id: u64) {
+        self.note_refused(request_id);
     }
 
     fn max_ackable_seq(&self) -> u64 {
@@ -230,6 +255,10 @@ impl InspectNav {
             accepted_id: self.accepted_id,
             replaced_id: self.replaced_id,
             replaced_prev_id: self.replaced_prev_id,
+            refused_id: self.refused[0],
+            refused_id_2: self.refused[1],
+            refused_id_3: self.refused[2],
+            unobserved: self.unobserved_count() as u64,
         }
     }
 
@@ -242,6 +271,7 @@ impl InspectNav {
         self.accepted_id = 0;
         self.replaced_id = 0;
         self.replaced_prev_id = 0;
+        self.refused = [0; 3];
         self.observed_seq = 0;
     }
 }
@@ -299,6 +329,7 @@ pub(super) fn queue_inspect(
             return;
         }
         if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
+            bot.inspect.refuse_unreserved(req.request_id);
             return;
         }
         if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
@@ -315,6 +346,7 @@ pub(super) fn queue_inspect(
             return;
         }
         if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
+            bot.inspect.refuse_unreserved(req.request_id);
             return;
         }
         if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
@@ -1048,6 +1080,48 @@ mod tests {
         }
     }
 
+    fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let all = navs.lock().unwrap();
+                if let Some(bot) = all.get("p") {
+                    if !bot.inspect.executing
+                        && bot.inspect.pending.is_none()
+                        && bot.inspect.worker.is_none()
+                    {
+                        return;
+                    }
+                }
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "inspect worker did not idle"
+            );
+            thread::yield_now();
+        }
+    }
+
+    fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWorld>) {
+        for _ in 0..3 {
+            queue_inspect(
+                navs,
+                "p",
+                &Some(Arc::clone(world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), tile(2, 2, 1), 0),
+            );
+            wait_idle(navs);
+        }
+        let all = navs.lock().unwrap();
+        let bot = all.get("p").unwrap();
+        assert_eq!(bot.inspect.unobserved_count(), 3);
+        assert!(!bot.inspect.can_admit(false));
+    }
+
     #[test]
     fn path_attribute_module_compiles() {
         let _ = std::any::type_name::<InspectNav>();
@@ -1666,6 +1740,7 @@ mod tests {
             assert_eq!(bot.inspect.accepted_id, 3, "fourth must not be accepted");
             assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
             assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 2);
+            assert_eq!(bot.inspect.refused, [4, 0, 0]);
         }
     }
 
@@ -1758,6 +1833,8 @@ mod tests {
             assert_eq!(bot.inspect.accepted_id, 3);
             assert!(bot.inspect.pending.is_none());
             assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
+            assert_eq!(bot.inspect.refused, [4, 0, 0]);
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 2);
         }
         {
             let mut all = navs.lock().unwrap();
@@ -1777,6 +1854,41 @@ mod tests {
         );
         let term = wait_latest(&navs, 5);
         assert_eq!(term.request_id, 5);
+    }
+
+    #[test]
+    fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        fill_three_id0(&navs, &world);
+        let before = {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            (
+                bot.inspect.latest.as_ref().map(|t| t.seq),
+                bot.inspect.held.as_ref().map(|t| t.seq),
+                bot.inspect.refused,
+            )
+        };
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(2, 2, 1), 0),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.latest.as_ref().map(|t| t.seq), before.0);
+            assert_eq!(bot.inspect.held.as_ref().map(|t| t.seq), before.1);
+            assert_eq!(bot.inspect.refused, [0, 0, 0]);
+            assert_eq!(bot.inspect.accepted_id, 0);
+            assert!(bot.inspect.pending.is_none());
+        }
     }
 
     #[test]
@@ -1966,6 +2078,10 @@ mod tests {
                     accepted_id: posted.accepted_id,
                     replaced_id: posted.replaced_id,
                     replaced_prev_id: posted.replaced_prev_id,
+                    refused_id: posted.refused_id,
+                    refused_id_2: posted.refused_id_2,
+                    refused_id_3: posted.refused_id_3,
+                    unobserved: posted.unobserved,
                 },
                 ..Default::default()
             },
@@ -2012,6 +2128,39 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn isolate_begin_and_authorize(
+        iso: &script::LoadIsolate,
+        from: WorldTile,
+        to: WorldTile,
+        tick: u64,
+    ) -> Option<u64> {
+        let token = inspect_begin_at(iso, from, to);
+        if inspect_settled(iso, token) {
+            return None;
+        }
+        iso.probe(&format!(
+            "globalThis.__rs_api.request({{op:'inspect-route',from:{{x:{},z:{},level:{}}},to:{{x:{},z:{},level:{}}},allow_wilderness:true,request_id:{token}}})",
+            from.x, from.z, from.level, to.x, to.z, to.level
+        ))
+        .expect("inspect-route request");
+        iso.on_game_tick(tick);
+        let _ = iso.probe("true").expect("tick flush");
+        let forwarded = iso.drain_interacts().into_iter().any(|req| {
+            matches!(
+                req,
+                script::shim::InteractReq::InspectRoute { request_id, .. } if request_id == token
+            )
+        });
+        forwarded.then_some(token)
+    }
+
+    fn inspect_force_timeout(iso: &script::LoadIsolate, token: u64) {
+        iso.probe(&format!(
+            "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token},timed_out:true}})"
+        ))
+        .unwrap();
     }
 
     fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script::LoadIsolate) {
@@ -2339,6 +2488,211 @@ export function tick() {}
         }
         reset_barrier.release();
         clear_barrier();
+        iso.join();
+    }
+
+    fn spawn_native_iso() -> script::LoadIsolate {
+        script::LoadIsolate::spawn(
+            r#"
+export const apiVersion = 2;
+export function tick() {}
+"#
+            .into(),
+            script::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
+        let iso = spawn_native_iso();
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        fill_three_id0(&navs, &world);
+        let ring_before = {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            (
+                bot.inspect.latest.as_ref().map(|t| t.seq),
+                bot.inspect.prev.as_ref().map(|t| t.seq),
+                bot.inspect.held.as_ref().map(|t| t.seq),
+                bot.inspect.accepted_id,
+            )
+        };
+        let dest = tile(2, 3, 1);
+        let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 1)
+            .expect("authorize must succeed when isolate has not seen host fullness");
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), dest, token),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.latest.as_ref().map(|t| t.seq), ring_before.0);
+            assert_eq!(bot.inspect.prev.as_ref().map(|t| t.seq), ring_before.1);
+            assert_eq!(bot.inspect.held.as_ref().map(|t| t.seq), ring_before.2);
+            assert_eq!(bot.inspect.accepted_id, ring_before.3);
+            assert!(bot.inspect.refused.contains(&token));
+            assert!(bot.inspect.pending.is_none());
+        }
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            2,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(inspect_settled(&iso, token));
+        assert_eq!(inspect_value(&iso, token)["reason"], "stale");
+        assert_ne!(inspect_value(&iso, token)["reason"], "waiter-timeout");
+        iso.join();
+    }
+
+    #[test]
+    fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
+        let iso = spawn_native_iso();
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let mut tokens = Vec::new();
+        for (i, dest) in [tile(2, 2, 1), tile(2, 3, 1), tile(2, 4, 1)]
+            .into_iter()
+            .enumerate()
+        {
+            let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 10 + i as u64)
+                .expect("registered begin while isolate unsettled < 3");
+            queue_inspect(
+                &navs,
+                "p",
+                &Some(Arc::clone(&world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), dest, token),
+            );
+            wait_idle(&navs);
+            tokens.push(token);
+        }
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.unobserved_count(), 3);
+            assert!(!bot.inspect.can_admit(false));
+        }
+        for token in &tokens {
+            inspect_force_timeout(&iso, *token);
+            assert_eq!(inspect_value(&iso, *token)["reason"], "waiter-timeout");
+        }
+        let dest = tile(2, 5, 1);
+        let next = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 20)
+            .expect("new begin after timeout; isolate has not observed host fullness");
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), dest, next),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert!(bot.inspect.refused.contains(&next));
+            assert_eq!(bot.inspect.unobserved_count(), 3);
+            assert_ne!(bot.inspect.accepted_id, next);
+            assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, tokens[2]);
+        }
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            21,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(inspect_settled(&iso, next));
+        assert_eq!(inspect_value(&iso, next)["reason"], "stale");
+        assert_ne!(inspect_value(&iso, next)["reason"], "waiter-timeout");
+        iso.join();
+    }
+
+    #[test]
+    fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
+        let iso = spawn_native_iso();
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        for i in 0..6u64 {
+            queue_inspect(
+                &navs,
+                "p",
+                &Some(Arc::clone(&world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), tile(2, 2, 1), 0),
+            );
+            wait_idle(&navs);
+            assert_eq!(
+                navs.lock()
+                    .unwrap()
+                    .get("p")
+                    .unwrap()
+                    .inspect
+                    .latest
+                    .as_ref()
+                    .map(|t| t.request_id),
+                Some(0),
+                "id0 stays enabled under mixed traffic"
+            );
+            let dest = tile(2, 6 + i as i32, 1);
+            let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 30 + i)
+                .expect("ACK progress must keep registered begin authorizable");
+            queue_inspect(
+                &navs,
+                "p",
+                &Some(Arc::clone(&world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), dest, token),
+            );
+            wait_idle(&navs);
+            post_and_apply(&iso, &navs, 40 + i);
+            assert!(inspect_settled(&iso, token));
+            let value = inspect_value(&iso, token);
+            assert_ne!(value["reason"], "waiter-timeout");
+            assert_eq!(value["request_id"], token);
+        }
+        fill_three_id0(&navs, &world);
+        post_and_apply(&iso, &navs, 49);
+        post_and_apply(&iso, &navs, 50);
+        let dest = tile(2, 20, 1);
+        let after = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 51)
+            .expect("ACK after id0 fill must admit registered traffic");
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), dest, after),
+        );
+        wait_idle(&navs);
+        post_and_apply(&iso, &navs, 52);
+        assert!(inspect_settled(&iso, after));
+        assert_ne!(inspect_value(&iso, after)["reason"], "waiter-timeout");
+        assert_eq!(inspect_value(&iso, after)["request_id"], after);
         iso.join();
     }
 }

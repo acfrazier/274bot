@@ -223,6 +223,14 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_replaced_id", repl)?;
         let rprev = num(&mut scope, snap.route_inspect_replaced_prev_id() as f64);
         set(&mut scope, obj, "route_inspect_replaced_prev_id", rprev)?;
+        let ref1 = num(&mut scope, snap.route_inspect_refused_id() as f64);
+        set(&mut scope, obj, "route_inspect_refused_id", ref1)?;
+        let ref2 = num(&mut scope, snap.route_inspect_refused_id_2() as f64);
+        set(&mut scope, obj, "route_inspect_refused_id_2", ref2)?;
+        let ref3 = num(&mut scope, snap.route_inspect_refused_id_3() as f64);
+        set(&mut scope, obj, "route_inspect_refused_id_3", ref3)?;
+        let unobs = num(&mut scope, snap.route_inspect_unobserved() as f64);
+        set(&mut scope, obj, "route_inspect_unobserved", unobs)?;
     } else if !had {
         let zero = num(&mut scope, 0.0);
         set(&mut scope, obj, "route_inspect_seq", zero)?;
@@ -248,6 +256,10 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_accepted_id", zero)?;
         set(&mut scope, obj, "route_inspect_replaced_id", zero)?;
         set(&mut scope, obj, "route_inspect_replaced_prev_id", zero)?;
+        set(&mut scope, obj, "route_inspect_refused_id", zero)?;
+        set(&mut scope, obj, "route_inspect_refused_id_2", zero)?;
+        set(&mut scope, obj, "route_inspect_refused_id_3", zero)?;
+        set(&mut scope, obj, "route_inspect_unobserved", zero)?;
     }
     if snap.has_count_dialog_open() {
         let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());

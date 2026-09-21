@@ -68,9 +68,14 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   on the existing FlatBuffer interact path after applying a published
   terminal; that ack is not a public `api.request` op and cannot be
   piggybacked on `inspect-route`. Host admission counts unobserved
-  terminals only (2-deep ring + 1 held). Conditional bank preview never
-  actions or latches a bank session; `bank_planned` requires a PRE-state
-  stand proof.
+  terminals only (2-deep ring + 1 held). A registered token the host
+  cannot reserve is posted in `route_inspect_refused_id{,_2,_3}` and
+  settles `stale`; the ring/held accepted results stay until ACK.
+  `route_inspect_unobserved` is last-seen fullness, not a reservation.
+  Snapshot-only `0` shares the same admit budget and does not take a
+  refuse-mailbox slot. Conditional bank preview never actions or
+  latches a bank session; `bank_planned` requires a PRE-state stand
+  proof.
 
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.

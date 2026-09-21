@@ -337,6 +337,15 @@ table Snapshot {
   // Explicit replace evidence (not inferred from snapshot arrival).
   route_inspect_replaced_id: ulong = 0;
   route_inspect_replaced_prev_id: ulong = 0;
+  // Latest host admission refuses for registered tokens that could not
+  // reserve a ring/held slot. Identities only; does not overwrite
+  // unobserved terminals. Old buffers omit these (0).
+  route_inspect_refused_id: ulong = 0;
+  route_inspect_refused_id_2: ulong = 0;
+  route_inspect_refused_id_3: ulong = 0;
+  // Last-seen unobserved obligation count (latest/prev seq>observed + held).
+  // Advisory; isolate authorize can lag the host drain.
+  route_inspect_unobserved: ulong = 0;
 }
 
 // One packed inspect hop (transports only). kind is TransportKind lowercased.

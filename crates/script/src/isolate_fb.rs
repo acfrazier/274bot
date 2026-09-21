@@ -219,6 +219,10 @@ const VT_SNAP_ROUTE_INSPECT_PENDING_ID: VOffsetT = 226;
 const VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID: VOffsetT = 228;
 const VT_SNAP_ROUTE_INSPECT_REPLACED_ID: VOffsetT = 230;
 const VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID: VOffsetT = 232;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID: VOffsetT = 234;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2: VOffsetT = 236;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3: VOffsetT = 238;
+const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
 
 // InspectHop
 const VT_IH_KIND: VOffsetT = 4;
@@ -757,6 +761,10 @@ pub struct RouteInspectFactsInput<'a> {
     pub accepted_id: u64,
     pub replaced_id: u64,
     pub replaced_prev_id: u64,
+    pub refused_id: u64,
+    pub refused_id_2: u64,
+    pub refused_id_3: u64,
+    pub unobserved: u64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1637,6 +1645,10 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<u64>("route_inspect_accepted_id", VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, false)?
             .visit_field::<u64>("route_inspect_replaced_id", VT_SNAP_ROUTE_INSPECT_REPLACED_ID, false)?
             .visit_field::<u64>("route_inspect_replaced_prev_id", VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, false)?
+            .visit_field::<u64>("route_inspect_refused_id", VT_SNAP_ROUTE_INSPECT_REFUSED_ID, false)?
+            .visit_field::<u64>("route_inspect_refused_id_2", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, false)?
+            .visit_field::<u64>("route_inspect_refused_id_3", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, false)?
+            .visit_field::<u64>("route_inspect_unobserved", VT_SNAP_ROUTE_INSPECT_UNOBSERVED, false)?
             .finish();
         Ok(())
     }
@@ -2080,6 +2092,18 @@ impl SnapshotReader<'_> {
     }
     pub fn route_inspect_replaced_prev_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id_2(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id_3(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_unobserved(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, None) }.unwrap_or(0)
     }
     pub fn has_canvas_width(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None).is_some() }
@@ -2652,6 +2676,10 @@ pub struct RouteInspectFp {
     pub accepted_id: u64,
     pub replaced_id: u64,
     pub replaced_prev_id: u64,
+    pub refused_id: u64,
+    pub refused_id_2: u64,
+    pub refused_id_3: u64,
+    pub unobserved: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -2950,6 +2978,10 @@ fn route_inspect_fp(facts: &RouteInspectFactsInput<'_>) -> RouteInspectFp {
         accepted_id: facts.accepted_id,
         replaced_id: facts.replaced_id,
         replaced_prev_id: facts.replaced_prev_id,
+        refused_id: facts.refused_id,
+        refused_id_2: facts.refused_id_2,
+        refused_id_3: facts.refused_id_3,
+        unobserved: facts.unobserved,
     }
 }
 
@@ -4034,6 +4066,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, facts.accepted_id);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, facts.replaced_id);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, facts.replaced_prev_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, facts.refused_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, facts.refused_id_2);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, facts.refused_id_3);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, facts.unobserved);
     }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
     b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
@@ -7070,6 +7106,10 @@ pub(crate) mod tests {
         assert_eq!(view.route_inspect_accepted_id(), 0);
         assert_eq!(view.route_inspect_replaced_id(), 0);
         assert_eq!(view.route_inspect_replaced_prev_id(), 0);
+        assert_eq!(view.route_inspect_refused_id(), 0);
+        assert_eq!(view.route_inspect_refused_id_2(), 0);
+        assert_eq!(view.route_inspect_refused_id_3(), 0);
+        assert_eq!(view.route_inspect_unobserved(), 0);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.

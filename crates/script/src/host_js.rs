@@ -2205,6 +2205,10 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "route_inspect_accepted_id", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_replaced_id", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_replaced_prev_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_refused_id", ty: "number", optional: false, doc: Some("Latest registered token the host could not reserve. Not a ring terminal.") },
+    TsField { name: "route_inspect_refused_id_2", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_refused_id_3", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_unobserved", ty: "number", optional: false, doc: Some("Host unobserved obligation count. Advisory; may lag the next drain.") },
 ];
 
 const NATIVE_OP_VARIANTS: &[InteractVariant] = &[

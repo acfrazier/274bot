@@ -235,16 +235,22 @@ never latches a bank session, and never changes ordinary walk policies.
   published ring plus one held slot (CAPACITY=3). Admission counts only
   unobserved terminals (`seq > observed_seq`, plus `held`) plus the
   executing job, a pending-replace publish, and the new request.
-  Observed history is not capacity. A legitimate request that cannot be
-  reserved is refused with an explicit terminal when a wrap-safe slot
-  exists; otherwise the isolate settles locally (`stale` /
-  `invalid-args`) before queueing. Snapshot-only overload leaves the
-  previous `route_inspect_*` latest and does not start a job. Held
-  flushes only from typed isolate `inspect-ack` after the snapshot is
-  applied, carrying that terminal's generation. Snapshot send is not
-  observation. Old-session ACK cannot free a new generation. ACK is
-  sent when the isolate applies a terminal even if no later inspect
-  request occurs.
+  Observed history is not capacity. A registered token that fails
+  `can_admit` is not accepted: its identity is posted in
+  `route_inspect_refused_id{,_2,_3}` (3-deep mailbox, oldest shifts)
+  and the isolate settles that waiter `stale`. The mailbox does not
+  overwrite unobserved ring or held terminals. Last-seen
+  `route_inspect_unobserved` may local-stale begin/authorize when it
+  is already 3; that count can lag the next host drain, so authorize
+  is not a reservation. Snapshot-only `request_id` 0 uses the same
+  admit budget, never occupies the refuse mailbox, and leaves the
+  previous published latest when overload refuses a new preview.
+  Continuous id0 does not disable registered traffic; ACK progress
+  admits either. Held flushes only from typed isolate `inspect-ack`
+  after the snapshot is applied, carrying that terminal's generation.
+  Snapshot send is not observation. Old-session ACK cannot free a new
+  generation. ACK is sent when the isolate applies a terminal even if
+  no later inspect request occurs.
 - Conditional `allow_bank_fetch` preview labels `bank_planned` only after
   a PRE-state stand proof (or wear-only). Published hops are the post-state
   from→to transports, never bank steps or Traveller actions.

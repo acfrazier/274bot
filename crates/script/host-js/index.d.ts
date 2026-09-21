@@ -371,6 +371,12 @@ export interface NativeSnapshot {
   route_inspect_accepted_id: number;
   route_inspect_replaced_id: number;
   route_inspect_replaced_prev_id: number;
+  /** Latest registered token the host could not reserve. Not a ring terminal. */
+  route_inspect_refused_id: number;
+  route_inspect_refused_id_2: number;
+  route_inspect_refused_id_3: number;
+  /** Host unobserved obligation count. Advisory; may lag the next drain. */
+  route_inspect_unobserved: number;
 }
 
 /** Typed settings access over the per-identity host bag. */

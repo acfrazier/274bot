@@ -12,7 +12,9 @@
 //! only after this module authorizes the token. Invented or stale ids never
 //! consume host jobs. `request_id` 0 is snapshot-only (no waiter). Typed
 //! `InspectAck` is isolate-generated after apply; it is never taken from
-//! `api.request`.
+//! `api.request`. Host `!can_admit` for a registered token posts that
+//! identity in `refused_id{,_2,_3}` without touching the ring. Last-seen
+//! `unobserved` may local-stale begin/authorize; it is not a reservation.
 
 use crate::isolate_fb::{InspectHopReader, SnapshotReader};
 use crate::shim::{InspectAvoidWire, InteractReq};
@@ -126,6 +128,10 @@ struct HostInspect {
     accepted_id: u64,
     replaced_id: u64,
     replaced_prev_id: u64,
+    refused_id: u64,
+    refused_id_2: u64,
+    refused_id_3: u64,
+    unobserved: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,6 +256,10 @@ impl InspectSlot {
                 accepted_id: 0,
                 replaced_id: 0,
                 replaced_prev_id: 0,
+                refused_id: 0,
+                refused_id_2: 0,
+                refused_id_3: 0,
+                unobserved: 0,
             },
             applied_seq: 0,
             pending_ack: None,
@@ -293,6 +303,10 @@ impl InspectSlot {
             accepted_id: snap.route_inspect_accepted_id(),
             replaced_id: snap.route_inspect_replaced_id(),
             replaced_prev_id: snap.route_inspect_replaced_prev_id(),
+            refused_id: snap.route_inspect_refused_id(),
+            refused_id_2: snap.route_inspect_refused_id_2(),
+            refused_id_3: snap.route_inspect_refused_id_3(),
+            unobserved: snap.route_inspect_unobserved(),
         };
         if self.host.latest_seq != 0 {
             self.applied_seq = self.applied_seq.max(self.host.latest_seq);
@@ -313,6 +327,7 @@ impl InspectSlot {
         }
         self.apply_published(snap);
         self.apply_replaced();
+        self.apply_refused();
     }
 
     fn apply_published(&mut self, snap: &SnapshotReader<'_>) {
@@ -360,10 +375,23 @@ impl InspectSlot {
 
     fn apply_replaced(&mut self) {
         let replaced = [self.host.replaced_id, self.host.replaced_prev_id];
+        self.settle_matching(&replaced);
+    }
+
+    fn apply_refused(&mut self) {
+        let refused = [
+            self.host.refused_id,
+            self.host.refused_id_2,
+            self.host.refused_id_3,
+        ];
+        self.settle_matching(&refused);
+    }
+
+    fn settle_matching(&mut self, ids: &[u64]) {
         let mut i = 0;
         while i < self.unsettled.len() {
             let token = self.unsettled[i].token;
-            if token != 0 && replaced.contains(&token) {
+            if token != 0 && ids.contains(&token) {
                 let mut waiter = self.unsettled.remove(i);
                 waiter.terminal = Some(Terminal {
                     request_id: token,
@@ -374,6 +402,22 @@ impl InspectSlot {
                 i += 1;
             }
         }
+    }
+
+    fn settle_stale_now(&mut self, spec: RouteSpec) -> u64 {
+        let token = self.alloc();
+        self.push_settled(Waiter {
+            token,
+            seq_at_begin: self.host.latest_seq,
+            clock: InstantTaskClock::new(),
+            terminal: Some(Terminal {
+                request_id: token,
+                ..Terminal::stale()
+            }),
+            spec,
+            queued: false,
+        });
+        token
     }
 
     fn begin(&mut self, input: &Value) -> u64 {
@@ -394,19 +438,12 @@ impl InspectSlot {
             return token;
         }
         if self.unsettled.len() >= UNSETTLED_MAX {
-            let token = self.alloc();
-            self.push_settled(Waiter {
-                token,
-                seq_at_begin: self.host.latest_seq,
-                clock: InstantTaskClock::new(),
-                terminal: Some(Terminal {
-                    request_id: token,
-                    ..Terminal::stale()
-                }),
-                spec,
-                queued: false,
-            });
-            return token;
+            return self.settle_stale_now(spec);
+        }
+        // Last-seen host fullness. Not a reservation: authorize can still
+        // race a later host drain, which then posts refused_id.
+        if self.host.unobserved >= UNSETTLED_MAX as u64 {
+            return self.settle_stale_now(spec);
         }
         let token = self.alloc();
         let mut clock = InstantTaskClock::new();
@@ -465,15 +502,36 @@ impl InspectSlot {
             self.settle_invalid(*request_id);
             return false;
         }
+        if self.host.unobserved >= UNSETTLED_MAX as u64 {
+            self.settle_stale(*request_id);
+            return false;
+        }
         self.unsettled[pos].queued = true;
         true
+    }
+
+    fn settle_stale(&mut self, token: u64) {
+        if let Some(pos) = self.unsettled.iter().position(|w| w.token == token) {
+            let mut waiter = self.unsettled.remove(pos);
+            waiter.terminal = Some(Terminal {
+                request_id: token,
+                ..Terminal::stale()
+            });
+            self.push_settled(waiter);
+        }
     }
 
     fn alloc(&self) -> u64 {
         let mut avoid = self.host.latest_id;
         loop {
             let token = walk_wait::alloc_token(avoid);
-            if token != self.host.latest_id && token != self.host.prev_id && token != 0 {
+            if token != 0
+                && token != self.host.latest_id
+                && token != self.host.prev_id
+                && token != self.host.refused_id
+                && token != self.host.refused_id_2
+                && token != self.host.refused_id_3
+            {
                 return token;
             }
             avoid = token;
@@ -980,6 +1038,34 @@ mod tests {
         replaced_id: u64,
         replaced_prev_id: u64,
     ) -> NativeFactsInput<'a> {
+        facts_with(
+            latest,
+            prev,
+            running_id,
+            pending_id,
+            accepted_id,
+            replaced_id,
+            replaced_prev_id,
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    fn facts_with<'a>(
+        latest: RouteInspectTerminalInput<'a>,
+        prev: RouteInspectTerminalInput<'a>,
+        running_id: u64,
+        pending_id: u64,
+        accepted_id: u64,
+        replaced_id: u64,
+        replaced_prev_id: u64,
+        refused_id: u64,
+        refused_id_2: u64,
+        refused_id_3: u64,
+        unobserved: u64,
+    ) -> NativeFactsInput<'a> {
         NativeFactsInput {
             route_inspect: RouteInspectFactsInput {
                 latest,
@@ -989,6 +1075,10 @@ mod tests {
                 accepted_id,
                 replaced_id,
                 replaced_prev_id,
+                refused_id,
+                refused_id_2,
+                refused_id_3,
+                unobserved,
             },
             ..Default::default()
         }
@@ -1373,5 +1463,57 @@ mod tests {
         }];
         filter_public_inspect_wire(&mut bad);
         assert_eq!(bad.len(), 1, "id0 invalid-args still reaches host publish");
+    }
+
+    #[test]
+    fn host_refused_ids_settle_registered_waiter_stale() {
+        on_reset();
+        let token = begin();
+        observe(
+            empty_input(1),
+            facts_with(
+                RouteInspectTerminalInput::default(),
+                RouteInspectTerminalInput::default(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                token,
+                0,
+                0,
+                3,
+            ),
+        );
+        assert!(settled(token));
+        assert_eq!(value(token)["reason"], "stale");
+        assert_ne!(value(token)["reason"], "waiter-timeout");
+    }
+
+    #[test]
+    fn last_seen_unobserved_full_stales_begin_without_queue() {
+        on_reset();
+        observe(
+            empty_input(1),
+            facts_with(
+                terminal(2, 11, false, "NoPath", &[]),
+                terminal(1, 10, false, "NoPath", &[]),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                3,
+            ),
+        );
+        let token = begin();
+        assert!(settled(token));
+        assert_eq!(value(token)["reason"], "stale");
+        let mut reqs = vec![route(token, (0, 0, 0), (1, 1, 0))];
+        filter_public_inspect_wire(&mut reqs);
+        assert!(reqs.is_empty(), "already-stale begin must not authorize");
     }
 }
