@@ -17,11 +17,14 @@ pub enum OnArg {
 }
 
 /// Compact observed prayer points/max and the 15 overlay varps (83–97).
+/// `present` is a bit per selected overlay: missing/truncated rows stay
+/// unobserved (not a proven 0, not a retained prior 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrayerObservation {
     pub points: i32,
     pub max: i32,
     pub varps: [i32; PRAYER_COUNT],
+    present: u16,
 }
 
 impl PrayerObservation {
@@ -30,23 +33,53 @@ impl PrayerObservation {
             points: 0,
             max: 0,
             varps: [0; PRAYER_COUNT],
+            present: 0,
         }
+    }
+
+    fn slot(varp: i32) -> Option<usize> {
+        let Ok(index) = usize::try_from(varp - PRAYER_VARP0) else {
+            return None;
+        };
+        (index < PRAYER_COUNT).then_some(index)
     }
 
     pub fn varp(&self, varp: i32) -> i32 {
-        let Ok(index) = usize::try_from(varp - PRAYER_VARP0) else {
+        let Some(index) = Self::slot(varp) else {
             return 0;
         };
-        self.varps.get(index).copied().unwrap_or(0)
+        if self.present & (1 << index) == 0 {
+            return 0;
+        }
+        self.varps[index]
+    }
+
+    pub fn varp_observed(&self, varp: i32) -> bool {
+        Self::slot(varp).is_some_and(|index| self.present & (1 << index) != 0)
+    }
+
+    pub fn is_on(&self, varp: i32) -> bool {
+        self.varp_observed(varp) && self.varp(varp) == 1
+    }
+
+    pub fn is_off(&self, varp: i32) -> bool {
+        self.varp_observed(varp) && self.varp(varp) == 0
     }
 
     pub fn set_varp(&mut self, varp: i32, value: i32) {
-        let Ok(index) = usize::try_from(varp - PRAYER_VARP0) else {
+        let Some(index) = Self::slot(varp) else {
             return;
         };
-        if let Some(slot) = self.varps.get_mut(index) {
-            *slot = value;
-        }
+        self.varps[index] = value;
+        self.present |= 1 << index;
+    }
+
+    pub fn unobserve_varp(&mut self, varp: i32) {
+        let Some(index) = Self::slot(varp) else {
+            return;
+        };
+        self.varps[index] = 0;
+        self.present &= !(1 << index);
     }
 }
 
@@ -75,7 +108,7 @@ pub fn available(data: &SelectedGameData, name: &str, obs: &PrayerObservation) -
 }
 
 pub fn active(data: &SelectedGameData, name: &str, obs: &PrayerObservation) -> bool {
-    lookup(data, name).is_some_and(|row| obs.varp(row.varp) == 1)
+    lookup(data, name).is_some_and(|row| obs.is_on(row.varp))
 }
 
 /// Frozen `active(name) === on` using the classified raw `on`.
@@ -153,5 +186,22 @@ mod tests {
         assert!(matches_on(true, OnArg::Bool(true)));
         assert!(!on_is_truthy(OnArg::Undefined));
         assert!(on_is_truthy(OnArg::Other { truthy: true }));
+    }
+
+    #[test]
+    fn unobserved_overlay_is_neither_on_nor_off() {
+        let mut obs = PrayerObservation::empty();
+        assert!(!obs.varp_observed(97));
+        assert!(!obs.is_on(97));
+        assert!(!obs.is_off(97));
+        obs.set_varp(97, 1);
+        assert!(obs.is_on(97));
+        obs.unobserve_varp(97);
+        assert!(!obs.varp_observed(97));
+        assert!(!obs.is_on(97));
+        assert!(!obs.is_off(97));
+        obs.set_varp(97, 0);
+        assert!(obs.is_off(97));
+        assert!(!obs.is_on(97));
     }
 }

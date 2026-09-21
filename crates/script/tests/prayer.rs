@@ -904,7 +904,106 @@ export async function tick(api) {
     post_snapshot_input(&iso, &snap);
     tick(&iso, 4);
     let set = iso.probe("globalThis.__set").unwrap();
-    assert_eq!(set["ok"], true, "deadline must stay frozen while blocked: {set}");
+    assert_eq!(
+        set["ok"], true,
+        "deadline must stay frozen while blocked: {set}"
+    );
     assert_eq!(set["value"], true);
     iso.join();
+}
+
+fn reserved_only_varps() -> [VarpInput; 3] {
+    [
+        VarpInput {
+            index: 108,
+            value: 0,
+        },
+        VarpInput {
+            index: 300,
+            value: 0,
+        },
+        VarpInput {
+            index: 301,
+            value: 0,
+        },
+    ]
+}
+
+/// A posted varps vector that omits the selected prayer band must not keep
+/// a prior ON, and must not look like a proven 0 (no click-to-clear, no
+/// Set(off) settle).
+#[test]
+fn truncated_posted_varps_do_not_retain_on_or_fabricate_off() {
+    let query = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  globalThis.__active = api.prayerActive({ name: 'Protect from Melee' }).value;
+  globalThis.__n = (globalThis.__n || 0) + 1;
+  if (globalThis.__n === 2) {
+    globalThis.__clear = await api.prayerClear();
+  }
+}
+"#;
+    let iso = spawn_v2(query, data_289());
+    let stats = [prayer_stat(43, 43)];
+    let on = [VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    let truncated = reserved_only_varps();
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &on;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__active").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
+
+    snap.varps = &truncated;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__active").unwrap(),
+        false,
+        "omitted 97 is unobserved, not a retained ON"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "clear must not click a truncated ON"
+    );
+    let clear = iso.probe("__clear").unwrap();
+    assert_eq!(clear["ok"], true);
+    assert_eq!(clear["value"]["clicked"], 0);
+    assert_eq!(clear["value"]["timed_out"], 0);
+    iso.join();
+
+    let off_src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  if (!globalThis.__started) {
+    globalThis.__off = await api.prayerSet({ name: 'Protect from Melee', on: false });
+    globalThis.__started = true;
+  }
+}
+"#;
+    let off = spawn_v2(off_src, data_289());
+    let mut off_snap = base_snapshot();
+    off_snap.stats = &stats;
+    off_snap.varps = &on;
+    post_snapshot_input(&off, &off_snap);
+    tick(&off, 1);
+    assert_eq!(off.drain_interacts(), vec![if_button(5623)]);
+    assert!(off.probe("globalThis.__off").unwrap().is_null());
+
+    off_snap.varps = &truncated;
+    off_snap.tick = 2;
+    post_snapshot_input(&off, &off_snap);
+    tick(&off, 2);
+    assert!(
+        off.probe("globalThis.__off").unwrap().is_null(),
+        "truncated missing 97 is not a proven off"
+    );
+    assert!(off.drain_interacts().is_empty());
+    off.join();
 }

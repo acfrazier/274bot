@@ -2861,10 +2861,31 @@ pub(super) fn with_script_snapshot_input<R>(
                 value: armed,
             },
         ];
+        // Selected prayer overlays 83..=97 must ride the same vector,
+        // including 0. Present snapshot rows only — do not invent 0 for
+        // an unobserved index. These reserved slots are in addition to
+        // the existing 29 nonzero extras, not carved out of them.
+        let prayer0 = api::prayer::PRAYER_VARP0;
+        let prayer_last = prayer0 + api::prayer::PRAYER_COUNT as i32 - 1;
         rows.extend(
             s.varps()
                 .iter()
-                .filter(|v| v.value != 0 && v.index != 108 && v.index != 300 && v.index != 301)
+                .filter(|v| (prayer0..=prayer_last).contains(&v.index))
+                .map(|v| VarpInput {
+                    index: v.index,
+                    value: v.value,
+                }),
+        );
+        rows.extend(
+            s.varps()
+                .iter()
+                .filter(|v| {
+                    v.value != 0
+                        && v.index != 108
+                        && v.index != 300
+                        && v.index != 301
+                        && !(prayer0..=prayer_last).contains(&v.index)
+                })
                 .take(29)
                 .map(|v| VarpInput {
                     index: v.index,

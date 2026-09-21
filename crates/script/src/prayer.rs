@@ -59,8 +59,21 @@ impl NativeObservation {
             }
         }
         if snap.has_varps() {
+            let mut seen = [false; PRAYER_COUNT];
             for row in snap.varps() {
-                self.obs.set_varp(row.index(), row.value());
+                let index = row.index();
+                if let Ok(slot) = usize::try_from(index - api::prayer::PRAYER_VARP0) {
+                    if slot < PRAYER_COUNT {
+                        seen[slot] = true;
+                        self.obs.set_varp(index, row.value());
+                    }
+                }
+            }
+            for (slot, seen) in seen.iter().enumerate() {
+                if !seen {
+                    self.obs
+                        .unobserve_varp(api::prayer::PRAYER_VARP0 + slot as i32);
+                }
             }
         }
     }
@@ -199,7 +212,7 @@ impl PrayerRuntime {
         while self.clear_index < rows.len() && self.clear_index < PRAYER_COUNT {
             let row = &rows[self.clear_index];
             self.clear_index += 1;
-            if obs.varp(row.varp) == 1 {
+            if obs.is_on(row.varp) {
                 self.clicked = self.clicked.saturating_add(1);
                 self.varp = row.varp;
                 return self.command_click(Phase::WaitClear, row.button_com);
@@ -234,13 +247,19 @@ impl PrayerRuntime {
         }
         match self.phase {
             Phase::Idle => json!({"kind": "aborted", "token": self.token}),
-            Phase::WaitToggle if matches_on(obs.varp(self.varp) == 1, self.want) => {
+            Phase::WaitToggle
+                if match self.want {
+                    OnArg::Bool(true) => obs.is_on(self.varp),
+                    OnArg::Bool(false) => obs.is_off(self.varp),
+                    OnArg::Undefined | OnArg::Other { .. } => false,
+                } =>
+            {
                 self.done(true, "toggled", json!(true))
             }
             Phase::WaitToggle if self.timed_out() => {
                 self.done(false, "toggle-timeout", Value::Null)
             }
-            Phase::WaitClear if obs.varp(self.varp) == 0 => self.advance_clear(data, obs),
+            Phase::WaitClear if obs.is_off(self.varp) => self.advance_clear(data, obs),
             Phase::WaitClear if self.timed_out() => {
                 self.timed_out = self.timed_out.saturating_add(1);
                 self.advance_clear(data, obs)
