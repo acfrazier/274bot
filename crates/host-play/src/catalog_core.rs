@@ -2337,14 +2337,22 @@ pub fn line_of_sight_baseline_ready(baseline: &Observation) -> bool {
 }
 
 fn los_receipt_joined(now: &LineOfSightObservation) -> bool {
-    let (Some(host_open), Some(host_blocked), Some(receipt)) =
-        (now.host_open, now.host_blocked, now.receipt)
-    else {
+    let (Some(host_open), Some(host_blocked), Some(receipt), Some(here), Some(here_flag)) = (
+        now.host_open,
+        now.host_blocked,
+        now.receipt.as_ref(),
+        now.here,
+        now.here_flag,
+    ) else {
         return false;
     };
     now.available
         && now.fixture_failure.is_none()
         && receipt.identity == now.identity
+        && receipt.here.x == here.x
+        && receipt.here.z == here.z
+        && receipt.here.level == here.level
+        && receipt.here.flag == here_flag
         && line_of_sight_pair_is_open(&host_open)
         && line_of_sight_pair_is_blocked(&host_blocked)
         && !line_of_sight_dest_vis_alone(&host_blocked)
@@ -2374,6 +2382,12 @@ impl LineOfSightDeliveryCycle {
         if let Some(msg) = now.los.fixture_failure.clone() {
             self.fixture_failure = Some(msg);
         }
+        // Once a same-observation host/receipt join is latched, freeze host
+        // pairs and identity with that historical witness. Later host drift
+        // must not overwrite evidence that still backs a valid receipt.
+        if self.receipt.is_some() {
+            return;
+        }
         if now.los.available {
             if let (Some(open), Some(blocked)) = (now.los.host_open, now.los.host_blocked) {
                 if line_of_sight_pair_is_open(&open) && line_of_sight_pair_is_blocked(&blocked) {
@@ -2384,6 +2398,10 @@ impl LineOfSightDeliveryCycle {
             }
         }
         if los_receipt_joined(&now.los) {
+            // Latch host + receipt from the same joined observation.
+            self.host_open = now.los.host_open;
+            self.host_blocked = now.los.host_blocked;
+            self.identity = Some(now.los.identity);
             self.receipt = now.los.receipt;
         }
     }
@@ -2403,11 +2421,28 @@ impl LineOfSightDeliveryCycle {
     }
 
     pub fn qualified(&self) -> bool {
-        self.fixture_failure.is_none()
-            && self.host_open.is_some()
-            && self.host_blocked.is_some()
-            && self.receipt.is_some()
-            && self.stopped.is_some()
+        if self.fixture_failure.is_some() || self.stopped.is_none() {
+            return false;
+        }
+        let (Some(host_open), Some(host_blocked), Some(identity), Some(receipt)) = (
+            self.host_open,
+            self.host_blocked,
+            self.identity,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        // Re-assert stored host still matches the latched receipt (fail-closed).
+        identity == receipt.identity
+            && host_open == receipt.open.pair()
+            && host_blocked == receipt.blocked.pair()
+            && line_of_sight_pair_is_open(&host_open)
+            && line_of_sight_pair_is_blocked(&host_blocked)
+            && !line_of_sight_dest_vis_alone(&host_blocked)
+            && receipt.open.v2
+            && !receipt.blocked.v2
+            && receipt.open.v1
+            && !receipt.blocked.v1
     }
 }
 
