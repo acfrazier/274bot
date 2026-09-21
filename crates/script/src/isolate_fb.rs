@@ -198,6 +198,48 @@ const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
 const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
 const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
 const VT_SNAP_COMBAT_LEVEL: VOffsetT = 190;
+const VT_SNAP_ROUTE_INSPECT_SEQ: VOffsetT = 192;
+const VT_SNAP_ROUTE_INSPECT_GENERATION: VOffsetT = 194;
+const VT_SNAP_ROUTE_INSPECT_REQUEST_ID: VOffsetT = 196;
+const VT_SNAP_ROUTE_INSPECT_OK: VOffsetT = 198;
+const VT_SNAP_ROUTE_INSPECT_REASON: VOffsetT = 200;
+const VT_SNAP_ROUTE_INSPECT_BANK_PLANNED: VOffsetT = 202;
+const VT_SNAP_ROUTE_INSPECT_TICKS: VOffsetT = 204;
+const VT_SNAP_ROUTE_INSPECT_HOPS: VOffsetT = 206;
+const VT_SNAP_ROUTE_INSPECT_PREV_SEQ: VOffsetT = 208;
+const VT_SNAP_ROUTE_INSPECT_PREV_GENERATION: VOffsetT = 210;
+const VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID: VOffsetT = 212;
+const VT_SNAP_ROUTE_INSPECT_PREV_OK: VOffsetT = 214;
+const VT_SNAP_ROUTE_INSPECT_PREV_REASON: VOffsetT = 216;
+const VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED: VOffsetT = 218;
+const VT_SNAP_ROUTE_INSPECT_PREV_TICKS: VOffsetT = 220;
+const VT_SNAP_ROUTE_INSPECT_PREV_HOPS: VOffsetT = 222;
+const VT_SNAP_ROUTE_INSPECT_RUNNING_ID: VOffsetT = 224;
+const VT_SNAP_ROUTE_INSPECT_PENDING_ID: VOffsetT = 226;
+const VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID: VOffsetT = 228;
+const VT_SNAP_ROUTE_INSPECT_REPLACED_ID: VOffsetT = 230;
+const VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID: VOffsetT = 232;
+
+// InspectHop
+const VT_IH_KIND: VOffsetT = 4;
+const VT_IH_LOC_ID: VOffsetT = 6;
+const VT_IH_LOC_NAME: VOffsetT = 8;
+const VT_IH_ACTION: VOffsetT = 10;
+const VT_IH_OPTION: VOffsetT = 12;
+const VT_IH_FROM_X: VOffsetT = 14;
+const VT_IH_FROM_Z: VOffsetT = 16;
+const VT_IH_FROM_LEVEL: VOffsetT = 18;
+const VT_IH_TO_X: VOffsetT = 20;
+const VT_IH_TO_Z: VOffsetT = 22;
+const VT_IH_TO_LEVEL: VOffsetT = 24;
+const VT_IH_TICKS: VOffsetT = 26;
+
+// AvoidRect
+const VT_AR_MIN_X: VOffsetT = 4;
+const VT_AR_MAX_X: VOffsetT = 6;
+const VT_AR_MIN_Z: VOffsetT = 8;
+const VT_AR_MAX_Z: VOffsetT = 10;
+const VT_AR_LEVEL: VOffsetT = 12;
 
 /// Logical applet posted as `canvasRect`. Bound to `api::native_input::APPLET_*`.
 pub const SNAPSHOT_CANVAS_W: i32 = api::native_input::APPLET_W;
@@ -321,6 +363,12 @@ const VT_IN_YF: VOffsetT = 44;
 const VT_IN_INPUT_IDENTITY: VOffsetT = 46;
 const VT_IN_ALLOW_WILDERNESS: VOffsetT = 48;
 const VT_IN_ALLOW_BANK_FETCH: VOffsetT = 50;
+const VT_IN_FROM_X: VOffsetT = 52;
+const VT_IN_FROM_Z: VOffsetT = 54;
+const VT_IN_FROM_LEVEL: VOffsetT = 56;
+const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
+const VT_IN_AVOID: VOffsetT = 60;
+const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -695,6 +743,47 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    pub route_inspect: RouteInspectFactsInput<'a>,
+}
+
+/// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
+#[derive(Clone, Copy, Default)]
+pub struct RouteInspectFactsInput<'a> {
+    pub latest: RouteInspectTerminalInput<'a>,
+    pub prev: RouteInspectTerminalInput<'a>,
+    pub running_id: u64,
+    pub pending_id: u64,
+    pub accepted_id: u64,
+    pub replaced_id: u64,
+    pub replaced_prev_id: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct RouteInspectTerminalInput<'a> {
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: Option<&'a str>,
+    pub bank_planned: bool,
+    pub ticks: f64,
+    pub hops: &'a [InspectHopInput<'a>],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InspectHopInput<'a> {
+    pub kind: &'a str,
+    pub loc_id: i32,
+    pub loc_name: &'a str,
+    pub action: &'a str,
+    pub option: i32,
+    pub from_x: i32,
+    pub from_z: i32,
+    pub from_level: i32,
+    pub to_x: i32,
+    pub to_z: i32,
+    pub to_level: i32,
+    pub ticks: i32,
 }
 
 /// One native bank-booth dest + readiness row.
@@ -1142,6 +1231,126 @@ impl Verifiable for BankApproachReader<'_> {
     }
 }
 
+/// One inspect hop as decoded.
+#[derive(Clone, Copy)]
+pub struct InspectHopReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for InspectHopReader<'a> {
+    type Inner = InspectHopReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl InspectHopReader<'_> {
+    pub fn kind(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_KIND, None) }.unwrap_or("")
+    }
+    pub fn loc_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_LOC_ID, None) }.unwrap_or(0)
+    }
+    pub fn loc_name(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_LOC_NAME, None) }.unwrap_or("")
+    }
+    pub fn action(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_ACTION, None) }.unwrap_or("")
+    }
+    pub fn option(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_OPTION, None) }.unwrap_or(0)
+    }
+    pub fn from_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_X, None) }.unwrap_or(0)
+    }
+    pub fn from_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_Z, None) }.unwrap_or(0)
+    }
+    pub fn from_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn to_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_X, None) }.unwrap_or(0)
+    }
+    pub fn to_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_Z, None) }.unwrap_or(0)
+    }
+    pub fn to_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn ticks(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TICKS, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for InspectHopReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("kind", VT_IH_KIND, false)?
+            .visit_field::<i32>("loc_id", VT_IH_LOC_ID, false)?
+            .visit_field::<ForwardsUOffset<&str>>("loc_name", VT_IH_LOC_NAME, false)?
+            .visit_field::<ForwardsUOffset<&str>>("action", VT_IH_ACTION, false)?
+            .visit_field::<i32>("option", VT_IH_OPTION, false)?
+            .visit_field::<i32>("from_x", VT_IH_FROM_X, false)?
+            .visit_field::<i32>("from_z", VT_IH_FROM_Z, false)?
+            .visit_field::<i32>("from_level", VT_IH_FROM_LEVEL, false)?
+            .visit_field::<i32>("to_x", VT_IH_TO_X, false)?
+            .visit_field::<i32>("to_z", VT_IH_TO_Z, false)?
+            .visit_field::<i32>("to_level", VT_IH_TO_LEVEL, false)?
+            .visit_field::<i32>("ticks", VT_IH_TICKS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One inspect avoid rectangle as decoded. `level() == -1` means every plane.
+#[derive(Clone, Copy)]
+pub struct AvoidRectReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for AvoidRectReader<'a> {
+    type Inner = AvoidRectReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl AvoidRectReader<'_> {
+    pub fn min_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MIN_X, None) }.unwrap_or(0)
+    }
+    pub fn max_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MAX_X, None) }.unwrap_or(0)
+    }
+    pub fn min_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MIN_Z, None) }.unwrap_or(0)
+    }
+    pub fn max_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MAX_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_LEVEL, None) }.unwrap_or(-1)
+    }
+}
+
+impl Verifiable for AvoidRectReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("min_x", VT_AR_MIN_X, false)?
+            .visit_field::<i32>("max_x", VT_AR_MAX_X, false)?
+            .visit_field::<i32>("min_z", VT_AR_MIN_Z, false)?
+            .visit_field::<i32>("max_z", VT_AR_MAX_Z, false)?
+            .visit_field::<i32>("level", VT_AR_LEVEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// The PLAYER_INFO snapshot as decoded: read-only access to the same
 /// fields `script_snapshot_fb` encodes.
 pub struct SnapshotReader<'a> {
@@ -1398,6 +1607,35 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
             .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
+            .visit_field::<u64>("route_inspect_seq", VT_SNAP_ROUTE_INSPECT_SEQ, false)?
+            .visit_field::<u64>("route_inspect_generation", VT_SNAP_ROUTE_INSPECT_GENERATION, false)?
+            .visit_field::<u64>("route_inspect_request_id", VT_SNAP_ROUTE_INSPECT_REQUEST_ID, false)?
+            .visit_field::<bool>("route_inspect_ok", VT_SNAP_ROUTE_INSPECT_OK, false)?
+            .visit_field::<ForwardsUOffset<&str>>("route_inspect_reason", VT_SNAP_ROUTE_INSPECT_REASON, false)?
+            .visit_field::<bool>("route_inspect_bank_planned", VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, false)?
+            .visit_field::<f64>("route_inspect_ticks", VT_SNAP_ROUTE_INSPECT_TICKS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
+                "route_inspect_hops",
+                VT_SNAP_ROUTE_INSPECT_HOPS,
+                false,
+            )?
+            .visit_field::<u64>("route_inspect_prev_seq", VT_SNAP_ROUTE_INSPECT_PREV_SEQ, false)?
+            .visit_field::<u64>("route_inspect_prev_generation", VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, false)?
+            .visit_field::<u64>("route_inspect_prev_request_id", VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, false)?
+            .visit_field::<bool>("route_inspect_prev_ok", VT_SNAP_ROUTE_INSPECT_PREV_OK, false)?
+            .visit_field::<ForwardsUOffset<&str>>("route_inspect_prev_reason", VT_SNAP_ROUTE_INSPECT_PREV_REASON, false)?
+            .visit_field::<bool>("route_inspect_prev_bank_planned", VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, false)?
+            .visit_field::<f64>("route_inspect_prev_ticks", VT_SNAP_ROUTE_INSPECT_PREV_TICKS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
+                "route_inspect_prev_hops",
+                VT_SNAP_ROUTE_INSPECT_PREV_HOPS,
+                false,
+            )?
+            .visit_field::<u64>("route_inspect_running_id", VT_SNAP_ROUTE_INSPECT_RUNNING_ID, false)?
+            .visit_field::<u64>("route_inspect_pending_id", VT_SNAP_ROUTE_INSPECT_PENDING_ID, false)?
+            .visit_field::<u64>("route_inspect_accepted_id", VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, false)?
+            .visit_field::<u64>("route_inspect_replaced_id", VT_SNAP_ROUTE_INSPECT_REPLACED_ID, false)?
+            .visit_field::<u64>("route_inspect_replaced_prev_id", VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, false)?
             .finish();
         Ok(())
     }
@@ -1773,6 +2011,74 @@ impl SnapshotReader<'_> {
     }
     pub fn walk_outcome_request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn has_route_inspect_seq(&self) -> bool {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None).is_some() }
+    }
+    pub fn route_inspect_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_request_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_ok(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_OK, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_reason(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_REASON, None) }
+            .unwrap_or("")
+    }
+    pub fn route_inspect_bank_planned(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_ticks(&self) -> f64 {
+        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_TICKS, None) }.unwrap_or(0.0)
+    }
+    pub fn route_inspect_hops(&self) -> Vec<InspectHopReader<'_>> {
+        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_HOPS)
+    }
+    pub fn route_inspect_prev_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_prev_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_prev_request_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_prev_ok(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_OK, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_prev_reason(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_PREV_REASON, None) }
+            .unwrap_or("")
+    }
+    pub fn route_inspect_prev_bank_planned(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_prev_ticks(&self) -> f64 {
+        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, None) }.unwrap_or(0.0)
+    }
+    pub fn route_inspect_prev_hops(&self) -> Vec<InspectHopReader<'_>> {
+        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_PREV_HOPS)
+    }
+    pub fn route_inspect_running_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_pending_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PENDING_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_accepted_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_replaced_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_replaced_prev_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None) }.unwrap_or(0)
     }
     pub fn has_canvas_width(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None).is_some() }
@@ -2333,6 +2639,46 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    pub route_inspect: RouteInspectFp,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct RouteInspectFp {
+    pub latest: RouteInspectTerminalFp,
+    pub prev: RouteInspectTerminalFp,
+    pub running_id: u64,
+    pub pending_id: u64,
+    pub accepted_id: u64,
+    pub replaced_id: u64,
+    pub replaced_prev_id: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct RouteInspectTerminalFp {
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: String,
+    pub bank_planned: bool,
+    pub ticks_bits: u64,
+    pub hops: Vec<InspectHopFp>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct InspectHopFp {
+    pub kind: String,
+    pub loc_id: i32,
+    pub loc_name: String,
+    pub action: String,
+    pub option: i32,
+    pub from_x: i32,
+    pub from_z: i32,
+    pub from_level: i32,
+    pub to_x: i32,
+    pub to_z: i32,
+    pub to_level: i32,
+    pub ticks: i32,
 }
 
 impl SnapshotFingerprint {
@@ -2559,7 +2905,50 @@ impl SnapshotFingerprint {
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
+            route_inspect: route_inspect_fp(&native.route_inspect),
         }
+    }
+}
+
+fn inspect_hop_fp(h: &InspectHopInput<'_>) -> InspectHopFp {
+    InspectHopFp {
+        kind: h.kind.to_string(),
+        loc_id: h.loc_id,
+        loc_name: h.loc_name.to_string(),
+        action: h.action.to_string(),
+        option: h.option,
+        from_x: h.from_x,
+        from_z: h.from_z,
+        from_level: h.from_level,
+        to_x: h.to_x,
+        to_z: h.to_z,
+        to_level: h.to_level,
+        ticks: h.ticks,
+    }
+}
+
+fn route_inspect_terminal_fp(t: &RouteInspectTerminalInput<'_>) -> RouteInspectTerminalFp {
+    RouteInspectTerminalFp {
+        seq: t.seq,
+        generation: t.generation,
+        request_id: t.request_id,
+        ok: t.ok,
+        reason: t.reason.unwrap_or("").to_string(),
+        bank_planned: t.bank_planned,
+        ticks_bits: t.ticks.to_bits(),
+        hops: t.hops.iter().map(inspect_hop_fp).collect(),
+    }
+}
+
+fn route_inspect_fp(facts: &RouteInspectFactsInput<'_>) -> RouteInspectFp {
+    RouteInspectFp {
+        latest: route_inspect_terminal_fp(&facts.latest),
+        prev: route_inspect_terminal_fp(&facts.prev),
+        running_id: facts.running_id,
+        pending_id: facts.pending_id,
+        accepted_id: facts.accepted_id,
+        replaced_id: facts.replaced_id,
+        replaced_prev_id: facts.replaced_prev_id,
     }
 }
 
@@ -2647,6 +3036,7 @@ pub struct DeltaMask {
     pub npc_boxes: bool,
     pub bank_approaches: bool,
     pub walk_outcome: bool,
+    pub route_inspect: bool,
 }
 
 impl DeltaMask {
@@ -2730,6 +3120,7 @@ impl DeltaMask {
             npc_boxes: true,
             bank_approaches: true,
             walk_outcome: true,
+            route_inspect: true,
         }
     }
 
@@ -2831,6 +3222,7 @@ impl DeltaMask {
                 || next.walk_outcome_radius != last.walk_outcome_radius
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id,
+            route_inspect: next.route_inspect != last.route_inspect,
         }
     }
 }
@@ -3277,6 +3669,40 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let inspect_reason_off = if mask.route_inspect {
+        Some(b.create_string(native.route_inspect.latest.reason.unwrap_or("")))
+    } else {
+        None
+    };
+    let inspect_prev_reason_off = if mask.route_inspect {
+        Some(b.create_string(native.route_inspect.prev.reason.unwrap_or("")))
+    } else {
+        None
+    };
+    let inspect_hops_off = if mask.route_inspect {
+        let offs = native
+            .route_inspect
+            .latest
+            .hops
+            .iter()
+            .map(|hop| inspect_hop_off(b, hop))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let inspect_prev_hops_off = if mask.route_inspect {
+        let offs = native
+            .route_inspect
+            .prev
+            .hops
+            .iter()
+            .map(|hop| inspect_hop_off(b, hop))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -3576,6 +4002,38 @@ fn encode_snapshot_masked_into(
             native.walk_outcome_request_id,
         );
     }
+    if mask.route_inspect {
+        let facts = &native.route_inspect;
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_SEQ, facts.latest.seq);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_GENERATION, facts.latest.generation);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, facts.latest.request_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_OK, facts.latest.ok);
+        if let Some(off) = inspect_reason_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REASON, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, facts.latest.bank_planned);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_TICKS, facts.latest.ticks);
+        if let Some(off) = inspect_hops_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_HOPS, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, facts.prev.seq);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, facts.prev.generation);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, facts.prev.request_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_OK, facts.prev.ok);
+        if let Some(off) = inspect_prev_reason_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REASON, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, facts.prev.bank_planned);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, facts.prev.ticks);
+        if let Some(off) = inspect_prev_hops_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_HOPS, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, facts.running_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PENDING_ID, facts.pending_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, facts.accepted_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, facts.replaced_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, facts.replaced_prev_id);
+    }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
     b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
     let root = b.end_table(tab);
@@ -3587,6 +4045,46 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
     b.push_slot_always(VT_TILE_X, t.x);
     b.push_slot_always(VT_TILE_Z, t.z);
     b.push_slot_always(VT_TILE_LEVEL, t.level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn avoid_rect_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    level: Option<i32>,
+) -> WIPOffset<AvoidRectReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_AR_MIN_X, min_x);
+    b.push_slot_always(VT_AR_MAX_X, max_x);
+    b.push_slot_always(VT_AR_MIN_Z, min_z);
+    b.push_slot_always(VT_AR_MAX_Z, max_z);
+    b.push_slot_always(VT_AR_LEVEL, level.unwrap_or(-1));
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn inspect_hop_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    hop: &InspectHopInput<'_>,
+) -> WIPOffset<InspectHopReader<'b>> {
+    let kind = b.create_string(hop.kind);
+    let loc_name = b.create_string(hop.loc_name);
+    let action = b.create_string(hop.action);
+    let tab = b.start_table();
+    b.push_slot_always(VT_IH_KIND, kind);
+    b.push_slot_always(VT_IH_LOC_ID, hop.loc_id);
+    b.push_slot_always(VT_IH_LOC_NAME, loc_name);
+    b.push_slot_always(VT_IH_ACTION, action);
+    b.push_slot_always(VT_IH_OPTION, hop.option);
+    b.push_slot_always(VT_IH_FROM_X, hop.from_x);
+    b.push_slot_always(VT_IH_FROM_Z, hop.from_z);
+    b.push_slot_always(VT_IH_FROM_LEVEL, hop.from_level);
+    b.push_slot_always(VT_IH_TO_X, hop.to_x);
+    b.push_slot_always(VT_IH_TO_Z, hop.to_z);
+    b.push_slot_always(VT_IH_TO_LEVEL, hop.to_level);
+    b.push_slot_always(VT_IH_TICKS, hop.ticks);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4419,6 +4917,24 @@ impl InteractReader<'_> {
     pub fn allow_bank_fetch(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_IN_ALLOW_BANK_FETCH, None) }.unwrap_or(false)
     }
+    pub fn from_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_X, None) }.unwrap_or(0)
+    }
+    pub fn from_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_Z, None) }.unwrap_or(0)
+    }
+    pub fn from_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn allow_teleports_explicit(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_TELEPORTS, None) }.unwrap_or(false)
+    }
+    pub fn inspect_ack_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn avoid(&self) -> Vec<AvoidRectReader<'_>> {
+        rows::<AvoidRectReader>(&self.tab, VT_IN_AVOID)
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4448,6 +4964,16 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<u64>("input_identity", VT_IN_INPUT_IDENTITY, false)?
             .visit_field::<bool>("allow_wilderness", VT_IN_ALLOW_WILDERNESS, false)?
             .visit_field::<bool>("allow_bank_fetch", VT_IN_ALLOW_BANK_FETCH, false)?
+            .visit_field::<i32>("from_x", VT_IN_FROM_X, false)?
+            .visit_field::<i32>("from_z", VT_IN_FROM_Z, false)?
+            .visit_field::<i32>("from_level", VT_IN_FROM_LEVEL, false)?
+            .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
+                "avoid",
+                VT_IN_AVOID,
+                false,
+            )?
+            .visit_field::<u64>("inspect_ack_seq", VT_IN_INSPECT_ACK_SEQ, false)?
             .finish();
         Ok(())
     }
@@ -5671,6 +6197,34 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
+            "inspect-route" => out.push(crate::shim::InteractReq::InspectRoute {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                from_x: row.from_x(),
+                from_z: row.from_z(),
+                from_level: row.from_level(),
+                allow_teleports: row.allow_teleports_explicit(),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
+                avoid: row
+                    .avoid()
+                    .into_iter()
+                    .map(|rect| crate::shim::InspectAvoidWire::Rect {
+                        min_x: rect.min_x(),
+                        max_x: rect.max_x(),
+                        min_z: rect.min_z(),
+                        max_z: rect.max_z(),
+                        level: if rect.level() < 0 {
+                            None
+                        } else {
+                            Some(rect.level())
+                        },
+                    })
+                    .collect(),
+                request_id: row.request_id(),
+                inspect_ack_seq: row.inspect_ack_seq(),
+            }),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
@@ -5927,6 +6481,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
+        InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
@@ -6020,6 +6575,28 @@ fn interact_off<'b>(
         InteractReq::Key { key, .. } => Some(b.create_string(key)),
         _ => None,
     };
+    let avoid_off = match req {
+        InteractReq::InspectRoute { avoid, .. } => {
+            let offs: Vec<_> = avoid
+                .iter()
+                .map(|entry| match entry {
+                    crate::shim::InspectAvoidWire::Rect {
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        level,
+                    } => avoid_rect_off(b, *min_x, *max_x, *min_z, *max_z, *level),
+                    // Inverted sentinel so host validation is invalid-args, not drop.
+                    crate::shim::InspectAvoidWire::Unsupported => {
+                        avoid_rect_off(b, 1, 0, 0, 0, None)
+                    }
+                })
+                .collect();
+            Some(b.create_vector(&offs))
+        }
+        _ => None,
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
@@ -6100,6 +6677,45 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
+        InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            request_id,
+            inspect_ack_seq,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_FROM_X, *from_x);
+            b.push_slot_always(VT_IN_FROM_Z, *from_z);
+            b.push_slot_always(VT_IN_FROM_LEVEL, *from_level);
+            if *allow_teleports {
+                b.push_slot_always(VT_IN_ALLOW_TELEPORTS, true);
+            }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+            }
+            if *request_id != 0 {
+                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            }
+            if *inspect_ack_seq != 0 {
+                b.push_slot_always(VT_IN_INSPECT_ACK_SEQ, *inspect_ack_seq);
+            }
+            if let Some(off) = avoid_off {
+                b.push_slot_always(VT_IN_AVOID, off);
+            }
+        }
         InteractReq::Walk {
             x,
             z,
@@ -6428,6 +7044,21 @@ pub(crate) mod tests {
         assert_eq!(view.walk_outcome_radius(), 0);
         assert!(!view.walk_outcome_allow_teleports());
         assert_eq!(view.walk_outcome_request_id(), 0);
+        assert!(!view.has_route_inspect_seq());
+        assert_eq!(view.route_inspect_seq(), 0);
+        assert_eq!(view.route_inspect_request_id(), 0);
+        assert!(!view.route_inspect_ok());
+        assert_eq!(view.route_inspect_reason(), "");
+        assert!(!view.route_inspect_bank_planned());
+        assert_eq!(view.route_inspect_ticks(), 0.0);
+        assert!(view.route_inspect_hops().is_empty());
+        assert_eq!(view.route_inspect_prev_seq(), 0);
+        assert_eq!(view.route_inspect_prev_request_id(), 0);
+        assert_eq!(view.route_inspect_running_id(), 0);
+        assert_eq!(view.route_inspect_pending_id(), 0);
+        assert_eq!(view.route_inspect_accepted_id(), 0);
+        assert_eq!(view.route_inspect_replaced_id(), 0);
+        assert_eq!(view.route_inspect_replaced_prev_id(), 0);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.

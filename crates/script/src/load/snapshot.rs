@@ -180,6 +180,75 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "walk_outcome_allow_teleports", falsy)?;
         set(&mut scope, obj, "walk_outcome_request_id", zero)?;
     }
+    if snap.has_route_inspect_seq() {
+        let seq = num(&mut scope, snap.route_inspect_seq() as f64);
+        set(&mut scope, obj, "route_inspect_seq", seq)?;
+        let gen = num(&mut scope, snap.route_inspect_generation() as f64);
+        set(&mut scope, obj, "route_inspect_generation", gen)?;
+        let rid = num(&mut scope, snap.route_inspect_request_id() as f64);
+        set(&mut scope, obj, "route_inspect_request_id", rid)?;
+        let ok = v8::Boolean::new(&mut scope, snap.route_inspect_ok());
+        set(&mut scope, obj, "route_inspect_ok", ok.into())?;
+        let reason = js_string(&mut scope, snap.route_inspect_reason())?;
+        set(&mut scope, obj, "route_inspect_reason", reason)?;
+        let bank = v8::Boolean::new(&mut scope, snap.route_inspect_bank_planned());
+        set(&mut scope, obj, "route_inspect_bank_planned", bank.into())?;
+        let ticks = num(&mut scope, snap.route_inspect_ticks());
+        set(&mut scope, obj, "route_inspect_ticks", ticks)?;
+        let hops = inspect_hop_array(&mut scope, &snap.route_inspect_hops())?;
+        set(&mut scope, obj, "route_inspect_hops", hops)?;
+        let pseq = num(&mut scope, snap.route_inspect_prev_seq() as f64);
+        set(&mut scope, obj, "route_inspect_prev_seq", pseq)?;
+        let pgen = num(&mut scope, snap.route_inspect_prev_generation() as f64);
+        set(&mut scope, obj, "route_inspect_prev_generation", pgen)?;
+        let prid = num(&mut scope, snap.route_inspect_prev_request_id() as f64);
+        set(&mut scope, obj, "route_inspect_prev_request_id", prid)?;
+        let pok = v8::Boolean::new(&mut scope, snap.route_inspect_prev_ok());
+        set(&mut scope, obj, "route_inspect_prev_ok", pok.into())?;
+        let preason = js_string(&mut scope, snap.route_inspect_prev_reason())?;
+        set(&mut scope, obj, "route_inspect_prev_reason", preason)?;
+        let pbank = v8::Boolean::new(&mut scope, snap.route_inspect_prev_bank_planned());
+        set(&mut scope, obj, "route_inspect_prev_bank_planned", pbank.into())?;
+        let pticks = num(&mut scope, snap.route_inspect_prev_ticks());
+        set(&mut scope, obj, "route_inspect_prev_ticks", pticks)?;
+        let phops = inspect_hop_array(&mut scope, &snap.route_inspect_prev_hops())?;
+        set(&mut scope, obj, "route_inspect_prev_hops", phops)?;
+        let run = num(&mut scope, snap.route_inspect_running_id() as f64);
+        set(&mut scope, obj, "route_inspect_running_id", run)?;
+        let pend = num(&mut scope, snap.route_inspect_pending_id() as f64);
+        set(&mut scope, obj, "route_inspect_pending_id", pend)?;
+        let acc = num(&mut scope, snap.route_inspect_accepted_id() as f64);
+        set(&mut scope, obj, "route_inspect_accepted_id", acc)?;
+        let repl = num(&mut scope, snap.route_inspect_replaced_id() as f64);
+        set(&mut scope, obj, "route_inspect_replaced_id", repl)?;
+        let rprev = num(&mut scope, snap.route_inspect_replaced_prev_id() as f64);
+        set(&mut scope, obj, "route_inspect_replaced_prev_id", rprev)?;
+    } else if !had {
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "route_inspect_seq", zero)?;
+        set(&mut scope, obj, "route_inspect_generation", zero)?;
+        set(&mut scope, obj, "route_inspect_request_id", zero)?;
+        set(&mut scope, obj, "route_inspect_ok", falsy)?;
+        let empty_reason = js_string(&mut scope, "")?;
+        set(&mut scope, obj, "route_inspect_reason", empty_reason)?;
+        set(&mut scope, obj, "route_inspect_bank_planned", falsy)?;
+        set(&mut scope, obj, "route_inspect_ticks", zero)?;
+        set(&mut scope, obj, "route_inspect_hops", empty_rows)?;
+        set(&mut scope, obj, "route_inspect_prev_seq", zero)?;
+        set(&mut scope, obj, "route_inspect_prev_generation", zero)?;
+        set(&mut scope, obj, "route_inspect_prev_request_id", zero)?;
+        set(&mut scope, obj, "route_inspect_prev_ok", falsy)?;
+        let empty_prev_reason = js_string(&mut scope, "")?;
+        set(&mut scope, obj, "route_inspect_prev_reason", empty_prev_reason)?;
+        set(&mut scope, obj, "route_inspect_prev_bank_planned", falsy)?;
+        set(&mut scope, obj, "route_inspect_prev_ticks", zero)?;
+        set(&mut scope, obj, "route_inspect_prev_hops", empty_rows)?;
+        set(&mut scope, obj, "route_inspect_running_id", zero)?;
+        set(&mut scope, obj, "route_inspect_pending_id", zero)?;
+        set(&mut scope, obj, "route_inspect_accepted_id", zero)?;
+        set(&mut scope, obj, "route_inspect_replaced_id", zero)?;
+        set(&mut scope, obj, "route_inspect_replaced_prev_id", zero)?;
+    }
     if snap.has_count_dialog_open() {
         let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
         set(
@@ -1405,6 +1474,47 @@ fn bank_approach_array<'s>(
         set(scope, o, "dest_z", dest_z)?;
         let dest_level = num(scope, row.dest_level() as f64);
         set(scope, o, "dest_level", dest_level)?;
+        arr.set_index(scope, i as u32, o.into())
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+fn inspect_hop_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::InspectHopReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let kind = js_string(scope, row.kind())?;
+        set(scope, o, "kind", kind)?;
+        let loc_id = num(scope, row.loc_id() as f64);
+        set(scope, o, "locId", loc_id)?;
+        let loc_name = js_string(scope, row.loc_name())?;
+        set(scope, o, "locName", loc_name)?;
+        let action = js_string(scope, row.action())?;
+        set(scope, o, "action", action)?;
+        let option = num(scope, row.option() as f64);
+        set(scope, o, "option", option)?;
+        let from = v8::Object::new(scope);
+        let from_x = num(scope, row.from_x() as f64);
+        set(scope, from, "x", from_x)?;
+        let from_z = num(scope, row.from_z() as f64);
+        set(scope, from, "z", from_z)?;
+        let from_level = num(scope, row.from_level() as f64);
+        set(scope, from, "level", from_level)?;
+        set(scope, o, "from", from.into())?;
+        let to = v8::Object::new(scope);
+        let to_x = num(scope, row.to_x() as f64);
+        set(scope, to, "x", to_x)?;
+        let to_z = num(scope, row.to_z() as f64);
+        set(scope, to, "z", to_z)?;
+        let to_level = num(scope, row.to_level() as f64);
+        set(scope, to, "level", to_level)?;
+        set(scope, o, "to", to.into())?;
+        let ticks = num(scope, row.ticks() as f64);
+        set(scope, o, "ticks", ticks)?;
         arr.set_index(scope, i as u32, o.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

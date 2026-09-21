@@ -322,6 +322,7 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
         false,
         None,
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -2183,6 +2184,7 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
         false,
         None,
         outcome,
+        PostedInspect::default(),
         |input, native| script::isolate_fb::encode_snapshot_with_native(input, native),
     )
 }
@@ -10225,6 +10227,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         false,
         Some(bits.as_slice()),
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -10264,6 +10267,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         false,
         None,
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");

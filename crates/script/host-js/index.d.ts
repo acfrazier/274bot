@@ -281,6 +281,7 @@ export type InteractReq =
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string | null; stand_op?: number | null; choose?: string | null}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
+  | { op: 'inspect-route'; x: number; z: number; level: number; from_x: number; from_z: number; from_level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number; inspect_ack_seq?: number}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
@@ -349,6 +350,27 @@ export interface NativeSnapshot {
   walk_outcome_radius: number;
   walk_outcome_allow_teleports: boolean;
   walk_outcome_request_id: number;
+  route_inspect_seq: number;
+  route_inspect_generation: number;
+  route_inspect_request_id: number;
+  route_inspect_ok: boolean;
+  route_inspect_reason: string;
+  route_inspect_bank_planned: boolean;
+  route_inspect_ticks: number;
+  route_inspect_hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>;
+  route_inspect_prev_seq: number;
+  route_inspect_prev_generation: number;
+  route_inspect_prev_request_id: number;
+  route_inspect_prev_ok: boolean;
+  route_inspect_prev_reason: string;
+  route_inspect_prev_bank_planned: boolean;
+  route_inspect_prev_ticks: number;
+  route_inspect_prev_hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>;
+  route_inspect_running_id: number;
+  route_inspect_pending_id: number;
+  route_inspect_accepted_id: number;
+  route_inspect_replaced_id: number;
+  route_inspect_replaced_prev_id: number;
 }
 
 /** Typed settings access over the per-identity host bag. */
@@ -382,7 +404,8 @@ export type NativeOp =
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
-  | { op: 'walk-nearest-bank'};
+  | { op: 'walk-nearest-bank'}
+  | { op: 'inspect-route'; from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number; inspect_ack_seq?: number};
 
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
@@ -394,4 +417,8 @@ export interface NativeApi {
   stop(reason?: string): void;
   readonly paint: NativePaint;
   request(op: NativeOp): void;
+  /** Isolate-owned inspect token. Pair with request inspect-route request_id, or query inspectSettled/inspectValue. Caller-invented ids are isolate-stale; 0 is snapshot-only. */
+  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;
+  inspectSettled(token: number): boolean;
+  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;
 }

@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[path = "route_inspect.rs"]
+mod route_inspect;
+pub(super) use route_inspect::PostedInspect;
+
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.
 pub(super) type ScriptSlot = Arc<Mutex<SlotScript>>;
@@ -86,6 +90,55 @@ pub(super) fn script_observe_with_npc_boxes(
     ours: bool,
     canlight: Option<&[u64]>,
     slot_input: Option<&SlotInput>,
+) -> bool {
+    script_observe_cached(
+        driver,
+        name,
+        up,
+        tick_edge,
+        tick,
+        here,
+        inv,
+        state,
+        snapshot,
+        npc_boxes,
+        obj_names,
+        scripts,
+        cheats,
+        navs,
+        world,
+        hold,
+        ours,
+        canlight,
+        slot_input,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn script_observe_cached(
+    driver: &mut dyn Driver,
+    name: &str,
+    up: bool,
+    tick_edge: bool,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    inv: Option<&[(i32, i32)]>,
+    state: Option<WorldState>,
+    snapshot: Option<&GameSnapshot>,
+    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    hold: bool,
+    ours: bool,
+    canlight: Option<&[u64]>,
+    slot_input: Option<&SlotInput>,
+    cache: Option<Arc<Cache>>,
+    obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
 ) -> bool {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -314,6 +367,7 @@ pub(super) fn script_observe_with_npc_boxes(
                     walk_level,
                     walk_radius,
                     walk_allow_teleports,
+                    inspect_posted,
                 ) = {
                     let mut all = navs.lock().unwrap();
                     match all.get_mut(name) {
@@ -329,11 +383,25 @@ pub(super) fn script_observe_with_npc_boxes(
                                 b.walk_outcome_level,
                                 b.walk_outcome_radius,
                                 b.walk_outcome_allow_teleports,
+                                b.inspect.posted(),
                             );
                             b.mark_walk_outcome_posted();
+                            b.inspect.mark_posted();
                             posted
                         }
-                        None => (false, 0, 0, 0, false, 0, 0, 0, 0, false),
+                        None => (
+                            false,
+                            0,
+                            0,
+                            0,
+                            false,
+                            0,
+                            0,
+                            0,
+                            0,
+                            false,
+                            route_inspect::PostedInspect::default(),
+                        ),
                     }
                 };
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
@@ -369,6 +437,7 @@ pub(super) fn script_observe_with_npc_boxes(
                         radius: walk_radius,
                         allow_teleports: walk_allow_teleports,
                     },
+                    inspect_posted,
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -726,7 +795,7 @@ pub(super) fn script_observe_with_npc_boxes(
                     req => dispatchable.push(req),
                 }
             }
-            wrote |= dispatch_script_interact(
+            wrote |= dispatch_script_interact_cached(
                 driver,
                 snapshot,
                 obj_names,
@@ -736,6 +805,8 @@ pub(super) fn script_observe_with_npc_boxes(
                 state.clone(),
                 name,
                 dispatchable,
+                cache.clone(),
+                obj_names_arc.clone(),
             );
             if armed.is_some()
                 || armed_bank_op.is_some()
@@ -1043,6 +1114,35 @@ pub(super) fn dispatch_script_interact(
     name: &str,
     reqs: Vec<script::shim::InteractReq>,
 ) -> bool {
+    dispatch_script_interact_cached(
+        driver,
+        snapshot,
+        obj_names,
+        here,
+        navs,
+        world,
+        state,
+        name,
+        reqs,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn dispatch_script_interact_cached(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    here: Option<(i32, i32, i32)>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    name: &str,
+    reqs: Vec<script::shim::InteractReq>,
+    cache: Option<Arc<Cache>>,
+    obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
+) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
     #[cfg(feature = "memory-profile")]
@@ -1241,6 +1341,76 @@ pub(super) fn dispatch_script_interact(
             }
             InteractReq::WalkTo { x, z, level } => {
                 wrote |= matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
+            }
+            InteractReq::InspectRoute {
+                x,
+                z,
+                level,
+                from_x,
+                from_z,
+                from_level,
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
+                avoid,
+                request_id,
+                inspect_ack_seq,
+            } => {
+                let mut invalid_args = false;
+                let mut rects = Vec::new();
+                for zone in avoid {
+                    match zone {
+                        script::shim::InspectAvoidWire::Rect {
+                            min_x,
+                            max_x,
+                            min_z,
+                            max_z,
+                            level: zone_level,
+                        } => {
+                            if min_x > max_x || min_z > max_z {
+                                invalid_args = true;
+                            }
+                            rects.push(nav::router::AvoidRect {
+                                min_x,
+                                max_x,
+                                min_z,
+                                max_z,
+                                level: zone_level,
+                            });
+                        }
+                        script::shim::InspectAvoidWire::Unsupported => invalid_args = true,
+                    }
+                }
+                let bank_rows: Vec<(i32, i32)> = snapshot
+                    .bank()
+                    .iter()
+                    .map(|it| (it.def.id, it.count))
+                    .collect();
+                route_inspect::queue_inspect(
+                    navs,
+                    name,
+                    world,
+                    state.clone(),
+                    bank_rows,
+                    cache.clone(),
+                    obj_names_arc.clone(),
+                    route_inspect::InspectRequest {
+                        from: WorldTile {
+                            x: from_x,
+                            z: from_z,
+                            level: from_level,
+                        },
+                        to: WorldTile { x, z, level },
+                        allow_teleports,
+                        allow_wilderness,
+                        allow_bank_fetch,
+                        avoid: rects,
+                        request_id,
+                        inspect_ack_seq,
+                        invalid_args,
+                    },
+                );
+                wrote = true;
             }
             InteractReq::Deposit { name } => {
                 let wanted = name.to_lowercase();
@@ -1957,6 +2127,7 @@ pub(super) fn script_snapshot_fb(
         false,
         None,
         PostedWalkOutcome::default(),
+        route_inspect::PostedInspect::default(),
         |input, native| {
             script::isolate_fb::encode_snapshot_delta_with_native(last, input, native, force_banks)
         },
@@ -2022,6 +2193,7 @@ pub(super) fn with_script_snapshot_input<R>(
     bank_op_result: bool,
     canlight: Option<&[u64]>,
     walk_outcome: PostedWalkOutcome,
+    inspect: route_inspect::PostedInspect,
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
         script::isolate_fb::NativeFactsInput<'_>,
@@ -3020,6 +3192,26 @@ pub(super) fn with_script_snapshot_input<R>(
             .collect(),
         _ => Vec::new(),
     };
+    let latest_hops = inspect
+        .latest
+        .as_ref()
+        .map(|t| route_inspect::hop_inputs(&t.hops))
+        .unwrap_or_default();
+    let prev_hops = inspect
+        .prev
+        .as_ref()
+        .map(|t| route_inspect::hop_inputs(&t.hops))
+        .unwrap_or_default();
+    let latest_in = inspect
+        .latest
+        .as_ref()
+        .map(|t| route_inspect::terminal_to_input(t, &latest_hops))
+        .unwrap_or_default();
+    let prev_in = inspect
+        .prev
+        .as_ref()
+        .map(|t| route_inspect::terminal_to_input(t, &prev_hops))
+        .unwrap_or_default();
     let native = NativeFactsInput {
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
@@ -3042,6 +3234,15 @@ pub(super) fn with_script_snapshot_input<R>(
         walk_outcome_level: walk_outcome.level,
         walk_outcome_radius: walk_outcome.radius,
         walk_outcome_allow_teleports: walk_outcome.allow_teleports,
+        route_inspect: script::isolate_fb::RouteInspectFactsInput {
+            latest: latest_in,
+            prev: prev_in,
+            running_id: inspect.running_id,
+            pending_id: inspect.pending_id,
+            accepted_id: inspect.accepted_id,
+            replaced_id: inspect.replaced_id,
+            replaced_prev_id: inspect.replaced_prev_id,
+        },
     };
     f(&input, native)
 }
@@ -3155,6 +3356,7 @@ pub(super) struct NavBot {
     pub(super) walk_outcome_level: i32,
     pub(super) walk_outcome_radius: i32,
     pub(super) walk_outcome_allow_teleports: bool,
+    pub(super) inspect: route_inspect::InspectNav,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and
@@ -4212,5 +4414,6 @@ pub(super) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
         nav.bank_fetch = None;
         nav.walk_request_id = 0;
         nav.clear_walk_outcome();
+        route_inspect::reset_inspect(nav);
     }
 }

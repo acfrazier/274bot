@@ -211,6 +211,24 @@ on_leg, troll_doors }`.
   same-tick rule). Use only for the live door-troll fixture; ordinary
   routes pay the cheap default.
 
+## Route inspect (preview)
+
+Pure preview is a separate host job from walking. It never arms Traveller,
+never latches a bank session, and never changes ordinary walk policies.
+
+- **v1** `Navigator.findPath(from, to, opts)`: wilderness on, bank-fetch
+  off, teleports only from explicit catalog/policy bits. Default waiter
+  timeout is 20000 ms (Brimhaven passes 8000). Returned hops include
+  `locName`; `expanded` is omitted.
+- **v2** `api.inspectBegin({ from, to, allow_* , avoid })` returns an
+  isolate token. Query `inspectSettled` / `inspectValue`, or observe
+  `snapshot.route_inspect_*`. `api.request({ op: 'inspect-route', from, to,
+  request_id })` with `request_id: 0` is snapshot-only. Caller-invented
+  nonzero ids are isolate-stale; they are not isolate tokens.
+- Conditional `allow_bank_fetch` preview labels `bank_planned` only after
+  a PRE-state stand proof (or wear-only). Published hops are the post-state
+  from→to transports, never bank steps or Traveller actions.
+
 ## WalkTo picker
 
 The panel's main-chrome **WalkTo** button fills the Game pane

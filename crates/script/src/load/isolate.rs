@@ -1411,6 +1411,7 @@ fn tick_loop(
                         crate::bank_open::on_snapshot(&snap);
                         crate::cake_stall::on_snapshot(&snap);
                         crate::walk_wait::on_snapshot(&snap);
+                        crate::inspect_wait::on_snapshot(&snap);
                         crate::autocast::on_snapshot(&snap);
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);
@@ -1427,6 +1428,7 @@ fn tick_loop(
                             crate::bank_open::on_hold(host_hold);
                             crate::cake_stall::on_hold(host_hold);
                             crate::walk_wait::on_hold(host_hold);
+                            crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
                             crate::autocast::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
@@ -1773,6 +1775,7 @@ fn tick_loop(
                 crate::bank_open::on_reset();
                 crate::cake_stall::on_reset();
                 crate::walk_wait::on_reset();
+                crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
                 crate::autocast::on_reset();
                 crate::special::on_reset();
@@ -1803,6 +1806,7 @@ fn tick_loop(
                 crate::bank_open::on_pause();
                 crate::cake_stall::on_pause();
                 crate::walk_wait::on_pause();
+                crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
                 crate::autocast::on_pause();
                 crate::special::on_pause();
@@ -1824,6 +1828,7 @@ fn tick_loop(
                 crate::bank_open::on_resume();
                 crate::cake_stall::on_resume();
                 crate::walk_wait::on_resume();
+                crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
                 crate::autocast::on_resume();
                 crate::special::on_resume();

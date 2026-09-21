@@ -744,3 +744,95 @@ export function tick(api) {
     assert_eq!(wired, walks);
     iso.join();
 }
+
+#[test]
+fn v2_inspect_route_uses_isolate_token_and_rejects_invented_ids() {
+    use script::shim::InspectAvoidWire;
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const token = api.inspectBegin({
+    from: { x: 2763, z: 3233, level: 0 },
+    to: { x: 2803, z: 3208, level: 0 },
+    allow_teleports: false,
+    allow_wilderness: true,
+    allow_bank_fetch: false,
+    avoid: [{ minX: 2780, maxX: 3040, minZ: 3130, maxZ: 3330 }],
+    timeout_ms: 8000,
+  });
+  globalThis.__token = token;
+  api.request({
+    op: 'inspect-route',
+    from: { x: 1, z: 2, level: 0 },
+    to: { x: 3, z: 4, level: 0 },
+    request_id: 0,
+  });
+  globalThis.__invented = api.inspectSettled(99);
+  globalThis.__zero = api.inspectSettled(0);
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let token: u64 = iso
+        .probe("globalThis.__token")
+        .unwrap()
+        .as_u64()
+        .expect("token");
+    assert_ne!(token, 0);
+    assert_eq!(iso.probe("globalThis.__invented").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__zero").unwrap(), false);
+    let drained = iso.drain_interacts();
+    let inspects: Vec<_> = drained
+        .into_iter()
+        .filter(|req| matches!(req, InteractReq::InspectRoute { .. }))
+        .collect();
+    assert_eq!(inspects.len(), 2);
+    match &inspects[0] {
+        InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            avoid,
+            request_id,
+            inspect_ack_seq,
+        } => {
+            assert_eq!((*from_x, *from_z, *from_level), (2763, 3233, 0));
+            assert_eq!((*x, *z, *level), (2803, 3208, 0));
+            assert!(!*allow_teleports);
+            assert!(*allow_wilderness);
+            assert!(!*allow_bank_fetch);
+            assert_eq!(*request_id, token);
+            assert_eq!(
+                avoid,
+                &vec![InspectAvoidWire::Rect {
+                    min_x: 2780,
+                    max_x: 3040,
+                    min_z: 3130,
+                    max_z: 3330,
+                    level: None,
+                }]
+            );
+            let _ = inspect_ack_seq;
+        }
+        other => panic!("expected inspect-route, got {other:?}"),
+    }
+    match &inspects[1] {
+        InteractReq::InspectRoute { request_id, .. } => {
+            assert_eq!(*request_id, 0, "explicit 0 is snapshot-only");
+        }
+        other => panic!("expected inspect-route, got {other:?}"),
+    }
+    let wired = script::isolate_fb::decode_interact_batch(
+        &script::isolate_fb::encode_interact_batch(&inspects),
+    )
+    .expect("v2 inspect FB roundtrip");
+    assert_eq!(wired, inspects);
+    iso.join();
+}

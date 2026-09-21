@@ -2347,7 +2347,7 @@ fn spawn_slot_thread(
             let park = park.map(Arc::new);
             let mut client = match &connection {
                 PlayConnection::Legacy(options) => prepare_client(
-                    bot_client_config(options, &profile), uid, slot_cache,
+                    bot_client_config(options, &profile), uid, Arc::clone(&slot_cache),
                     ifaces_template.clone(), ifaces_mut_template.clone(),
                 ),
                 PlayConnection::Bound { template, .. } => match template.prepare_client(uid, profile.settings.lowmem) {
@@ -2501,6 +2501,7 @@ fn spawn_slot_thread(
                         let slot_cheats = Arc::clone(&slot_cheats);
                         let slot_wires = Arc::clone(&slot_wires);
                         let slot_obj_names = Arc::clone(&slot_obj_names);
+                        let slot_cache = Arc::clone(&slot_cache);
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_world = slot_world.clone();
                         let slot_canlight = connection.profile().and_then(|p| p.canlight());
@@ -2654,7 +2655,7 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 || projected_npc_boxes(c),
                             );
-                            script_observe_with_npc_boxes(
+                            script_observe_cached(
                                 c,
                                 name,
                                 up,
@@ -2674,6 +2675,8 @@ fn spawn_slot_thread(
                                 status.ours,
                                 slot_canlight.as_deref(),
                                 Some(slot_input.as_ref()),
+                                Some(Arc::clone(&slot_cache)),
+                                Some(Arc::clone(&slot_obj_names)),
                             );
                             // TUI chat / WASD sends: run the queued wire
                             // commands through `Interactions` on this

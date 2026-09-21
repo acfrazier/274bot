@@ -42,7 +42,8 @@ Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 ### Supported requests
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `withdraw`,
-`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`.
+`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`,
+`inspect-route`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
 
@@ -57,6 +58,13 @@ Completion is the next snapshots' seq/result fields, not a Promise.
 - `walk-nearest-bank` uses host packed nav with default-false FindOptions.
   Watch `walk_outcome_seq` / `walk_outcome_failed` and `here` vs `banks`.
   No packed stand fails closed in Rust.
+- `inspect-route` is a pure preview. Required `from` / `to` tiles. Omitted
+  `allow_teleports` / `allow_wilderness` / `allow_bank_fetch` default
+  false. Optional `avoid` rects. Use `api.inspectBegin` for an isolate
+  token and `inspectSettled` / `inspectValue` to query it. `request_id: 0`
+  is snapshot-only (`route_inspect_*`). Invented nonzero ids are
+  isolate-stale. Conditional bank preview never actions or latches a
+  bank session; `bank_planned` requires a PRE-state stand proof.
 
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.
