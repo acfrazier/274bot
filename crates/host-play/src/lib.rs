@@ -2552,7 +2552,7 @@ fn spawn_slot_thread(
                             // Snapshot observe runs before this frame copies it
                             // onto the slot row.
                             let inspect = if obs_catalog_core.copies_route_inspect() {
-                                slot_navs.lock().unwrap().get(name).and_then(|bot| {
+                                slot_navs.lock().unwrap().get(name).map(|bot| {
                                     bot.inspect.published_core_facts()
                                 })
                             } else {

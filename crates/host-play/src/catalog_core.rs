@@ -1082,6 +1082,10 @@ pub struct Observation {
     pub route_inspect_reason: String,
     #[serde(rename = "route_inspect_hops")]
     pub route_inspect_hops: Vec<RouteInspectHopFact>,
+    /// `InspectNav.generation` even when no terminal is published.
+    /// Missing-terminal Observation defaults are 0 and are not this value.
+    pub route_inspect_live_generation: u64,
+    pub route_inspect_has_terminal: bool,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1096,6 +1100,8 @@ pub struct RouteInspectHopFact {
 /// terminal. Copied only when the active Core case asks for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RouteInspectPublished {
+    pub live_generation: u64,
+    pub has_terminal: bool,
     pub seq: u64,
     pub generation: u64,
     pub request_id: u64,
@@ -1588,10 +1594,14 @@ impl Observation {
             route_inspect_ok: false,
             route_inspect_reason: String::new(),
             route_inspect_hops: Vec::new(),
+            route_inspect_live_generation: 0,
+            route_inspect_has_terminal: false,
         }
     }
 
     pub fn attach_route_inspect(&mut self, published: RouteInspectPublished) {
+        self.route_inspect_live_generation = published.live_generation;
+        self.route_inspect_has_terminal = published.has_terminal;
         self.route_inspect_seq = published.seq;
         self.route_inspect_generation = published.generation;
         self.route_inspect_request_id = published.request_id;
@@ -1799,11 +1809,43 @@ fn hop_loc_wrong_boat(hops: &[RouteInspectHopFact]) -> bool {
     })
 }
 
-fn fresh_barnaby_inspect(now: &Observation, prior_seq: u64) -> bool {
-    now.route_inspect_seq > prior_seq
-        && now.route_inspect_ok
-        && hop_loc_has(&now.route_inspect_hops, "barnaby")
-        && !hop_loc_wrong_boat(&now.route_inspect_hops)
+/// Authoritative inspect freshness for Core (not a new product policy).
+///
+/// `InspectNav.generation` starts at 0 and is the live generation even when
+/// no terminal is published. `reset_inspect` (session nav reset, not catalog
+/// Start) does `wrapping_add(1)` and `clear_published`; a later publish uses
+/// `next_seq` from an empty latest (seq 1) stamped with the new generation.
+/// `Observation` defaults (`generation`/`seq`/`live_generation` = 0,
+/// `has_terminal` = false) are missing-projection placeholders, not "live
+/// generation is 0". The narrow inspect projection therefore copies
+/// `live_generation` even without a terminal so Start baseline can store the
+/// real ring. Generation 0 is a legitimate first-session value.
+///
+/// Current publish: `has_terminal` and `terminal.generation == live_generation`.
+/// Same live generation as the Start baseline: `seq` must advance past that
+/// baseline seq. After `reset_inspect` the live generation changes; the new
+/// ring's seq 1 is fresh even if the previous ring ended at seq 8. Old
+/// generation / stale seq / unpublished seq 0 are rejected. v1 also requires
+/// a registered `request_id != 0` at the cycle; v2 token uses `!= 0` then a
+/// later distinct `request_id == 0` snapshot.
+fn fresh_barnaby_inspect(
+    now: &Observation,
+    prior_live_generation: u64,
+    prior_seq: u64,
+) -> bool {
+    if !now.route_inspect_has_terminal
+        || now.route_inspect_generation != now.route_inspect_live_generation
+        || !now.route_inspect_ok
+        || !hop_loc_has(&now.route_inspect_hops, "barnaby")
+        || hop_loc_wrong_boat(&now.route_inspect_hops)
+    {
+        return false;
+    }
+    if now.route_inspect_live_generation == prior_live_generation {
+        now.route_inspect_seq > prior_seq
+    } else {
+        now.route_inspect_seq > 0
+    }
 }
 
 pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool {
@@ -1823,8 +1865,10 @@ pub fn route_inspect_brimhaven_v2_baseline_ready(baseline: &Observation) -> bool
 }
 
 /// Ordered v1 witness: restock after empty-pack Start, then a fresh accepted
-/// Barnaby inspect, then ordinary walk progress. Seed and fallback-without-
-/// accept cannot qualify.
+/// Barnaby inspect (`request_id != 0`), then a later observation with an
+/// actual tile change toward/at the pier. First `accepted_tile` is kept.
+/// Seed, fallback-without-accept, same-frame pier, wrong-boat, and stale
+/// generation cannot qualify.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct BrimhavenMossInspectCycle {
     pub restocked: bool,
@@ -1846,16 +1890,25 @@ impl BrimhavenMossInspectCycle {
         {
             self.restocked = true;
         }
-        if self.restocked && self.accepted_seq.is_none() && fresh_barnaby_inspect(now, baseline.route_inspect_seq)
+        if self.restocked
+            && self.accepted_seq.is_none()
+            && now.route_inspect_request_id != 0
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
         {
             self.accepted_seq = Some(now.route_inspect_seq);
+            // First accepted tile only; repeated later terminals must not refresh it.
             self.accepted_tile = now.tile;
         }
         if let (Some(_), Some(from)) = (self.accepted_seq, self.accepted_tile) {
-            self.walk_progress |= near(now.tile, BRIMHAVEN_INSPECT_PIER, BRIMHAVEN_INSPECT_PIER_RADIUS)
-                || now.tile.is_some_and(|tile| {
-                    chebyshev(tile, BRIMHAVEN_INSPECT_PIER) < chebyshev(from, BRIMHAVEN_INSPECT_PIER)
-                });
+            let later_tile = now.tile.filter(|tile| *tile != from);
+            if let Some(tile) = later_tile {
+                self.walk_progress |= near(Some(tile), BRIMHAVEN_INSPECT_PIER, BRIMHAVEN_INSPECT_PIER_RADIUS)
+                    || chebyshev(tile, BRIMHAVEN_INSPECT_PIER) < chebyshev(from, BRIMHAVEN_INSPECT_PIER);
+            }
         }
     }
 
@@ -1877,14 +1930,25 @@ impl RouteInspectBrimhavenV2Cycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         if self.token_seq.is_none()
             && now.route_inspect_request_id != 0
-            && fresh_barnaby_inspect(now, baseline.route_inspect_seq)
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
         {
             self.token_seq = Some(now.route_inspect_seq);
         }
         if let Some(token_seq) = self.token_seq {
             if self.snap0_seq.is_none()
                 && now.route_inspect_request_id == 0
-                && fresh_barnaby_inspect(now, token_seq)
+                && fresh_barnaby_inspect(
+                    now,
+                    // id0 is a later publish on this same live ring; seq must
+                    // advance past the token. v2 request_id 0 is distinct from
+                    // a v1 registered identity.
+                    now.route_inspect_live_generation,
+                    token_seq,
+                )
             {
                 self.snap0_seq = Some(now.route_inspect_seq);
             }

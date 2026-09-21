@@ -1016,18 +1016,35 @@ fn brimhaven_v1_baseline() -> Observation {
         ..Observation::default()
     };
     observation.levels.insert("agility".into(), 30);
+    // Session `reset_inspect` already bumped generation and cleared terminals.
+    // Missing-terminal defaults are not the live generation.
+    observation.route_inspect_live_generation = 1;
+    observation.route_inspect_has_terminal = false;
     observation
 }
 
 fn with_hop(mut observation: Observation, seq: u64, request_id: u64, ok: bool, loc: &str) -> Observation {
     observation.route_inspect_seq = seq;
-    observation.route_inspect_generation = seq;
+    observation.route_inspect_generation = observation.route_inspect_live_generation;
+    observation.route_inspect_has_terminal = true;
     observation.route_inspect_request_id = request_id;
     observation.route_inspect_ok = ok;
     observation.route_inspect_hops = vec![RouteInspectHopFact {
         loc_name: loc.into(),
     }];
     observation
+}
+
+fn restocked_from(baseline: &Observation) -> Observation {
+    let mut restocked = baseline.clone();
+    restocked.bank_open = true;
+    restocked.bank_loaded = true;
+    restocked.bank_generation = baseline.bank_generation + 1;
+    restocked.item_ids.insert(LOBSTER_ID, 20);
+    restocked.item_ids.insert(COINS_ID, 60);
+    restocked.items.insert("Lobster".into(), 20);
+    restocked.items.insert("Coins".into(), 60);
+    restocked
 }
 
 #[test]
@@ -1062,14 +1079,7 @@ fn brimhaven_moss_inspect_v1_seed_and_fallback_cannot_pass() {
         "field arrival without restock or accepted inspect must not qualify"
     );
 
-    let mut restocked = baseline.clone();
-    restocked.bank_open = true;
-    restocked.bank_loaded = true;
-    restocked.bank_generation = baseline.bank_generation + 1;
-    restocked.item_ids.insert(LOBSTER_ID, 20);
-    restocked.item_ids.insert(COINS_ID, 60);
-    restocked.items.insert("Lobster".into(), 20);
-    restocked.items.insert("Coins".into(), 60);
+    let restocked = restocked_from(&baseline);
     watch.observe("catalogtest", restocked.clone(), false);
     assert!(
         watch.qualify().is_err(),
@@ -1102,12 +1112,7 @@ fn brimhaven_moss_inspect_v1_requires_restock_then_fresh_barnaby_then_walk() {
     watch.observe("catalogtest", baseline.clone(), false);
     watch.begin_start("catalogtest").unwrap();
 
-    let mut restocked = baseline.clone();
-    restocked.bank_open = true;
-    restocked.bank_loaded = true;
-    restocked.bank_generation = baseline.bank_generation + 1;
-    restocked.item_ids.insert(LOBSTER_ID, 20);
-    restocked.item_ids.insert(COINS_ID, 60);
+    let restocked = restocked_from(&baseline);
     watch.observe("catalogtest", restocked.clone(), false);
 
     let accepted = with_hop(restocked.clone(), 4, 7, true, "Captain Barnaby");
@@ -1167,4 +1172,122 @@ fn route_inspect_brimhaven_v2_requires_token_then_id0_then_bank_tile() {
     watch
         .qualify()
         .expect("token, request_id 0, and actual bank tile");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_same_frame_pier_accept_cannot_pass() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", restocked_from(&baseline), false);
+
+    let mut accept_at_pier = with_hop(restocked_from(&baseline), 4, 7, true, "Captain Barnaby");
+    accept_at_pier.tile = Some(BRIMHAVEN_INSPECT_PIER);
+    watch.observe("catalogtest", accept_at_pier.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "same-frame accept already at the pier is not later walk progress"
+    );
+
+    let mut later = accept_at_pier;
+    later.tile = Some((2675, 3275, 0));
+    watch.observe("catalogtest", later, false);
+    watch
+        .qualify()
+        .expect("a later observation with actual tile change can qualify");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_wrong_boat_and_old_generation_cannot_pass() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let restocked = restocked_from(&baseline);
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let wrong_boat = with_hop(restocked.clone(), 4, 7, true, "Captain Thresnor");
+    watch.observe("catalogtest", wrong_boat.clone(), false);
+    let mut wrong_walk = wrong_boat;
+    wrong_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", wrong_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "wrong-boat hop cannot stand in for accepted Barnaby"
+    );
+
+    let mut stale_gen = with_hop(restocked.clone(), 9, 7, true, "Captain Barnaby");
+    stale_gen.route_inspect_generation = 0;
+    watch.observe("catalogtest", stale_gen.clone(), false);
+    let mut stale_walk = stale_gen;
+    stale_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", stale_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "old generation after reset_inspect cannot qualify"
+    );
+
+    let id0 = with_hop(restocked.clone(), 5, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", id0.clone(), false);
+    let mut id0_walk = id0;
+    id0_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", id0_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "v1 requires a registered request identity, not request_id 0"
+    );
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_generation_zero_is_legitimate_before_reset() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let mut baseline = brimhaven_v1_baseline();
+    baseline.route_inspect_live_generation = 0;
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", restocked_from(&baseline), false);
+
+    let accepted = with_hop(restocked_from(&baseline), 1, 3, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    assert!(watch.qualify().is_err(), "accept still needs later walk");
+
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("generation 0 is a real first-session InspectNav generation");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_generation_transition_uses_new_ring_seq() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let mut baseline = brimhaven_v1_baseline();
+    baseline.route_inspect_live_generation = 0;
+    baseline.route_inspect_has_terminal = true;
+    baseline.route_inspect_seq = 8;
+    baseline.route_inspect_generation = 0;
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut restocked = restocked_from(&baseline);
+    restocked.route_inspect_live_generation = 1;
+    restocked.route_inspect_has_terminal = false;
+    restocked.route_inspect_seq = 0;
+    restocked.route_inspect_generation = 0;
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let accepted = with_hop(restocked, 1, 4, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("after reset, seq 1 on the new generation is fresh even if the old ring was 8");
 }

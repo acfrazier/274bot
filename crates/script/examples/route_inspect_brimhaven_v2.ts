@@ -87,6 +87,9 @@ export function tick(api: NativeApi): void {
         }
         return;
     }
+    // New unreadiness episode after this ready; do not keep the old stamp
+    // (that false-fails later) and do not drop the bound after work starts.
+    readySince = 0;
     if (!clockArmed) {
         phaseSince = api.tick;
         clockArmed = true;

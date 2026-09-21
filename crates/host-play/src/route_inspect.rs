@@ -126,18 +126,28 @@ pub(crate) struct PostedInspect {
 }
 
 impl InspectNav {
-    /// Read-only copy of the already-published latest terminal for Core JSON.
-    /// Callers must invoke this only for the active inspect case.
-    pub(crate) fn published_core_facts(&self) -> Option<crate::catalog_core::RouteInspectPublished> {
-        let latest = self.latest.as_ref()?;
-        Some(crate::catalog_core::RouteInspectPublished {
-            seq: latest.seq,
-            generation: latest.generation,
-            request_id: latest.request_id,
-            ok: latest.ok,
-            reason: latest.reason.clone(),
-            hop_loc_names: latest.hops.iter().map(|hop| hop.loc_name.clone()).collect(),
-        })
+    /// Read-only copy of the slot inspect generation and, when present, the
+    /// already-published latest terminal. Callers invoke this only for the
+    /// active inspect case. `reset_inspect` bumps generation and clears
+    /// terminals; a missing terminal must not be treated as generation 0.
+    pub(crate) fn published_core_facts(&self) -> crate::catalog_core::RouteInspectPublished {
+        match self.latest.as_ref() {
+            Some(latest) => crate::catalog_core::RouteInspectPublished {
+                live_generation: self.generation,
+                has_terminal: true,
+                seq: latest.seq,
+                generation: latest.generation,
+                request_id: latest.request_id,
+                ok: latest.ok,
+                reason: latest.reason.clone(),
+                hop_loc_names: latest.hops.iter().map(|hop| hop.loc_name.clone()).collect(),
+            },
+            None => crate::catalog_core::RouteInspectPublished {
+                live_generation: self.generation,
+                has_terminal: false,
+                ..Default::default()
+            },
+        }
     }
 
     fn next_seq(&self) -> u64 {
