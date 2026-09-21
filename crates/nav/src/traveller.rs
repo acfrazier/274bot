@@ -2392,10 +2392,39 @@ fn scene_standable(snapshot: &GameSnapshot, tile: WorldTile) -> bool {
         })
 }
 
+/// Chebyshev distance from `at` to the closest tile of `loc`'s rotated
+/// footprint. A 1×1 loc equals origin distance; a length-6 ropeswing
+/// whose origin is 4 tiles from `at` still matches when `at` sits on the
+/// footprint. Does not widen the 3-tile search radius.
+fn loc_chebyshev_to_footprint(loc: &LocView, at: WorldTile) -> i32 {
+    let fw = loc.footprint_width.max(1);
+    let fl = loc.footprint_length.max(1);
+    let min_x = loc.tile.x;
+    let max_x = loc.tile.x + fw - 1;
+    let min_z = loc.tile.z;
+    let max_z = loc.tile.z + fl - 1;
+    let dx = if at.x < min_x {
+        min_x - at.x
+    } else if at.x > max_x {
+        at.x - max_x
+    } else {
+        0
+    };
+    let dz = if at.z < min_z {
+        min_z - at.z
+    } else if at.z > max_z {
+        at.z - max_z
+    } else {
+        0
+    };
+    dx.max(dz)
+}
+
 /// The snapshot loc for a transport edge: the edge's closed `loc_id` or
-/// `open_loc_id` on the edge's level within 3 tiles of `edge.at` (the m8aq
-/// `gap <= 3`), nearest first. Trapdoors `loc_change` closed→open (1568→
-/// 1570); matching only the closed id leaves Climb-down unarmed.
+/// `open_loc_id` on the edge's level within 3 tiles of `edge.at` measured
+/// to the rotated footprint (the m8aq `gap <= 3`), nearest first.
+/// Trapdoors `loc_change` closed→open (1568→1570); matching only the
+/// closed id leaves Climb-down unarmed.
 fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
     snapshot
         .locs()
@@ -2404,7 +2433,7 @@ fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> O
             loc.tile.level == edge.at.level
                 && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
         })
-        .map(|loc| (loc, cheb(loc.tile, edge.at)))
+        .map(|loc| (loc, loc_chebyshev_to_footprint(loc, edge.at)))
         .filter(|(_, gap)| *gap <= 3)
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
@@ -3790,6 +3819,20 @@ mod tests {
     /// A wall loc at scene (`scene_x`, `scene_z`) with `id`/`name`/`op1`:
     /// the generic wall-planting shape (the essence exit portal, …).
     fn plant_loc(c: &mut Client, id: i32, name: &str, op1: &str, scene_x: i32, scene_z: i32) {
+        plant_loc_sized(c, id, name, op1, scene_x, scene_z, 1, 1, 1);
+    }
+
+    fn plant_loc_sized(
+        c: &mut Client,
+        id: i32,
+        name: &str,
+        op1: &str,
+        scene_x: i32,
+        scene_z: i32,
+        width: i32,
+        length: i32,
+        angle: i32,
+    ) {
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             while cache.locs.len() <= id as usize {
@@ -3799,12 +3842,26 @@ mod tests {
                 id,
                 name: name.into(),
                 op: vec![Some(op1.into()), None, None, None, None],
+                width,
+                length,
                 ..Default::default()
             };
         }
         let typecode = 0x4000_0000 + (id << 14) + scene_x + (scene_z << 7);
-        c.world
-            .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+        c.world.set_wall(
+            0,
+            scene_x,
+            scene_z,
+            0,
+            0,
+            0,
+            typecode,
+            angle << 6,
+            0,
+            0,
+            0,
+            0,
+        );
     }
 
     /// A level-0 walk leg over the given (x, z) world tiles.
@@ -3878,6 +3935,110 @@ mod tests {
             worn_req: vec![],
             members_req: false,
         }
+    }
+
+    fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::AgilityShortcut,
+            at,
+            to: WorldTile {
+                x: at.x - 5,
+                z: at.z,
+                level: at.level,
+            },
+            loc_id,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    #[test]
+    fn find_transport_loc_matches_inbound_swing_on_rotated_footprint() {
+        let mut c = scene_client();
+        // Origin (3205,3209), start at (3209,3209): Chebyshev 4 to origin,
+        // on the length-6 angle-1 footprint (x=3205..3210).
+        plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 6, 1);
+        let snap = snap_at(&mut c, 9, 9);
+        let loc = snap.locs().iter().find(|l| l.id == 2322).expect("planted");
+        assert_eq!(
+            loc.tile,
+            WorldTile {
+                x: 3205,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(loc.footprint_width, 6);
+        assert_eq!(loc.footprint_length, 1);
+        let edge = agility_at(
+            2322,
+            WorldTile {
+                x: 3209,
+                z: 3209,
+                level: 0,
+            },
+        );
+        let found = super::find_transport_loc(&snap, &edge).expect("footprint covers start");
+        assert_eq!(found.id, 2322);
+        assert_eq!(found.tile, loc.tile);
+    }
+
+    #[test]
+    fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
+        let mut c = scene_client();
+        // 1×1 loc four tiles west of at: origin gap 4, footprint does not reach.
+        plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 1, 0);
+        plant_loc_sized(&mut c, 1, "Door", "Open", 1, 1, 1, 1, 0);
+        let snap = snap_at(&mut c, 9, 9);
+        let at = WorldTile {
+            x: 3209,
+            z: 3209,
+            level: 0,
+        };
+        assert!(
+            super::find_transport_loc(&snap, &agility_at(2322, at)).is_none(),
+            "1×1 origin 4 away must not match; radius stays 3"
+        );
+        assert!(
+            super::find_transport_loc(&snap, &agility_at(1, at)).is_none(),
+            "unrelated far loc must not match"
+        );
+        let closed = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: Some(1531),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        };
+        assert!(
+            super::find_transport_loc(&snap, &closed).is_none(),
+            "closed-door id still required; 1×1 decoy is not 1530"
+        );
     }
 
     /// Edgeville trapdoor: closed 1568 / open 1570, dest loc-baked +6400.
@@ -5801,14 +5962,7 @@ mod tests {
         c.map_build_base_z = RANGING_SCENE_BASE.1;
         // 2514 not planted — only an unrelated swing door one tile off `at`.
         let nearby = scene_of(RANGING_SCENE_BASE, RANGING_LOC);
-        plant_loc(
-            &mut c,
-            1531,
-            "Unrelated door",
-            "Close",
-            nearby.0,
-            nearby.1,
-        );
+        plant_loc(&mut c, 1531, "Unrelated door", "Close", nearby.0, nearby.1);
         let start = scene_of(RANGING_SCENE_BASE, RANGING_OUTSIDE);
         let mut snap = snap_at(&mut c, start.0, start.1);
         let mut rec = FollowRec {

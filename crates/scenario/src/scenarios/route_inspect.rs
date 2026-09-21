@@ -53,7 +53,10 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
-        wait: Wait { arm, budget_ticks: budget },
+        wait: Wait {
+            arm,
+            budget_ticks: budget,
+        },
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
@@ -132,10 +135,12 @@ pub(crate) fn brimhaven_moss_inspect_v1_scenario() -> Scenario {
 
 /// Headed File-card v2 witness on the same pier→field inspect geometry.
 ///
-/// Inspect `ok` + Barnaby `locName` and snapshot `request_id:0` consumption
-/// are validated inside the example (paint + self-stop) together with an
-/// actual bank-tile check. Membership stays the selected profile's
-/// `map_members` fact; this fixture does not flip a global option.
+/// PRESTART carries coins ≥ 30 and `setstat agility 10` (verified coins
+/// before Start). Inspect `ok` + Barnaby `locName` and snapshot
+/// `request_id:0` consumption are validated inside the example (paint +
+/// self-stop) together with an actual bank-tile check. Membership stays
+/// the selected profile's `map_members` fact; this fixture does not flip
+/// a global option.
 pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
     let bank_arrival = Proof::ArrivedNear {
         x: BRIMHAVEN_BANK.x,
@@ -155,16 +160,30 @@ pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
+        name: "carry coins 30 and setstat agility 10 before Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat agility 10");
+                cheat(c, "give coins 30");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Item {
+                name: "Coins",
+                count: 30,
+            },
+            budget_ticks: 120,
+        },
+    });
+    steps.push(Step {
         name: "tele to Captain Barnaby pier before Start",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
                 cheat(
                     c,
-                    &tele_args(
-                        BRIMHAVEN_PIER.level,
-                        BRIMHAVEN_PIER.x,
-                        BRIMHAVEN_PIER.z,
-                    ),
+                    &tele_args(BRIMHAVEN_PIER.level, BRIMHAVEN_PIER.x, BRIMHAVEN_PIER.z),
                 );
                 true
             }),
@@ -205,5 +224,54 @@ pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
             nav: gold_script_nav(),
             ..Default::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v2_prestart_verifies_carried_coins_before_start() {
+        let s = route_inspect_brimhaven_v2_scenario();
+        let start = s
+            .steps
+            .iter()
+            .position(|st| st.name == "start the catalog card")
+            .expect("catalog Start");
+        assert!(
+            s.steps[..start].iter().any(|st| {
+                st.name == "carry coins 30 and setstat agility 10 before Start"
+                    && st.wait.arm
+                        == Proof::Item {
+                            name: "Coins",
+                            count: 30,
+                        }
+            }),
+            "v2 must prove carried coins before Start: {:?}",
+            s.steps[..start]
+                .iter()
+                .map(|st| st.name)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !s.steps[start..]
+                .iter()
+                .any(|st| { st.name.contains("give") || st.name.contains("setstat") }),
+            "no post-Start seed"
+        );
+    }
+
+    #[test]
+    fn v1_bank_coins_and_agility_30_unchanged() {
+        let s = brimhaven_moss_inspect_v1_scenario();
+        assert!(s
+            .steps
+            .iter()
+            .any(|st| st.name.contains("empty pack and Ardougne bank food+coins")));
+        assert_eq!(
+            s.settings.start_script.as_deref(),
+            Some("BrimhavenMossGiants")
+        );
     }
 }

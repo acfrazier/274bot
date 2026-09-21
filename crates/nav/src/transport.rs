@@ -43,7 +43,6 @@ use condparse::{
     top_level_statements,
 };
 
-
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportKind {
@@ -209,6 +208,14 @@ fn derive_transports_with_skips(
         &mut graph,
         &mut skipped,
     );
+    island_rope_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
     web_edges(
         content_root,
         &ids,
@@ -297,6 +304,12 @@ const SKIP_RANGINGGUILD_PLACEMENT: &str =
     "ranging guild door placement is not the expected single diagonal";
 const SKIP_ZANARIS_SOURCE: &str = "Zanaris shed door script did not load or declare oploc1";
 const SKIP_ZANARIS_ROUTE: &str = "Zanaris shed door block did not resolve to a hop";
+const SKIP_ISLAND_ROPE_CONFIG: &str = "shortcuts.loc did not load or admit island_rope_swing";
+const SKIP_ISLAND_ROPE_PARAMS: &str = "island_rope_swing block missing start_coord or end_coord";
+const SKIP_ISLAND_ROPE_JOIN: &str = "island_rope_swing placement does not join start_coord";
+/// Category leaf whose handler omits the agility-10 gate (`loc_type ! tree_ropeswing2`).
+const ISLAND_ROPE_RETURN: &str = "tree_ropeswing2";
+const ISLAND_ROPE_CATEGORY: &str = "island_rope_swing";
 
 /// Pack names for wilderness lever `[oploc1,*]` blocks (one skip unit each).
 const WILDERNESS_LEVER_LOC_NAMES: &[&str] = &["wildinlever", "wildoutlever"];
@@ -418,6 +431,11 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     // agility_dungeon.rs2: Walk-across the Yanille balancing ledge
     // (forcemove 8 tiles + p_delay).
     ("balancing_ledge3", 8),
+    // island_rope_swing: curated extra=1 (ticks=2), fullstyle exactmove
+    // analogue. Source does not publish a nav extra; unmeasured.
+    ("tree_ropeswing1", 1),
+    ("tree_ropeswing2", 1),
+    ("tree_ropeswing3", 1),
 ];
 
 fn extra_ticks(name: &str) -> Option<i32> {
@@ -2483,7 +2501,6 @@ fn completed_quest_reverse(
     None
 }
 
-
 // ---------------------------------------------------------------------------
 // Ladders and stairs (m8aq `resolvePlacements` port).
 // ---------------------------------------------------------------------------
@@ -3066,6 +3083,193 @@ fn shortcut_edges(
             }
         }
     }
+}
+
+/// Directed `island_rope_swing` hops from `shortcuts.loc` `start_coord` /
+/// `end_coord`. Packed `at` is the standable start, not the loc origin.
+/// Absolute params only emit when a placement footprint joins that start
+/// — a far mapsquare copy cannot invent a remotely usable edge.
+fn island_rope_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let path = content_root
+        .join("scripts")
+        .join("skill_agility")
+        .join("configs")
+        .join("shortcuts.loc");
+    let Ok(text) = fs::read_to_string(&path) else {
+        bump(skipped, SKIP_ISLAND_ROPE_CONFIG, 1);
+        return;
+    };
+    for leaf in island_rope_leaves(&text) {
+        emit_island_rope_leaf(&leaf, ids, positions, loc_defs, graph, skipped);
+    }
+}
+
+struct IslandRopeLeaf {
+    name: String,
+    start: Option<WorldTile>,
+    end: Option<WorldTile>,
+    width: i32,
+    length: i32,
+}
+
+fn island_rope_leaves(text: &str) -> Vec<IslandRopeLeaf> {
+    let mut out = Vec::new();
+    let mut cur_name: Option<String> = None;
+    let mut category: Option<String> = None;
+    let mut start = None;
+    let mut end = None;
+    let mut width = 1;
+    let mut length = 1;
+    let mut flush = |name: &str,
+                     category: &Option<String>,
+                     start: Option<WorldTile>,
+                     end: Option<WorldTile>,
+                     width: i32,
+                     length: i32| {
+        if category.as_deref() == Some(ISLAND_ROPE_CATEGORY) {
+            out.push(IslandRopeLeaf {
+                name: name.to_string(),
+                start,
+                end,
+                width,
+                length,
+            });
+        }
+    };
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(name) = config_header(line) {
+            if let Some(prev) = cur_name.take() {
+                flush(&prev, &category, start, end, width, length);
+            }
+            cur_name = Some(name.to_string());
+            category = None;
+            start = None;
+            end = None;
+            width = 1;
+            length = 1;
+            continue;
+        }
+        if cur_name.is_none() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("category=") {
+            category = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("width=") {
+            if let Ok(n) = value.trim().parse::<i32>() {
+                width = n;
+            }
+        } else if let Some(value) = line.strip_prefix("length=") {
+            if let Ok(n) = value.trim().parse::<i32>() {
+                length = n;
+            }
+        } else if let Some(rest) = line.strip_prefix("param=") {
+            if let Some((key, value)) = rest.split_once(',') {
+                let tile =
+                    coord_literal(value.trim()).map(|(level, x, z)| WorldTile { level, x, z });
+                match key.trim() {
+                    "start_coord" => start = tile,
+                    "end_coord" => end = tile,
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(prev) = cur_name {
+        flush(&prev, &category, start, end, width, length);
+    }
+    out
+}
+
+fn placement_joins(loc: &Placement, start: WorldTile, width: i32, length: i32) -> bool {
+    if loc.level != start.level {
+        return false;
+    }
+    let w = width.max(1);
+    let l = length.max(1);
+    let (fw, fl) = if loc.angle == 1 || loc.angle == 3 {
+        (l, w)
+    } else {
+        (w, l)
+    };
+    let max_x = loc.x + fw - 1;
+    let max_z = loc.z + fl - 1;
+    start.x >= loc.x && start.x <= max_x && start.z >= loc.z && start.z <= max_z
+}
+
+fn emit_island_rope_leaf(
+    leaf: &IslandRopeLeaf,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let Some(&id) = ids.get(&leaf.name) else {
+        return;
+    };
+    let Some(_def) = loc_defs.loc(id) else {
+        return;
+    };
+    let Some(extra) = extra_ticks(&leaf.name) else {
+        bump(
+            skipped,
+            SKIP_UNPRICED,
+            positions.get(&id).map_or(1, Vec::len),
+        );
+        return;
+    };
+    let (Some(start), Some(end)) = (leaf.start, leaf.end) else {
+        bump(skipped, SKIP_ISLAND_ROPE_PARAMS, 1);
+        return;
+    };
+    if !in_world_box(&start) || !in_world_box(&end) {
+        bump(skipped, SKIP_DEST_OUTSIDE, 1);
+        return;
+    }
+    let Some(placements) = positions.get(&id) else {
+        bump(skipped, SKIP_ISLAND_ROPE_JOIN, 1);
+        return;
+    };
+    let mut joined = false;
+    for loc in placements {
+        if placement_joins(loc, start, leaf.width, leaf.length) {
+            joined = true;
+        } else {
+            bump(skipped, SKIP_ISLAND_ROPE_JOIN, 1);
+        }
+    }
+    if !joined {
+        return;
+    }
+    let skill_req = if leaf.name == ISLAND_ROPE_RETURN {
+        vec![]
+    } else {
+        vec![(SKILL_AGILITY, 10)]
+    };
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::AgilityShortcut,
+        at: start,
+        to: end,
+        loc_id: id,
+        option: 1,
+        ticks: 1 + extra,
+        dir: None,
+        open_loc_id: None,
+        skill_req,
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+    });
 }
 
 fn fullstyle_dests(loc: &Placement) -> Vec<WorldTile> {
@@ -4489,8 +4693,7 @@ fn magicguild_door_edges(
         .join("area_yanille")
         .join("scripts")
         .join("magic_guild.rs2");
-    let applicable =
-        packed_declared_names(ids, &[MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT]);
+    let applicable = packed_declared_names(ids, &[MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT]);
     if !script_path.is_file() {
         bump(skipped, SKIP_MAGICGUILD_SCRIPT, applicable);
         return;
@@ -4652,11 +4855,19 @@ fn rangingguild_door_edges(
     let Some((exit_force, exit_tele, enter_force, enter_tele)) =
         rangingguild_parse_opener(content_root)
     else {
-        bump(skipped, SKIP_RANGINGGUILD_SCRIPT, RANGINGGUILD_DECLARED_PAIR);
+        bump(
+            skipped,
+            SKIP_RANGINGGUILD_SCRIPT,
+            RANGINGGUILD_DECLARED_PAIR,
+        );
         return;
     };
     let Some(placement) = rangingguild_unique_placement(positions, loc_id) else {
-        bump(skipped, SKIP_RANGINGGUILD_PLACEMENT, RANGINGGUILD_DECLARED_PAIR);
+        bump(
+            skipped,
+            SKIP_RANGINGGUILD_PLACEMENT,
+            RANGINGGUILD_DECLARED_PAIR,
+        );
         return;
     };
     let loc = WorldTile {
@@ -4691,7 +4902,10 @@ fn rangingguild_door_edges(
     }
 }
 
-fn rangingguild_resolve_loc_id(content_root: &Path, ids: &HashMap<String, i32>) -> RangingLocResolve {
+fn rangingguild_resolve_loc_id(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> RangingLocResolve {
     let Some(&id) = ids.get(RANGINGGUILD_DOOR_NAME) else {
         return RangingLocResolve::NotApplicable;
     };
@@ -7289,6 +7503,526 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
         assert_eq!(e.option, 1);
         assert_eq!(e.ticks, 1); // op base 1 + watchshortcut extra 0
         assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 5)]);
+    }
+
+    const ISLAND_ROPE_LOC: &str = "\
+[tree_ropeswing1]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_42_50_21_9
+param=end_coord,0_42_50_16_9
+param=dir,3
+
+[tree_ropeswing2]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_42_50_17_5
+param=end_coord,0_42_50_21_5
+param=dir,1
+
+[tree_ropeswing3]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_39_48_15_19
+param=end_coord,0_39_48_15_24
+param=dir,0
+
+[zqrockjump1]
+name=Stepping stones
+op1=Cross
+category=karamja_stepping_stone
+";
+
+    fn island_rope_fixture(pack_ids: &[(i32, &str)]) -> Fixture {
+        let fx = Fixture::new();
+        let mut pack = String::new();
+        for (id, name) in pack_ids {
+            pack.push_str(&format!("{id}={name}\n"));
+        }
+        fx.write("pack/loc.pack", &pack);
+        fx.write(
+            "scripts/skill_agility/configs/shortcuts.loc",
+            ISLAND_ROPE_LOC,
+        );
+        fx.write(
+            "maps/m42_50.jm2",
+            "\
+==== MAP ====
+0 17 9: h1 o6 u50
+0 15 5: h1 o6 u50
+==== LOC ====
+0 17 9: 9001 10 1
+0 15 5: 9002 10 3
+",
+        );
+        fx.write(
+            "maps/m39_48.jm2",
+            "\
+==== MAP ====
+0 15 18: h1 o6 u50
+==== LOC ====
+0 15 18: 9003 10 2
+",
+        );
+        fx.write(
+            "maps/m45_73.jm2",
+            "\
+==== MAP ====
+0 15 18: h1 o6 u50
+==== LOC ====
+0 15 18: 9003 10 2
+",
+        );
+        fx.write(
+            "maps/m45_46.jm2",
+            "\
+==== MAP ====
+0 45 4: h1 o6 u50
+==== LOC ====
+0 45 4: 9333 10 0
+",
+        );
+        fx
+    }
+
+    fn island_rope_pack() -> Vec<(i32, &'static str)> {
+        vec![
+            (9001, "tree_ropeswing1"),
+            (9002, "tree_ropeswing2"),
+            (9003, "tree_ropeswing3"),
+            (9333, "zqrockjump1"),
+        ]
+    }
+
+    fn island_rope_defs() -> LocDefs {
+        loc_defs(&[(9001, 1, 6), (9002, 1, 6), (9003, 1, 6), (9333, 1, 1)])
+    }
+
+    fn island_rope_edge<'a>(graph: &'a TransportGraph, loc_id: i32) -> Option<&'a TransportEdge> {
+        graph
+            .edges
+            .iter()
+            .find(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == loc_id)
+    }
+
+    #[test]
+    fn derive_transports_emits_island_rope_swing_from_start_end_params() {
+        let fx = island_rope_fixture(&island_rope_pack());
+        let defs = island_rope_defs();
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+
+        let inbound = island_rope_edge(&graph, 9001).expect("tree_ropeswing1");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(
+            inbound.to,
+            WorldTile {
+                x: 2704,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(inbound.option, 1);
+        assert_eq!(inbound.dir, None);
+        assert_eq!(inbound.ticks, 2);
+        assert_eq!(inbound.skill_req, vec![(SKILL_AGILITY, 10)]);
+        assert!(inbound.item_req.is_empty());
+        assert!(inbound.quest_req.is_empty());
+        assert!(inbound.varp_req.is_empty());
+        assert!(inbound.worn_req.is_empty());
+        assert!(!inbound.members_req);
+
+        let ret = island_rope_edge(&graph, 9002).expect("tree_ropeswing2");
+        assert_eq!(
+            ret.at,
+            WorldTile {
+                x: 2705,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ret.to,
+            WorldTile {
+                x: 2709,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert!(ret.skill_req.is_empty(), "return has no agility gate");
+        assert_eq!(ret.ticks, 2);
+        assert_eq!(ret.option, 1);
+        assert_eq!(ret.dir, None);
+
+        let ogre = island_rope_edge(&graph, 9003).expect("tree_ropeswing3");
+        assert_eq!(
+            ogre.at,
+            WorldTile {
+                x: 2511,
+                z: 3091,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ogre.to,
+            WorldTile {
+                x: 2511,
+                z: 3096,
+                level: 0
+            }
+        );
+        assert_eq!(ogre.skill_req, vec![(SKILL_AGILITY, 10)]);
+
+        assert!(
+            graph.edges.iter().filter(|e| e.loc_id == 9003).count() == 1,
+            "far m45_73 copy must not invent a second edge"
+        );
+        assert!(
+            graph.edges.iter().all(|e| e.at
+                != WorldTile {
+                    x: 2895,
+                    z: 4690,
+                    level: 0
+                }),
+            "absolute params must not emit from the far copy origin"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_JOIN), 1);
+        assert_eq!(skip_total(&skipped, SKIP_UNPRICED), 0);
+        assert!(
+            island_rope_edge(&graph, 9333).is_none(),
+            "zqrockjump1 is not island_rope_swing"
+        );
+
+        let inbound_ok = crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 10)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        let inbound_low = crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 9)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        assert!(inbound_ok.allows(inbound));
+        assert!(!inbound_low.allows(inbound));
+        assert!(crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 1)]),
+            ..crate::world_state::WorldState::empty()
+        }
+        .allows(ret));
+    }
+
+    #[test]
+    fn derive_transports_skips_island_rope_missing_end_coord() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "9001=tree_ropeswing1\n");
+        fx.write(
+            "scripts/skill_agility/configs/shortcuts.loc",
+            "\
+[tree_ropeswing1]
+category=island_rope_swing
+length=6
+param=start_coord,0_42_50_21_9
+",
+        );
+        fx.write(
+            "maps/m42_50.jm2",
+            "==== MAP ====\n0 17 9: h1 o6 u50\n==== LOC ====\n0 17 9: 9001 10 1\n",
+        );
+        let defs = loc_defs(&[(9001, 1, 6)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(island_rope_edge(&graph, 9001).is_none());
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_PARAMS), 1);
+    }
+
+    #[test]
+    fn derive_transports_skips_island_rope_when_shortcuts_loc_missing() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "9001=tree_ropeswing1\n");
+        fx.write(
+            "maps/m42_50.jm2",
+            "==== MAP ====\n0 17 9: h1 o6 u50\n==== LOC ====\n0 17 9: 9001 10 1\n",
+        );
+        let defs = loc_defs(&[(9001, 1, 6)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(island_rope_edge(&graph, 9001).is_none());
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_CONFIG), 1);
+    }
+
+    fn pack_id_by_name(content_root: &Path, name: &str) -> Option<i32> {
+        loc_ids_by_name(content_root).get(name).copied()
+    }
+
+    fn assert_real_island_ropes(graph: &TransportGraph, content_root: &Path) {
+        let id1 = pack_id_by_name(content_root, "tree_ropeswing1").expect("pack tree_ropeswing1");
+        let id2 = pack_id_by_name(content_root, "tree_ropeswing2").expect("pack tree_ropeswing2");
+        let id3 = pack_id_by_name(content_root, "tree_ropeswing3").expect("pack tree_ropeswing3");
+        let inbound = island_rope_edge(graph, id1).expect("inbound island rope");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(
+            inbound.to,
+            WorldTile {
+                x: 2704,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(inbound.option, 1);
+        assert_eq!(inbound.dir, None);
+        assert_eq!(inbound.skill_req, vec![(SKILL_AGILITY, 10)]);
+        let ret = island_rope_edge(graph, id2).expect("return island rope");
+        assert_eq!(
+            ret.at,
+            WorldTile {
+                x: 2705,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ret.to,
+            WorldTile {
+                x: 2709,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert!(ret.skill_req.is_empty());
+        let ogre = island_rope_edge(graph, id3).expect("ogre island rope");
+        assert_eq!(
+            ogre.at,
+            WorldTile {
+                x: 2511,
+                z: 3091,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ogre.to,
+            WorldTile {
+                x: 2511,
+                z: 3096,
+                level: 0
+            }
+        );
+        assert_eq!(ogre.skill_req, vec![(SKILL_AGILITY, 10)]);
+        if let Some(zq) = pack_id_by_name(content_root, "zqrockjump1") {
+            assert!(
+                graph
+                    .edges
+                    .iter()
+                    .filter(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == zq)
+                    .all(|e| e.at.x != 2698 && e.to.x != 2698),
+                "zqrockjump1 must not close FIELD"
+            );
+        }
+    }
+
+    #[test]
+    fn derive_transports_island_ropes_from_real_274_content() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let root = real_content_root().expect("root present when derive succeeded");
+        assert_real_island_ropes(&graph, &root);
+    }
+
+    #[test]
+    fn derive_transports_island_ropes_from_real_289_content() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+        assert_real_island_ropes(graph, &root);
+    }
+
+    fn staged_289_world() -> Option<crate::world::NavWorld> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../../docs/superpowers/qualification/Inspect Qualification.app/Contents/Resources/nav/289/274bot.navpack",
+        );
+        match crate::world::NavWorld::load_pack(&path) {
+            Ok(world) => Some(world),
+            Err(e) => {
+                eprintln!(
+                    "SKIP: staged 289 navpack missing at {} ({e:?})",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    fn inspect_avoid() -> [crate::router::AvoidRect; 1] {
+        [crate::router::AvoidRect {
+            min_x: 2780,
+            max_x: 3040,
+            min_z: 3130,
+            max_z: 3330,
+            level: None,
+        }]
+    }
+
+    fn inspect_opts() -> crate::router::FindOptions {
+        crate::router::FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            essence: None,
+        }
+    }
+
+    fn pier_field_state(coins: i32, agility: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            inv: HashMap::from([(995, coins)]),
+            stats: HashMap::from([(SKILL_AGILITY, agility)]),
+            ..crate::world_state::WorldState::empty()
+        }
+        .with_map_members(true)
+    }
+
+    #[test]
+    fn derived_graph_plus_staged_collision_pier_reaches_field() {
+        let Some(world) = staged_289_world() else {
+            return;
+        };
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+        let swing1 = pack_id_by_name(&root, "tree_ropeswing1").expect("pack tree_ropeswing1");
+        let inbound = island_rope_edge(graph, swing1).expect("derived inbound swing");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert!(
+            world
+                .graph
+                .edges
+                .iter()
+                .all(|e| e.kind != TransportKind::AgilityShortcut || e.loc_id != swing1),
+            "staged pack still lacks the swing; proof is the derived graph"
+        );
+
+        let pier = WorldTile {
+            x: 2683,
+            z: 3272,
+            level: 0,
+        };
+        let field = WorldTile {
+            x: 2698,
+            z: 3206,
+            level: 0,
+        };
+        let opts = inspect_opts();
+        let avoid = inspect_avoid();
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    &world.collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(0, 10),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
+            ),
+            "missing coins stay NoPath"
+        );
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    &world.collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(30, 9),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
+            ),
+            "agility 9 stays NoPath"
+        );
+        let ok = crate::router::find_with_avoid(
+            &world.collision,
+            graph,
+            pier,
+            field,
+            opts,
+            &pier_field_state(30, 10),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("coins30 agility10 must reach FIELD ({e:?})"));
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == 381
+            )),
+            "Barnaby 381 must be on the route: {ok:?}"
+        );
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge }
+                    if edge.loc_id == swing1
+                        && edge.at
+                            == WorldTile {
+                                x: 2709,
+                                z: 3209,
+                                level: 0
+                            }
+            )),
+            "derived inbound swing must be on the route: {ok:?}"
+        );
+
+        let ret_id = pack_id_by_name(&root, "tree_ropeswing2").expect("pack tree_ropeswing2");
+        let back = crate::router::find_with_avoid(
+            &world.collision,
+            graph,
+            field,
+            pier,
+            opts,
+            &pier_field_state(30, 1),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("return must allow low agility ({e:?})"));
+        assert!(
+            back.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == ret_id
+            )),
+            "low-agility return uses tree_ropeswing2: {back:?}"
+        );
     }
 
     #[test]
@@ -11776,10 +12510,7 @@ p_teleport(movecoord(coord, 2, 0, -2));
         assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 1);
 
         let fx = Fixture::new();
-        fx.write(
-            "pack/loc.pack",
-            "1814=wildinlever\n1815=wildoutlever\n",
-        );
+        fx.write("pack/loc.pack", "1814=wildinlever\n1815=wildoutlever\n");
         let defs = loc_defs(&[(1814, 1, 1), (1815, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let (_, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
@@ -11787,7 +12518,10 @@ p_teleport(movecoord(coord, 2, 0, -2));
 
         let fx = Fixture::new();
         write_magicguild_source(&fx, "");
-        fx.write("pack/loc.pack", "1600=magicguild_door_l\n1601=magicguild_door_r\n1522=loc_1522\n1523=loc_1523\n");
+        fx.write(
+            "pack/loc.pack",
+            "1600=magicguild_door_l\n1601=magicguild_door_r\n1522=loc_1522\n1523=loc_1523\n",
+        );
         fx.write(
             "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
             "\
@@ -11804,9 +12538,7 @@ param=next_loc_stage,loc_1523
         let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
         let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
-        assert!(
-            door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty()
-        );
+        assert!(door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty());
         assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 2);
 
         let fx = Fixture::new();
@@ -11910,10 +12642,7 @@ param=next_loc_stage,loc_1563
         let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
         let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
         assert!(
-            graph
-                .edges
-                .iter()
-                .all(|e| !matches!(e.loc_id, 2882 | 2883)),
+            graph.edges.iter().all(|e| !matches!(e.loc_id, 2882 | 2883)),
             "no toll crossings without jm2 placements"
         );
         assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 2);
@@ -11933,7 +12662,11 @@ param=next_loc_stage,loc_1563
             graph.edges.iter().any(|e| e.loc_id == 2882),
             "left gate emits when placed"
         );
-        assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 1, "right gate still missing");
+        assert_eq!(
+            skip_total(&skipped, SKIP_TOLL_GATE),
+            1,
+            "right gate still missing"
+        );
     }
 
     /// Original-base `toll_edges` emits every `parse_door_config_ids` openable
@@ -11943,10 +12676,7 @@ param=next_loc_stage,loc_1563
     fn n1_toll_emits_openable_alternate_border_gate_name() {
         let fx = Fixture::new();
         fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
-        fx.write(
-            "pack/loc.pack",
-            "4242=border_gate_extra\n1564=loc_1564\n",
-        );
+        fx.write("pack/loc.pack", "4242=border_gate_extra\n1564=loc_1564\n");
         fx.write(
             "scripts/areas/area_alkharid/configs/border_gate.loc",
             "\
@@ -11989,11 +12719,22 @@ param=next_loc_stage,loc_1564
                 level: 0,
             }
         );
-        assert_eq!(extras[0].to, WorldTile { x: 3267, z: 3227, level: 0 });
+        assert_eq!(
+            extras[0].to,
+            WorldTile {
+                x: 3267,
+                z: 3227,
+                level: 0
+            }
+        );
         assert_eq!(extras[0].dir, Some(DoorDir::W));
         assert_eq!(
             extras[1].to,
-            WorldTile { x: 3269, z: 3227, level: 0 }
+            WorldTile {
+                x: 3269,
+                z: 3227,
+                level: 0
+            }
         );
         assert_eq!(extras[1].dir, Some(DoorDir::E));
         for e in &extras {
