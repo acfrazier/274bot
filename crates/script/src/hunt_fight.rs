@@ -39,11 +39,16 @@ pub const RETURN_MS: u64 = 60_000;
 pub const RETREAT_HOPS: u32 = 4;
 pub const RETREAT_HOP_MS: u64 = 3_000;
 pub const RETREAT_RETRY_MS: u64 = 5_000;
+/// Frozen WalkToSpot `APPROACH_RADIUS`. Chebyshev 12 is Hold's walk-back.
+pub const APPROACH_RADIUS: i32 = 12;
+/// Frozen approach / dest leg window. Not `RETURN_MS`. Not `HOP_MS`.
+pub const APPROACH_MS: u64 = 120_000;
 
 thread_local! {
     static RUNTIMES: RefCell<HashMap<u64, FightRuntime>> = RefCell::new(HashMap::new());
     static HOLD_RUNTIMES: RefCell<HashMap<u64, HoldRuntime>> = RefCell::new(HashMap::new());
     static RETREAT_RUNTIMES: RefCell<HashMap<u64, RetreatRuntime>> = RefCell::new(HashMap::new());
+    static WALK_RUNTIMES: RefCell<HashMap<u64, WalkRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
     static OBSERVATION: RefCell<FightObservation> = RefCell::new(FightObservation::ready());
 }
@@ -87,6 +92,8 @@ pub struct Site {
     pub boxes: Vec<SiteBox>,
     pub fire_at_range: bool,
     pub ranged_threat: bool,
+    /// WalkToSpot stops. Default empty. Fight, Hold, and Retreat ignore it.
+    pub approach: Vec<Tile>,
 }
 
 #[derive(Clone, Debug)]
@@ -376,8 +383,8 @@ impl FightRuntime {
 #[derive(Clone, Debug)]
 struct Projection {
     died: bool,
-    /// Additive chase-gate field. Fight validate_inner / next_effect must
-    /// not read this; Hold validate uses it only.
+    /// Chase-gate field. Fight validate_inner / next_effect must not read
+    /// this. Hold validate and Walk validate read it for the chase gate only.
     target_idx: Option<i32>,
     hp_fraction: f64,
     panic_hp: f64,
@@ -520,6 +527,15 @@ fn parse_projection(input: &Value) -> Projection {
                 .collect()
         })
         .unwrap_or_default();
+    let approach = input
+        .get("approach")
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .map(|row| parse_tile(Some(row), origin))
+                .collect()
+        })
+        .unwrap_or_default();
     Projection {
         died: input.get("died").and_then(Value::as_bool).unwrap_or(false),
         target_idx: match input.get("targetIdx") {
@@ -596,6 +612,7 @@ fn parse_projection(input: &Value) -> Projection {
                 .get("rangedThreat")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            approach,
         },
     }
 }
@@ -676,6 +693,16 @@ fn nearest_spot(from: Tile, spots: &[Tile]) -> i32 {
         }
     }
     best
+}
+
+/// Frozen `Tile.distanceTo`: Chebyshev xz, different level is `1_000_000 + xz`.
+fn distance_to(a: Tile, b: Tile) -> i32 {
+    let xz = (a.x - b.x).abs().max((a.z - b.z).abs());
+    if a.level != b.level {
+        1_000_000 + xz
+    } else {
+        xz
+    }
 }
 
 fn retreat_aim(rotated: Option<i32>, from: Tile, spots: &[Tile]) -> (i32, i32) {
@@ -1506,6 +1533,14 @@ fn each_retreat_runtime(f: impl Fn(&mut RetreatRuntime)) {
     });
 }
 
+fn each_walk_runtime(f: impl Fn(&mut WalkRuntime)) {
+    WALK_RUNTIMES.with(|m| {
+        for rt in m.borrow_mut().values_mut() {
+            f(rt);
+        }
+    });
+}
+
 pub fn on_pause() {
     each_runtime(|rt| {
         let held = rt.clock.held;
@@ -1516,6 +1551,10 @@ pub fn on_pause() {
         rt.apply_freeze(true, held);
     });
     each_retreat_runtime(|rt| {
+        let held = rt.clock.held;
+        rt.apply_freeze(true, held);
+    });
+    each_walk_runtime(|rt| {
         let held = rt.clock.held;
         rt.apply_freeze(true, held);
     });
@@ -1534,6 +1573,10 @@ pub fn on_resume() {
         let held = rt.clock.held;
         rt.apply_freeze(false, held);
     });
+    each_walk_runtime(|rt| {
+        let held = rt.clock.held;
+        rt.apply_freeze(false, held);
+    });
 }
 
 pub fn on_hold(held: bool) {
@@ -1549,12 +1592,17 @@ pub fn on_hold(held: bool) {
         let paused = rt.clock.paused;
         rt.apply_freeze(paused, held);
     });
+    each_walk_runtime(|rt| {
+        let paused = rt.clock.paused;
+        rt.apply_freeze(paused, held);
+    });
 }
 
 pub fn on_reset() {
     RUNTIMES.with(|m| m.borrow_mut().clear());
     HOLD_RUNTIMES.with(|m| m.borrow_mut().clear());
     RETREAT_RUNTIMES.with(|m| m.borrow_mut().clear());
+    WALK_RUNTIMES.with(|m| m.borrow_mut().clear());
     OBSERVATION.with(|o| *o.borrow_mut() = FightObservation::ready());
 }
 
@@ -2468,6 +2516,332 @@ pub fn retreat_token_alive(token: u64) -> bool {
 /// Test helper: make `clock.bound_reached()` true without sleeping hop/retry.
 pub fn retreat_force_bound_reached(token: u64) -> bool {
     with_retreat(token, |rt| {
+        rt.clock.deadline = Some(rt.clock.now());
+        true
+    })
+    .unwrap_or(false)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkMode {
+    Idle,
+    PickLeg,
+    NeedAck,
+    Waiting,
+    NeedYield,
+    Aborted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkLeg {
+    Approach,
+    Dest,
+}
+
+struct WalkRuntime {
+    clock: InstantTaskClock,
+    token: u64,
+    mode: WalkMode,
+    dest: Option<Tile>,
+    leg: Option<Tile>,
+    approach_cursor: i32,
+    leg_kind: WalkLeg,
+    walk_token: Option<u64>,
+    after_sustain: bool,
+}
+
+impl WalkRuntime {
+    fn new(token: u64) -> Self {
+        Self {
+            clock: InstantTaskClock::new(),
+            token,
+            mode: WalkMode::Idle,
+            dest: None,
+            leg: None,
+            approach_cursor: 0,
+            leg_kind: WalkLeg::Dest,
+            walk_token: None,
+            after_sustain: false,
+        }
+    }
+
+    fn now(&self) -> Instant {
+        self.clock.now()
+    }
+
+    fn apply_freeze(&mut self, paused: bool, held: bool) {
+        self.clock.set_freeze(paused, held);
+    }
+
+    fn emit(&self, mut v: Value) -> Value {
+        v["token"] = json!(self.token);
+        v
+    }
+
+    fn yield_now(&mut self) -> Value {
+        self.mode = WalkMode::Idle;
+        self.walk_token = None;
+        self.after_sustain = false;
+        self.dest = None;
+        self.leg = None;
+        self.approach_cursor = 0;
+        self.leg_kind = WalkLeg::Dest;
+        self.emit(json!({ "kind": "yield" }))
+    }
+
+    fn aborted(&mut self, reason: &str) -> Value {
+        self.mode = WalkMode::Aborted;
+        self.emit(json!({ "kind": "aborted", "reason": reason }))
+    }
+}
+
+fn with_walk<T>(token: u64, f: impl FnOnce(&mut WalkRuntime) -> T) -> Option<T> {
+    WALK_RUNTIMES.with(|m| m.borrow_mut().get_mut(&token).map(f))
+}
+
+fn walk_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
+    let Some(here) = obs.here else {
+        return false;
+    };
+    if !in_area_body(here, 1, &proj.site.boxes) {
+        return false;
+    }
+    if chase_mode(proj.style, proj.site.fire_at_range) && proj.target_idx.is_some() {
+        return false;
+    }
+    if proj.hp_fraction < proj.panic_hp {
+        return false;
+    }
+    distance_to(anchor(proj), here) > APPROACH_RADIUS
+}
+
+fn walk_short_log(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    let dest = rt.dest.unwrap_or_else(|| anchor(proj));
+    let name = spot_name(proj.style, proj.safespot_index);
+    rt.mode = WalkMode::NeedYield;
+    rt.emit(json!({
+        "kind": "log",
+        "message": format!(
+            "the walk in stopped short of {name} at ({}, {}, {}). Closing the gap from the walk-back task.",
+            dest.x, dest.z, dest.level
+        ),
+    }))
+}
+
+fn walk_interrupt(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    let dest = rt.dest.unwrap_or_else(|| anchor(proj));
+    let obs = observation();
+    if at_tile(&obs, dest) {
+        return rt.yield_now();
+    }
+    walk_short_log(rt, proj)
+}
+
+fn walk_sustain(rt: &mut WalkRuntime) -> Value {
+    if !rt.after_sustain {
+        rt.after_sustain = true;
+        return rt.emit(json!({ "kind": "sustain" }));
+    }
+    rt.after_sustain = false;
+    rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
+}
+
+fn walk_emit_walk(rt: &mut WalkRuntime, tile: Tile, kind: WalkLeg) -> Value {
+    rt.leg = Some(tile);
+    rt.leg_kind = kind;
+    rt.clock.arm(APPROACH_MS);
+    rt.walk_token = None;
+    rt.after_sustain = false;
+    rt.mode = WalkMode::NeedAck;
+    rt.emit(json!({
+        "kind": "walk",
+        "x": tile.x,
+        "z": tile.z,
+        "level": tile.level,
+    }))
+}
+
+fn walk_pick_leg(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    if observation().hold || observation().ours {
+        return walk_interrupt(rt, proj);
+    }
+    if rt.leg_kind == WalkLeg::Approach {
+        let here = observation().here;
+        while let Some(stop) = usize::try_from(rt.approach_cursor)
+            .ok()
+            .and_then(|i| proj.site.approach.get(i).copied())
+        {
+            if here.is_some_and(|h| distance_to(stop, h) <= 1) {
+                rt.approach_cursor += 1;
+                continue;
+            }
+            return walk_emit_walk(rt, stop, WalkLeg::Approach);
+        }
+        rt.leg_kind = WalkLeg::Dest;
+    }
+    let dest = rt.dest.unwrap_or_else(|| anchor(proj));
+    rt.dest = Some(dest);
+    walk_emit_walk(rt, dest, WalkLeg::Dest)
+}
+
+fn walk_advance_approach(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    rt.approach_cursor += 1;
+    rt.walk_token = None;
+    rt.after_sustain = false;
+    rt.mode = WalkMode::PickLeg;
+    rt.leg_kind = WalkLeg::Approach;
+    walk_pick_leg(rt, proj)
+}
+
+fn walk_poll(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    let obs = observation();
+    if obs.hold || obs.ours {
+        return walk_interrupt(rt, proj);
+    }
+    let dest = rt.dest.unwrap_or_else(|| anchor(proj));
+    if rt.leg_kind == WalkLeg::Dest {
+        if at_tile(&obs, dest) {
+            return rt.yield_now();
+        }
+        let done = rt.walk_token.is_some_and(walk_wait_settled) || rt.clock.bound_reached();
+        if done {
+            let obs = observation();
+            if at_tile(&obs, dest) {
+                return rt.yield_now();
+            }
+            return walk_short_log(rt, proj);
+        }
+        return walk_sustain(rt);
+    }
+    let leg = rt.leg.unwrap_or(dest);
+    let done = at_tile(&obs, leg)
+        || rt.walk_token.is_some_and(walk_wait_settled)
+        || rt.clock.bound_reached();
+    if done {
+        return walk_advance_approach(rt, proj);
+    }
+    walk_sustain(rt)
+}
+
+fn walk_start(rt: &mut WalkRuntime, proj: &Projection) -> Value {
+    let dest = anchor(proj);
+    rt.dest = Some(dest);
+    rt.leg = None;
+    rt.walk_token = None;
+    rt.after_sustain = false;
+    rt.clock.deadline = None;
+    let obs = observation();
+    if let Some(here) = obs.here.filter(|_| !proj.site.approach.is_empty()) {
+        rt.leg_kind = WalkLeg::Approach;
+        rt.approach_cursor = nearest_spot(here, &proj.site.approach);
+    } else {
+        rt.leg_kind = WalkLeg::Dest;
+        rt.approach_cursor = 0;
+    }
+    rt.mode = WalkMode::PickLeg;
+    rt.emit(json!({ "kind": "status", "message": "walking to the fight spot" }))
+}
+
+fn walk_next_effect(rt: &mut WalkRuntime, proj: &Projection, reply: Option<&Value>) -> Value {
+    if rt.mode == WalkMode::Aborted {
+        return rt.aborted("aborted");
+    }
+    if reply.is_some_and(|r| r.get("eatOk").is_some()) {
+        return rt.aborted("unexpected eatOk");
+    }
+    if rt.clock.frozen() {
+        return rt.emit(json!({ "kind": "wait" }));
+    }
+    match rt.mode {
+        WalkMode::Idle => walk_start(rt, proj),
+        WalkMode::PickLeg => walk_pick_leg(rt, proj),
+        WalkMode::NeedAck => {
+            let queued = reply
+                .and_then(|r| r.get("queued"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let Some(walk_token) = reply_u64(reply, "walkToken") else {
+                if queued {
+                    return rt.aborted("unexpected queued");
+                }
+                return rt.aborted("missing walkToken");
+            };
+            rt.walk_token = Some(walk_token);
+            rt.mode = WalkMode::Waiting;
+            rt.after_sustain = false;
+            walk_poll(rt, proj)
+        }
+        WalkMode::Waiting => {
+            let queued = reply
+                .and_then(|r| r.get("queued"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if queued {
+                return rt.aborted("unexpected queued");
+            }
+            walk_poll(rt, proj)
+        }
+        WalkMode::NeedYield => rt.yield_now(),
+        WalkMode::Aborted => rt.aborted("aborted"),
+    }
+}
+
+fn walk_begin() -> Value {
+    let token = alloc_token();
+    WALK_RUNTIMES.with(|m| {
+        m.borrow_mut().insert(token, WalkRuntime::new(token));
+    });
+    json!({ "kind": "started", "token": token })
+}
+
+pub fn walk_dispatch(input: &Value) -> Value {
+    match input.get("op").and_then(Value::as_str).unwrap_or("") {
+        "begin" => walk_begin(),
+        "validate" => {
+            let token = token_of(input);
+            let proj = parse_projection(input);
+            let obs = observation();
+            match with_walk(
+                token,
+                |_| json!({ "value": walk_validate_inner(&proj, &obs), "token": token }),
+            ) {
+                Some(v) => v,
+                None => json!({ "kind": "aborted", "reason": "unknown token", "value": false }),
+            }
+        }
+        "next" => {
+            let token = token_of(input);
+            let proj = parse_projection(input);
+            let reply = input.get("reply");
+            match with_walk(token, |rt| walk_next_effect(rt, &proj, reply)) {
+                Some(v) => v,
+                None => json!({ "kind": "aborted", "reason": "unknown token" }),
+            }
+        }
+        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
+    }
+}
+
+pub fn walk_deadline_remaining_ms(token: u64) -> Option<i64> {
+    with_walk(token, |rt| {
+        rt.clock.deadline.map(|d| {
+            if d > rt.now() {
+                d.saturating_duration_since(rt.now()).as_millis() as i64
+            } else {
+                0
+            }
+        })
+    })
+    .flatten()
+}
+
+pub fn walk_token_alive(token: u64) -> bool {
+    WALK_RUNTIMES.with(|m| m.borrow().contains_key(&token))
+}
+
+/// Test helper: make `clock.bound_reached()` true without sleeping `APPROACH_MS`.
+pub fn walk_force_bound_reached(token: u64) -> bool {
+    with_walk(token, |rt| {
         rt.clock.deadline = Some(rt.clock.now());
         true
     })

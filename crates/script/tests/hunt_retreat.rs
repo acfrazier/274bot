@@ -655,7 +655,7 @@ fn leftover_walk_token_does_not_settle_retreat() {
 }
 
 #[test]
-fn walk_to_spot_still_not_impl_and_class_switches_stay_split() {
+fn class_switches_stay_split_and_walk_to_spot_is_live() {
     let src = include_str!("../src/shim/hunting_combat.js");
     assert!(!src.contains("retreatDue"));
     assert!(!src.contains("retreatAim"));
@@ -707,11 +707,12 @@ export default class T extends LoopingBot {
         serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
     assert!(
-        probe["walkToSpot"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{probe:?}"
+        probe["walkToSpot"].is_null()
+            || !probe["walkToSpot"]
+                .as_str()
+                .unwrap_or("")
+                .contains("not impl"),
+        "WalkToSpot isolate is live: {probe:?}"
     );
 }
 

@@ -45,6 +45,19 @@ fn host_js_dts_includes_required_interfaces() {
     ));
     assert!(src.contains("export type FightStep"));
     assert!(src.contains("export type HoldStep"));
+    assert!(src.contains("export type RetreatStep"));
+    assert!(src.contains("walkspotBegin(input?: object): HelperResult<{ token: number }>"));
+    assert!(src.contains(
+        "walkspotNext(input: { token: number; reply?: unknown } & Record<string, unknown>): WalkStep"
+    ));
+    assert!(src.contains("export type WalkStep"));
+    let walk_step = src.split("export type WalkStep").nth(1).expect("WalkStep");
+    assert!(walk_step.contains("kind: 'yield'"));
+    assert!(walk_step.contains("kind: 'aborted'"));
+    assert!(
+        !walk_step.contains("status: 'aborted'; token: number; kind: 'aborted'"),
+        "WalkStep must not copy FightStep ok:true aborted"
+    );
     assert!(src.contains("kind: 'yield'"));
     assert!(src.contains("export interface QuestStatusRow"));
     assert!(src.contains("quest_statuses: QuestStatusRow[] | null"));

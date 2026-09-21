@@ -44,6 +44,7 @@ function projection(host, site) {
         boxes: site.boxes || [],
         fireAtRange: site.fireAtRange === true,
         rangedThreat: site.rangedThreat === true,
+        approach: (site.approach || []).map(tile),
     };
 }
 
@@ -308,8 +309,90 @@ export class HoldSafespot {
     }
 }
 
-export class WalkToSpot {
-    constructor() {
+function walkspotCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walkspot
+        : undefined;
+    if (typeof fn !== 'function') {
         throw notImpl('WalkToSpot');
+    }
+    return fn(payload);
+}
+
+export class WalkToSpot {
+    constructor(host, site) {
+        this.host = host;
+        this.site = site;
+        const started = walkspotCall({ op: 'begin' });
+        this.token = started.token;
+    }
+
+    validate() {
+        const out = walkspotCall({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        return out === true || out?.value === true;
+    }
+
+    async execute() {
+        this.host.fight?.interruptWatch();
+        let reply = null;
+        for (;;) {
+            const step = walkspotCall({
+                op: 'next',
+                token: this.token,
+                reply,
+                ...projection(this.host, this.site),
+            });
+            reply = null;
+            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+                return;
+            }
+            switch (step.kind) {
+                case 'log':
+                    this.host.log?.(step.message);
+                    break;
+                case 'status':
+                    this.host.setStatus?.(step.message);
+                    break;
+                case 'walk': {
+                    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+                        ? globalThis.rustyscript.functions.__rs2b0t_walk
+                        : undefined;
+                    if (typeof walkFn !== 'function') {
+                        throw notImpl('walk');
+                    }
+                    const walkToken = walkFn({
+                        op: 'begin',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        radius: 0,
+                        allow_teleports: false,
+                    });
+                    queue({
+                        op: 'walk',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        request_id: walkToken,
+                        allow_teleports: false,
+                        allow_wilderness: true,
+                        allow_bank_fetch: true,
+                    });
+                    reply = { queued: true, walkToken };
+                    break;
+                }
+                case 'sustain':
+                    await Sustain.run();
+                    break;
+                case 'delay-ticks':
+                    await Execution.delayTicks(Number(step.n) || 1);
+                    break;
+                case 'wait':
+                    await Execution.delayTicks(1);
+                    break;
+                default:
+                    return;
+            }
+        }
     }
 }

@@ -666,11 +666,12 @@ export default class T extends LoopingBot {
         "Retreat isolate is live: {probe:?}"
     );
     assert!(
-        probe["walkToSpot"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{probe:?}"
+        probe["walkToSpot"].is_null()
+            || !probe["walkToSpot"]
+                .as_str()
+                .unwrap_or("")
+                .contains("not impl"),
+        "WalkToSpot isolate is live: {probe:?}"
     );
 }
 
