@@ -285,6 +285,7 @@ const SKIP_LEVER_SOURCE: &str = "wilderness lever script or constants did not lo
 const SKIP_LEVER_ROUTE: &str = "wilderness lever oploc1 block did not resolve to a hop";
 const SKIP_TOLL_OBJ_PACK: &str = "toll or shantay item name missing from pack/obj.pack";
 const SKIP_TOLL_CONFIG: &str = "Al Kharid border_gate.loc did not load or parse toll gates";
+const SKIP_TOLL_GATE: &str = "Al Kharid border toll gate placement did not derive crossings";
 const SKIP_TOLL_HENGE: &str = "Shantay henge doorway did not resolve to hops";
 const SKIP_MAGICGUILD_SCRIPT: &str = "magic guild opener script did not load or parse";
 const SKIP_MAGICGUILD_CONFIG: &str = "magic guild door config did not admit named doors";
@@ -297,16 +298,15 @@ const SKIP_RANGINGGUILD_PLACEMENT: &str =
 const SKIP_ZANARIS_SOURCE: &str = "Zanaris shed door script did not load or declare oploc1";
 const SKIP_ZANARIS_ROUTE: &str = "Zanaris shed door block did not resolve to a hop";
 
-/// Declared wilderness lever hops (`wildinlever` / `wildoutlever`).
-const LEVER_DECLARED_ROUTES: usize = 2;
-/// Al Kharid border toll gate locs (`border_gate_toll_left` / `_right`).
-const TOLL_BORDER_GATES: usize = 2;
+/// Pack names for wilderness lever `[oploc1,*]` blocks (one skip unit each).
+const WILDERNESS_LEVER_LOC_NAMES: &[&str] = &["wildinlever", "wildoutlever"];
+/// Pack names for Al Kharid border toll gates (one skip unit each).
+const TOLL_GATE_LOC_NAMES: &[&str] = &["border_gate_toll_left", "border_gate_toll_right"];
+const SHANTAY_HENGE_LOC_NAME: &str = "shantay_pass_henge_doorway";
 /// One reciprocal enter/exit pair for ranging guild door 2514.
 const RANGINGGUILD_DECLARED_PAIR: usize = 1;
 /// One Zanaris shed `[oploc1,zanarisdoor]` hop (per level-0 wall placement).
 const ZANARIS_DECLARED_ROUTES: usize = 1;
-/// Named magic guild doors (`magicguild_door_l` / `_r`).
-const MAGICGUILD_DECLARED_DOORS: usize = 2;
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -431,6 +431,23 @@ fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usi
     if n > 0 {
         *skipped.entry(reason).or_default() += n;
     }
+}
+
+/// How many declared producer loc names are present in the selected pack.
+fn packed_declared_names(ids: &HashMap<String, i32>, names: &[&str]) -> usize {
+    names.iter().filter(|name| ids.contains_key(**name)).count()
+}
+
+fn wilderness_lever_applicable(ids: &HashMap<String, i32>) -> usize {
+    packed_declared_names(ids, WILDERNESS_LEVER_LOC_NAMES)
+}
+
+fn toll_gate_applicable(ids: &HashMap<String, i32>) -> usize {
+    packed_declared_names(ids, TOLL_GATE_LOC_NAMES)
+}
+
+fn toll_applicable_route_count(gate_applicable: usize, henge_applicable: bool) -> usize {
+    gate_applicable + usize::from(henge_applicable)
 }
 
 fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'static str, usize>) {
@@ -4097,13 +4114,17 @@ fn lever_edges(
         .join("scripts")
         .join("areas")
         .join("area_ardougne_east");
+    let applicable = wilderness_lever_applicable(ids);
+    if applicable == 0 {
+        return;
+    }
     let Ok(script) = fs::read_to_string(dir.join("scripts").join("wilderness_lever.rs2")) else {
-        bump(skipped, SKIP_LEVER_SOURCE, LEVER_DECLARED_ROUTES);
+        bump(skipped, SKIP_LEVER_SOURCE, applicable);
         return;
     };
     let Ok(constants) = fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
     else {
-        bump(skipped, SKIP_LEVER_SOURCE, LEVER_DECLARED_ROUTES);
+        bump(skipped, SKIP_LEVER_SOURCE, applicable);
         return;
     };
     // `^name` → the teleport tile (`0_mx_mz_lx_lz`, decoded like every
@@ -4131,7 +4152,6 @@ fn lever_edges(
         }
         let edge_start = graph.edges.len();
         let Some(&loc_id) = ids.get(&name) else {
-            bump(skipped, SKIP_LEVER_ROUTE, 1);
             continue;
         };
         let Some(placements) = positions.get(&loc_id) else {
@@ -4252,6 +4272,11 @@ fn toll_edges(
     collision: &WorldCollision,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
+    let gate_applicable = toll_gate_applicable(ids);
+    let henge_applicable = ids.contains_key(SHANTAY_HENGE_LOC_NAME);
+    if gate_applicable == 0 && !henge_applicable {
+        return;
+    }
     // The toll charge and the Shantay pass resolve by name through
     // `pack/obj.pack`; a missing pack skips the family instead of faking
     // an item id.
@@ -4260,7 +4285,7 @@ fn toll_edges(
         bump(
             skipped,
             SKIP_TOLL_OBJ_PACK,
-            TOLL_BORDER_GATES + 1, // two toll gates + one henge doorway route
+            toll_applicable_route_count(gate_applicable, henge_applicable),
         );
         return;
     };
@@ -4270,8 +4295,10 @@ fn toll_edges(
         .join("areas")
         .join("area_alkharid");
     let Ok(config) = fs::read_to_string(alkharid.join("configs").join("border_gate.loc")) else {
-        bump(skipped, SKIP_TOLL_CONFIG, TOLL_BORDER_GATES);
-        if ids.get("shantay_pass_henge_doorway").is_some() {
+        if gate_applicable > 0 {
+            bump(skipped, SKIP_TOLL_CONFIG, gate_applicable);
+        }
+        if henge_applicable {
             bump(skipped, SKIP_TOLL_HENGE, 1);
         }
         return;
@@ -4279,7 +4306,11 @@ fn toll_edges(
     let toll_ids = parse_door_config_ids(&config, ids);
     let open_ids = parse_door_open_ids(&config, ids);
     for id in toll_ids {
+        let edge_start = graph.edges.len();
         let Some(placements) = positions.get(&id) else {
+            if ids.values().any(|&packed| packed == id) {
+                bump(skipped, SKIP_TOLL_GATE, 1);
+            }
             continue;
         };
         for p in placements {
@@ -4315,6 +4346,9 @@ fn toll_edges(
                     members_req: false,
                 });
             }
+        }
+        if graph.edges.len() == edge_start && ids.values().any(|&packed| packed == id) {
+            bump(skipped, SKIP_TOLL_GATE, 1);
         }
     }
 
@@ -4394,7 +4428,7 @@ fn toll_shantay_henge_edges(
 }
 
 // ---------------------------------------------------------------------------
-// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
+// Magic Guild doors (`magic_guild.rs2`): named loc-specific openers.
 // ---------------------------------------------------------------------------
 
 /// Named Magic Guild doors (`magicguild_door_l` / `_r`). Not inherited
@@ -4420,21 +4454,22 @@ fn magicguild_door_edges(
         .join("area_yanille")
         .join("scripts")
         .join("magic_guild.rs2");
+    let applicable =
+        packed_declared_names(ids, &[MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT]);
+    if applicable == 0 {
+        return;
+    }
     if !script_path.is_file() {
-        if ids.contains_key(MAGICGUILD_DOOR_LEFT) || ids.contains_key(MAGICGUILD_DOOR_RIGHT) {
-            bump(skipped, SKIP_MAGICGUILD_SCRIPT, MAGICGUILD_DECLARED_DOORS);
-        }
+        bump(skipped, SKIP_MAGICGUILD_SCRIPT, applicable);
         return;
     }
     let Some(level) = magicguild_entering_magic_level(content_root) else {
-        bump(skipped, SKIP_MAGICGUILD_SCRIPT, MAGICGUILD_DECLARED_DOORS);
+        bump(skipped, SKIP_MAGICGUILD_SCRIPT, applicable);
         return;
     };
     let admitted = magicguild_door_open_ids(content_root, ids);
     if admitted.is_empty() {
-        if ids.contains_key(MAGICGUILD_DOOR_LEFT) || ids.contains_key(MAGICGUILD_DOOR_RIGHT) {
-            bump(skipped, SKIP_MAGICGUILD_CONFIG, MAGICGUILD_DECLARED_DOORS);
-        }
+        bump(skipped, SKIP_MAGICGUILD_CONFIG, applicable);
         return;
     }
     for (&id, &open) in &admitted {
@@ -4922,6 +4957,10 @@ fn named_loc_has_open(text: &str, name: &str) -> bool {
     }
     in_block && open
 }
+
+// ---------------------------------------------------------------------------
+// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
+// ---------------------------------------------------------------------------
 
 /// The Zanaris shed door ticks: OP_BASE 1, the door block's `p_delay(1)`,
 /// and the `player_teleport_normal` cast `p_delay(2)` (the whole Open
@@ -11676,27 +11715,52 @@ p_teleport(movecoord(coord, 2, 0, -2));
         assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_PACK), 0);
     }
 
+    /// Pack-gated applicability: unrelated/empty fixtures must not pollute the
+    /// five-producer skip ledger; partial selection counts only packed names.
     #[test]
-    fn n1_lever_missing_source_increments_declared_route_skips() {
+    fn n1_producer_skips_follow_packed_applicability() {
+        let empty = Fixture::new();
+        let defs = loc_defs(&[]);
+        let wc = bake_collision(&empty, &defs, &HashSet::new());
+        let (_, skipped) = derive_transports_with_skips(empty.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_OBJ_PACK), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 0);
+
         let fx = Fixture::new();
         fx.write("pack/loc.pack", "1814=wildinlever\n");
         let defs = loc_defs(&[(1814, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::new());
         let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
-        assert!(
-            graph.edges.iter().all(|e| e.loc_id != 1814),
-            "no edges for the declared lever loc without source"
-        );
-        assert_eq!(
-            skip_total(&skipped, SKIP_LEVER_SOURCE),
-            LEVER_DECLARED_ROUTES
-        );
-    }
+        assert!(graph.edges.iter().all(|e| e.loc_id != 1814));
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 1);
 
-    #[test]
-    fn n1_magicguild_missing_opener_increments_script_skips_not_edges() {
+        let fx = Fixture::new();
+        fx.write(
+            "pack/loc.pack",
+            "1814=wildinlever\n1815=wildoutlever\n",
+        );
+        let defs = loc_defs(&[(1814, 1, 1), (1815, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (_, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 2);
+
         let fx = Fixture::new();
         write_magicguild_source(&fx, "");
+        fx.write("pack/loc.pack", "1600=magicguild_door_l\n1601=magicguild_door_r\n1522=loc_1522\n1523=loc_1523\n");
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+op1=Open
+param=next_loc_stage,loc_1522
+
+[magicguild_door_r]
+op1=Open
+param=next_loc_stage,loc_1523
+",
+        );
         write_magicguild_yanille_placements(&fx);
         let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
         let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
@@ -11704,10 +11768,27 @@ p_teleport(movecoord(coord, 2, 0, -2));
         assert!(
             door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty()
         );
-        assert_eq!(
-            skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT),
-            MAGICGUILD_DECLARED_DOORS
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 2);
+
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, "");
+        fx.write(
+            "pack/loc.pack",
+            "1600=magicguild_door_l\n1522=loc_1522\n1523=loc_1523\n",
         );
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+op1=Open
+param=next_loc_stage,loc_1522
+",
+        );
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600]));
+        let (_, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 1);
     }
 
     #[test]
@@ -11738,7 +11819,7 @@ p_teleport(movecoord(coord, 2, 0, -2));
     }
 
     #[test]
-    fn n1_toll_missing_border_gate_config_skips_gates_and_henge_when_packed() {
+    fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
         let fx = Fixture::new();
         fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
         fx.write("pack/loc.pack", "4031=shantay_pass_henge_doorway\n");
@@ -11761,7 +11842,58 @@ p_teleport(movecoord(coord, 2, 0, -2));
                 .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, AL_KHARID_TOLL_COINS)]),
             "no toll or henge hops without border_gate.loc"
         );
-        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), TOLL_BORDER_GATES);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
         assert_eq!(skip_total(&skipped, SKIP_TOLL_HENGE), 1);
+
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+        fx.write(
+            "pack/loc.pack",
+            "2882=border_gate_toll_left\n2883=border_gate_toll_right\n1562=loc_1562\n1563=loc_1563\n",
+        );
+        fx.write(
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "\
+[border_gate_toll_left]
+name=Gate
+op1=Open
+category=border_gate_toll_left
+param=next_loc_stage,loc_1562
+
+[border_gate_toll_right]
+name=Gate
+op1=Open
+category=border_gate_toll_right
+param=next_loc_stage,loc_1563
+",
+        );
+        let defs = loc_defs(&[(2882, 1, 1), (2883, 1, 1), (1562, 1, 1), (1563, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph
+                .edges
+                .iter()
+                .all(|e| !matches!(e.loc_id, 2882 | 2883)),
+            "no toll crossings without jm2 placements"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 2);
+
+        fx.write(
+            "maps/m51_50.jm2",
+            "\
+==== MAP ====
+0 4 27: h1 u50
+==== LOC ====
+0 4 27: 2882 0 0
+",
+        );
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph.edges.iter().any(|e| e.loc_id == 2882),
+            "left gate emits when placed"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 1, "right gate still missing");
     }
 }
