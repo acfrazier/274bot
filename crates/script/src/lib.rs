@@ -121,6 +121,8 @@ mod reach;
 #[cfg(feature = "load")]
 pub mod line_of_sight;
 #[cfg(feature = "load")]
+pub mod hunt_fight;
+#[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
 mod supply_v2;

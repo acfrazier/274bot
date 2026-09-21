@@ -508,6 +508,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("sustain.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/combat/hunting/combat.js",
+            include_str!("hunting_combat.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/firemaking/LightFire.js",
             include_str!("light_fire.js"),
         ),

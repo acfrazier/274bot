@@ -526,4 +526,17 @@ export interface NativeApi {
   plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;
   potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;
   lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;
+  fightBegin(input?: object): HelperResult<{ token: number }>;
+  fightValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
+  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */
+  fightNext(input: { token: number; reply?: unknown } & Record<string, unknown>): FightStep;
+  fightReset(input: { token: number }): HelperResult<null>;
+  fightInterruptWatch(input: { token: number }): HelperResult<null>;
+  fightBlocksLoot(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
 }
+
+export type FightStep =
+  | { ok: true; status: 'continue'; token: number; kind: string }
+  | { ok: true; status: 'done'; token: number; kind: 'yield' }
+  | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }
+  | { ok: false; error: string };

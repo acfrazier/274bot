@@ -411,6 +411,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register shop: {e}"))?;
     runtime
+        .register_function("__rs2b0t_fight", |args: &[serde_json::Value]| {
+            Ok(crate::hunt_fight::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register fight: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_production",
             move |args: &[serde_json::Value]| {
@@ -1293,6 +1300,50 @@ api.potionToSip = function (input) {
 };
 api.lineOfSight = function (input) {
   return globalThis.__rs2b0t_line_of_sight('v2', input);
+};
+function fightCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_fight(payload);
+}
+api.fightBegin = function (input) {
+  const out = fightCall({ op: 'begin', ...(input || {}) });
+  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
+  return helperOk({ token: out.token });
+};
+api.fightValidate = function (input) {
+  if (!input || input.token == null) return helperErr('invalid-args');
+  const out = fightCall({ op: 'validate', ...input });
+  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+  return helperOk(out === true || out?.value === true);
+};
+api.fightNext = function (input) {
+  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
+  const out = fightCall({ op: 'next', ...input });
+  if (!out) return { ok: false, error: 'aborted' };
+  if (out.kind === 'aborted') {
+    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
+  }
+  if (out.kind === 'yield') {
+    return { ok: true, status: 'done', token: out.token, kind: 'yield' };
+  }
+  return { ok: true, status: 'continue', token: out.token, ...out };
+};
+api.fightReset = function (input) {
+  if (!input || input.token == null) return helperErr('invalid-args');
+  const out = fightCall({ op: 'reset', ...input });
+  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+  return helperOk(null);
+};
+api.fightInterruptWatch = function (input) {
+  if (!input || input.token == null) return helperErr('invalid-args');
+  const out = fightCall({ op: 'interruptWatch', ...input });
+  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+  return helperOk(null);
+};
+api.fightBlocksLoot = function (input) {
+  if (!input || input.token == null) return helperErr('invalid-args');
+  const out = fightCall({ op: 'blocksLoot', ...input });
+  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+  return helperOk(out === true || out?.value === true);
 };
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;

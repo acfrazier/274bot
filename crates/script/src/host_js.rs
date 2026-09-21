@@ -373,7 +373,19 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;\n");
     out.push_str("  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;\n");
     out.push_str("  lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;\n");
-    out.push_str("}\n");
+    out.push_str("  fightBegin(input?: object): HelperResult<{ token: number }>;\n");
+    out.push_str("  fightValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
+    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
+    out.push_str("  fightNext(input: { token: number; reply?: unknown } & Record<string, unknown>): FightStep;\n");
+    out.push_str("  fightReset(input: { token: number }): HelperResult<null>;\n");
+    out.push_str("  fightInterruptWatch(input: { token: number }): HelperResult<null>;\n");
+    out.push_str("  fightBlocksLoot(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
+    out.push_str("}\n\n");
+    out.push_str("export type FightStep =\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
+    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
+    out.push_str("  | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }\n");
+    out.push_str("  | { ok: false; error: string };\n");
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[

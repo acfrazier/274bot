@@ -35,6 +35,12 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains(
         "lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>"
     ));
+    assert!(src.contains("fightBegin(input?: object): HelperResult<{ token: number }>"));
+    assert!(src.contains(
+        "fightNext(input: { token: number; reply?: unknown } & Record<string, unknown>): FightStep"
+    ));
+    assert!(src.contains("export type FightStep"));
+    assert!(src.contains("kind: 'yield'"));
     assert!(src.contains("export interface QuestStatusRow"));
     assert!(src.contains("quest_statuses: QuestStatusRow[] | null"));
     assert!(src.contains("slot?: number"));
