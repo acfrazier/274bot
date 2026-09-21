@@ -708,10 +708,186 @@ fn npc_rebuild_reads_full_actor_view() {
     assert!(!v.running, "primary_anim 809 != runanim 810");
     assert_eq!(v.level, 2);
     assert_eq!(v.size, 1);
+    // route defaults to (0,0); pixels (100,200) are not rest-pose, so
+    // rendered SW and network SW already disagree on this fixture.
+    assert_eq!(
+        v.network,
+        WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 1
+        }
+    );
+    assert_ne!(v.tile, v.network);
     // legacy position fields keep the existing consumers working
     assert_eq!(v.x, 100);
     assert_eq!(v.z, 200);
     assert_eq!(v.yaw, 512);
+}
+
+fn rest_pose_pixels(route: i32, size: i32) -> i32 {
+    route * 128 + size * 64
+}
+
+/// Size-1 standing rest pose: rendered SW equals path-head network SW.
+#[test]
+fn npc_size1_standing_tile_equals_network_sw() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    {
+        let e = &mut c.npc[7].as_mut().unwrap().entity;
+        e.size = 1;
+        e.route_x[0] = 10;
+        e.route_z[0] = 20;
+        e.x = rest_pose_pixels(10, 1);
+        e.z = rest_pose_pixels(20, 1);
+        e.route_length = 0;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 1);
+    assert_eq!(
+        v.tile,
+        WorldTile {
+            x: 3210,
+            z: 3220,
+            level: 0
+        }
+    );
+    assert_eq!(v.tile, v.network);
+}
+
+/// Size-4 standing rest pose: tile == network SW == base+route, not frozen centre.
+#[test]
+fn npc_size4_standing_tile_equals_network_not_centre() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    {
+        let npc = c.npc[7].as_mut().unwrap();
+        npc.r#type = None;
+        let e = &mut npc.entity;
+        e.size = 4;
+        e.route_x[0] = 10;
+        e.route_z[0] = 20;
+        e.x = rest_pose_pixels(10, 4);
+        e.z = rest_pose_pixels(20, 4);
+        e.route_length = 0;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 4);
+    let sw = WorldTile {
+        x: 3210,
+        z: 3220,
+        level: 0,
+    };
+    assert_eq!(v.tile, sw);
+    assert_eq!(v.network, sw);
+    assert_ne!(
+        v.network,
+        WorldTile {
+            x: 3212,
+            z: 3222,
+            level: 0
+        },
+        "must not publish frozen centre base+route+(size/2)"
+    );
+}
+
+/// Frozen npc-network-position numbers: size-4 moving rendered SW vs path-head.
+#[test]
+fn npc_size4_moving_rendered_sw_vs_network_sw() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 0;
+    c.map_build_base_z = 0;
+    c.minusedlevel = 0;
+    {
+        let npc = c.npc[7].as_mut().unwrap();
+        npc.r#type = None;
+        let e = &mut npc.entity;
+        e.size = 4;
+        e.route_x[0] = 2832;
+        e.route_z[0] = 9825;
+        e.x = 2835 * 128;
+        e.z = 9825 * 128;
+        e.route_length = 1;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 4);
+    assert_eq!(
+        v.tile,
+        WorldTile {
+            x: 2833,
+            z: 9823,
+            level: 0
+        }
+    );
+    assert_eq!(
+        v.network,
+        WorldTile {
+            x: 2832,
+            z: 9825,
+            level: 0
+        }
+    );
+    assert_ne!(v.tile, v.network);
+    assert_ne!(
+        (v.tile.x, v.tile.z),
+        (2835, 9825),
+        "rendered SW is not frozen centre"
+    );
+    assert_ne!(
+        (v.network.x, v.network.z),
+        (2834, 9827),
+        "network SW is not frozen centre"
+    );
+}
+
+/// Live row after type size change: next NPC_INFO rebuild follows cache size.
+#[test]
+fn npc_live_row_size_follows_new_type_after_rebuild() {
+    let mut c = client_with_npc();
+    let npc = c.npc[7].as_mut().unwrap();
+    let mut first = None;
+    let mut second = None;
+    if let Some(cache) = Arc::get_mut(&mut c.cache) {
+        first = Some(cache.npcs.len());
+        npc.r#type = first;
+        cache.npcs.push(NpcType {
+            id: 9,
+            name: "Goblin".into(),
+            size: 1,
+            ..Default::default()
+        });
+        second = Some(cache.npcs.len());
+        cache.npcs.push(NpcType {
+            id: 10,
+            name: "Goblin".into(),
+            size: 4,
+            ..Default::default()
+        });
+    }
+    c.npc[7].as_mut().unwrap().entity.size = 1;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert_eq!(snap.npcs()[0].size, 1);
+    c.npc[7].as_mut().unwrap().r#type = second;
+    c.npc[7].as_mut().unwrap().entity.size = 4;
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert_eq!(snap.npcs()[0].size, 4);
 }
 
 /// `in_combat` is the health-bar window (`combatCycle > loopCycle`), not

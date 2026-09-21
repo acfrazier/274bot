@@ -273,3 +273,20 @@ fn v1_bounded_compat() {
         Some(1)
     ));
 }
+
+/// Chosen fixture: LOS to network SW disagrees with LOS to rendered SW.
+/// Not a universal "wrong coords fail" rule.
+#[test]
+fn network_sw_and_rendered_sw_are_not_interchangeable_for_los() {
+    let mut g = open_scene(16, 16);
+    set(&mut g, 16, 3, 1, CollisionFlag::VIS_SCENERY);
+    let q = query(true, &g, 3200, 3200, 0, 16, 16);
+    let spot = tile(3201, 3201, 0);
+    let network = tile(3205, 3201, 0);
+    let rendered = tile(3201, 3205, 0);
+    let network_los = line_of_sight_v2(Some(&q), spot, network, Some(4));
+    let rendered_los = line_of_sight_v2(Some(&q), spot, rendered, Some(4));
+    assert_eq!(network_los, Ok(false));
+    assert_eq!(rendered_los, Ok(true));
+    assert_ne!(network_los, rendered_los);
+}

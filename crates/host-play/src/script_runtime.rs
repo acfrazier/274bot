@@ -2449,6 +2449,9 @@ pub(super) fn with_script_snapshot_input<R>(
                     combat_level: npc.level,
                     target_kind,
                     target_index,
+                    size: npc.size,
+                    nx: npc.network.x,
+                    nz: npc.network.z,
                 }
             })
             .collect()
@@ -2491,6 +2494,9 @@ pub(super) fn with_script_snapshot_input<R>(
                     combat_level: 0,
                     target_kind: 0,
                     target_index: -1,
+                    size: 0,
+                    nx: 0,
+                    nz: 0,
                 }
             })
             .collect()
@@ -2544,6 +2550,9 @@ pub(super) fn with_script_snapshot_input<R>(
                     combat_level: player.combat_level,
                     target_kind,
                     target_index,
+                    size: 0,
+                    nx: 0,
+                    nz: 0,
                 }
             })
             .collect()
@@ -2586,6 +2595,9 @@ pub(super) fn with_script_snapshot_input<R>(
                     combat_level: 0,
                     target_kind: 0,
                     target_index: -1,
+                    size: 0,
+                    nx: 0,
+                    nz: 0,
                 }
             })
             .collect()
@@ -2926,6 +2938,8 @@ pub(super) fn with_script_snapshot_input<R>(
     let in_combat = local.is_some_and(|lp| lp.player.actor.in_combat);
     let attacked_by_player =
         local.is_some_and(|lp| api::snapshot::attacked_by_player(lp.player.actor.face_entity));
+    let (self_target_kind, self_target_index) =
+        scene_entity_target(local.and_then(|lp| lp.player.actor.target.as_ref()));
     let animating =
         local.is_some_and(|lp| lp.player.actor.moving || lp.player.actor.animation != -1);
     let modals = snapshot.map(|s| s.modals());
@@ -3183,6 +3197,8 @@ pub(super) fn with_script_snapshot_input<R>(
         shop_stock: &shop_stock,
         reach,
         attacked_by_player,
+        self_target_kind,
+        self_target_index,
         widgets: &widgets,
     };
     let bank_approach_store: Vec<BankApproachInput> = match (snapshot, here, flood.as_ref()) {

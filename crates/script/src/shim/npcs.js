@@ -32,6 +32,23 @@ export class Npc {
         return this.snap.combat_level;
     }
 
+    get size() {
+        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1) {
+            throw notImpl('Npc.size');
+        }
+        return this.snap.size;
+    }
+
+    networkOrigin() {
+        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1) {
+            throw notImpl('Npc.networkOrigin');
+        }
+        if (!Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
+            throw notImpl('Npc.networkOrigin');
+        }
+        return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
+    }
+
     /**
      * True when this NPC's combat target is the local player (`face_entity`),
      * not merely when `Game.inCombat()` is true.

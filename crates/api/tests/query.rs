@@ -69,6 +69,7 @@ fn fixture_npc(
         in_combat: false,
         level: 2,
         size: 1,
+        network: WorldTile { x, z, level: 0 },
         x,
         z,
         yaw: 0,

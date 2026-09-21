@@ -70,6 +70,12 @@ export interface SceneEntity {
   target_kind: number;
   /** -1 when not facing anyone. */
   target_index: number;
+  /** NPC footprint in tiles. <1 means observation absent (old buffer / non-NPC row). Packet-time at last NPC_INFO. */
+  size: number;
+  /** Path-head network SW x. Valid world 0 is not absence when size>=1. */
+  nx: number;
+  /** Path-head network SW z. */
+  nz: number;
 }
 
 /** A packed bank stand (booth loc or teller npc). */
@@ -252,6 +258,7 @@ export interface Snapshot {
   reach: ReachQueryView;
   hold: boolean;
   ours: boolean;
+  /** Packet-time NPC_INFO rows. Copy if retaining past this tick. size<1 is unavailable, not a synthetic 1. */
   npcs: SceneEntity[];
   locs: SceneEntity[];
   players: SceneEntity[];
@@ -397,6 +404,10 @@ export interface NativeSnapshot {
   route_inspect_unobserved: number;
   /** One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent. */
   collision: CollisionView;
+  /** 0 none, 1 npc, 2 player. Packet-time local face. */
+  self_target_kind: number;
+  /** -1 when kind is 0. 0 is a legal NPC index. */
+  self_target_index: number;
 }
 
 /** Typed settings access over the per-identity host bag. */

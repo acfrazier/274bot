@@ -225,6 +225,8 @@ const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2: VOffsetT = 236;
 const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3: VOffsetT = 238;
 const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
 const VT_SNAP_COLLISION: VOffsetT = 242;
+const VT_SNAP_SELF_TARGET_KIND: VOffsetT = 244;
+const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
 
 const VT_COL_AVAILABLE: VOffsetT = 4;
 const VT_COL_BASE_X: VOffsetT = 6;
@@ -327,6 +329,9 @@ const VT_ENT_REACHABLE_ADJ: VOffsetT = 30;
 const VT_ENT_COMBAT_LEVEL: VOffsetT = 32;
 const VT_ENT_TARGET_KIND: VOffsetT = 34;
 const VT_ENT_TARGET_INDEX: VOffsetT = 36;
+const VT_ENT_SIZE: VOffsetT = 38;
+const VT_ENT_NX: VOffsetT = 40;
+const VT_ENT_NZ: VOffsetT = 42;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
@@ -553,6 +558,12 @@ pub struct SceneEntityInput<'a> {
     pub target_kind: i32,
     /// `-1` when not facing anyone.
     pub target_index: i32,
+    /// NPC packed size in tiles. `0` omits the new slots (loc/player/ground).
+    pub size: i32,
+    /// Path-head network SW x. Packed only with `size >= 1`.
+    pub nx: i32,
+    /// Path-head network SW z. Packed only with `size >= 1`.
+    pub nz: i32,
 }
 
 /// One chat modal BUTTON_OK choice.
@@ -747,6 +758,10 @@ pub struct SnapshotInput<'a> {
     pub reach: ReachViewInput<'a>,
     /// Local `Game.attackedByPlayer`: `face_entity >= PLAYER_FACE_BASE`.
     pub attacked_by_player: bool,
+    /// Local decoded face: `0` none, `1` npc, `2` player.
+    pub self_target_kind: i32,
+    /// Local decoded face index. `-1` when kind is none.
+    pub self_target_index: i32,
     /// Selected-world widget text rows. Absent id is not a stale IfType label.
     pub widgets: &'a [WidgetTextInput<'a>],
 }
@@ -1741,6 +1756,8 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<u64>("route_inspect_refused_id_3", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, false)?
             .visit_field::<u64>("route_inspect_unobserved", VT_SNAP_ROUTE_INSPECT_UNOBSERVED, false)?
             .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
+            .visit_field::<i32>("self_target_kind", VT_SNAP_SELF_TARGET_KIND, false)?
+            .visit_field::<i32>("self_target_index", VT_SNAP_SELF_TARGET_INDEX, false)?
             .finish();
         Ok(())
     }
@@ -2242,6 +2259,26 @@ impl SnapshotReader<'_> {
     pub fn attacked_by_player(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None) }.unwrap_or(false)
     }
+    pub fn has_self_target_kind(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_SELF_TARGET_KIND, None)
+                .is_some()
+        }
+    }
+    pub fn self_target_kind(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_KIND, None) }.unwrap_or(0)
+    }
+    pub fn has_self_target_index(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None)
+                .is_some()
+        }
+    }
+    pub fn self_target_index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None) }.unwrap_or(-1)
+    }
     pub fn has_widgets(&self) -> bool {
         rows_present::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
     }
@@ -2624,6 +2661,9 @@ pub struct SceneEntityFp {
     pub combat_level: i32,
     pub target_kind: i32,
     pub target_index: i32,
+    pub size: i32,
+    pub nx: i32,
+    pub nz: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2801,6 +2841,8 @@ pub struct SnapshotFingerprint {
     pub main_make: Option<Vec<ItemRowFp>>,
     pub reach: ReachViewFp,
     pub attacked_by_player: bool,
+    pub self_target_kind: i32,
+    pub self_target_index: i32,
     pub widgets: Vec<(i32, String)>,
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
@@ -2905,6 +2947,9 @@ impl SnapshotFingerprint {
                 combat_level: e.combat_level,
                 target_kind: e.target_kind,
                 target_index: e.target_index,
+                size: e.size,
+                nx: e.nx,
+                nz: e.nz,
             }
         }
         SnapshotFingerprint {
@@ -3064,6 +3109,8 @@ impl SnapshotFingerprint {
                 canlight: input.reach.canlight.to_vec(),
             },
             attacked_by_player: input.attacked_by_player,
+            self_target_kind: input.self_target_kind,
+            self_target_index: input.self_target_index,
             widgets: input
                 .widgets
                 .iter()
@@ -3216,6 +3263,7 @@ pub struct DeltaMask {
     pub main_make: bool,
     pub reach: bool,
     pub attacked_by_player: bool,
+    pub self_target: bool,
     pub widgets: bool,
     pub self_chat: bool,
     pub hint_tile: bool,
@@ -3301,6 +3349,7 @@ impl DeltaMask {
             main_make: true,
             reach: true,
             attacked_by_player: true,
+            self_target: true,
             widgets: true,
             self_chat: true,
             hint_tile: true,
@@ -3396,6 +3445,8 @@ impl DeltaMask {
             main_make: next.main_make != last.main_make,
             reach: next.reach != last.reach,
             attacked_by_player: next.attacked_by_player != last.attacked_by_player,
+            self_target: next.self_target_kind != last.self_target_kind
+                || next.self_target_index != last.self_target_index,
             widgets: next.widgets != last.widgets,
             self_chat: next.self_chat != last.self_chat,
             hint_tile: next.hint_tile != last.hint_tile,
@@ -4143,6 +4194,10 @@ fn encode_snapshot_masked_into(
     if mask.attacked_by_player {
         b.push_slot_always(VT_SNAP_ATTACKED_BY_PLAYER, input.attacked_by_player);
     }
+    if mask.self_target {
+        b.push_slot_always(VT_SNAP_SELF_TARGET_KIND, input.self_target_kind);
+        b.push_slot_always(VT_SNAP_SELF_TARGET_INDEX, input.self_target_index);
+    }
     if mask.widgets {
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
     }
@@ -4413,6 +4468,11 @@ fn scene_entity_off<'b>(
     b.push_slot_always(VT_ENT_COMBAT_LEVEL, e.combat_level);
     b.push_slot_always(VT_ENT_TARGET_KIND, e.target_kind);
     b.push_slot_always(VT_ENT_TARGET_INDEX, e.target_index);
+    if e.size >= 1 {
+        b.push_slot_always(VT_ENT_SIZE, e.size);
+        b.push_slot_always(VT_ENT_NX, e.nx);
+        b.push_slot_always(VT_ENT_NZ, e.nz);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4647,6 +4707,15 @@ impl SceneEntityReader<'_> {
     pub fn target_index(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ENT_TARGET_INDEX, None) }.unwrap_or(-1)
     }
+    pub fn size(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_SIZE, None) }.unwrap_or(0)
+    }
+    pub fn nx(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_NX, None) }.unwrap_or(0)
+    }
+    pub fn nz(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_NZ, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -4673,6 +4742,9 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<i32>("combat_level", VT_ENT_COMBAT_LEVEL, false)?
             .visit_field::<i32>("target_kind", VT_ENT_TARGET_KIND, false)?
             .visit_field::<i32>("target_index", VT_ENT_TARGET_INDEX, false)?
+            .visit_field::<i32>("size", VT_ENT_SIZE, false)?
+            .visit_field::<i32>("nx", VT_ENT_NX, false)?
+            .visit_field::<i32>("nz", VT_ENT_NZ, false)?
             .finish();
         Ok(())
     }
@@ -7254,6 +7326,8 @@ pub(crate) mod tests {
             shop_stock: &[],
             reach: ReachViewInput::UNAVAILABLE,
             attacked_by_player: false,
+            self_target_kind: 0,
+            self_target_index: -1,
             widgets: &[],
         }
     }
@@ -7343,6 +7417,9 @@ pub(crate) mod tests {
             combat_level: 1,
             target_kind: 0,
             target_index: -1,
+            size: 4,
+            nx: 2832,
+            nz: 9825,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -7356,6 +7433,7 @@ pub(crate) mod tests {
         assert_eq!(got[0].id(), 41);
         assert_eq!(got[0].name(), Some("Chicken"));
         assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
+        assert_eq!((got[0].size(), got[0].nx(), got[0].nz()), (4, 2832, 9825));
         assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
     }
 
@@ -7381,6 +7459,9 @@ pub(crate) mod tests {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
         };
         let mut input = empty_input(1);
         let npcs = [npc];
@@ -7392,6 +7473,225 @@ pub(crate) mod tests {
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_npcs(), "unchanged npcs omitted from delta");
         assert!(view.npcs().is_empty(), "absent reads as empty vec");
+    }
+
+    #[test]
+    fn old_scene_entity_defaults_size_nx_nz_zero() {
+        let mut snap_b = flatbuffers::FlatBufferBuilder::new();
+        let ent_tab = snap_b.start_table();
+        snap_b.push_slot_always(VT_ENT_INDEX, 7i32);
+        snap_b.push_slot_always(VT_ENT_X, 10i32);
+        snap_b.push_slot_always(VT_ENT_Z, 20i32);
+        let ent_off = snap_b.end_table(ent_tab);
+        let vec = snap_b.create_vector(&[flatbuffers::WIPOffset::<SceneEntityReader>::new(
+            ent_off.value(),
+        )]);
+        let tab = snap_b.start_table();
+        snap_b.push_slot_always(VT_SNAP_TICK, 1u64);
+        snap_b.push_slot_always(VT_SNAP_NPCS, vec);
+        let root = snap_b.end_table(tab);
+        snap_b.finish(root, None);
+        let snap = SnapshotReader::from_bytes(snap_b.finished_data()).expect("old snap");
+        let got = snap.npcs();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].size(), 0);
+        assert_eq!(got[0].nx(), 0);
+        assert_eq!(got[0].nz(), 0);
+        assert_eq!(got[0].target_index(), -1);
+    }
+
+    #[test]
+    fn old_snapshot_self_target_defaults_none() {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(!view.has_self_target_kind());
+        assert!(!view.has_self_target_index());
+        assert_eq!(view.self_target_kind(), 0);
+        assert_eq!(view.self_target_index(), -1);
+    }
+
+    #[test]
+    fn packed_size_zero_world_is_present_when_size_at_least_one() {
+        let actions: [String; 0] = [];
+        let npc = SceneEntityInput {
+            index: 1,
+            id: 1,
+            name: Some("Man"),
+            x: 0,
+            z: 0,
+            level: 0,
+            distance: 0,
+            health: 1,
+            max_health: 1,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 0,
+            nz: 0,
+        };
+        let mut input = empty_input(2);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert_eq!(view.npcs()[0].size(), 1);
+        assert_eq!((view.npcs()[0].nx(), view.npcs()[0].nz()), (0, 0));
+    }
+
+    #[test]
+    fn loc_row_omits_size_slots() {
+        let actions: [String; 0] = [];
+        let loc = SceneEntityInput {
+            index: 9,
+            id: 9,
+            name: Some("Tree"),
+            x: 10,
+            z: 10,
+            level: 0,
+            distance: 1,
+            health: -1,
+            max_health: -1,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
+        };
+        let mut input = empty_input(3);
+        let locs = [loc];
+        input.locs = &locs;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert_eq!(view.locs()[0].size(), 0);
+        assert_eq!((view.locs()[0].nx(), view.locs()[0].nz()), (0, 0));
+    }
+
+    #[test]
+    fn fingerprint_changes_when_size_or_network_origin_changes() {
+        let actions = ["Attack".to_string()];
+        let mut npc = SceneEntityInput {
+            index: 1,
+            id: 9,
+            name: Some("Goblin"),
+            x: 10,
+            z: 10,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 2,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 10,
+            nz: 10,
+        };
+        let mut input = empty_input(4);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp1 = SnapshotFingerprint::from_input(&input);
+        npc.size = 4;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp2 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp1.npcs, fp2.npcs);
+        npc.size = 4;
+        npc.nx = 11;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp3 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp2.npcs, fp3.npcs);
+        npc.nx = 11;
+        npc.nz = 12;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp4 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp3.npcs, fp4.npcs);
+    }
+
+    #[test]
+    fn self_target_delta_omits_when_unchanged_and_posts_on_change() {
+        let mut input = empty_input(5);
+        input.self_target_kind = 1;
+        input.self_target_index = 42;
+        let (kf, fp) = encode_snapshot_delta(None, &input, false);
+        let kf_view = decode_snapshot(&kf).expect("kf");
+        assert_eq!(kf_view.self_target_kind(), 1);
+        assert_eq!(kf_view.self_target_index(), 42);
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let d = decode_snapshot(&delta).expect("delta");
+        assert!(!d.has_self_target_kind());
+        assert!(!d.has_self_target_index());
+        input.self_target_kind = 2;
+        input.self_target_index = 7;
+        let (delta2, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let d2 = decode_snapshot(&delta2).expect("delta2");
+        assert!(d2.has_self_target_kind());
+        assert_eq!(d2.self_target_kind(), 2);
+        assert_eq!(d2.self_target_index(), 7);
+    }
+
+    #[test]
+    fn reset_posts_empty_npcs_and_none_target() {
+        let actions = ["Attack".to_string()];
+        let npc = SceneEntityInput {
+            index: 1,
+            id: 2,
+            name: Some("Goblin"),
+            x: 100,
+            z: 100,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 100,
+            nz: 100,
+        };
+        let mut input = empty_input(6);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        input.self_target_kind = 1;
+        input.self_target_index = 1;
+        let (_, fp) = encode_snapshot_delta(None, &input, false);
+        let mut reset = empty_input(7);
+        reset.self_target_kind = 0;
+        reset.self_target_index = -1;
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &reset, false);
+        let view = decode_snapshot(&delta).expect("reset");
+        assert!(view.has_npcs());
+        assert!(view.npcs().is_empty());
+        assert_eq!(view.self_target_kind(), 0);
+        assert_eq!(view.self_target_index(), -1);
     }
 
     /// Task 8 — interact `npc` + label round-trips through the batch codec.

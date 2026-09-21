@@ -104,6 +104,8 @@ fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
         shop_stock: &[],
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     };
     input.tick = tick;
@@ -271,7 +273,8 @@ export const apiVersion = 2;
 export function tick(api) {
   globalThis.__rs_family = globalThis.__rs_api_family;
   globalThis.__rs_ingame = api.snapshot.ingame;
-  globalThis.__rs_npcs = api.snapshot.npcs;
+  globalThis.__rs_npcs = Array.isArray(api.snapshot.npcs);
+  globalThis.__rs_npcs_len = api.snapshot.npcs.length;
   api.log('hi');
   api.request({ op: 'held', name: 'Bones', action: 'Bury' });
   try { api.request({ op: 'npc', name: 'Man', action: 'Talk-to' }); globalThis.__rs_npc = 'ok'; }
@@ -283,7 +286,8 @@ export function tick(api) {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_family").unwrap(), 2);
     assert_eq!(iso.probe("globalThis.__rs_ingame").unwrap(), true);
-    assert_eq!(iso.probe("globalThis.__rs_npcs").unwrap(), serde_json::Value::Null);
+    assert_eq!(iso.probe("globalThis.__rs_npcs").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__rs_npcs_len").unwrap(), 0);
     let npc = iso.probe("globalThis.__rs_npc").unwrap();
     assert!(
         npc.as_str().unwrap_or("").contains("not impl: request.npc"),

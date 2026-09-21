@@ -161,6 +161,20 @@ export const reader = proxy('reader', {
     selfAnim() {
         return snap().animating === true ? 1 : -1;
     },
+    selfTarget() {
+        const kind = snap().self_target_kind;
+        const index = snap().self_target_index;
+        const k = finiteInt(kind) ? kind : 0;
+        if (k === 0) return { kind: 0, index: -1 };
+        const i = finiteInt(index) ? index : -1;
+        return { kind: k, index: i };
+    },
+    selfFaceEntity() {
+        const t = this.selfTarget();
+        if (t.kind === 1) return t.index;
+        if (t.kind === 2) return t.index + 32768;
+        return -1;
+    },
     energy() {
         return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
     },

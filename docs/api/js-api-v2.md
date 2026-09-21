@@ -212,6 +212,22 @@ blocked pair. It then calls real `api.lineOfSight` and imported
 `Reachability.lineOfSight` on those pairs. Pair selection is qualification
 fixture logic, not API policy.
 
+## Actor observation
+
+`snapshot.npcs` is the packed NPC_INFO array. Each row's `x,z` is rendered
+SW. `nx,nz` is path-head network SW. `size` is tiles along one side.
+`size < 1` means observation absent (old buffer or non-NPC family); do not
+invent `1`. World `0,0` with `size >= 1` is a real tile, not absence.
+Facts are packet-time at the last NPC_INFO rebuild. Copy the array if
+retaining past this tick.
+
+`snapshot.self_target_kind` is `0` none, `1` npc, `2` player.
+`snapshot.self_target_index` is `-1` when kind is none; `0` is a legal NPC
+index. Consume dest SW + dest size with existing `api.lineOfSight`. There
+is no v2 `Npc` class.
+
+Example: `crates/script/examples/actor_observation_v2.ts`.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that

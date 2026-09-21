@@ -234,6 +234,8 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         shop_stock: &[],
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -1095,6 +1097,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.locs = &first_locs;
@@ -2523,6 +2528,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
@@ -2589,6 +2597,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3382,6 +3393,9 @@ export default class T extends LoopingBot {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
         },
         script::isolate_fb::SceneEntityInput {
             index: 2,
@@ -3401,6 +3415,9 @@ export default class T extends LoopingBot {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
         },
     ];
     let mut snap = base_snapshot();
@@ -3571,6 +3588,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     let inv = [script::isolate_fb::ItemRowInput {
@@ -3748,6 +3768,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3805,6 +3828,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     };
     let far = script::isolate_fb::SceneEntityInput {
         index: 1,
@@ -3824,6 +3850,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     };
     let locs = [near, far];
     let mut snap = base_snapshot();
@@ -4113,6 +4142,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -4404,6 +4436,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let ground = [script::isolate_fb::SceneEntityInput {
         index: 2,
@@ -4423,6 +4458,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
@@ -5270,6 +5308,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -5346,6 +5387,9 @@ export default class T extends LoopingBot {
         combat_level: 5,
         target_kind: 2,
         target_index: 0,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -5393,6 +5437,9 @@ export default class T extends LoopingBot {
         combat_level: 5,
         target_kind: 2,
         target_index: 7,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.self_slot = 0;
@@ -5493,6 +5540,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let spells = [script::isolate_fb::CombatStyleInput {
         mode: 0,
@@ -5852,6 +5902,9 @@ export default class T extends LoopingBot {
         combat_level: 1,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.players = &players;
@@ -6387,6 +6440,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;
@@ -6441,6 +6497,9 @@ export default class T extends LoopingBot {
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }];
     let mut snap = base_snapshot();
     snap.npcs = &npcs;

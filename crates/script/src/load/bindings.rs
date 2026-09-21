@@ -951,7 +951,7 @@ const SNAPSHOT_KEYS = new Set([
   'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
   'route_inspect_replaced_id','route_inspect_replaced_prev_id',
   'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
-  'route_inspect_unobserved','collision',
+  'route_inspect_unobserved','collision','npcs','self_target_kind','self_target_index',
 ]);
 const V2_OPS = {
   'held': ['name','action'],

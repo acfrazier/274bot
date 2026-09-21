@@ -104,6 +104,8 @@ fn live_like_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }

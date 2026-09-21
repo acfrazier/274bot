@@ -132,6 +132,9 @@ pub struct NpcView {
     pub in_combat: bool,
     pub level: i32,
     pub size: i32,
+    /// Path-head network SW: `map_build_base + route[0]`, same level as `tile`.
+    /// Packet-time at `rebuild_npcs`; not an alias of rendered `tile`.
+    pub network: WorldTile,
     /// Legacy position aliases (`query::npcs_at` and older tests read them).
     /// These are the raw entity pixel coords, not the world `tile` above.
     pub x: i32,
@@ -181,6 +184,7 @@ impl NpcView {
             in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
             level: npc_level,
             size,
+            network: entity_network_tile(entity, base, level),
             x: entity.x,
             z: entity.z,
             yaw: entity.yaw,
@@ -2849,6 +2853,16 @@ fn entity_world_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> Wor
     WorldTile {
         x: base.0 + (entity.x - entity.size * 64) / 128,
         z: base.1 + (entity.z - entity.size * 64) / 128,
+        level,
+    }
+}
+
+/// Path-head network SW: build base plus `route[0]`. Independent of rendered
+/// pixel `x`/`z` (those stay mid-route until rest pose).
+fn entity_network_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> WorldTile {
+    WorldTile {
+        x: base.0 + entity.route_x[0],
+        z: base.1 + entity.route_z[0],
         level,
     }
 }

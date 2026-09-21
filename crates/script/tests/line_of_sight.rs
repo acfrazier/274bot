@@ -80,6 +80,8 @@ fn empty_input(tick: u64) -> SnapshotInput<'static> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }

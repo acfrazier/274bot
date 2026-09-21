@@ -693,6 +693,9 @@ mod tests {
             combat_level: 0,
             target_kind: 1,
             target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
         }
     }
 
@@ -770,6 +773,8 @@ mod tests {
             shop_stock: &[],
             reach: ReachViewInput::UNAVAILABLE,
             attacked_by_player: false,
+            self_target_kind: 0,
+            self_target_index: -1,
             widgets: &[],
         }
     }

@@ -80,6 +80,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -110,6 +112,9 @@ fn npc_row<'a>(
         combat_level: 21,
         target_kind,
         target_index,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }
 }
 

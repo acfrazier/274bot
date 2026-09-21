@@ -58,6 +58,11 @@ table SceneEntity {
   combat_level: int;
   target_kind: int;   // 0 none, 1 npc, 2 player
   target_index: int; // -1 when none
+  // NPC-only packed observation. Omitted on loc/player/ground (reader 0).
+  // size < 1 means observation absent; 0,0 with size >= 1 is a valid world tile.
+  size: int;
+  nx: int; // path-head network SW x
+  nz: int; // path-head network SW z
 }
 
 // One chat modal BUTTON_OK choice.
@@ -349,6 +354,10 @@ table Snapshot {
   // One current-plane raw i32 collision grid. Slot 242. Omitted in a delta
   // is keep; first post without the table materializes unavailable.
   collision: Collision;
+  // Local decoded face. Slot 244/246. Omitted in a delta is keep.
+  // self_target_index default -1 because 0 is a legal NPC index.
+  self_target_kind: int = 0;   // 0 none, 1 npc, 2 player
+  self_target_index: int = -1;
 }
 
 table Collision {

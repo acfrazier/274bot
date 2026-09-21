@@ -80,6 +80,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -113,6 +115,9 @@ fn npc_at<'a>(id: i32, x: i32, z: i32, level: i32) -> SceneEntityInput<'a> {
         combat_level: 0,
         target_kind: 0,
         target_index: 0,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }
 }
 

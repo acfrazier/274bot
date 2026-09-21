@@ -628,6 +628,24 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 optional: false,
                 doc: Some("-1 when not facing anyone."),
             },
+            TsField {
+                name: "size",
+                ty: "number",
+                optional: false,
+                doc: Some("NPC footprint in tiles. <1 means observation absent (old buffer / non-NPC row). Packet-time at last NPC_INFO."),
+            },
+            TsField {
+                name: "nx",
+                ty: "number",
+                optional: false,
+                doc: Some("Path-head network SW x. Valid world 0 is not absence when size>=1."),
+            },
+            TsField {
+                name: "nz",
+                ty: "number",
+                optional: false,
+                doc: Some("Path-head network SW z."),
+            },
         ],
     },
     TsInterface {
@@ -1240,7 +1258,7 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         name: "npcs",
         ty: "SceneEntity[]",
         optional: false,
-        doc: None,
+        doc: Some("Packet-time NPC_INFO rows. Copy if retaining past this tick. size<1 is unavailable, not a synthetic 1."),
     },
     TsField {
         name: "locs",
@@ -2305,6 +2323,18 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         ty: "CollisionView",
         optional: false,
         doc: Some("One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent."),
+    },
+    TsField {
+        name: "self_target_kind",
+        ty: "number",
+        optional: false,
+        doc: Some("0 none, 1 npc, 2 player. Packet-time local face."),
+    },
+    TsField {
+        name: "self_target_index",
+        ty: "number",
+        optional: false,
+        doc: Some("-1 when kind is 0. 0 is a legal NPC index."),
     },
 ];
 

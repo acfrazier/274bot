@@ -497,6 +497,17 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "attacked_by_player", falsy)?;
     }
+    if snap.has_self_target_kind() || snap.has_self_target_index() {
+        let kind = num(&mut scope, snap.self_target_kind() as f64);
+        set(&mut scope, obj, "self_target_kind", kind)?;
+        let index = num(&mut scope, snap.self_target_index() as f64);
+        set(&mut scope, obj, "self_target_index", index)?;
+    } else if !had {
+        let kind = num(&mut scope, 0.0);
+        set(&mut scope, obj, "self_target_kind", kind)?;
+        let index = num(&mut scope, -1.0);
+        set(&mut scope, obj, "self_target_index", index)?;
+    }
     if snap.has_widgets() {
         let widgets = widget_text_array(&mut scope, &snap.widgets())?;
         set(&mut scope, obj, "widgets", widgets)?;
@@ -1320,6 +1331,12 @@ fn scene_entity_object<'s>(
     set(scope, o, "target_kind", target_kind)?;
     let target_index = num(scope, ent.target_index() as f64);
     set(scope, o, "target_index", target_index)?;
+    let size = num(scope, ent.size() as f64);
+    set(scope, o, "size", size)?;
+    let nx = num(scope, ent.nx() as f64);
+    set(scope, o, "nx", nx)?;
+    let nz = num(scope, ent.nz() as f64);
+    set(scope, o, "nz", nz)?;
     Ok(o.into())
 }
 
