@@ -347,6 +347,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/skills/Skills.js",
             include_str!("skills.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/prayer/Prayer.js",
+            include_str!("prayer.js"),
+        ),
         Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
         Module::new(
             "/rs2b0t/bot/api/bank/bankOps.js",

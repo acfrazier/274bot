@@ -1427,6 +1427,7 @@ fn tick_loop(
                             });
                         }
                         crate::autocast::on_snapshot(&snap);
+                        crate::prayer::on_snapshot(&snap);
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);
                         crate::production::on_snapshot(&snap);
@@ -1445,6 +1446,7 @@ fn tick_loop(
                             crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
                             crate::autocast::on_hold(host_hold);
+                            crate::prayer::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
                             crate::teleport::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
@@ -1604,37 +1606,38 @@ fn tick_loop(
                     // paints. Drain so await + onPaint + loop
                     // continuation land on this tick before paint
                     // forward.
-                    let result = runtime.call_function(None, "__rs2b0t_pump", json_args!(n));
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
-                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
-                    result
+                    runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
                 } else if v2_pending {
                     // Rust-owned v2 single-flight: do not re-enter tick
                     // while a previous returned Promise is pending.
                     // Snapshot posts still merge; this only skips tick.
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
                     Ok(())
                 } else {
                     // `__rs_tick` is a synchronous entry that returns
                     // immediately (parked or not), so this cannot hang on
-                    // a wait. Drain microtasks so the runner's await
-                    // continuations and onPaint land inside this tick; a
-                    // parked wait leaves no pending work, so the drain
-                    // returns at once (the timeout is only a backstop).
-                    let result =
-                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
-                    result
+                    // a wait.
+                    runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
                 };
+                // Eligible NativeTick only: pause, generation mismatch,
+                // and guardian hold already `continue` above. Advance an
+                // admitted prayer private pump once per tick, including
+                // a sync caller that did not return the Promise.
+                // Before: pump ran only on `v2_pending` (and reset).
+                // After: one no-op-if-absent call here, then the same
+                // single event-loop drain as before — not a second 10ms
+                // framework and not a duplicate drain.
+                if v2_native {
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
+                    );
+                }
+                let _ = runtime.block_on_event_loop(
+                    rustyscript::deno_core::PollEventLoopOptions::default(),
+                    Some(Duration::from_millis(10)),
+                );
+                if parked {
+                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
+                }
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
                 // JS frames have fully unwound. This is the only cancel
@@ -1793,6 +1796,7 @@ fn tick_loop(
                 crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
                 crate::autocast::on_reset();
+                crate::prayer::on_reset();
                 crate::special::on_reset();
                 crate::teleport::on_reset();
                 crate::shop::on_reset();
@@ -1807,6 +1811,13 @@ fn tick_loop(
                 if v2_native {
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
+                    );
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
+                    );
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
                     );
                 }
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
@@ -1824,6 +1835,7 @@ fn tick_loop(
                 crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
                 crate::autocast::on_pause();
+                crate::prayer::on_pause();
                 crate::special::on_pause();
                 crate::teleport::on_pause();
                 crate::shop::on_pause();
@@ -1846,6 +1858,7 @@ fn tick_loop(
                 crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
                 crate::autocast::on_resume();
+                crate::prayer::on_resume();
                 crate::special::on_resume();
                 crate::teleport::on_resume();
                 crate::shop::on_resume();

@@ -13,6 +13,7 @@ pub mod interact;
 pub mod named_banks;
 pub mod native_input;
 pub mod obj_names;
+pub mod prayer;
 pub mod prot;
 pub mod query;
 pub mod random;

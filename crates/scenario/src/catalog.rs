@@ -73,6 +73,8 @@ const REGISTRY: &[Entry] = &[
         "route_inspect_brimhaven_v2_ts",
         scenarios::route_inspect_brimhaven_v2_scenario,
     ),
+    Entry::new("prayer_v2_ts", scenarios::prayer_v2_scenario),
+    Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
     Entry::new("bone_burier", scenarios::bone_burier_scenario),
     Entry::new("lamp_redemption", scenarios::lamp_redemption_scenario),
     Entry::new("bone_burier_v2_ts", bone_burier_v2_ts_scenario),

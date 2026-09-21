@@ -1291,3 +1291,157 @@ fn brimhaven_moss_inspect_v1_generation_transition_uses_new_ring_seq() {
         .qualify()
         .expect("after reset, seq 1 on the new generation is fresh even if the old ring was 8");
 }
+
+fn prayer_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3222, 3222, 0)),
+        ..Observation::default()
+    };
+    observation.levels.insert("prayer".into(), 43);
+    observation.effective_levels.insert("prayer".into(), 43);
+    for index in 83..=97 {
+        observation.varps.insert(index, 0);
+    }
+    observation
+}
+
+fn prayer_on(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    observation.varps.insert(97, 1);
+    observation
+}
+
+fn prayer_all_off(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    for index in 83..=97 {
+        observation.varps.insert(index, 0);
+    }
+    observation
+}
+
+fn prayer_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn prayer_v2_requires_baseline_off_then_on_then_off_and_named_stop() {
+    let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
+    assert!(case.copies_prayer_varps());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seeded all-off must not qualify"
+    );
+
+    let on = prayer_on(baseline.clone());
+    watch.observe("catalogtest", on.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "latched ON without later all-off is incomplete"
+    );
+
+    let off = prayer_all_off(on);
+    watch.observe("catalogtest", off.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "all-off without the exact helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        prayer_stop(off, "prayer v2 qualification complete"),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("ordered off, observed ON, later all-off, and named stop");
+}
+
+#[test]
+fn prayer_v1_stop_without_on_and_missing_varps_cannot_pass() {
+    let case = CoreCase::parse("prayer_v1_ts").expect("named prayer v1 cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let stopped = prayer_stop(baseline.clone(), "prayer v1 qualification complete");
+    watch.observe("catalogtest", stopped, false);
+    assert!(
+        watch.qualify().is_err(),
+        "clean stop without a latched ON cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = baseline.clone();
+    missing.varps.remove(&90);
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing prayer varps must not look like all-off"
+    );
+}
+
+#[test]
+fn prayer_unready_and_outoforder_cannot_pass() {
+    let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = prayer_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut no_points = prayer_ready();
+    no_points.effective_levels.insert("prayer".into(), 0);
+    watch.observe("catalogtest", no_points, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "zero prayer points cannot start"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut low_base = prayer_ready();
+    low_base.levels.insert("prayer".into(), 40);
+    watch.observe("catalogtest", low_base, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "base 40 is below Protect from Melee 43"
+    );
+
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let off = prayer_all_off(baseline.clone());
+    watch.observe("catalogtest", off.clone(), false);
+    watch.observe(
+        "catalogtest",
+        prayer_stop(off, "prayer v2 qualification complete"),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "later all-off+stop without a prior ON latch is out of order"
+    );
+}

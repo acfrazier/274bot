@@ -307,7 +307,11 @@ pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
 /// Lookup is by file name including extension so `.ts` and `.js` stay distinct.
 pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
     match file_name {
-        "bone_burier_v2.ts" | "bone_burier_v2.js" | "route_inspect_brimhaven_v2.ts" => {
+        "bone_burier_v2.ts"
+        | "bone_burier_v2.js"
+        | "route_inspect_brimhaven_v2.ts"
+        | "prayer_v2.ts"
+        | "prayer_v1.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -829,5 +833,17 @@ mod tests {
         assert!(live_example_path("bone_burier_v2").is_none());
         assert!(live_example_path("TradeBot").is_none());
         assert!(live_example_path("bone_burier.ts").is_none());
+    }
+
+    #[test]
+    fn prayer_qualification_examples_are_exact_file_cards() {
+        let v2 = live_example_path("prayer_v2.ts").expect("checked-in prayer v2 example");
+        let v1 = live_example_path("prayer_v1.ts").expect("checked-in prayer v1 adapter");
+        assert!(v2.ends_with("prayer_v2.ts"), "{}", v2.display());
+        assert!(v1.ends_with("prayer_v1.ts"), "{}", v1.display());
+        assert_ne!(file_identity(&v2), file_identity(&v1));
+        assert!(live_example_path("prayer_v2").is_none());
+        assert!(live_example_path("prayer_v1").is_none());
+        assert!(live_example_path("Prayer.ts").is_none());
     }
 }

@@ -840,3 +840,44 @@ export function tick(api) {
     assert_eq!(wired, inspects);
     iso.join();
 }
+
+#[test]
+fn v2_prayer_methods_are_named_helper_results_not_a_namespace() {
+    let src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  globalThis.__probe = {
+    points: api.prayerPoints(),
+    known: api.prayerKnown({ name: 'Protect from Melee' }),
+    prayer: api.prayer,
+    setThen: typeof api.prayerSet({ name: 'Nope', on: true }).then,
+    clearThen: typeof api.prayerClear().then,
+  };
+  try { api.request({ op: 'if-button', component_id: 5623 }); globalThis.__if = 'ok'; }
+  catch (e) { globalThis.__if = String(e); }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["points"]["ok"], true);
+    assert_eq!(probe["points"]["value"], 0);
+    assert_eq!(probe["known"]["ok"], true);
+    assert_eq!(probe["known"]["value"], true);
+    assert!(probe["prayer"].is_null());
+    assert_eq!(probe["setThen"], "function");
+    assert_eq!(probe["clearThen"], "function");
+    let if_btn = iso.probe("globalThis.__if").unwrap();
+    assert!(
+        if_btn
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl: request.if-button"),
+        "{if_btn}"
+    );
+    iso.join();
+}

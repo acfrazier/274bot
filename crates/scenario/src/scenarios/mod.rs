@@ -1,6 +1,7 @@
 pub(crate) mod combat;
 pub(crate) mod navigation;
 pub(crate) mod pair;
+pub(crate) mod prayer;
 pub(crate) mod production;
 pub(crate) mod ranging_guild;
 pub(crate) mod render;
@@ -34,6 +35,7 @@ pub(crate) use pair::{
     duel_arena_scenario, flax_runner_scenario, mule_crafter_air_scenario,
     nature_crafter_air_scenario, script_trade_scenario,
 };
+pub(crate) use prayer::{prayer_v1_scenario, prayer_v2_scenario};
 pub(crate) use production::{
     alcher_custom_alias_scenario, alcher_custom_name_scenario, alcher_custom_scenario,
     alcher_defaults_scenario, alcher_fire_battlestaff_scenario, alcher_large_batch_scenario,

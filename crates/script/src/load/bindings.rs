@@ -366,6 +366,7 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register spell button: {e}"))?;
     crate::autocast::configure(game_data.as_deref());
+    crate::prayer::configure(game_data.as_deref());
     crate::shop::configure(game_data.clone());
     let selected_autocast = game_data.clone();
     runtime
@@ -376,6 +377,15 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register autocast: {e}"))?;
+    let selected_prayer = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_prayer", move |args: &[serde_json::Value]| {
+            Ok(crate::prayer::dispatch(
+                selected_prayer.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register prayer: {e}"))?;
     let selected_special = game_data.clone();
     runtime
         .register_function("__rs2b0t_special", move |args: &[serde_json::Value]| {
@@ -1111,6 +1121,94 @@ globalThis.__rs_api_family = 2;
 globalThis.__rs_v2_tick_pending = false;
 let lifecycleGeneration = 0;
 globalThis.__rs_v2_reset_session = () => { lifecycleGeneration += 1; };
+function prayerCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_prayer(payload);
+}
+function helperOk(value) { return { ok: true, value: value }; }
+function helperErr(error) { return { ok: false, error: String(error) }; }
+function mapPrayerDone(step) {
+  if (!step || step.kind === 'aborted' || step.kind !== 'done') {
+    return helperErr((step && step.reason) || 'aborted');
+  }
+  if (step.ok === true) {
+    return helperOk(step.value === undefined ? true : step.value);
+  }
+  return helperErr(step.reason || 'aborted');
+}
+function enqueueIfButton(component_id) {
+  const h = host();
+  h.interact = h.interact || [];
+  h.interact.push({ op: 'if-button', component_id: component_id });
+}
+function runPrayerMachine(payload) {
+  // Before: a second begin overwrote __rs_prayer_pump; Rust abort of the
+  // old token did not resolve the first Promise (hang).
+  // After: refuse a second native Set/Clear with busy before Rust begin
+  // or click. The admitted operation keeps the pump and must settle.
+  if (typeof globalThis.__rs_prayer_pump === 'function') {
+    return Promise.resolve(helperErr('busy'));
+  }
+  const generation = lifecycleGeneration;
+  const begin = prayerCall(payload);
+  if (begin && begin.kind === 'if-button') {
+    enqueueIfButton(begin.component_id);
+  }
+  if (begin && (begin.kind === 'done' || begin.kind === 'aborted')) {
+    return Promise.resolve(mapPrayerDone(begin));
+  }
+  const token = begin && begin.token;
+  return new Promise((resolve) => {
+    const pump = () => {
+      if (generation !== lifecycleGeneration) {
+        if (globalThis.__rs_prayer_pump === pump) delete globalThis.__rs_prayer_pump;
+        resolve(helperErr('aborted'));
+        return;
+      }
+      const next = prayerCall({ op: 'next', token: token });
+      if (!next || next.kind === 'wait') return;
+      if (next.kind === 'if-button') {
+        enqueueIfButton(next.component_id);
+        return;
+      }
+      if (globalThis.__rs_prayer_pump === pump) delete globalThis.__rs_prayer_pump;
+      resolve(mapPrayerDone(next));
+    };
+    globalThis.__rs_prayer_pump = pump;
+  });
+}
+api.prayerPoints = function () { return prayerCall({ op: 'points' }); };
+api.prayerMax = function () { return prayerCall({ op: 'max' }); };
+api.prayerFull = function () { return prayerCall({ op: 'full' }); };
+api.prayerKnown = function (input) {
+  if (!input || typeof input.name !== 'string') return helperErr('invalid-args');
+  return prayerCall({ op: 'known', name: input.name });
+};
+api.prayerAvailable = function (input) {
+  if (!input || typeof input.name !== 'string') return helperErr('invalid-args');
+  return prayerCall({ op: 'available', name: input.name });
+};
+api.prayerActive = function (input) {
+  if (!input || typeof input.name !== 'string') return helperErr('invalid-args');
+  return prayerCall({ op: 'active', name: input.name });
+};
+api.prayerSet = function (input) {
+  // Sequential await is the preferred example. An already-admitted
+  // operation still progresses on later eligible NativeTicks even if
+  // this Promise is not returned from tick. A second Set while busy
+  // settles immediately with error busy and does not click.
+  if (!input || typeof input.name !== 'string' || typeof input.on !== 'boolean') {
+    return Promise.resolve(helperErr('invalid-args'));
+  }
+  return runPrayerMachine({
+    op: 'begin-set',
+    name: input.name,
+    on: { kind: 'boolean', value: input.on },
+  });
+};
+api.prayerClear = function () {
+  // Same admission rule as prayerSet: busy if a pump is already installed.
+  return runPrayerMachine({ op: 'begin-clear' });
+};
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
   const h = host();

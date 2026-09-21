@@ -10858,6 +10858,182 @@ fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
     );
 }
 
+fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapshot {
+    const VARP_LEN: usize = 360;
+    let cache = Cache {
+        varps: (0..VARP_LEN)
+            .map(|_| client::config::VarpType::default())
+            .collect(),
+        ..Default::default()
+    };
+    let mut c = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(cache),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    c.var = vec![0; VARP_LEN];
+    for index in 0..api::prayer::PRAYER_COUNT {
+        c.var[api::prayer::PRAYER_VARP0 as usize + index] = 0;
+    }
+    c.var[97] = melee;
+    let mut filled = 0;
+    for index in 0..VARP_LEN {
+        if index == 108 || index == 300 || index == 301 {
+            continue;
+        }
+        if (api::prayer::PRAYER_VARP0 as usize
+            ..=api::prayer::PRAYER_VARP0 as usize + api::prayer::PRAYER_COUNT - 1)
+            .contains(&index)
+        {
+            continue;
+        }
+        if filled < extra_nonzero {
+            c.var[index] = 2;
+            filled += 1;
+        }
+    }
+    c.stat_base_level[5] = 43;
+    c.stat_effective_level[5] = 43;
+    c.bump_gens(client::io::ServerProt::VARP_SYNC);
+    c.bump_gens(client::io::ServerProt::UPDATE_STAT);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    snapshot
+}
+
+fn publish_script_snapshot(
+    last: Option<&script::isolate_fb::SnapshotFingerprint>,
+    tick: u64,
+    snapshot: &GameSnapshot,
+) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
+    script_snapshot_fb(
+        last,
+        false,
+        tick,
+        Some((3220, 3220, 0)),
+        true,
+        None,
+        Some(snapshot),
+        None,
+        None,
+        false,
+        false,
+        false,
+    )
+}
+
+fn posted_varp(view: &script::isolate_fb::SnapshotReader<'_>, index: i32) -> Option<i32> {
+    view.varps()
+        .iter()
+        .find(|row| row.index() == index)
+        .map(|row| row.value())
+}
+
+/// Production `script_snapshot_fb` → FlatBuffer → helper must carry the
+/// selected 15 prayer overlays including 0, even when take(29) extras
+/// would otherwise evict them.
+#[test]
+fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
+    let extras = 40;
+    let off_snap = prayer_overlay_game_snapshot(0, extras);
+    let on_snap = prayer_overlay_game_snapshot(1, extras);
+    let (off_bytes, off_fp) = publish_script_snapshot(None, 1, &off_snap);
+    let off_view = script::isolate_fb::decode_snapshot(&off_bytes).expect("off keyframe");
+    for index in
+        api::prayer::PRAYER_VARP0..api::prayer::PRAYER_VARP0 + api::prayer::PRAYER_COUNT as i32
+    {
+        assert_eq!(
+            posted_varp(&off_view, index),
+            Some(0),
+            "selected prayer {index} including 0 must be on the wire"
+        );
+    }
+    assert_eq!(posted_varp(&off_view, 108), Some(0));
+    assert_eq!(posted_varp(&off_view, 300), Some(0));
+    assert_eq!(posted_varp(&off_view, 301), Some(0));
+    let extra_rows = off_view
+        .varps()
+        .iter()
+        .filter(|row| {
+            let index = row.index();
+            row.value() != 0
+                && index != 108
+                && index != 300
+                && index != 301
+                && !(api::prayer::PRAYER_VARP0
+                    ..api::prayer::PRAYER_VARP0 + api::prayer::PRAYER_COUNT as i32)
+                    .contains(&index)
+        })
+        .count();
+    assert_eq!(
+        extra_rows, 29,
+        "non-prayer nonzero extras keep take(29) capacity"
+    );
+
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso = script::LoadIsolate::spawn_with_game_data(
+        r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__active = api.prayerActive({ name: 'Protect from Melee' }).value;
+}
+"#
+        .into(),
+        script::LoadShape::NativeTick,
+        vec![],
+        game_data,
+    )
+    .unwrap();
+    iso.post_snapshot(off_bytes);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__active").unwrap(), false);
+
+    let (on_bytes, on_fp) = publish_script_snapshot(Some(&off_fp), 2, &on_snap);
+    let on_view = script::isolate_fb::decode_snapshot(&on_bytes).expect("on delta");
+    assert_eq!(
+        posted_varp(&on_view, 97),
+        Some(1),
+        "97=1 must not lose the reserved overlay slot to extra pressure"
+    );
+    iso.post_snapshot(on_bytes);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("globalThis.__active").unwrap(), true);
+
+    let (held_bytes, held_fp) = publish_script_snapshot(Some(&on_fp), 3, &on_snap);
+    let held = script::isolate_fb::decode_snapshot(&held_bytes).expect("unchanged delta");
+    assert!(
+        !held.has_varps(),
+        "unchanged varps stay omitted; helper must retain the last overlay"
+    );
+    iso.post_snapshot(held_bytes);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("globalThis.__active").unwrap(), true);
+
+    let (back_bytes, _) = publish_script_snapshot(Some(&held_fp), 4, &off_snap);
+    let back = script::isolate_fb::decode_snapshot(&back_bytes).expect("off delta");
+    assert_eq!(
+        posted_varp(&back, 97),
+        Some(0),
+        "host 97=0 must be published; omitting it leaves the helper ON"
+    );
+    iso.post_snapshot(back_bytes);
+    iso.on_game_tick(4);
+    assert_eq!(
+        iso.probe("globalThis.__active").unwrap(),
+        false,
+        "0->1->0 through production publication must observe off"
+    );
+    iso.join();
+}
+
 #[test]
 fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() {
     let mut c = prepare_client(
