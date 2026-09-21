@@ -1,5 +1,6 @@
 pub(crate) mod actor_observation;
 pub(crate) mod fight_field;
+pub(crate) mod hold_spot;
 pub(crate) mod combat;
 pub(crate) mod line_of_sight;
 pub(crate) mod navigation;
@@ -14,6 +15,7 @@ pub(crate) mod shop;
 
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use fight_field::fight_field_v2_scenario;
+pub(crate) use hold_spot::hold_spot_v2_scenario;
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_scenario, auto_fighter_bank_scenario,
     auto_fighter_mage_scenario, auto_fighter_range_scenario, auto_fighter_scenario,

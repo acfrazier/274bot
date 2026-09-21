@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -611,6 +611,7 @@ pub enum CoreCase {
     LineOfSightV2,
     ActorObservationV2,
     FightFieldV2,
+    HoldSpotV2,
 }
 
 impl CoreCase {
@@ -748,6 +749,7 @@ impl CoreCase {
             "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
             "actor_observation_v2_ts" => Ok(Self::ActorObservationV2),
             "fight_field_v2_ts" => Ok(Self::FightFieldV2),
+            "hold_spot_v2_ts" => Ok(Self::HoldSpotV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -888,6 +890,7 @@ impl CoreCase {
             Self::LineOfSightV2 => "line_of_sight_v2_ts",
             Self::ActorObservationV2 => "actor_observation_v2_ts",
             Self::FightFieldV2 => "fight_field_v2_ts",
+            Self::HoldSpotV2 => "hold_spot_v2_ts",
         }
     }
 
@@ -996,6 +999,7 @@ impl CoreCase {
             Self::LineOfSightV2 => "line_of_sight_v2",
             Self::ActorObservationV2 => "actor_observation_v2",
             Self::FightFieldV2 => "fight_field_v2",
+            Self::HoldSpotV2 => "hold_spot_v2",
         }
     }
 
@@ -1020,6 +1024,10 @@ impl CoreCase {
 
     pub fn copies_fight_field(self) -> bool {
         matches!(self, Self::FightFieldV2)
+    }
+
+    pub fn copies_hold_spot(self) -> bool {
+        matches!(self, Self::HoldSpotV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1047,6 +1055,13 @@ impl CoreCase {
     pub fn fight_field_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::FightFieldV2 => Some(FIGHT_FIELD_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn hold_spot_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::HoldSpotV2 => Some(HOLD_SPOT_V2_STOP),
             _ => None,
         }
     }
@@ -1161,6 +1176,9 @@ pub struct Observation {
     /// Compact fight-field NPC + both LOS helper results. Empty unless the
     /// active Core case asked for fight field. Never a world or NPC-table copy.
     pub fight: FightFieldObservation,
+    /// Compact here/dest/kind hold-spot witness. Empty unless the active Core
+    /// case asked for hold spot. Never a world copy.
+    pub hold: HoldSpotObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1674,6 +1692,7 @@ impl Observation {
             los: LineOfSightObservation::default(),
             actor: ActorObservation::default(),
             fight: FightFieldObservation::default(),
+            hold: HoldSpotObservation::default(),
         }
     }
 
@@ -1938,6 +1957,27 @@ impl Observation {
             npc,
             host_los_network,
             host_los_tile,
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint dest/kind receipt. Never copies
+    /// the collision grid or world.
+    pub fn attach_hold_spot(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_hold_spot_receipt_from_paint);
+        let dest = receipt.as_ref().map(|row| row.dest);
+        self.hold = HoldSpotObservation {
+            available: scene.available,
+            here,
+            dest,
             receipt,
         };
     }
@@ -2328,6 +2368,10 @@ pub const ACTOR_OBSERVATION_V2_STOP: &str = "actor observation qualification com
 pub const ACTOR_RECEIPT_PREFIX: &str = "actor-receipt:";
 pub const FIGHT_FIELD_V2_STOP: &str = "fight field qualification complete";
 pub const FIGHT_FIELD_RECEIPT_PREFIX: &str = "fight-field-receipt:";
+pub const HOLD_SPOT_V2_STOP: &str = "hold spot qualification complete";
+pub const HOLD_SPOT_RECEIPT_PREFIX: &str = "hold-spot-receipt:";
+pub const HOLD_SPOT_MIN_CHEB: i32 = 2;
+pub const HOLD_SPOT_MAX_CHEB: i32 = 6;
 pub const LOS_WALK_SCENERY: i32 = 0x100;
 pub const LOS_V_N: i32 = 0x400;
 pub const LOS_V_E: i32 = 0x1000;
@@ -3095,6 +3139,140 @@ impl FightFieldDeliveryCycle {
             && receipt.los_network == host_los_network
             && receipt.los_tile == host_los_tile
             && !fight_field_effect_is_attack(receipt)
+    }
+}
+
+fn parse_hold_spot_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<HoldSpotScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(HOLD_SPOT_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+fn hold_spot_kind_forbidden(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk-to")
+        || kind.eq_ignore_ascii_case("npc")
+        || kind.eq_ignore_ascii_case("attack")
+}
+
+fn hold_spot_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("status") || kind.eq_ignore_ascii_case("walk")
+}
+
+fn hold_spot_chebyshev(here: LineOfSightTile, dest: LineOfSightTile) -> i32 {
+    (here.x - dest.x).abs().max((here.z - dest.z).abs())
+}
+
+fn hold_spot_dest_ok(here: LineOfSightTile, dest: LineOfSightTile) -> bool {
+    here.level == dest.level && (here.x != dest.x || here.z != dest.z) && {
+        let d = hold_spot_chebyshev(here, dest);
+        d >= HOLD_SPOT_MIN_CHEB && d <= HOLD_SPOT_MAX_CHEB
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HoldSpotScriptReceipt {
+    pub here: LineOfSightTile,
+    pub dest: LineOfSightTile,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HoldSpotObservation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub receipt: Option<HoldSpotScriptReceipt>,
+}
+
+impl Default for HoldSpotObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            dest: None,
+            receipt: None,
+        }
+    }
+}
+
+pub fn hold_spot_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.hold.available
+        && baseline.hold.here.is_some()
+}
+
+fn hold_spot_receipt_joined(now: &HoldSpotObservation) -> bool {
+    let (Some(here), Some(dest), Some(receipt)) = (now.here, now.dest, now.receipt.as_ref()) else {
+        return false;
+    };
+    now.available
+        && receipt.here == here
+        && receipt.dest == dest
+        && hold_spot_dest_ok(here, dest)
+        && hold_spot_kind_ok(&receipt.kind)
+        && !hold_spot_kind_forbidden(&receipt.kind)
+}
+
+/// Post-Start witness: joined here/dest receipt, status or walk, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct HoldSpotDeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub receipt: Option<HoldSpotScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl HoldSpotDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if hold_spot_receipt_joined(&now.hold) {
+            self.here = now.hold.here;
+            self.dest = now.hold.dest;
+            self.kind = now.hold.receipt.as_ref().map(|row| row.kind.clone());
+            self.receipt = now.hold.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (Some(here), Some(dest), Some(kind), Some(receipt)) = (
+            self.here,
+            self.dest,
+            self.kind.as_deref(),
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.dest == dest
+            && receipt.kind == kind
+            && hold_spot_dest_ok(here, dest)
+            && hold_spot_kind_ok(kind)
+            && !hold_spot_kind_forbidden(kind)
     }
 }
 
@@ -4046,6 +4224,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
         CoreCase::ActorObservationV2 => actor_observation_baseline_ready(baseline),
         CoreCase::FightFieldV2 => fight_field_baseline_ready(baseline),
+        CoreCase::HoldSpotV2 => hold_spot_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -4411,6 +4590,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::FightFieldV2 => {
             "ingame && scene_state==2 && SceneView.available, here on the published plane"
         }
+        CoreCase::HoldSpotV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -4484,6 +4666,7 @@ pub struct CoreWitness {
     pub line_of_sight_cycle: LineOfSightDeliveryCycle,
     pub actor_observation_cycle: ActorObservationDeliveryCycle,
     pub fight_field_cycle: FightFieldDeliveryCycle,
+    pub hold_spot_cycle: HoldSpotDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -9787,6 +9970,7 @@ impl CoreWitness {
             line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
             actor_observation_cycle: ActorObservationDeliveryCycle::default(),
             fight_field_cycle: FightFieldDeliveryCycle::default(),
+            hold_spot_cycle: HoldSpotDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -10023,6 +10207,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::FightFieldV2) {
             self.fight_field_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::HoldSpotV2) {
+            self.hold_spot_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -10278,6 +10465,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::HoldSpotV2 => {
+                if let Some(expected) = self.case.hold_spot_stop_reason() {
+                    self.hold_spot_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -10496,6 +10689,7 @@ impl CoreWitness {
             CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
             CoreCase::ActorObservationV2 => self.actor_observation_cycle.qualified(),
             CoreCase::FightFieldV2 => self.fight_field_cycle.qualified(),
+            CoreCase::HoldSpotV2 => self.hold_spot_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -10595,6 +10789,7 @@ impl CoreWitness {
             "prayer_delivery_cycle": self.prayer_delivery_cycle,
             "line_of_sight_cycle": self.line_of_sight_cycle,
             "fight_field_cycle": self.fight_field_cycle,
+            "hold_spot_cycle": self.hold_spot_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -10918,6 +11113,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_hold = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_hold_spot()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_hold_spot(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -10935,6 +11137,9 @@ impl CoreWatch {
             }
             if copies_fight {
                 observation.attach_fight_field(snapshot, paint);
+            }
+            if copies_hold {
+                observation.attach_hold_spot(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -11000,6 +11205,21 @@ impl CoreWatch {
                 case.copies_fight_field()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the hold-spot File card. Callers attach paint and
+    /// compact here/dest only then.
+    pub fn copies_hold_spot(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_hold_spot()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_hold_spot(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

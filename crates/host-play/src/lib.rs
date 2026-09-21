@@ -2563,6 +2563,7 @@ fn spawn_slot_thread(
                             let catalog_paint = if obs_catalog_core.copies_line_of_sight()
                                 || obs_catalog_core.copies_actor_observation()
                                 || obs_catalog_core.copies_fight_field()
+                                || obs_catalog_core.copies_hold_spot()
                             {
                                 script_paint_of(&slot_scripts, name)
                             } else {

@@ -15,7 +15,8 @@ use host_play::catalog_core::{
     ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
     ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
     ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
-    ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
+    HoldSpotObservation, HoldSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
+    HOLD_SPOT_V2_STOP,
 };
 
 fn thiever_observation() -> Observation {
@@ -2619,5 +2620,273 @@ fn fight_field_rejects_forged_npc_attack_step() {
     assert!(
         watch.qualify().is_err(),
         "forged Attack effect cannot pass"
+    );
+}
+
+fn hold_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn hold_dest() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3203,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn hold_receipt(here: LineOfSightTile, dest: LineOfSightTile, kind: &str) -> HoldSpotScriptReceipt {
+    HoldSpotScriptReceipt {
+        here,
+        dest,
+        kind: kind.into(),
+    }
+}
+
+fn hold_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.hold = HoldSpotObservation {
+        available: true,
+        here: Some(hold_here()),
+        ..HoldSpotObservation::default()
+    };
+    observation
+}
+
+fn hold_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = hold_here();
+    let dest = hold_dest();
+    observation.hold.here = Some(here);
+    observation.hold.dest = Some(dest);
+    observation.hold.receipt = Some(hold_receipt(here, dest, "walk"));
+    observation
+}
+
+fn hold_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn hold_spot_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("hold_spot_v2_ts").expect("named hold spot cell");
+    assert!(case.copies_hold_spot());
+    assert!(!case.copies_fight_field());
+    assert!(!case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = hold_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = hold_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe("catalogtest", hold_stop(joined, HOLD_SPOT_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("host here, joined dest/kind receipt, and named stop");
+}
+
+#[test]
+fn hold_spot_rejects_noquery_nodest_already_on_dest_and_wrong_stop() {
+    let case = CoreCase::parse("hold_spot_v2_ts").expect("named hold spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = hold_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        hold_stop(baseline.clone(), HOLD_SPOT_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_dest = hold_joined(baseline.clone());
+    no_dest.hold.dest = None;
+    no_dest.hold.receipt = None;
+    no_dest.script_lifecycle = hold_stop(no_dest.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_dest, false);
+    assert!(watch.qualify().is_err(), "no-dest success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut already = hold_joined(baseline.clone());
+    let here = hold_here();
+    already.hold.dest = Some(here);
+    if let Some(receipt) = already.hold.receipt.as_mut() {
+        receipt.dest = here;
+    }
+    already.script_lifecycle = hold_stop(already.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", already, false);
+    assert!(
+        watch.qualify().is_err(),
+        "already-on-dest success cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = hold_joined(baseline.clone());
+    if let Some(receipt) = mismatch.hold.receipt.as_mut() {
+        receipt.here.x = 0;
+    }
+    mismatch.script_lifecycle = hold_stop(mismatch.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script here disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = hold_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", hold_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn hold_spot_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("hold_spot_v2_ts").expect("named hold spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = hold_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = hold_ready();
+    missing.hold.available = false;
+    missing.hold.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+}
+
+#[test]
+fn hold_spot_join_agrees_on_here_dest_not_host_here_alone() {
+    let case = CoreCase::parse("hold_spot_v2_ts").expect("named hold spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = hold_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut mismatch = hold_joined(baseline.clone());
+    if let Some(receipt) = mismatch.hold.receipt.as_mut() {
+        receipt.dest = LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        };
+    }
+    mismatch.script_lifecycle = hold_stop(mismatch.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "host dest vs File dest disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = hold_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", hold_stop(joined, HOLD_SPOT_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on here and dest");
+}
+
+#[test]
+fn hold_spot_rejects_forged_walk_to_npc_attack() {
+    let case = CoreCase::parse("hold_spot_v2_ts").expect("named hold spot cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = hold_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut walk_to = hold_joined(baseline.clone());
+    if let Some(receipt) = walk_to.hold.receipt.as_mut() {
+        receipt.kind = "walk-to".into();
+    }
+    walk_to.script_lifecycle = hold_stop(walk_to.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", walk_to, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged walk-to holdNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut npc_kind = hold_joined(baseline.clone());
+    if let Some(receipt) = npc_kind.hold.receipt.as_mut() {
+        receipt.kind = "npc".into();
+    }
+    npc_kind.script_lifecycle = hold_stop(npc_kind.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", npc_kind, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged npc holdNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut attack = hold_joined(baseline);
+    if let Some(receipt) = attack.hold.receipt.as_mut() {
+        receipt.kind = "Attack".into();
+    }
+    attack.script_lifecycle = hold_stop(attack.clone(), HOLD_SPOT_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", attack, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged Attack holdNext step cannot pass"
     );
 }
