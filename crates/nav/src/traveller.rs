@@ -2804,16 +2804,19 @@ fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
         || (edge.kind == TransportKind::Door && edge.loc_id == SHANTAY_HENGE_LOC_ID)
 }
 
-/// Whether the live loc family already reads **open**. Searches closed
-/// and open ids within 3 of `at` — an exact-tile check misses the
-/// Catherby open leaf at (2816,3439) while `at` is (2816,3438).
+/// Whether the live loc family already reads **open**. Packed closed/open
+/// ids are resolved by [`find_door_loc`] within chebyshev 3 of `at` (the
+/// Catherby open leaf at (2816,3439) while `at` is (2816,3438)). When
+/// that misses, an unpacked swing door with no `open_loc_id` may still
+/// read open if the closed id is gone and a loc **on `edge.at`** offers
+/// Close — not a nearby unrelated Close loc (sealed `dir=None` stand
+/// hops such as ranging 2514 sit a tile off the door loc).
 fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bool {
     if let Some(loc) = find_door_loc(snapshot, edge) {
         return loc.id != edge.loc_id;
     }
     snapshot.locs().iter().any(|loc| {
-        cheb(loc.tile, edge.at) <= 3
-            && loc.tile.level == edge.at.level
+        loc.tile == edge.at
             && loc
                 .actions
                 .iter()
@@ -5787,6 +5790,79 @@ mod tests {
             }
             assert_eq!(rec.loc_ops, 1, "{label} one Open");
         }
+    }
+
+    /// Sealed ranging 2514 hop with the door loc absent: a nearby unrelated
+    /// Close-action loc must not satisfy [`edge_loc_open`] and skip Open.
+    #[test]
+    fn follow_rangingguild_missing_loc_nearby_close_does_not_skip_open() {
+        let mut c = scene_client();
+        c.map_build_base_x = RANGING_SCENE_BASE.0;
+        c.map_build_base_z = RANGING_SCENE_BASE.1;
+        // 2514 not planted — only an unrelated swing door one tile off `at`.
+        let nearby = scene_of(RANGING_SCENE_BASE, RANGING_LOC);
+        plant_loc(
+            &mut c,
+            1531,
+            "Unrelated door",
+            "Close",
+            nearby.0,
+            nearby.1,
+        );
+        let start = scene_of(RANGING_SCENE_BASE, RANGING_OUTSIDE);
+        let mut snap = snap_at(&mut c, start.0, start.1);
+        let mut rec = FollowRec {
+            route: Some(start),
+            build_base: Some(RANGING_SCENE_BASE),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: rangingguild_enter_edge(),
+            }],
+            dest: RANGING_INSIDE,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "first poll must stay pending, not walk through on a nearby Close"
+        );
+        assert_eq!(
+            rec.loc_ops, 0,
+            "must not OP_LOC1 Open when 2514 is missing (no skip-open fallback)"
+        );
+        assert!(
+            rec.walked.is_empty(),
+            "must not walk toward `to` on a nearby Close misread"
+        );
+
+        let mut outcome = None;
+        for _ in 0..8 {
+            if let Some(o) = t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                outcome = Some(o);
+                break;
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        match outcome {
+            Some(TravelOutcome::Blocked { detail, .. }) => {
+                assert!(
+                    detail.contains("2514"),
+                    "blocked waiting for the packed door loc, got: {detail}"
+                );
+            }
+            other => panic!("expected Blocked for missing 2514, got {other:?}"),
+        }
+        assert_eq!(
+            rec.loc_ops, 0,
+            "never sent Open — nearby Close is not the ranging door"
+        );
     }
 
     /// Shantay north is another Door+dir=None Cheb-2 teleport. Default-2
