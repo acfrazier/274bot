@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const JS_MAX_SAFE: u64 = (1 << 53) - 1;
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
-fn alloc_token(avoid: u64) -> u64 {
+pub(crate) fn alloc_token(avoid: u64) -> u64 {
     loop {
         let cur = NEXT_TOKEN.load(Ordering::Relaxed);
         let token = match cur {

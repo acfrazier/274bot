@@ -322,6 +322,7 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
         false,
         None,
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -2183,6 +2184,7 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
         false,
         None,
         outcome,
+        PostedInspect::default(),
         |input, native| script::isolate_fb::encode_snapshot_with_native(input, native),
     )
 }
@@ -10225,6 +10227,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         false,
         Some(bits.as_slice()),
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
@@ -10264,6 +10267,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         false,
         None,
         PostedWalkOutcome::default(),
+        PostedInspect::default(),
         script::isolate_fb::encode_snapshot_with_native,
     );
     let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");
@@ -14022,6 +14026,7 @@ fn observer_pump_inactive_watches_skip_lifecycle_and_guardian_producers() {
             guardian_called.set(true);
             catalog_core::BoundedGuardian::default()
         },
+        None,
     );
 
     assert!(
@@ -14066,6 +14071,7 @@ fn observer_pump_configured_catalog_runs_producers_and_clear_stops_them() {
                     ..catalog_core::BoundedGuardian::default()
                 }
             },
+            None,
         );
     };
 
@@ -14104,6 +14110,7 @@ fn observer_pump_paired_only_skips_catalog_fact_producers() {
             None
         },
         || catalog_core::BoundedGuardian::default(),
+        None,
     );
 
     assert!(
@@ -14144,6 +14151,7 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
             guardian_called.set(true);
             unreachable!("session boundary must not read prior-frame random status")
         },
+        None,
     );
 
     assert!(

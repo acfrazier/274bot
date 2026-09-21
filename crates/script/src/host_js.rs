@@ -309,6 +309,10 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  stop(reason?: string): void;\n");
     out.push_str("  readonly paint: NativePaint;\n");
     out.push_str("  request(op: NativeOp): void;\n");
+    out.push_str("  /** Isolate-owned inspect token. Pair with request inspect-route request_id, or query inspectSettled/inspectValue. Caller-invented ids never consume host jobs; 0 is snapshot-only preview. */\n");
+    out.push_str("  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;\n");
+    out.push_str("  inspectSettled(token: number): boolean;\n");
+    out.push_str("  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;\n");
     out.push_str("}\n");
 }
 
@@ -1495,6 +1499,22 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "inspect-route",
+        fields: &[
+            TsField { name: "x", ty: "number", optional: false, doc: None },
+            TsField { name: "z", ty: "number", optional: false, doc: None },
+            TsField { name: "level", ty: "number", optional: false, doc: None },
+            TsField { name: "from_x", ty: "number", optional: false, doc: None },
+            TsField { name: "from_z", ty: "number", optional: false, doc: None },
+            TsField { name: "from_level", ty: "number", optional: false, doc: None },
+            TsField { name: "allow_teleports", ty: "boolean", optional: true, doc: None },
+            TsField { name: "allow_wilderness", ty: "boolean", optional: true, doc: None },
+            TsField { name: "allow_bank_fetch", ty: "boolean", optional: true, doc: None },
+            TsField { name: "avoid", ty: "Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>", optional: true, doc: None },
+            TsField { name: "request_id", ty: "number", optional: true, doc: None },
+        ],
+    },
+    InteractVariant {
         op: "walk-to",
         fields: &[
             TsField {
@@ -2164,6 +2184,31 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "walk_outcome_radius", ty: "number", optional: false, doc: None },
     TsField { name: "walk_outcome_allow_teleports", ty: "boolean", optional: false, doc: None },
     TsField { name: "walk_outcome_request_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_generation", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_request_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_ok", ty: "boolean", optional: false, doc: None },
+    TsField { name: "route_inspect_reason", ty: "string", optional: false, doc: None },
+    TsField { name: "route_inspect_bank_planned", ty: "boolean", optional: false, doc: None },
+    TsField { name: "route_inspect_ticks", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_hops", ty: "Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_seq", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_generation", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_request_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_ok", ty: "boolean", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_reason", ty: "string", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_bank_planned", ty: "boolean", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_ticks", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_prev_hops", ty: "Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>", optional: false, doc: None },
+    TsField { name: "route_inspect_running_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_pending_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_accepted_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_replaced_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_replaced_prev_id", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_refused_id", ty: "number", optional: false, doc: Some("Latest registered token the host could not reserve. Not a ring terminal.") },
+    TsField { name: "route_inspect_refused_id_2", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_refused_id_3", ty: "number", optional: false, doc: None },
+    TsField { name: "route_inspect_unobserved", ty: "number", optional: false, doc: Some("Host unobserved obligation count. Advisory; may lag the next drain.") },
 ];
 
 const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
@@ -2253,6 +2298,18 @@ const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant { op: "walk-nearest-bank", fields: &[] },
+    InteractVariant {
+        op: "inspect-route",
+        fields: &[
+            TsField { name: "from", ty: "WorldTile", optional: false, doc: None },
+            TsField { name: "to", ty: "WorldTile", optional: false, doc: None },
+            TsField { name: "allow_teleports", ty: "boolean", optional: true, doc: None },
+            TsField { name: "allow_wilderness", ty: "boolean", optional: true, doc: None },
+            TsField { name: "allow_bank_fetch", ty: "boolean", optional: true, doc: None },
+            TsField { name: "avoid", ty: "Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>", optional: true, doc: None },
+            TsField { name: "request_id", ty: "number", optional: true, doc: Some("Isolate inspectBegin token only. 0 is snapshot-only and still runs a host preview. Invented nonzero ids never reach the host.") },
+        ],
+    },
 ];
 
 #[cfg(test)]

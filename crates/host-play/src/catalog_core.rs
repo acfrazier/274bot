@@ -25,7 +25,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -603,6 +603,8 @@ pub enum CoreCase {
     RangingGuildRedeem,
     RangingGuildBank,
     RangingGuildFull,
+    BrimhavenMossInspectV1,
+    RouteInspectBrimhavenV2,
 }
 
 impl CoreCase {
@@ -733,6 +735,8 @@ impl CoreCase {
             "ranging_guild_redeem" => Ok(Self::RangingGuildRedeem),
             "ranging_guild_bank" => Ok(Self::RangingGuildBank),
             "ranging_guild_full" => Ok(Self::RangingGuildFull),
+            "brimhaven_moss_inspect_v1" => Ok(Self::BrimhavenMossInspectV1),
+            "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -866,6 +870,8 @@ impl CoreCase {
             Self::RangingGuildRedeem => "ranging_guild_redeem",
             Self::RangingGuildBank => "ranging_guild_bank",
             Self::RangingGuildFull => "ranging_guild_full",
+            Self::BrimhavenMossInspectV1 => "brimhaven_moss_inspect_v1",
+            Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
         }
     }
 
@@ -967,7 +973,16 @@ impl CoreCase {
             | Self::RangingGuildRedeem
             | Self::RangingGuildBank
             | Self::RangingGuildFull => "RangingGuild",
+            Self::BrimhavenMossInspectV1 => "BrimhavenMossGiants",
+            Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
         }
+    }
+
+    pub fn copies_route_inspect(self) -> bool {
+        matches!(
+            self,
+            Self::BrimhavenMossInspectV1 | Self::RouteInspectBrimhavenV2
+        )
     }
 }
 
@@ -1058,6 +1073,41 @@ pub struct Observation {
     /// Posted anvil/main-skill-multi row ids this frame (empty if the panel
     /// was not decoded). Chat `make_products` does not fill this.
     pub main_make_ids: BTreeSet<i32>,
+    /// Already-published inspect terminal, attached only for inspect Core
+    /// cases. Default empty; `from_snapshot` does not copy hops.
+    pub route_inspect_seq: u64,
+    pub route_inspect_generation: u64,
+    pub route_inspect_request_id: u64,
+    pub route_inspect_ok: bool,
+    pub route_inspect_reason: String,
+    #[serde(rename = "route_inspect_hops")]
+    pub route_inspect_hops: Vec<RouteInspectHopFact>,
+    /// `InspectNav.generation` even when no terminal is published.
+    /// Missing-terminal Observation defaults are 0 and are not this value.
+    pub route_inspect_live_generation: u64,
+    pub route_inspect_has_terminal: bool,
+}
+
+/// Compact hop projection for Core JSON. Only `locName` is copied from the
+/// already-published host terminal.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteInspectHopFact {
+    pub loc_name: String,
+}
+
+/// Identity/freshness/ok/hop names already published by the host inspect
+/// terminal. Copied only when the active Core case asks for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RouteInspectPublished {
+    pub live_generation: u64,
+    pub has_terminal: bool,
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: String,
+    pub hop_loc_names: Vec<String>,
 }
 
 /// Compact proof that this run observed the exact HerbCleaner seed in a
@@ -1538,7 +1588,30 @@ impl Observation {
                 .take(16)
                 .map(|item| item.def.id)
                 .collect(),
+            route_inspect_seq: 0,
+            route_inspect_generation: 0,
+            route_inspect_request_id: 0,
+            route_inspect_ok: false,
+            route_inspect_reason: String::new(),
+            route_inspect_hops: Vec::new(),
+            route_inspect_live_generation: 0,
+            route_inspect_has_terminal: false,
         }
+    }
+
+    pub fn attach_route_inspect(&mut self, published: RouteInspectPublished) {
+        self.route_inspect_live_generation = published.live_generation;
+        self.route_inspect_has_terminal = published.has_terminal;
+        self.route_inspect_seq = published.seq;
+        self.route_inspect_generation = published.generation;
+        self.route_inspect_request_id = published.request_id;
+        self.route_inspect_ok = published.ok;
+        self.route_inspect_reason = published.reason;
+        self.route_inspect_hops = published
+            .hop_loc_names
+            .into_iter()
+            .map(|loc_name| RouteInspectHopFact { loc_name })
+            .collect();
     }
 
     pub fn item(&self, name: &str) -> i32 {
@@ -1705,6 +1778,190 @@ pub fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32)
 
 pub fn empty_pack(observation: &Observation) -> bool {
     observation.item_ids.values().copied().sum::<i32>() == 0
+}
+
+/// Frozen `config.ts` @ rs2b0t `beecd912` Ardougne SE bank / Barnaby pier / field.
+pub const BRIMHAVEN_INSPECT_BANK: (i32, i32, i32) = (2655, 3283, 0);
+pub const BRIMHAVEN_INSPECT_PIER: (i32, i32, i32) = (2683, 3272, 0);
+pub const BRIMHAVEN_INSPECT_FIELD: (i32, i32, i32) = (2698, 3206, 0);
+pub const BRIMHAVEN_INSPECT_BANK_RADIUS: i32 = 6;
+pub const BRIMHAVEN_INSPECT_PIER_RADIUS: i32 = 8;
+pub const BRIMHAVEN_INSPECT_FOOD_WITHDRAW: i32 = 20;
+pub const BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP: i32 = 60;
+
+fn chebyshev(a: (i32, i32, i32), b: (i32, i32, i32)) -> i32 {
+    if a.2 != b.2 {
+        i32::MAX
+    } else {
+        (a.0 - b.0).abs().max((a.1 - b.1).abs())
+    }
+}
+
+fn hop_loc_has(hops: &[RouteInspectHopFact], needle: &str) -> bool {
+    hops.iter()
+        .any(|hop| hop.loc_name.to_ascii_lowercase().contains(needle))
+}
+
+fn hop_loc_wrong_boat(hops: &[RouteInspectHopFact]) -> bool {
+    hops.iter().any(|hop| {
+        let name = hop.loc_name.to_ascii_lowercase();
+        name.contains("thresnor") || name.contains("musa") || name.contains("port sarim")
+    })
+}
+
+/// Authoritative inspect freshness for Core (not a new product policy).
+///
+/// `InspectNav.generation` starts at 0 and is the live generation even when
+/// no terminal is published. `reset_inspect` (session nav reset, not catalog
+/// Start) does `wrapping_add(1)` and `clear_published`; a later publish uses
+/// `next_seq` from an empty latest (seq 1) stamped with the new generation.
+/// `Observation` defaults (`generation`/`seq`/`live_generation` = 0,
+/// `has_terminal` = false) are missing-projection placeholders, not "live
+/// generation is 0". The narrow inspect projection therefore copies
+/// `live_generation` even without a terminal so Start baseline can store the
+/// real ring. Generation 0 is a legitimate first-session value.
+///
+/// Current publish: `has_terminal` and `terminal.generation == live_generation`.
+/// Same live generation as the Start baseline: `seq` must advance past that
+/// baseline seq. After `reset_inspect` the live generation changes; the new
+/// ring's seq 1 is fresh even if the previous ring ended at seq 8. Old
+/// generation / stale seq / unpublished seq 0 are rejected. v1 also requires
+/// a registered `request_id != 0` at the cycle; v2 token uses `!= 0` then a
+/// later distinct `request_id == 0` snapshot.
+fn fresh_barnaby_inspect(
+    now: &Observation,
+    prior_live_generation: u64,
+    prior_seq: u64,
+) -> bool {
+    if !now.route_inspect_has_terminal
+        || now.route_inspect_generation != now.route_inspect_live_generation
+        || !now.route_inspect_ok
+        || !hop_loc_has(&now.route_inspect_hops, "barnaby")
+        || hop_loc_wrong_boat(&now.route_inspect_hops)
+    {
+        return false;
+    }
+    if now.route_inspect_live_generation == prior_live_generation {
+        now.route_inspect_seq > prior_seq
+    } else {
+        now.route_inspect_seq > 0
+    }
+}
+
+pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_BANK_RADIUS)
+        && empty_pack(baseline)
+        && baseline.item_id(LOBSTER_ID) == 0
+        && baseline.item_id(COINS_ID) == 0
+        && baseline.level("agility") >= 30
+        && baseline.ingame
+        && baseline.scene_state == 2
+}
+
+pub fn route_inspect_brimhaven_v2_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, BRIMHAVEN_INSPECT_PIER, 4)
+        && baseline.ingame
+        && baseline.scene_state == 2
+}
+
+/// Ordered v1 witness: restock after empty-pack Start, then a fresh accepted
+/// Barnaby inspect (`request_id != 0`), then a later observation with an
+/// actual tile change toward/at the pier. First `accepted_tile` is kept.
+/// Seed, fallback-without-accept, same-frame pier, wrong-boat, and stale
+/// generation cannot qualify.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BrimhavenMossInspectCycle {
+    pub restocked: bool,
+    pub accepted_seq: Option<u64>,
+    pub accepted_tile: Option<(i32, i32, i32)>,
+    pub walk_progress: bool,
+}
+
+impl BrimhavenMossInspectCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if !self.restocked
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(LOBSTER_ID) >= BRIMHAVEN_INSPECT_FOOD_WITHDRAW
+            && now.item_id(COINS_ID) >= BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP
+            && baseline.item_id(LOBSTER_ID) == 0
+            && baseline.item_id(COINS_ID) == 0
+        {
+            self.restocked = true;
+        }
+        if self.restocked
+            && self.accepted_seq.is_none()
+            && now.route_inspect_request_id != 0
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
+        {
+            self.accepted_seq = Some(now.route_inspect_seq);
+            // First accepted tile only; repeated later terminals must not refresh it.
+            self.accepted_tile = now.tile;
+        }
+        if let (Some(_), Some(from)) = (self.accepted_seq, self.accepted_tile) {
+            let later_tile = now.tile.filter(|tile| *tile != from);
+            if let Some(tile) = later_tile {
+                self.walk_progress |= near(Some(tile), BRIMHAVEN_INSPECT_PIER, BRIMHAVEN_INSPECT_PIER_RADIUS)
+                    || chebyshev(tile, BRIMHAVEN_INSPECT_PIER) < chebyshev(from, BRIMHAVEN_INSPECT_PIER);
+            }
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.restocked && self.accepted_seq.is_some() && self.walk_progress
+    }
+}
+
+/// Ordered v2 witness: consumed token result, then a later request_id 0
+/// result, then ordinary arrival on a distinct bank tile.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RouteInspectBrimhavenV2Cycle {
+    pub token_seq: Option<u64>,
+    pub snap0_seq: Option<u64>,
+    pub walked: bool,
+}
+
+impl RouteInspectBrimhavenV2Cycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.token_seq.is_none()
+            && now.route_inspect_request_id != 0
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
+        {
+            self.token_seq = Some(now.route_inspect_seq);
+        }
+        if let Some(token_seq) = self.token_seq {
+            if self.snap0_seq.is_none()
+                && now.route_inspect_request_id == 0
+                && fresh_barnaby_inspect(
+                    now,
+                    // id0 is a later publish on this same live ring; seq must
+                    // advance past the token. v2 request_id 0 is distinct from
+                    // a v1 registered identity.
+                    now.route_inspect_live_generation,
+                    token_seq,
+                )
+            {
+                self.snap0_seq = Some(now.route_inspect_seq);
+            }
+        }
+        if self.snap0_seq.is_some() {
+            self.walked |= near(now.tile, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_BANK_RADIUS)
+                && !near(now.tile, BRIMHAVEN_INSPECT_PIER, 4);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.token_seq.is_some() && self.snap0_seq.is_some() && self.walked
+    }
 }
 
 fn empty_worn(observation: &Observation) -> bool {
@@ -2649,6 +2906,8 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RangingGuildRedeem => ranging_guild_redeem_baseline_ready(baseline),
         CoreCase::RangingGuildBank => ranging_guild_bank_baseline_ready(baseline),
         CoreCase::RangingGuildFull => ranging_guild_full_baseline_ready(baseline),
+        CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
+        CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -2996,6 +3255,12 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RangingGuildFull => {
             "Seers bank (2725,3491,0) r6, Ranged 70, seeded KEEP ticket 1464x1999, no rune arrow 892 packed or banked, no pack coins 995, no pack/worn Magic shortbow 861, unpaid targetcount 156"
         }
+        CoreCase::BrimhavenMossInspectV1 => {
+            "Ardougne SE bank (2655,3283,0) r6, empty pack, Agility 30, no carried lobster/coins"
+        }
+        CoreCase::RouteInspectBrimhavenV2 => {
+            "Captain Barnaby pier (2683,3272,0) r4, ingame && scene_state==2"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -3063,6 +3328,8 @@ pub struct CoreWitness {
     pub ranging_guild_redeem_cycle: RangingGuildRedeemCycle,
     pub ranging_guild_bank_cycle: RangingGuildBankCycle,
     pub ranging_guild_full_cycle: RangingGuildFullCycle,
+    pub brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle,
+    pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -8360,6 +8627,8 @@ impl CoreWitness {
             ranging_guild_redeem_cycle: RangingGuildRedeemCycle::default(),
             ranging_guild_bank_cycle: RangingGuildBankCycle::default(),
             ranging_guild_full_cycle: RangingGuildFullCycle::default(),
+            brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle::default(),
+            route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -8575,6 +8844,14 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::RangingGuildFull) {
             self.ranging_guild_full_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::BrimhavenMossInspectV1) {
+            self.brimhaven_moss_inspect_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RouteInspectBrimhavenV2) {
+            self.route_inspect_brimhaven_v2_cycle
                 .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
@@ -9019,6 +9296,8 @@ impl CoreWitness {
             CoreCase::RangingGuildRedeem => self.ranging_guild_redeem_cycle.qualified(),
             CoreCase::RangingGuildBank => self.ranging_guild_bank_cycle.qualified(),
             CoreCase::RangingGuildFull => self.ranging_guild_full_cycle.qualified(),
+            CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
+            CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -9113,6 +9392,8 @@ impl CoreWitness {
             "ranging_guild_redeem_cycle": self.ranging_guild_redeem_cycle,
             "ranging_guild_bank_cycle": self.ranging_guild_bank_cycle,
             "ranging_guild_full_cycle": self.ranging_guild_full_cycle,
+            "brimhaven_moss_inspect_cycle": self.brimhaven_moss_inspect_cycle,
+            "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -9377,6 +9658,7 @@ impl CoreWatch {
             None,
             BoundedGuardian::default(),
             session_boundary,
+            None,
         );
     }
 
@@ -9391,6 +9673,7 @@ impl CoreWatch {
         lifecycle: Option<script::ScriptLifecycleReceipt>,
         guardian: BoundedGuardian,
         session_boundary: bool,
+        inspect: Option<RouteInspectPublished>,
     ) {
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -9407,12 +9690,30 @@ impl CoreWatch {
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
+            if let Some(published) = inspect {
+                observation.attach_route_inspect(published);
+            }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
     }
 
     pub fn configured(&self) -> bool {
         self.active.load(Ordering::Acquire)
+    }
+
+    /// True only for the active inspect cards. Callers copy published hops
+    /// only then; other cases keep the empty default.
+    pub fn copies_route_inspect(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_route_inspect()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_route_inspect(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
     }
 
     /// Allocation-free terminal polling for the headed UI. The full receipt

@@ -616,6 +616,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/event/webwalk/walkOpening.js",
             include_str!("walk_opening.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/event/webwalk/Navigator.js",
+            include_str!("navigator.js"),
+        ),
         Module::new("/rs2b0t/bot/api/tasks/Anchor.js", include_str!("anchor.js")),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),
@@ -1028,6 +1032,30 @@ pub enum InteractReq {
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
+    /// Pure inspect-route preview. `x/z/level` are the destination.
+    #[serde(rename = "inspect-route")]
+    InspectRoute {
+        x: i32,
+        z: i32,
+        level: i32,
+        from_x: i32,
+        from_z: i32,
+        from_level: i32,
+        #[serde(default)]
+        allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
+        #[serde(default)]
+        avoid: Vec<InspectAvoidWire>,
+        #[serde(default)]
+        request_id: u64,
+    },
+    /// Isolate-applied inspect consume-ack. Not a public JS request.
+    /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
+    #[serde(rename = "inspect-ack")]
+    InspectAck { seq: u64, generation: u64 },
     /// Scene `try_move` packet (`Interactions::walk`) used by
     /// `DirectNavigator` and local client actions, not world `Traversal`.
     #[serde(rename = "walk-to")]
@@ -1234,6 +1262,52 @@ pub enum InteractReq {
         #[serde(default)]
         identity: u64,
     },
+}
+
+/// One inspect avoid entry. Typed rects keep their bounds; anything else
+/// is `Unsupported` so Rust can refuse `invalid-args` instead of dropping
+/// the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectAvoidWire {
+    Rect {
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+        level: Option<i32>,
+    },
+    Unsupported,
+}
+
+impl<'de> serde::Deserialize<'de> for InspectAvoidWire {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(d)?;
+        let Some(obj) = value.as_object() else {
+            return Ok(Self::Unsupported);
+        };
+        let coord = |camel: &str, snake: &str| {
+            obj.get(camel)
+                .or_else(|| obj.get(snake))
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|n| i32::try_from(n).ok())
+        };
+        let (Some(min_x), Some(max_x), Some(min_z), Some(max_z)) = (
+            coord("minX", "min_x"),
+            coord("maxX", "max_x"),
+            coord("minZ", "min_z"),
+            coord("maxZ", "max_z"),
+        ) else {
+            return Ok(Self::Unsupported);
+        };
+        let level = coord("level", "level");
+        Ok(Self::Rect {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level,
+        })
+    }
 }
 
 #[derive(serde::Deserialize)]

@@ -1411,6 +1411,21 @@ fn tick_loop(
                         crate::bank_open::on_snapshot(&snap);
                         crate::cake_stall::on_snapshot(&snap);
                         crate::walk_wait::on_snapshot(&snap);
+                        crate::inspect_wait::on_snapshot(&snap);
+                        if let Some((seq, inspect_generation)) =
+                            crate::inspect_wait::take_pending_ack()
+                        {
+                            let generation =
+                                work_generation.load(std::sync::atomic::Ordering::Acquire);
+                            let req = crate::shim::InteractReq::InspectAck {
+                                seq,
+                                generation: inspect_generation,
+                            };
+                            let _ = out.send(ThreadMsg::Interact {
+                                bytes: ipc.encode_interact_batch(&[req]),
+                                generation,
+                            });
+                        }
                         crate::autocast::on_snapshot(&snap);
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);
@@ -1427,6 +1442,7 @@ fn tick_loop(
                             crate::bank_open::on_hold(host_hold);
                             crate::cake_stall::on_hold(host_hold);
                             crate::walk_wait::on_hold(host_hold);
+                            crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
                             crate::autocast::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
@@ -1675,6 +1691,7 @@ fn tick_loop(
                     })
                     .collect();
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
+                crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 let (enqueued, settled) = take_wait_facts(&mut runtime);
                 append_wait_facts(&mut reqs, enqueued, settled);
                 if !reqs.is_empty() {
@@ -1773,6 +1790,7 @@ fn tick_loop(
                 crate::bank_open::on_reset();
                 crate::cake_stall::on_reset();
                 crate::walk_wait::on_reset();
+                crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
                 crate::autocast::on_reset();
                 crate::special::on_reset();
@@ -1803,6 +1821,7 @@ fn tick_loop(
                 crate::bank_open::on_pause();
                 crate::cake_stall::on_pause();
                 crate::walk_wait::on_pause();
+                crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
                 crate::autocast::on_pause();
                 crate::special::on_pause();
@@ -1824,6 +1843,7 @@ fn tick_loop(
                 crate::bank_open::on_resume();
                 crate::cake_stall::on_resume();
                 crate::walk_wait::on_resume();
+                crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
                 crate::autocast::on_resume();
                 crate::special::on_resume();

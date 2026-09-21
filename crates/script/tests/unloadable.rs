@@ -155,12 +155,26 @@ fn walk_executor_stays_unloadable() {
 }
 
 #[test]
-fn webwalk_navigator_stays_unloadable() {
-    let src = "import x from '../../event/webwalk/Navigator.js'; export default class T extends LoopingBot { loop() {} }";
-    assert_eq!(
-        script::first_unloadable_specifier(src).as_deref(),
-        Some("../../event/webwalk/Navigator.js")
-    );
+fn webwalk_navigator_find_path_is_loadable() {
+    let src = "import { Navigator } from '../../event/webwalk/Navigator.js'; export default class T extends LoopingBot { async loop() { await Navigator.findPath({x:1,z:2,level:0},{x:3,z:4,level:0},{timeoutMs:8000}); } }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn webwalk_worker_and_navworker_stay_unloadable() {
+    for spec in [
+        "../../event/webwalk/Worker.js",
+        "../../event/webwalk/navworker.js",
+        "../../event/webwalk/collision.lcnav.gz",
+    ] {
+        let src = format!(
+            "import x from '{spec}'; export default class T extends LoopingBot {{ loop() {{}} }}"
+        );
+        assert_eq!(
+            script::first_unloadable_specifier(&src).as_deref(),
+            Some(spec)
+        );
+    }
 }
 
 #[test]
