@@ -204,7 +204,13 @@ v1 `Reachability.lineOfSight(from, to, size?)` marshals the same Rust ray and
 returns `false` for invalid tiles, missing family, or a non-integer / `0` /
 `>104` size.
 
-Example: `crates/script/examples/line_of_sight_v2.ts`.
+Example: `crates/script/examples/line_of_sight_v2.ts`. The File witness
+selects two observed cardinal adjacent pairs from raw `flags.at` (open:
+start not `WALK_SCENERY` and entering projectile V-bit clear; blocked:
+entering V-direction bit set). `VIS_SCENERY` at the destination is not a
+blocked pair. It then calls real `api.lineOfSight` and imported
+`Reachability.lineOfSight` on those pairs. Pair selection is qualification
+fixture logic, not API policy.
 
 ## Sync and async tick
 

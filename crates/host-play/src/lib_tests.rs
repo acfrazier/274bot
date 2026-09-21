@@ -14377,6 +14377,7 @@ fn observer_pump_inactive_watches_skip_lifecycle_and_guardian_producers() {
             catalog_core::BoundedGuardian::default()
         },
         None,
+        None,
     );
 
     assert!(
@@ -14422,6 +14423,7 @@ fn observer_pump_configured_catalog_runs_producers_and_clear_stops_them() {
                 }
             },
             None,
+            None,
         );
     };
 
@@ -14460,6 +14462,7 @@ fn observer_pump_paired_only_skips_catalog_fact_producers() {
             None
         },
         || catalog_core::BoundedGuardian::default(),
+        None,
         None,
     );
 
@@ -14501,6 +14504,7 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
             guardian_called.set(true);
             unreachable!("session boundary must not read prior-frame random status")
         },
+        None,
         None,
     );
 

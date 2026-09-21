@@ -258,6 +258,50 @@ export function tick(api) {
 #[test]
 fn example_calls_raw_at_and_true_false_los() {
     let mut flags = OPEN_FLAGS;
+    // Adjacent east dest carries entering V_W. A dest VIS_SCENERY rock alone
+    // is not a blocked pair.
+    flags[2 * 16 + 1] = 0x10000;
+    let js = script::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
+        .expect("transpile line_of_sight_v2.ts");
+    let iso = spawn_v2(&js);
+    let bytes =
+        encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let paint = iso.paint().expect("example paint receipt");
+    let line = paint
+        .lines
+        .iter()
+        .find(|row| row.starts_with("los-receipt:"))
+        .expect("compact los-receipt paint line");
+    let receipt: serde_json::Value =
+        serde_json::from_str(line.strip_prefix("los-receipt:").unwrap()).unwrap();
+    assert_eq!(receipt["open"]["v2"], true);
+    assert_eq!(receipt["blocked"]["v2"], false);
+    assert_eq!(receipt["open"]["v1"], true);
+    assert_eq!(receipt["blocked"]["v1"], false);
+    assert_eq!(receipt["here"]["flag"], 0);
+    assert_eq!(receipt["open"]["from"]["x"], 3201);
+    assert_eq!(receipt["blocked"]["to"]["x"], 3202);
+    assert_eq!(receipt["blocked"]["mask"], 0x10000);
+    assert_eq!(
+        iso.script_stop_receipt().expect("named helper stop").reason,
+        "line of sight qualification complete"
+    );
+    assert!(iso.stopped());
+    iso.join();
+}
+
+#[test]
+fn qualification_example_reachability_import_is_loadable() {
+    let src = include_str!("../examples/line_of_sight_v2.ts");
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn dest_vis_alone_is_fixture_failure_not_a_blocked_pair() {
+    let mut flags = OPEN_FLAGS;
     flags[5 * 16 + 1] = 0x20000;
     let js = script::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
         .expect("transpile line_of_sight_v2.ts");
@@ -266,12 +310,17 @@ fn example_calls_raw_at_and_true_false_los() {
         encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
     iso.post_snapshot(bytes);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__losExample").unwrap();
-    assert_eq!(value["ok"], true);
-    assert_eq!(value["open"], true);
-    assert_eq!(value["blocked"], false);
-    assert_eq!(value["selfFlag"], 0);
+    let _ = iso.probe("true");
+    let logs = iso.drain_logs();
     iso.join();
+    assert!(
+        logs.iter().any(|line| line.contains("fixture failure")),
+        "dest VIS_SCENERY alone must fail the pair fixture: {logs:?}"
+    );
+    assert!(
+        logs.iter().all(|line| !line.contains("los-receipt:")),
+        "dest VIS_SCENERY alone must not publish a receipt: {logs:?}"
+    );
 }
 
 #[test]
