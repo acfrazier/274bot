@@ -209,15 +209,16 @@ export function tick(api: NativeApi): void {
             return;
         }
         case 'walk-wait': {
-            if (api.snapshot.walk_outcome_seq <= walkSeq) {
-                return;
-            }
-            if (api.snapshot.walk_outcome_failed) {
+            // Host `note_failure` bumps walk_outcome_seq. Successful
+            // request_id 0 follow does not — isolate walk_wait settles on
+            // actual arrival (Chebyshev ≤ the armed radius). Seq increment
+            // is the failure seam, not completion.
+            if (api.snapshot.walk_outcome_seq > walkSeq &&
+                api.snapshot.walk_outcome_failed) {
                 fail(api, 'ordinary walk after inspect failed');
                 return;
             }
-            if (chebyshev(api.snapshot.here, BANK) > 6) {
-                fail(api, 'ordinary walk outcome advanced without arriving at the bank tile');
+            if (chebyshev(api.snapshot.here, BANK) > 4) {
                 return;
             }
             phase = 'done';
