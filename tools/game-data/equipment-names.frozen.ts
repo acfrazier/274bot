@@ -1,0 +1,49 @@
+export const BOWS: string[] = [
+    'Shortbow', 'Longbow',
+    'Oak shortbow', 'Oak longbow',
+    'Willow shortbow', 'Willow longbow',
+    'Maple shortbow', 'Maple longbow',
+    'Yew shortbow', 'Yew longbow',
+    'Magic shortbow', 'Magic longbow'
+];
+
+export const CROSSBOWS: string[] = [
+    'Crossbow',
+    'Bronze crossbow', 'Iron crossbow', 'Steel crossbow', 'Black crossbow',
+    'Mithril crossbow', 'Adamant crossbow', 'Rune crossbow',
+    'Dorgeshuun crossbow', 'Karil\'s crossbow'
+];
+
+export const DARTS: string[] = ['Bronze dart', 'Iron dart', 'Steel dart', 'Black dart', 'Mithril dart', 'Adamant dart', 'Rune dart'];
+
+/** Arrow tiers used by bows (mirrors BOWS, kept in the API like the other gear lists). */
+export const ARROWS: string[] = [
+    'Bronze arrow', 'Iron arrow', 'Steel arrow', 'Mithril arrow', 'Adamant arrow', 'Rune arrow', 'Dragon arrow'
+];
+
+/** Bolt tiers used by crossbows (mirrors CROSSBOWS). */
+export const BOLTS: string[] = [
+    'Bronze bolts', 'Iron bolts', 'Steel bolts', 'Black bolts', 'Mithril bolts', 'Adamant bolts', 'Rune bolts',
+    'Broad bolts', 'Bone bolts'
+];
+
+/**
+ * One-handed melee weapons, so the shield slot stays free.
+ * Why: attack style comes from the labels the client offers for whatever is wielded ("aggressive" is strength), so a dagger's Stab/Lunge and a longsword's Chop/Slash resolve with no per-weapon mapping here.
+ */
+export const MELEE_WEAPONS: string[] = [
+    'Bronze scimitar', 'Iron scimitar', 'Steel scimitar', 'Black scimitar', 'Mithril scimitar', 'Adamant scimitar', 'Rune scimitar',
+    'Bronze sword', 'Iron sword', 'Steel sword', 'Black sword', 'Mithril sword', 'Adamant sword', 'Rune sword',
+    'Bronze longsword', 'Iron longsword', 'Steel longsword', 'Black longsword', 'Mithril longsword', 'Adamant longsword', 'Rune longsword',
+    'Dragon longsword',
+    'Bronze dagger', 'Iron dagger', 'Steel dagger', 'Black dagger', 'Mithril dagger', 'Adamant dagger', 'Rune dagger', 'Dragon dagger',
+    'Dragon dagger(p)',
+    'Dragon battleaxe', 'Dragon mace'
+];
+
+export const STAFFS: string[] = [
+    'Staff', 'Magic staff',
+    'Staff of air', 'Staff of water', 'Staff of earth', 'Staff of fire',
+    'Battlestaff', 'Air battlestaff', 'Water battlestaff', 'Earth battlestaff', 'Fire battlestaff',
+    'Mystic air staff', 'Mystic water staff', 'Mystic earth staff', 'Mystic fire staff'
+];

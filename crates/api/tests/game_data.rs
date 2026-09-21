@@ -481,8 +481,8 @@ fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
             .chain(&equipment.staffs)
             .filter(|row| row.disposition == "absent")
             .count();
-        assert_eq!(resolved, 74, "revision {}", revision.as_i32());
-        assert_eq!(absent, 19, "revision {}", revision.as_i32());
+        assert_eq!(resolved, 74, "count summary revision {}", revision.as_i32());
+        assert_eq!(absent, 19, "count summary revision {}", revision.as_i32());
         let shortbow = data
             .equipment_name("bows", "Shortbow")
             .expect("shortbow row");
@@ -498,15 +498,47 @@ fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
             .expect("black dagger row");
         assert_eq!(black_dagger.alias.as_deref(), Some("black_dagger"));
         assert_eq!(black_dagger.id, Some(1217));
+        assert_eq!(
+            black_dagger.disambiguation.as_deref(),
+            Some("prefer_standard_pack_alias_black_dagger")
+        );
         let dragon_arrow = data
             .equipment_name("arrows", "Dragon arrow")
             .expect("dragon arrow row");
         assert_eq!(dragon_arrow.disposition, "absent");
-        assert_eq!(dragon_arrow.absent_class.as_deref(), Some("no_display_name"));
+        assert_eq!(
+            dragon_arrow.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
         let bronze_bolts = data
             .equipment_name("bolts", "Bronze bolts")
             .expect("bronze bolts row");
         assert_eq!(bronze_bolts.disposition, "absent");
+        assert_eq!(
+            bronze_bolts.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let karil = data
+            .equipment_name("crossbows", "Karil's crossbow")
+            .expect("karil row");
+        assert_eq!(karil.requested_name, "Karil's crossbow");
+        assert_eq!(karil.disposition, "absent");
+        assert_eq!(
+            karil.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let join = equipment.exact_name_join.as_ref().expect("exact join note");
+        assert_eq!(join.matching, "exact_display_name_only");
+        assert!(!join.bolts.generic_is_substitute);
+        assert_eq!(join.bolts.generic_display_name, "Bolts");
+        assert!(equipment
+            .bolts
+            .iter()
+            .all(|row| row.requested_name != "Bolts"));
+        assert!(data
+            .items()
+            .iter()
+            .any(|item| item.name.as_deref() == Some("Bolts")));
         assert!(data.equipment_name("bows", "Not a bow").is_none());
     }
 }

@@ -492,11 +492,30 @@ pub struct EquipmentNameEntry {
     pub candidates: Option<Vec<EquipmentNameCandidate>>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentBoltJoinLimitation {
+    pub generic_display_name: String,
+    pub generic_is_substitute: bool,
+    pub note: String,
+}
+
+/// Exact display-name join limitation: a miss is not a global content claim.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentExactNameJoin {
+    pub matching: String,
+    pub no_exact_selected_match_means: String,
+    pub bolts: EquipmentBoltJoinLimitation,
+}
+
 /// Curated rs2b0t combat equipment name families with selected-revision joins.
 #[derive(Debug, Deserialize, Clone)]
 pub struct EquipmentNamesFacts {
     pub curated_input: EquipmentInputPin,
     pub equipment_source: EquipmentInputPin,
+    #[serde(default)]
+    pub equipment_evidence: Option<EquipmentInputPin>,
+    #[serde(default)]
+    pub exact_name_join: Option<EquipmentExactNameJoin>,
     pub bows: Vec<EquipmentNameEntry>,
     pub crossbows: Vec<EquipmentNameEntry>,
     pub darts: Vec<EquipmentNameEntry>,

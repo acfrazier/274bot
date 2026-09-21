@@ -62283,14 +62283,28 @@
   "equipment_names": {
     "curated_input": {
       "path": "tools/game-data/equipment-names.curated.json",
-      "bytes": 2604,
-      "sha256": "c6346acbf4f265b7ea73c154ab6b61e6e5da0c78e6e5d015c33e01cd32af4615"
+      "bytes": 2613,
+      "sha256": "4c1a2f5c94ad1cfc6354fe064521abc680187b1fd9fc471d25e82cd8ec84b9e1"
     },
     "equipment_source": {
       "path": ".superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/equipment.ts",
       "bytes": 2360,
       "sha256": "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3",
       "commit": "beecd9126b"
+    },
+    "equipment_evidence": {
+      "path": "tools/game-data/equipment-names.frozen.ts",
+      "bytes": 2360,
+      "sha256": "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3"
+    },
+    "exact_name_join": {
+      "matching": "exact_display_name_only",
+      "no_exact_selected_match_means": "No exact display name in the selected item table. This is not a claim about all game content or global revision unavailability.",
+      "bolts": {
+        "generic_display_name": "Bolts",
+        "generic_is_substitute": false,
+        "note": "Frozen BOLTS members (Bronze bolts … Bone bolts) are absent under exact join. Generic Bolts / Bolts(p) are not substitutes and are not mapped onto those tier strings."
+      }
     },
     "bows": [
       {
@@ -62415,55 +62429,55 @@
       {
         "requested_name": "Bronze crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Iron crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Steel crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Black crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Mithril crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Adamant crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Rune crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Dorgeshuun crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
-        "requested_name": "Karil\\",
+        "requested_name": "Karil's crossbow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       }
     ],
@@ -62577,7 +62591,7 @@
       {
         "requested_name": "Dragon arrow",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       }
     ],
@@ -62585,55 +62599,55 @@
       {
         "requested_name": "Bronze bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Iron bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Steel bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Black bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Mithril bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Adamant bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Rune bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Broad bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       },
       {
         "requested_name": "Bone bolts",
         "disposition": "absent",
-        "absent_class": "no_display_name",
+        "absent_class": "no_exact_selected_match",
         "candidates": []
       }
     ],
@@ -62870,7 +62884,7 @@
         "alias": "black_dagger",
         "id": 1217,
         "wear_position": 3,
-        "disambiguation": "exclude_bank_note_prefer_wearable"
+        "disambiguation": "prefer_standard_pack_alias_black_dagger"
       },
       {
         "requested_name": "Mithril dagger",

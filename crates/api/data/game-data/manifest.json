@@ -54,8 +54,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1458083,
-      "sha256": "928883b1bd6a151916056d8154f1ffb84d5d07b6a277d79857ffaf39fa50cb39",
+      "bytes": 1458988,
+      "sha256": "9549a5f4024be48ded038cc4c3d210b7dcb4d1991a28241624cda21e66407ac8",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -398,8 +398,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1520579,
-      "sha256": "930e89ed3a5a64afc12758b538e90851f7f6de8755d4b518bbba976a238932cc",
+      "bytes": 1521484,
+      "sha256": "135281ed686f57eb3a1c203ab1e9228033f0106891fe66952c82a6818a30c46a",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
