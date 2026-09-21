@@ -16,8 +16,11 @@ use host_play::catalog_core::{
     ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
     ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
     HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
-    WalkSpotObservation, WalkSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
-    HOLD_SPOT_V2_STOP, RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
+    WalkSpotObservation, WalkSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, ENTER_LAIR_V2_STOP,
+    FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
+};
+use host_play::catalog_core::{
+    EnterLairBox, EnterLairObservation, EnterLairScriptReceipt,
 };
 
 fn thiever_observation() -> Observation {
@@ -3471,4 +3474,414 @@ fn walk_spot_rejects_forged_walk_to_walk_near_npc_attack_and_set_safespot() {
         watch.observe("catalogtest", forged, false);
         assert!(watch.qualify().is_err(), "{why}");
     }
+}
+
+fn enter_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn enter_approach() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3209,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn enter_box() -> EnterLairBox {
+    EnterLairBox {
+        min_x: 3209,
+        max_x: 3217,
+        min_z: 3201,
+        max_z: 3201,
+        level: 0,
+    }
+}
+
+fn enter_receipt(
+    here: LineOfSightTile,
+    approach: LineOfSightTile,
+    kind: &str,
+    area: EnterLairBox,
+) -> EnterLairScriptReceipt {
+    EnterLairScriptReceipt {
+        here,
+        approach,
+        kind: kind.into(),
+        discriminator: "gateless".into(),
+        radius: 0,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        area,
+        key: "enter-lair".into(),
+    }
+}
+
+fn enter_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.enter = EnterLairObservation {
+        available: true,
+        here: Some(enter_here()),
+        ..EnterLairObservation::default()
+    };
+    observation
+}
+
+fn enter_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = enter_here();
+    let approach = enter_approach();
+    let area = enter_box();
+    let receipt = enter_receipt(here, approach, "walk", area);
+    observation.enter.here = Some(here);
+    observation.enter.approach = Some(approach);
+    observation.enter.radius = Some(receipt.radius);
+    observation.enter.allow_teleports = Some(receipt.allow_teleports);
+    observation.enter.allow_wilderness = Some(receipt.allow_wilderness);
+    observation.enter.allow_bank_fetch = Some(receipt.allow_bank_fetch);
+    observation.enter.area = Some(area);
+    observation.enter.receipt = Some(receipt);
+    observation
+}
+
+fn enter_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+fn enter_with(
+    observation: Observation,
+    approach: LineOfSightTile,
+    area: EnterLairBox,
+    kind: &str,
+) -> Observation {
+    let mut joined = enter_joined(observation);
+    joined.enter.approach = Some(approach);
+    joined.enter.area = Some(area);
+    if let Some(receipt) = joined.enter.receipt.as_mut() {
+        receipt.approach = approach;
+        receipt.area = area;
+        receipt.kind = kind.into();
+    }
+    joined
+}
+
+#[test]
+fn enter_lair_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("enter_lair_v2_ts").expect("named enter lair cell");
+    assert!(case.copies_enter_lair());
+    assert!(!case.copies_walk_spot());
+    assert!(!case.copies_hold_spot());
+    assert!(!case.copies_retreat_spot());
+    assert!(!case.copies_fight_field());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = enter_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = enter_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe("catalogtest", enter_stop(joined, ENTER_LAIR_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("host here, joined approach, gateless walk radius 0, and named stop");
+}
+
+#[test]
+fn enter_lair_accepts_chebyshev_12_and_rejects_walk_gate_and_hold_back() {
+    let case = CoreCase::parse("enter_lair_v2_ts").expect("named enter lair cell");
+    let baseline = enter_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let twelve = enter_with(
+        baseline.clone(),
+        LineOfSightTile {
+            x: 3213,
+            z: 3201,
+            level: 0,
+        },
+        enter_box(),
+        "walk",
+    );
+    watch.observe("catalogtest", enter_stop(twelve, ENTER_LAIR_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("Chebyshev 12 is inside 8-16 and must not copy Walk's > 12 gate");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let hold_back = enter_with(
+        baseline.clone(),
+        LineOfSightTile {
+            x: 3203,
+            z: 3201,
+            level: 0,
+        },
+        EnterLairBox {
+            min_x: 3203,
+            max_x: 3210,
+            min_z: 3201,
+            max_z: 3201,
+            level: 0,
+        },
+        "walk",
+    );
+    watch.observe("catalogtest", enter_stop(hold_back, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "Chebyshev 2 Hold walk-back cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let skip = enter_with(
+        baseline,
+        LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        EnterLairBox {
+            min_x: 3202,
+            max_x: 3210,
+            min_z: 3201,
+            max_z: 3201,
+            level: 0,
+        },
+        "walk",
+    );
+    watch.observe("catalogtest", enter_stop(skip, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "Chebyshev 1 is the approach skip and cannot pass"
+    );
+}
+
+#[test]
+fn enter_lair_rejects_in_area_missing_receipt_flags_and_kbd() {
+    let case = CoreCase::parse("enter_lair_v2_ts").expect("named enter lair cell");
+    let baseline = enter_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        enter_stop(baseline.clone(), ENTER_LAIR_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a receipt cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut inside = enter_joined(baseline.clone());
+    let inside_box = EnterLairBox {
+        min_x: 3190,
+        max_x: 3220,
+        min_z: 3190,
+        max_z: 3220,
+        level: 0,
+    };
+    inside.enter.area = Some(inside_box);
+    if let Some(receipt) = inside.enter.receipt.as_mut() {
+        receipt.area = inside_box;
+    }
+    watch.observe("catalogtest", enter_stop(inside, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "already-inArea success cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut flagged = enter_joined(baseline.clone());
+    if let Some(receipt) = flagged.enter.receipt.as_mut() {
+        receipt.allow_teleports = true;
+    }
+    flagged.enter.allow_teleports = Some(true);
+    watch.observe("catalogtest", enter_stop(flagged, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "allow_teleports true cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut radius = enter_joined(baseline.clone());
+    if let Some(receipt) = radius.enter.receipt.as_mut() {
+        receipt.radius = 2;
+    }
+    radius.enter.radius = Some(2);
+    watch.observe("catalogtest", enter_stop(radius, ENTER_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "nonzero radius cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut kbd = enter_joined(baseline.clone());
+    if let Some(receipt) = kbd.enter.receipt.as_mut() {
+        receipt.key = "kbd-lair".into();
+    }
+    watch.observe("catalogtest", enter_stop(kbd, ENTER_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "kbd-lair cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let kbd_tile = enter_with(
+        baseline,
+        LineOfSightTile {
+            x: 3017,
+            z: 3849,
+            level: 0,
+        },
+        EnterLairBox {
+            min_x: 3017,
+            max_x: 3033,
+            min_z: 3849,
+            max_z: 3849,
+            level: 0,
+        },
+        "walk",
+    );
+    let mut kbd_tile = kbd_tile;
+    kbd_tile.enter.here = Some(LineOfSightTile {
+        x: 3009,
+        z: 3849,
+        level: 0,
+    });
+    kbd_tile.tile = Some((3009, 3849, 0));
+    if let Some(receipt) = kbd_tile.enter.receipt.as_mut() {
+        receipt.here = LineOfSightTile {
+            x: 3009,
+            z: 3849,
+            level: 0,
+        };
+    }
+    watch.observe("catalogtest", enter_stop(kbd_tile, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "(3017, 3849) cannot pass"
+    );
+}
+
+#[test]
+fn enter_lair_rejects_forged_kinds_and_disagreement() {
+    let case = CoreCase::parse("enter_lair_v2_ts").expect("named enter lair cell");
+    let baseline = enter_ready();
+    for (kind, why) in [
+        ("walk-near", "forged walk-near cannot pass"),
+        ("walk-to", "forged walk-to cannot pass"),
+        ("npc", "forged npc cannot pass"),
+        ("loc", "forged loc cannot pass"),
+        ("use-on", "forged use-on cannot pass"),
+        ("bank-open", "forged bank-open cannot pass"),
+        ("answer", "forged answer cannot pass"),
+        ("Attack", "forged Attack cannot pass"),
+    ] {
+        let watch = CoreWatch::default();
+        watch.configure(case, "catalogtest");
+        watch.observe("catalogtest", baseline.clone(), false);
+        watch.begin_start("catalogtest").unwrap();
+        let forged = enter_stop(
+            enter_with(baseline.clone(), enter_approach(), enter_box(), kind),
+            ENTER_LAIR_V2_STOP,
+        );
+        watch.observe("catalogtest", forged, false);
+        assert!(watch.qualify().is_err(), "{why}");
+    }
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = enter_joined(baseline.clone());
+    if let Some(receipt) = mismatch.enter.receipt.as_mut() {
+        receipt.approach.x = 3214;
+    }
+    watch.observe("catalogtest", enter_stop(mismatch, ENTER_LAIR_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "host approach vs File approach disagreement cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = enter_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", enter_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn enter_lair_rejects_unready_scene() {
+    let case = CoreCase::parse("enter_lair_v2_ts").expect("named enter lair cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = enter_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = enter_ready();
+    missing.enter.available = false;
+    missing.enter.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
 }
