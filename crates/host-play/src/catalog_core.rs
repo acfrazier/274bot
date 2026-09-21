@@ -25,7 +25,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -605,6 +605,8 @@ pub enum CoreCase {
     RangingGuildFull,
     BrimhavenMossInspectV1,
     RouteInspectBrimhavenV2,
+    PrayerV2,
+    PrayerV1,
 }
 
 impl CoreCase {
@@ -737,6 +739,8 @@ impl CoreCase {
             "ranging_guild_full" => Ok(Self::RangingGuildFull),
             "brimhaven_moss_inspect_v1" => Ok(Self::BrimhavenMossInspectV1),
             "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
+            "prayer_v2_ts" => Ok(Self::PrayerV2),
+            "prayer_v1_ts" => Ok(Self::PrayerV1),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -872,6 +876,8 @@ impl CoreCase {
             Self::RangingGuildFull => "ranging_guild_full",
             Self::BrimhavenMossInspectV1 => "brimhaven_moss_inspect_v1",
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
+            Self::PrayerV2 => "prayer_v2_ts",
+            Self::PrayerV1 => "prayer_v1_ts",
         }
     }
 
@@ -975,6 +981,8 @@ impl CoreCase {
             | Self::RangingGuildFull => "RangingGuild",
             Self::BrimhavenMossInspectV1 => "BrimhavenMossGiants",
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
+            Self::PrayerV2 => "prayer_v2",
+            Self::PrayerV1 => "prayer_v1",
         }
     }
 
@@ -983,6 +991,18 @@ impl CoreCase {
             self,
             Self::BrimhavenMossInspectV1 | Self::RouteInspectBrimhavenV2
         )
+    }
+
+    pub fn copies_prayer_varps(self) -> bool {
+        matches!(self, Self::PrayerV2 | Self::PrayerV1)
+    }
+
+    pub fn prayer_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::PrayerV2 => Some(PRAYER_V2_STOP),
+            Self::PrayerV1 => Some(PRAYER_V1_STOP),
+            _ => None,
+        }
     }
 }
 
@@ -1646,6 +1666,17 @@ impl Observation {
         self.varps.get(&index).copied().unwrap_or(0)
     }
 
+    /// Copy varps 83..=97 only. Absent snapshot rows stay absent (not 0).
+    pub fn attach_prayer_varps(&mut self, snapshot: &GameSnapshot) {
+        let first = api::prayer::PRAYER_VARP0;
+        let last = first + api::prayer::PRAYER_COUNT as i32 - 1;
+        for varp in snapshot.varps() {
+            if (first..=last).contains(&varp.index) {
+                self.varps.insert(varp.index, varp.value);
+            }
+        }
+    }
+
     pub fn equipment_id(&self, id: i32) -> i32 {
         self.equipment_ids.get(&id).copied().unwrap_or(0)
     }
@@ -1961,6 +1992,68 @@ impl RouteInspectBrimhavenV2Cycle {
 
     pub fn qualified(&self) -> bool {
         self.token_seq.is_some() && self.snap0_seq.is_some() && self.walked
+    }
+}
+
+pub const PRAYER_V2_STOP: &str = "prayer v2 qualification complete";
+pub const PRAYER_V1_STOP: &str = "prayer v1 qualification complete";
+pub const PRAYER_BASE_MIN: i32 = 43;
+pub const PROTECT_FROM_MELEE_VARP: i32 = 97;
+
+pub fn prayer_varp_indexes() -> impl Iterator<Item = i32> {
+    let start = api::prayer::PRAYER_VARP0;
+    (0..api::prayer::PRAYER_COUNT as i32).map(move |i| start + i)
+}
+
+/// All 15 overlay keys present and zero. Missing keys are not off.
+pub fn prayer_varps_all_present_off(observation: &Observation) -> bool {
+    prayer_varp_indexes().all(|index| observation.varps.get(&index) == Some(&0))
+}
+
+pub fn prayer_delivery_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.level("prayer") >= PRAYER_BASE_MIN
+        && baseline.effective_level("prayer") > 0
+        && prayer_varps_all_present_off(baseline)
+}
+
+/// Ordered witness: seeded all-off, then a latched Protect from Melee ON
+/// (varp 97==1, even if later cleared the same/later tick), then all 15
+/// present-and-off, then the exact File-card stop reason.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PrayerDeliveryCycle {
+    pub saw_on: bool,
+    pub later_all_off: bool,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl PrayerDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if now.varps.get(&PROTECT_FROM_MELEE_VARP) == Some(&1) {
+            self.saw_on = true;
+        }
+        if self.saw_on && prayer_varps_all_present_off(now) {
+            self.later_all_off = true;
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.later_all_off
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.saw_on && self.later_all_off && self.stopped.is_some()
     }
 }
 
@@ -2908,6 +3001,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RangingGuildFull => ranging_guild_full_baseline_ready(baseline),
         CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
         CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
+        CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -3261,6 +3355,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RouteInspectBrimhavenV2 => {
             "Captain Barnaby pier (2683,3272,0) r4, ingame && scene_state==2"
         }
+        CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+            "ingame && scene_state==2, prayer base>=43, positive points, varps 83..97 present and 0"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -3330,6 +3427,7 @@ pub struct CoreWitness {
     pub ranging_guild_full_cycle: RangingGuildFullCycle,
     pub brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle,
     pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
+    pub prayer_delivery_cycle: PrayerDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -8629,6 +8727,7 @@ impl CoreWitness {
             ranging_guild_full_cycle: RangingGuildFullCycle::default(),
             brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle::default(),
             route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
+            prayer_delivery_cycle: PrayerDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -8853,6 +8952,9 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::RouteInspectBrimhavenV2) {
             self.route_inspect_brimhaven_v2_cycle
                 .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::PrayerV2 | CoreCase::PrayerV1) {
+            self.prayer_delivery_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -9084,6 +9186,12 @@ impl CoreWitness {
             CoreCase::RangingGuildFull => self
                 .ranging_guild_full_cycle
                 .observe_script_lifecycle(receipt),
+            CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+                if let Some(expected) = self.case.prayer_stop_reason() {
+                    self.prayer_delivery_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -9298,6 +9406,7 @@ impl CoreWitness {
             CoreCase::RangingGuildFull => self.ranging_guild_full_cycle.qualified(),
             CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
             CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
+            CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -9394,6 +9503,7 @@ impl CoreWitness {
             "ranging_guild_full_cycle": self.ranging_guild_full_cycle,
             "brimhaven_moss_inspect_cycle": self.brimhaven_moss_inspect_cycle,
             "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
+            "prayer_delivery_cycle": self.prayer_delivery_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -9687,11 +9797,21 @@ impl CoreWatch {
         ) {
             // Convert while the lifecycle lock is held so a reconfiguration
             // cannot attach this snapshot to a later run of the same account.
+            let copies_prayer = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_prayer_varps()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_prayer_varps(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
             if let Some(published) = inspect {
                 observation.attach_route_inspect(published);
+            }
+            if copies_prayer {
+                observation.attach_prayer_varps(snapshot);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }

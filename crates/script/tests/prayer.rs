@@ -649,11 +649,54 @@ fn published_example_queries_sets_clears_and_stops() {
     snap.tick = 3;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 3);
-    let _ = iso.script_stop_receipt();
+    let receipt = iso.script_stop_receipt().expect("named helper stop");
+    assert_eq!(receipt.reason, "prayer v2 qualification complete");
     assert!(
         iso.stopped(),
         "example must stop after sequential set+clear"
     );
+    iso.join();
+}
+
+#[test]
+fn published_v1_adapter_imports_prayer_and_stops() {
+    let dir = std::env::temp_dir().join(format!("274bot-prayer-v1-example-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let path = script::load::live_example_path("prayer_v1.ts").expect("File allowlist");
+    let card = library.load(&path).unwrap();
+    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
+    let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
+    let stats = [prayer_stat(43, 43)];
+    let varps = [VarpInput {
+        index: 97,
+        value: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 0,
+    }];
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    let receipt = iso.script_stop_receipt().expect("named helper stop");
+    assert_eq!(receipt.reason, "prayer v1 qualification complete");
+    assert!(iso.stopped());
     iso.join();
 }
 
