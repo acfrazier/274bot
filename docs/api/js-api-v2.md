@@ -226,7 +226,11 @@ retaining past this tick.
 index. Consume dest SW + dest size with existing `api.lineOfSight`. There
 is no v2 `Npc` class.
 
-Example: `crates/script/examples/actor_observation_v2.ts`.
+Example: `crates/script/examples/actor_observation_v2.ts`. The File waits
+for a posted `size>=1` NPC, calls existing `api.lineOfSight` plus imported
+`Npc.size` / `Npc.networkOrigin()` / `reader.selfTarget()` /
+`Reachability.lineOfSight`, then named-stops. No size>=1 row is not
+complete.
 
 ## Sync and async tick
 

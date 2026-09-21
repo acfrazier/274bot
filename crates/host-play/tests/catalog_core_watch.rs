@@ -11,6 +11,11 @@ use host_play::catalog_core::{
     STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID, UNIDENTIFIED_MARENTILL_ID,
     VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
+use host_play::catalog_core::{
+    ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
+    ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
+    ActorObservationSelfTarget, ACTOR_OBSERVATION_V2_STOP,
+};
 
 fn thiever_observation() -> Observation {
     let mut observation = Observation {
@@ -2003,5 +2008,237 @@ fn line_of_sight_rejects_mismatched_here_and_here_flag() {
     assert!(
         watch.qualify().is_err(),
         "receipt.here.flag must join host here_flag"
+    );
+}
+
+fn actor_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn actor_npc() -> ActorObservationNpc {
+    ActorObservationNpc {
+        index: 7,
+        name: Some("Goblin".into()),
+        size: 4,
+        tile_x: 3201,
+        tile_z: 3205,
+        nx: 3205,
+        nz: 3201,
+        level: 0,
+    }
+}
+
+fn actor_receipt(npc: &ActorObservationNpc, los: bool) -> ActorObservationScriptReceipt {
+    ActorObservationScriptReceipt {
+        identity: actor_identity(),
+        here: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        npc: ActorObservationNpcFact {
+            index: npc.index,
+            name: npc.name.clone(),
+            size: npc.size,
+            tile: ActorObservationPoint {
+                x: npc.tile_x,
+                z: npc.tile_z,
+            },
+            network: ActorObservationPoint {
+                x: npc.nx,
+                z: npc.nz,
+            },
+            level: npc.level,
+        },
+        packed: ActorObservationPacked {
+            size: npc.size,
+            nx: npc.nx,
+            nz: npc.nz,
+        },
+        rendered: ActorObservationPoint {
+            x: npc.tile_x,
+            z: npc.tile_z,
+        },
+        self_target: ActorObservationSelfTarget {
+            kind: 1,
+            index: 7,
+        },
+        los: ActorObservationLos { v2: los, v1: los },
+    }
+}
+
+fn actor_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.actor = ActorObservation {
+        available: true,
+        identity: actor_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        ..ActorObservation::default()
+    };
+    observation
+}
+
+fn actor_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let npc = actor_npc();
+    observation.actor.npc = Some(npc.clone());
+    observation.actor.host_los = Some(true);
+    observation.actor.self_target_kind = 1;
+    observation.actor.self_target_index = 7;
+    observation.actor.receipt = Some(actor_receipt(&npc, true));
+    observation
+}
+
+fn actor_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn actor_observation_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    assert!(case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = actor_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        actor_stop(joined, ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("host npc, joined receipt, and named stop");
+}
+
+#[test]
+fn actor_observation_rejects_noquery_nonpc_identity_and_wrong_stop() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        actor_stop(baseline.clone(), ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_npc = actor_joined(baseline.clone());
+    no_npc.actor.npc = None;
+    no_npc.actor.receipt = None;
+    no_npc.script_lifecycle = actor_stop(no_npc.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_npc, false);
+    assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = actor_joined(baseline.clone());
+    if let Some(receipt) = mismatch.actor.receipt.as_mut() {
+        receipt.npc.network.x = 0;
+        receipt.packed.nx = 0;
+    }
+    mismatch.script_lifecycle =
+        actor_stop(mismatch.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script packed vs rendered disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut identity = actor_joined(baseline.clone());
+    if let Some(receipt) = identity.actor.receipt.as_mut() {
+        receipt.identity.base_x = 0;
+    }
+    identity.script_lifecycle =
+        actor_stop(identity.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", identity, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = actor_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", actor_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn actor_observation_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = actor_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = actor_ready();
+    missing.actor.available = false;
+    missing.actor.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
     );
 }

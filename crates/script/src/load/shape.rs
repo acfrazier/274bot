@@ -312,7 +312,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
         | "prayer_v1.ts"
-        | "line_of_sight_v2.ts" => {
+        | "line_of_sight_v2.ts"
+        | "actor_observation_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -854,5 +855,14 @@ mod tests {
         assert!(v2.ends_with("line_of_sight_v2.ts"), "{}", v2.display());
         assert!(live_example_path("line_of_sight_v2").is_none());
         assert!(live_example_path("LineOfSight.ts").is_none());
+    }
+
+    #[test]
+    fn actor_observation_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("actor_observation_v2.ts")
+            .expect("checked-in actor observation v2 example");
+        assert!(v2.ends_with("actor_observation_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("actor_observation_v2").is_none());
+        assert!(live_example_path("ActorObservation.ts").is_none());
     }
 }

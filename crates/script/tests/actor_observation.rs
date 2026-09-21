@@ -1,8 +1,8 @@
 //! v1/v2 actor observation: packed size/network SW and local self target.
 
 use script::isolate_fb::{
-    encode_snapshot, encode_snapshot_delta, CollisionViewInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
+    encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, CollisionViewInput,
+    NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
 use script::load::{LoadIsolate, LoadShape};
 
@@ -441,5 +441,130 @@ export function tick(api) {
     assert_eq!(probe["nx"], 2832);
     assert_eq!(probe["kind"], 1);
     assert_eq!(probe["index"], 42);
+    iso.join();
+}
+
+fn spawn_v2(source: &str) -> LoadIsolate {
+    LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap()
+}
+
+fn open_collision<'a>(flags: &'a [i32]) -> NativeFactsInput<'a> {
+    NativeFactsInput {
+        collision: Some(CollisionViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 16,
+            height: 16,
+            flags,
+        }),
+        ..NativeFactsInput::default()
+    }
+}
+
+fn scene_npc<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 7,
+        id: 9,
+        name: Some("Goblin"),
+        x: 3201,
+        z: 3205,
+        level: 0,
+        distance: 4,
+        health: 5,
+        max_health: 5,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 2,
+        target_kind: 0,
+        target_index: -1,
+        size: 4,
+        nx: 3205,
+        nz: 3201,
+    }
+}
+
+#[test]
+fn qualification_example_imports_are_loadable() {
+    let src = include_str!("../examples/actor_observation_v2.ts");
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn example_does_not_stop_without_size_ge_1_npc() {
+    let js = script::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
+        .expect("transpile actor_observation_v2.ts");
+    let iso = spawn_v2(&js);
+    let flags = [0i32; 256];
+    let mut snap = empty_input(1);
+    iso.post_snapshot(encode_snapshot_with_native(&snap, open_collision(&flags)));
+    iso.on_game_tick(1);
+    let logs = iso.drain_logs();
+    assert!(!iso.stopped(), "no-NPC must not named-stop: logs={logs:?}");
+    assert!(
+        logs.iter().all(|line| !line.contains("actor-receipt:")),
+        "no-NPC must not publish a receipt: {logs:?}"
+    );
+    iso.join();
+
+    let iso = spawn_v2(&js);
+    let actions = ["Attack".to_string()];
+    let npcs = [npc_row(Some("Goblin"), 0, 3205, 3201, &actions)];
+    snap.npcs = &npcs;
+    iso.post_snapshot(encode_snapshot_with_native(&snap, open_collision(&flags)));
+    iso.on_game_tick(1);
+    let logs = iso.drain_logs();
+    assert!(!iso.stopped(), "size<1 must not named-stop: logs={logs:?}");
+    iso.join();
+}
+
+#[test]
+fn example_executes_v1_and_v2_helpers_then_named_stop() {
+    let js = script::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
+        .expect("transpile actor_observation_v2.ts");
+    let iso = spawn_v2(&js);
+    let flags = [0i32; 256];
+    let actions = ["Attack".to_string()];
+    let npcs = [scene_npc(&actions)];
+    let mut snap = empty_input(1);
+    snap.npcs = &npcs;
+    snap.self_target_kind = 1;
+    snap.self_target_index = 7;
+    iso.post_snapshot(encode_snapshot_with_native(&snap, open_collision(&flags)));
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let paint = iso.paint().expect("example paint receipt");
+    let line = paint
+        .lines
+        .iter()
+        .find(|row| row.starts_with("actor-receipt:"))
+        .expect("compact actor-receipt paint line");
+    let receipt: serde_json::Value =
+        serde_json::from_str(line.strip_prefix("actor-receipt:").unwrap()).unwrap();
+    assert_eq!(receipt["npc"]["index"], 7);
+    assert_eq!(receipt["npc"]["name"], "Goblin");
+    assert_eq!(receipt["npc"]["size"], 4);
+    assert_eq!(receipt["npc"]["tile"]["x"], 3201);
+    assert_eq!(receipt["npc"]["tile"]["z"], 3205);
+    assert_eq!(receipt["npc"]["network"]["x"], 3205);
+    assert_eq!(receipt["npc"]["network"]["z"], 3201);
+    assert_eq!(receipt["packed"]["size"], 4);
+    assert_eq!(receipt["packed"]["nx"], 3205);
+    assert_eq!(receipt["packed"]["nz"], 3201);
+    assert_eq!(receipt["rendered"]["x"], 3201);
+    assert_eq!(receipt["rendered"]["z"], 3205);
+    assert_ne!(receipt["packed"]["nx"], receipt["rendered"]["x"]);
+    assert_eq!(receipt["self_target"]["kind"], 1);
+    assert_eq!(receipt["self_target"]["index"], 7);
+    assert_eq!(receipt["los"]["v2"], receipt["los"]["v1"]);
+    assert_eq!(
+        iso.script_stop_receipt().expect("named helper stop").reason,
+        "actor observation qualification complete"
+    );
+    assert!(iso.stopped());
     iso.join();
 }

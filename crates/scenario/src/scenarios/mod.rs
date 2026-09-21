@@ -1,3 +1,4 @@
+pub(crate) mod actor_observation;
 pub(crate) mod combat;
 pub(crate) mod line_of_sight;
 pub(crate) mod navigation;
@@ -10,6 +11,7 @@ pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
 
+pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_scenario, auto_fighter_bank_scenario,
     auto_fighter_mage_scenario, auto_fighter_range_scenario, auto_fighter_scenario,
@@ -27,6 +29,7 @@ pub(crate) use combat::{
     moss_giant_dart_scenario, moss_giant_prepared_scenario, moss_giant_scenario,
     rock_crab_bank_scenario, rock_crab_range_scenario, rock_crab_scenario,
 };
+pub(crate) use line_of_sight::line_of_sight_v2_scenario;
 pub(crate) use navigation::{
     nav_cart_scenario, nav_door_scenario, nav_elkoy_scenario, nav_essence_scenario,
     nav_paint_path_scenario, nav_routes_scenario, nav_shantay_scenario, nav_tele_scenario,
@@ -36,7 +39,6 @@ pub(crate) use pair::{
     duel_arena_scenario, flax_runner_scenario, mule_crafter_air_scenario,
     nature_crafter_air_scenario, script_trade_scenario,
 };
-pub(crate) use line_of_sight::line_of_sight_v2_scenario;
 pub(crate) use prayer::{prayer_v1_scenario, prayer_v2_scenario};
 pub(crate) use production::{
     alcher_custom_alias_scenario, alcher_custom_name_scenario, alcher_custom_scenario,

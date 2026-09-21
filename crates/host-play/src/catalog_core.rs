@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use api::line_of_sight::{line_of_sight_v2, CollisionQuery};
 use api::obj_names::ObjNames;
 use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldTile};
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -608,6 +609,7 @@ pub enum CoreCase {
     PrayerV2,
     PrayerV1,
     LineOfSightV2,
+    ActorObservationV2,
 }
 
 impl CoreCase {
@@ -743,6 +745,7 @@ impl CoreCase {
             "prayer_v2_ts" => Ok(Self::PrayerV2),
             "prayer_v1_ts" => Ok(Self::PrayerV1),
             "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
+            "actor_observation_v2_ts" => Ok(Self::ActorObservationV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -881,6 +884,7 @@ impl CoreCase {
             Self::PrayerV2 => "prayer_v2_ts",
             Self::PrayerV1 => "prayer_v1_ts",
             Self::LineOfSightV2 => "line_of_sight_v2_ts",
+            Self::ActorObservationV2 => "actor_observation_v2_ts",
         }
     }
 
@@ -987,6 +991,7 @@ impl CoreCase {
             Self::PrayerV2 => "prayer_v2",
             Self::PrayerV1 => "prayer_v1",
             Self::LineOfSightV2 => "line_of_sight_v2",
+            Self::ActorObservationV2 => "actor_observation_v2",
         }
     }
 
@@ -1005,6 +1010,10 @@ impl CoreCase {
         matches!(self, Self::LineOfSightV2)
     }
 
+    pub fn copies_actor_observation(self) -> bool {
+        matches!(self, Self::ActorObservationV2)
+    }
+
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::PrayerV2 => Some(PRAYER_V2_STOP),
@@ -1016,6 +1025,13 @@ impl CoreCase {
     pub fn los_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::LineOfSightV2 => Some(LOS_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn actor_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::ActorObservationV2 => Some(ACTOR_OBSERVATION_V2_STOP),
             _ => None,
         }
     }
@@ -1124,6 +1140,9 @@ pub struct Observation {
     /// Compact current-plane identity and selected pair cells. Empty unless
     /// the active Core case asked for collision. Never a whole-grid dump.
     pub los: LineOfSightObservation,
+    /// Compact chosen NPC + LOS helper result. Empty unless the active Core
+    /// case asked for actor observation. Never a world or NPC-table copy.
+    pub actor: ActorObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1635,6 +1654,7 @@ impl Observation {
             route_inspect_live_generation: 0,
             route_inspect_has_terminal: false,
             los: LineOfSightObservation::default(),
+            actor: ActorObservation::default(),
         }
     }
 
@@ -1740,6 +1760,81 @@ impl Observation {
             host_blocked,
             fixture_failure,
             receipt: paint.and_then(parse_los_receipt_from_paint),
+        };
+    }
+
+    /// Compact host identity, one size>=1 NPC, existing LOS helper, and the
+    /// script paint receipt. Never copies the NPC table or collision grid.
+    pub fn attach_actor_observation(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let npc = snapshot
+            .npcs()
+            .iter()
+            .filter(|row| row.size >= 1)
+            .min_by_key(|row| (row.distance, row.index))
+            .map(|row| ActorObservationNpc {
+                index: row.index as i32,
+                name: row.name.clone(),
+                size: row.size,
+                tile_x: row.tile.x,
+                tile_z: row.tile.z,
+                nx: row.network.x,
+                nz: row.network.z,
+                level: row.tile.level,
+            });
+        let (self_target_kind, self_target_index) = packed_self_target(snapshot);
+        let host_los = match (here, npc.as_ref()) {
+            (Some(from), Some(npc)) if scene.available => {
+                let query = CollisionQuery {
+                    available: scene.available,
+                    base_x: scene.base_x,
+                    base_z: scene.base_z,
+                    level: scene.level,
+                    width: scene.width,
+                    height: scene.height,
+                    flags: Arc::from(scene.collision_flags.as_slice()),
+                };
+                line_of_sight_v2(
+                    Some(&query),
+                    WorldTile {
+                        x: from.x,
+                        z: from.z,
+                        level: from.level,
+                    },
+                    WorldTile {
+                        x: npc.nx,
+                        z: npc.nz,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok()
+            }
+            _ => None,
+        };
+        self.actor = ActorObservation {
+            available: scene.available,
+            identity,
+            here,
+            npc,
+            host_los,
+            self_target_kind,
+            self_target_index,
+            receipt: paint.and_then(parse_actor_receipt_from_paint),
         };
     }
 
@@ -2125,6 +2220,8 @@ impl PrayerDeliveryCycle {
 
 pub const LOS_V2_STOP: &str = "line of sight qualification complete";
 pub const LOS_RECEIPT_PREFIX: &str = "los-receipt:";
+pub const ACTOR_OBSERVATION_V2_STOP: &str = "actor observation qualification complete";
+pub const ACTOR_RECEIPT_PREFIX: &str = "actor-receipt:";
 pub const LOS_WALK_SCENERY: i32 = 0x100;
 pub const LOS_V_N: i32 = 0x400;
 pub const LOS_V_E: i32 = 0x1000;
@@ -2447,6 +2544,230 @@ impl LineOfSightDeliveryCycle {
             && !receipt.blocked.v2
             && receipt.open.v1
             && !receipt.blocked.v1
+    }
+}
+
+fn packed_self_target(snapshot: &GameSnapshot) -> (i32, i32) {
+    match snapshot
+        .local_player()
+        .and_then(|player| player.player.actor.target)
+    {
+        None => (0, -1),
+        Some(target) => match target.kind {
+            ActorKind::Npc => (1, target.index as i32),
+            ActorKind::Player => (2, target.index as i32),
+        },
+    }
+}
+
+fn parse_actor_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<ActorObservationScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(ACTOR_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationPoint {
+    pub x: i32,
+    pub z: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationNpcFact {
+    pub index: i32,
+    pub name: Option<String>,
+    pub size: i32,
+    pub tile: ActorObservationPoint,
+    pub network: ActorObservationPoint,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationPacked {
+    pub size: i32,
+    pub nx: i32,
+    pub nz: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationSelfTarget {
+    pub kind: i32,
+    pub index: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationLos {
+    pub v2: bool,
+    pub v1: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationScriptReceipt {
+    pub identity: LineOfSightIdentity,
+    pub here: LineOfSightTile,
+    pub npc: ActorObservationNpcFact,
+    pub packed: ActorObservationPacked,
+    pub rendered: ActorObservationPoint,
+    pub self_target: ActorObservationSelfTarget,
+    pub los: ActorObservationLos,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct ActorObservationNpc {
+    pub index: i32,
+    pub name: Option<String>,
+    pub size: i32,
+    pub tile_x: i32,
+    pub tile_z: i32,
+    pub nx: i32,
+    pub nz: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ActorObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<ActorObservationNpc>,
+    pub host_los: Option<bool>,
+    pub self_target_kind: i32,
+    pub self_target_index: i32,
+    pub receipt: Option<ActorObservationScriptReceipt>,
+}
+
+impl Default for ActorObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            identity: LineOfSightIdentity::default(),
+            here: None,
+            npc: None,
+            host_los: None,
+            self_target_kind: 0,
+            self_target_index: -1,
+            receipt: None,
+        }
+    }
+}
+
+pub fn actor_observation_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.actor.available
+        && baseline.actor.here.is_some()
+}
+
+fn actor_receipt_joined(now: &ActorObservation) -> bool {
+    let (Some(npc), Some(here), Some(host_los), Some(receipt)) = (
+        now.npc.as_ref(),
+        now.here,
+        now.host_los,
+        now.receipt.as_ref(),
+    ) else {
+        return false;
+    };
+    now.available
+        && npc.size >= 1
+        && receipt.identity == now.identity
+        && receipt.here == here
+        && receipt.npc.index == npc.index
+        && receipt.npc.name == npc.name
+        && receipt.npc.size == npc.size
+        && receipt.npc.level == npc.level
+        && receipt.npc.tile.x == npc.tile_x
+        && receipt.npc.tile.z == npc.tile_z
+        && receipt.npc.network.x == npc.nx
+        && receipt.npc.network.z == npc.nz
+        && receipt.packed.size == npc.size
+        && receipt.packed.nx == npc.nx
+        && receipt.packed.nz == npc.nz
+        && receipt.rendered.x == npc.tile_x
+        && receipt.rendered.z == npc.tile_z
+        && receipt.self_target.kind == now.self_target_kind
+        && receipt.self_target.index == now.self_target_index
+        && receipt.los.v2 == host_los
+        && receipt.los.v1 == host_los
+}
+
+/// Post-Start witness: one packed size>=1 NPC, joined script receipt, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ActorObservationDeliveryCycle {
+    pub identity: Option<LineOfSightIdentity>,
+    pub npc: Option<ActorObservationNpc>,
+    pub host_los: Option<bool>,
+    pub receipt: Option<ActorObservationScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl ActorObservationDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.actor.available {
+            if let Some(npc) = now.actor.npc.clone() {
+                if npc.size >= 1 {
+                    self.identity = Some(now.actor.identity);
+                    self.npc = Some(npc);
+                    self.host_los = now.actor.host_los;
+                }
+            }
+        }
+        if actor_receipt_joined(&now.actor) {
+            self.identity = Some(now.actor.identity);
+            self.npc = now.actor.npc.clone();
+            self.host_los = now.actor.host_los;
+            self.receipt = now.actor.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (Some(identity), Some(npc), Some(host_los), Some(receipt)) = (
+            self.identity,
+            self.npc.as_ref(),
+            self.host_los,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        identity == receipt.identity
+            && npc.size >= 1
+            && npc.index == receipt.npc.index
+            && npc.name == receipt.npc.name
+            && npc.size == receipt.npc.size
+            && npc.level == receipt.npc.level
+            && npc.tile_x == receipt.npc.tile.x
+            && npc.tile_z == receipt.npc.tile.z
+            && npc.nx == receipt.npc.network.x
+            && npc.nz == receipt.npc.network.z
+            && npc.size == receipt.packed.size
+            && npc.nx == receipt.packed.nx
+            && npc.nz == receipt.packed.nz
+            && npc.tile_x == receipt.rendered.x
+            && npc.tile_z == receipt.rendered.z
+            && receipt.los.v2 == host_los
+            && receipt.los.v1 == host_los
     }
 }
 
@@ -3396,6 +3717,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
         CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
         CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
+        CoreCase::ActorObservationV2 => actor_observation_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -3755,6 +4077,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::LineOfSightV2 => {
             "ingame && scene_state==2 && SceneView.available, here in published collision bounds"
         }
+        CoreCase::ActorObservationV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -3826,6 +4151,7 @@ pub struct CoreWitness {
     pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
     pub prayer_delivery_cycle: PrayerDeliveryCycle,
     pub line_of_sight_cycle: LineOfSightDeliveryCycle,
+    pub actor_observation_cycle: ActorObservationDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -9127,6 +9453,7 @@ impl CoreWitness {
             route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
             prayer_delivery_cycle: PrayerDeliveryCycle::default(),
             line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
+            actor_observation_cycle: ActorObservationDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -9357,6 +9684,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::LineOfSightV2) {
             self.line_of_sight_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::ActorObservationV2) {
+            self.actor_observation_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -9600,6 +9930,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::ActorObservationV2 => {
+                if let Some(expected) = self.case.actor_stop_reason() {
+                    self.actor_observation_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -9816,6 +10152,7 @@ impl CoreWitness {
             CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
             CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
             CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
+            CoreCase::ActorObservationV2 => self.actor_observation_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -10223,6 +10560,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_actor = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_actor_observation()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -10234,6 +10578,9 @@ impl CoreWatch {
             }
             if copies_los {
                 observation.attach_line_of_sight(snapshot, paint);
+            }
+            if copies_actor {
+                observation.attach_actor_observation(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -10269,6 +10616,21 @@ impl CoreWatch {
                 case.copies_line_of_sight()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the actor-observation File card. Callers attach paint and
+    /// one packed NPC row only then.
+    pub fn copies_actor_observation(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_actor_observation()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }
