@@ -50,6 +50,10 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("prayerPoints(): HelperResult<number>"));
     assert!(src.contains("foodCount(input: { items: ItemRow[]; foodName: string })"));
     assert!(src.contains("escapeRunesFor(input: { id: string })"));
+    assert!(src.contains("export interface LoadoutInput"));
+    assert!(src.contains("export interface PotionPlan"));
+    assert!(src.contains("foodOf(input: { loadout: LoadoutInput | null; fallback: string })"));
+    assert!(src.contains("potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> })"));
     assert!(src.contains(
         "prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>"
     ));

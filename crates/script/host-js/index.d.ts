@@ -423,6 +423,35 @@ export interface PrayerClearCounts {
   timed_out: number;
 }
 
+/** Caller-supplied carry row. Omitted qty defaults to 1 on loadout helpers. */
+export interface LoadoutCarry {
+  item: string;
+  qty?: number;
+}
+
+/** Caller-supplied loadout. Not a NativeSnapshot field. */
+export interface LoadoutInput {
+  name?: string;
+  worn?: Record<string, string>;
+  carry?: LoadoutCarry[];
+  unassigned?: string[];
+}
+
+/** Recommended flask form. short is present on plannedPotions values. */
+export interface PotionPlan {
+  skill: string;
+  short?: string;
+  flask: string;
+  doses: string[];
+  want: number;
+}
+
+export interface RangeLoadout {
+  weapon: string;
+  projectile: string;
+  thrown: boolean;
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -455,4 +484,12 @@ export interface NativeApi {
   combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;
   runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;
   escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;
+  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
+  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
+  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
+  weaponOf(input: { loadout: LoadoutInput | null; fallback?: string | null }): HelperResult<string | null>;
+  rangeLoadoutOf(input: { weapon: string; ammo: string }): HelperResult<RangeLoadout>;
+  boostFaded(input: { base: number; effective: number; floor?: number }): HelperResult<boolean>;
+  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;
+  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;
 }

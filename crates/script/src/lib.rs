@@ -28,6 +28,7 @@ mod keep_list;
 pub mod escape_runes;
 pub mod food_policy;
 pub mod load;
+pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod params;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
