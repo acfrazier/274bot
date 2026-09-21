@@ -568,3 +568,106 @@ fn example_executes_v1_and_v2_helpers_then_named_stop() {
     assert!(iso.stopped());
     iso.join();
 }
+
+#[test]
+fn example_picks_nearest_size_ge_1_not_array_first() {
+    let js = script::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
+        .expect("transpile actor_observation_v2.ts");
+    let iso = spawn_v2(&js);
+    let flags = [0i32; 256];
+    let actions = ["Attack".to_string()];
+    let npcs = [
+        SceneEntityInput {
+            index: 1,
+            id: 1,
+            name: Some("Zero"),
+            x: 3201,
+            z: 3201,
+            level: 0,
+            distance: 0,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 1,
+            target_kind: 0,
+            target_index: -1,
+            size: 0,
+            nx: 3201,
+            nz: 3201,
+        },
+        SceneEntityInput {
+            index: 3,
+            id: 2,
+            name: Some("Far"),
+            x: 3208,
+            z: 3208,
+            level: 0,
+            distance: 8,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 2,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 3208,
+            nz: 3208,
+        },
+        SceneEntityInput {
+            index: 11,
+            id: 3,
+            name: Some("Near"),
+            x: 3202,
+            z: 3202,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 2,
+            target_kind: 0,
+            target_index: -1,
+            size: 2,
+            nx: 3203,
+            nz: 3201,
+        },
+    ];
+    let mut snap = empty_input(1);
+    snap.npcs = &npcs;
+    snap.self_target_kind = 1;
+    snap.self_target_index = 7;
+    iso.post_snapshot(encode_snapshot_with_native(&snap, open_collision(&flags)));
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let paint = iso.paint().expect("example paint receipt");
+    let line = paint
+        .lines
+        .iter()
+        .find(|row| row.starts_with("actor-receipt:"))
+        .expect("compact actor-receipt paint line");
+    let receipt: serde_json::Value =
+        serde_json::from_str(line.strip_prefix("actor-receipt:").unwrap()).unwrap();
+    assert_eq!(
+        receipt["npc"]["index"], 11,
+        "array-first size>=1 is index 3; File must pick nearest index 11: {receipt}"
+    );
+    assert_eq!(receipt["npc"]["name"], "Near");
+    assert_eq!(receipt["npc"]["size"], 2);
+    assert_eq!(
+        iso.script_stop_receipt().expect("named helper stop").reason,
+        "actor observation qualification complete"
+    );
+    iso.join();
+}

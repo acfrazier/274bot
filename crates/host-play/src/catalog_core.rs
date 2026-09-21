@@ -1781,12 +1781,9 @@ impl Observation {
         let here = self
             .tile
             .map(|(x, z, level)| LineOfSightTile { x, z, level });
-        let npc = snapshot
-            .npcs()
-            .iter()
-            .filter(|row| row.size >= 1)
-            .min_by_key(|row| (row.distance, row.index))
-            .map(|row| ActorObservationNpc {
+        let receipt = paint.and_then(parse_actor_receipt_from_paint);
+        let npc = choose_actor_observation_npc(snapshot.npcs(), receipt.as_ref()).map(|row| {
+            ActorObservationNpc {
                 index: row.index as i32,
                 name: row.name.clone(),
                 size: row.size,
@@ -1795,7 +1792,8 @@ impl Observation {
                 nx: row.network.x,
                 nz: row.network.z,
                 level: row.tile.level,
-            });
+            }
+        });
         let (self_target_kind, self_target_index) = packed_self_target(snapshot);
         let host_los = match (here, npc.as_ref()) {
             (Some(from), Some(npc)) if scene.available => {
@@ -1834,7 +1832,7 @@ impl Observation {
             host_los,
             self_target_kind,
             self_target_index,
-            receipt: paint.and_then(parse_actor_receipt_from_paint),
+            receipt,
         };
     }
 
@@ -2545,6 +2543,23 @@ impl LineOfSightDeliveryCycle {
             && receipt.open.v1
             && !receipt.blocked.v1
     }
+}
+
+/// File and Core share this rule: min `(distance, index)` among `size >= 1`.
+/// After the script posts a receipt, look that index up so headed join verifies
+/// the observed row instead of independently picking another NPC.
+fn choose_actor_observation_npc<'a>(
+    npcs: &'a [NpcView],
+    receipt: Option<&ActorObservationScriptReceipt>,
+) -> Option<&'a NpcView> {
+    if let Some(index) = receipt.map(|row| row.npc.index) {
+        return npcs
+            .iter()
+            .find(|row| row.size >= 1 && row.index as i32 == index);
+    }
+    npcs.iter()
+        .filter(|row| row.size >= 1)
+        .min_by_key(|row| (row.distance, row.index))
 }
 
 fn packed_self_target(snapshot: &GameSnapshot) -> (i32, i32) {
@@ -10789,4 +10804,89 @@ fn validate_start_baseline(
         ));
     }
     validate_case_baseline_with_preparation(case, observation, start_preparation)
+}
+
+#[cfg(test)]
+mod actor_observation_selection_tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    fn npc(index: usize, distance: i32, size: i32, name: &str) -> NpcView {
+        NpcView {
+            index,
+            r#type: Some(1),
+            name: Some(name.into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 3201,
+                z: 3205,
+                level: 0,
+            },
+            distance,
+            animation: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 5,
+            total_health: 5,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 2,
+            size,
+            network: WorldTile {
+                x: 3205,
+                z: 3201,
+                level: 0,
+            },
+            x: 3201,
+            z: 3205,
+            yaw: 0,
+        }
+    }
+
+    fn receipt_for(index: i32) -> ActorObservationScriptReceipt {
+        ActorObservationScriptReceipt {
+            npc: ActorObservationNpcFact {
+                index,
+                name: Some("Near".into()),
+                size: 2,
+                ..ActorObservationNpcFact::default()
+            },
+            ..ActorObservationScriptReceipt::default()
+        }
+    }
+
+    #[test]
+    fn chooses_nearest_size_ge_1_not_array_first() {
+        let rows = [
+            npc(1, 0, 0, "Zero"),
+            npc(3, 8, 1, "Far"),
+            npc(11, 1, 2, "Near"),
+        ];
+        let chosen = choose_actor_observation_npc(&rows, None).expect("nearest size>=1");
+        assert_eq!(chosen.index, 11);
+        assert_eq!(chosen.name.as_deref(), Some("Near"));
+        assert_eq!(chosen.size, 2);
+    }
+
+    #[test]
+    fn receipt_index_selects_that_row_not_nearest() {
+        let rows = [
+            npc(1, 0, 0, "Zero"),
+            npc(3, 8, 1, "Far"),
+            npc(11, 1, 2, "Near"),
+        ];
+        let receipt = receipt_for(3);
+        let chosen = choose_actor_observation_npc(&rows, Some(&receipt)).expect("receipt index 3");
+        assert_eq!(chosen.index, 3);
+        assert_eq!(chosen.name.as_deref(), Some("Far"));
+        let nearest = receipt_for(11);
+        let chosen = choose_actor_observation_npc(&rows, Some(&nearest)).expect("receipt index 11");
+        assert_eq!(chosen.index, 11);
+    }
 }

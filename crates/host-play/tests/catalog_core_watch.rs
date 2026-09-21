@@ -2242,3 +2242,69 @@ fn actor_observation_rejects_unready_and_missing_scene() {
         "missing SceneView cannot start"
     );
 }
+
+#[test]
+fn actor_observation_join_agrees_on_nearest_not_array_first() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let array_first = ActorObservationNpc {
+        index: 3,
+        name: Some("Far".into()),
+        size: 1,
+        tile_x: 3208,
+        tile_z: 3208,
+        nx: 3208,
+        nz: 3208,
+        level: 0,
+    };
+    let nearest = ActorObservationNpc {
+        index: 11,
+        name: Some("Near".into()),
+        size: 2,
+        tile_x: 3202,
+        tile_z: 3202,
+        nx: 3203,
+        nz: 3201,
+        level: 0,
+    };
+
+    let mut mismatch = baseline.clone();
+    mismatch.tick += 1;
+    mismatch.actor.npc = Some(array_first);
+    mismatch.actor.host_los = Some(true);
+    mismatch.actor.self_target_kind = 1;
+    mismatch.actor.self_target_index = 7;
+    mismatch.actor.receipt = Some(actor_receipt(&nearest, true));
+    mismatch.script_lifecycle =
+        actor_stop(mismatch.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "array-first host npc vs nearest File receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut joined = baseline;
+    joined.tick += 1;
+    joined.actor.npc = Some(nearest.clone());
+    joined.actor.host_los = Some(true);
+    joined.actor.self_target_kind = 1;
+    joined.actor.self_target_index = 7;
+    joined.actor.receipt = Some(actor_receipt(&nearest, true));
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        actor_stop(joined, ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on nearest index 11");
+}

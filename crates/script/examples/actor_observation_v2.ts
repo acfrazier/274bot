@@ -5,8 +5,9 @@ import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
 
 /**
- * Headed File witness: one posted NPC row with size>=1, v1 Npc/reader
- * helpers plus existing v1/v2 line-of-sight, then named stop.
+ * Headed File witness: one posted NPC row with size>=1, chosen by
+ * min(distance, index), v1 Npc/reader helpers plus existing v1/v2
+ * line-of-sight, then named stop.
  * no-NPC / unready is not complete — keep waiting within the scenario budget.
  */
 export const apiVersion = 2;
@@ -23,7 +24,19 @@ export function tick(api: NativeApi): void {
     if (!c.available) {
         return;
     }
-    const n = (snap.npcs || []).find((row) => row && row.size >= 1);
+    let n: (typeof snap.npcs)[number] | undefined;
+    for (const row of snap.npcs || []) {
+        if (!row || row.size < 1) {
+            continue;
+        }
+        if (
+            !n ||
+            row.distance < n.distance ||
+            (row.distance === n.distance && row.index < n.index)
+        ) {
+            n = row;
+        }
+    }
     if (!n) {
         return;
     }
