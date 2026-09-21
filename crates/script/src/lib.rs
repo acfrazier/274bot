@@ -119,6 +119,8 @@ mod production;
 #[cfg(feature = "load")]
 mod reach;
 #[cfg(feature = "load")]
+pub mod line_of_sight;
+#[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
 mod supply_v2;

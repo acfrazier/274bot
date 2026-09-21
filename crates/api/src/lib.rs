@@ -10,6 +10,7 @@ pub mod ent;
 pub mod game_data;
 pub mod gather_tools;
 pub mod interact;
+pub mod line_of_sight;
 pub mod named_banks;
 pub mod native_input;
 pub mod obj_names;

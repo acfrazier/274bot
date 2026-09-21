@@ -484,6 +484,13 @@ pub(super) fn materialize_snapshot(
         let reach = unavailable_reach(&mut scope)?;
         set(&mut scope, obj, "reach", reach)?;
     }
+    if snap.has_collision() {
+        let collision = collision_object(&mut scope, snap.collision())?;
+        set(&mut scope, obj, "collision", collision)?;
+    } else if !had {
+        let collision = unavailable_collision(&mut scope)?;
+        set(&mut scope, obj, "collision", collision)?;
+    }
     if snap.has_attacked_by_player() {
         let attacked = v8::Boolean::new(&mut scope, snap.attacked_by_player());
         set(&mut scope, obj, "attacked_by_player", attacked.into())?;
@@ -1068,6 +1075,95 @@ fn u16_array<'s>(
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
+}
+
+fn unavailable_collision<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    collision_from_parts(scope, false, 0, 0, 0, 0, 0, &[])
+}
+
+fn collision_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    collision: Option<crate::isolate_fb::CollisionReader<'_>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(c) = collision else {
+        return unavailable_collision(scope);
+    };
+    let flags = c.flags();
+    collision_from_parts(
+        scope,
+        c.available(),
+        c.base_x(),
+        c.base_z(),
+        c.level(),
+        c.width(),
+        c.height(),
+        &flags,
+    )
+}
+
+fn collision_from_parts<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    available: bool,
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    width: i32,
+    height: i32,
+    flags: &[i32],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let available_v = v8::Boolean::new(scope, available).into();
+    set(scope, o, "available", available_v)?;
+    let base_x_v = num(scope, base_x as f64);
+    set(scope, o, "base_x", base_x_v)?;
+    let base_z_v = num(scope, base_z as f64);
+    set(scope, o, "base_z", base_z_v)?;
+    let level_v = num(scope, level as f64);
+    set(scope, o, "level", level_v)?;
+    let width_v = num(scope, width as f64);
+    set(scope, o, "width", width_v)?;
+    let height_v = num(scope, height as f64);
+    set(scope, o, "height", height_v)?;
+    let view_flags = if available { flags } else { &[] };
+    let flags_v = collision_flags_view(scope, view_flags)?;
+    set(scope, o, "flags", flags_v)?;
+    Ok(o.into())
+}
+
+fn collision_flags_view<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    flags: &[i32],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let nbytes = flags.len().saturating_mul(4);
+    let ab = v8::ArrayBuffer::new(scope, nbytes);
+    if nbytes > 0 {
+        let backing = ab.get_backing_store();
+        if let Some(ptr) = backing.data() {
+            let dest = ptr.as_ptr() as *mut u8;
+            for (i, flag) in flags.iter().enumerate() {
+                let bytes = flag.to_le_bytes();
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.add(i * 4), 4);
+                }
+            }
+        }
+    }
+    let u8a = v8::Uint8Array::new(scope, ab, 0, nbytes)
+        .ok_or_else(|| "uint8 collision flags".to_string())?;
+    let global = scope.get_current_context().global(scope);
+    let key = v8::String::new(scope, "__rs2b0t_flags_view")
+        .ok_or_else(|| "flags view name".to_string())?;
+    let factory = global
+        .get(scope, key.into())
+        .ok_or_else(|| "missing flags view".to_string())?;
+    let factory = v8::Local::<v8::Function>::try_from(factory)
+        .map_err(|_| "flags view is not a function".to_string())?;
+    let recv = v8::undefined(scope).into();
+    factory
+        .call(scope, recv, &[u8a.into()])
+        .ok_or_else(|| "flags view call".to_string())
 }
 
 fn unavailable_reach<'s>(

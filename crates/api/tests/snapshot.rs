@@ -1207,6 +1207,8 @@ fn ground_item_view_rebuild_reads_ground_obj() {
 #[test]
 fn scene_view_rebuild_reads_collision_flags() {
     let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;
     c.minusedlevel = 1;
@@ -4569,4 +4571,117 @@ fn packed_interfaces_include_a_make_type_inv() {
         found > 0,
         "selected cache must contain a Make TYPE_INV for the anvil walk"
     );
+}
+
+fn flag_at(scene: &api::snapshot::SceneView, x: usize, z: usize) -> i32 {
+    scene.collision_flags[x * scene.height as usize + z]
+}
+
+/// T3: highmem plane writes do not bump gens.scene; identity recopy must
+/// still publish the new plane and Scene's return stays gen-only.
+#[test]
+fn highmem_plane_recopies_without_scene_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.collision[1].add_wall(10, 10, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().level, 0);
+    assert_eq!(flag_at(snap.scene(), 5, 6), CollisionFlag::W_W);
+
+    c.minusedlevel = 1;
+    assert!(
+        !snap.rebuild_family(&c, Family::Scene),
+        "plane write is not a scene gen"
+    );
+    let _ = snap.rebuild(&c);
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().level, 1);
+    assert_eq!(flag_at(snap.scene(), 10, 10), CollisionFlag::W_W);
+    assert_eq!(
+        flag_at(snap.scene(), 5, 6),
+        CollisionFlag::_OPEN,
+        "old-plane wall is not the current identity"
+    );
+}
+
+/// T4: new base while scene_state==1 must unpublish, not pair new base
+/// with the previous region's flags.
+#[test]
+fn state1_new_base_unpublishes_scene() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().base_x, 3200);
+
+    c.scene_state = 1;
+    c.map_build_base_x = 3300;
+    assert!(
+        !snap.rebuild_family(&c, Family::Scene),
+        "lowmem loading is not a scene gen"
+    );
+    assert!(!snap.scene().available);
+    assert!(
+        snap.scene().collision_flags.is_empty(),
+        "must not keep the previous region's flags"
+    );
+}
+
+/// T5 / T8: returning to scene_state==2 recopies; Scene return stays gen-only.
+#[test]
+fn map_build_ready_materializes_without_inventing_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 1;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert!(!snap.scene().available);
+
+    c.scene_state = 2;
+    assert!(!snap.rebuild(&c), "scene_state 1→2 is not a gen move");
+    assert!(snap.scene().available);
+    assert_eq!(flag_at(snap.scene(), 5, 6), CollisionFlag::W_W);
+
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.collision[0].add_wall(20, 20, 0, 0, false);
+    assert!(snap.rebuild_family(&c, Family::Scene));
+    assert!(snap.scene().available);
+    assert_eq!(flag_at(snap.scene(), 20, 20), CollisionFlag::W_W);
+}
+
+/// Logout / !ingame clears the published grid even without a later gen.
+#[test]
+fn logout_clears_scene_without_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.scene().available);
+
+    c.ingame = false;
+    assert!(!snap.rebuild_family(&c, Family::Scene));
+    assert!(!snap.scene().available);
+    assert!(snap.scene().collision_flags.is_empty());
 }

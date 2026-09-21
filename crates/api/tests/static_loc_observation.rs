@@ -211,3 +211,71 @@ fn player_tile_change_refreshes_loc_distance_without_resweep() {
         "same-tile player tick must not clone loc names"
     );
 }
+
+/// T6: consume LOC_* gen, then a later static-scenery write plus collision
+/// mutation must still refresh flags on standalone Family::Loc.
+#[test]
+fn queued_loc_after_consumed_gen_refreshes_collision_flags() {
+    let (mut c, id) = client_with_flax();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.collision[0].flags[7][8] = client::dash3d::CollisionFlag::WALK_SCENERY;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::LOC_DEL);
+    assert!(snap.rebuild(&c));
+    assert_eq!(
+        snap.scene().collision_flags[7 * 104 + 8],
+        client::dash3d::CollisionFlag::WALK_SCENERY
+    );
+    assert!(
+        !snap.rebuild_family(&c, Family::Loc),
+        "packet gen already consumed"
+    );
+
+    c.world.del_loc(0, 7, 8);
+    c.collision[0].flags[7][8] = client::dash3d::CollisionFlag::VIS_SCENERY;
+    assert!(
+        snap.rebuild_family(&c, Family::Loc),
+        "standalone Loc after consumed gen must still dirty"
+    );
+    assert!(
+        snap.locs()
+            .iter()
+            .all(|loc| loc.layer != LocLayer::Ground || loc.id != id)
+    );
+    assert_eq!(
+        snap.scene().collision_flags[7 * 104 + 8],
+        client::dash3d::CollisionFlag::VIS_SCENERY,
+        "standalone Loc recopies the current plane"
+    );
+}
+
+/// T7: missing-tile del_loc / add_dynamic are not collision writes.
+#[test]
+fn no_op_loc_churn_does_not_require_a_client_collision_hook() {
+    let (mut c, _id) = client_with_flax();
+    c.ingame = true;
+    c.scene_state = 2;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild(&c));
+    let before = snap.scene().collision_flags.clone();
+
+    c.world.del_loc(0, 4, 4);
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+    assert!(c
+        .world
+        .add_dynamic(
+            0,
+            7 * 128 + 64,
+            0,
+            8 * 128 + 64,
+            scene_typecode(2),
+            0,
+            0,
+            false
+        )
+        .is_some());
+    assert!(!snap.rebuild_family(&c, Family::Loc));
+    assert_eq!(snap.scene().collision_flags, before);
+}

@@ -2211,7 +2211,8 @@ pub(super) fn with_script_snapshot_input<R>(
     use script::isolate_fb::{
         BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput,
         ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput,
-        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+        CollisionViewInput, QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput,
+        SnapshotInput,
         StatInput, TileInput, VarpInput, WidgetTextInput,
     };
 
@@ -3242,6 +3243,21 @@ pub(super) fn with_script_snapshot_input<R>(
         .as_ref()
         .map(|t| route_inspect::terminal_to_input(t, &prev_hops))
         .unwrap_or_default();
+    let collision = Some(match snapshot {
+        Some(s) if s.ingame() && s.scene_state() == 2 && s.scene().available => {
+            let sc = s.scene();
+            CollisionViewInput {
+                available: true,
+                base_x: sc.base_x,
+                base_z: sc.base_z,
+                level: sc.level,
+                width: sc.width,
+                height: sc.height,
+                flags: &sc.collision_flags,
+            }
+        }
+        _ => CollisionViewInput::UNAVAILABLE,
+    });
     let native = NativeFactsInput {
         self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
         hint_tile: snapshot
@@ -3277,6 +3293,7 @@ pub(super) fn with_script_snapshot_input<R>(
             refused_id_3: inspect.refused_id_3,
             unobserved: inspect.unobserved,
         },
+        collision,
     };
     f(&input, native)
 }
