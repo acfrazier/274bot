@@ -299,6 +299,14 @@ fn render_native_v2(out: &mut String) {
         }
     }
     out.push_str(";\n\n");
+    out.push_str("export type HelperResult<T> =\n");
+    out.push_str("  | { ok: true; value: T }\n");
+    out.push_str("  | { ok: false; error: string };\n\n");
+    out.push_str("/** prayerClear walk counts. timed_out may be nonzero; that is not all-off success. */\n");
+    out.push_str("export interface PrayerClearCounts {\n");
+    out.push_str("  clicked: number;\n");
+    out.push_str("  timed_out: number;\n");
+    out.push_str("}\n\n");
     out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
     out.push_str("export interface NativeApi {\n");
     out.push_str("  readonly tick: number;\n");
@@ -313,6 +321,16 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;\n");
     out.push_str("  inspectSettled(token: number): boolean;\n");
     out.push_str("  inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;\n");
+    out.push_str("  prayerPoints(): HelperResult<number>;\n");
+    out.push_str("  prayerMax(): HelperResult<number>;\n");
+    out.push_str("  prayerFull(): HelperResult<boolean>;\n");
+    out.push_str("  prayerKnown(input: { name: string }): HelperResult<boolean>;\n");
+    out.push_str("  prayerAvailable(input: { name: string }): HelperResult<boolean>;\n");
+    out.push_str("  prayerActive(input: { name: string }): HelperResult<boolean>;\n");
+    out.push_str("  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step. */\n");
+    out.push_str("  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;\n");
+    out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. */\n");
+    out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
     out.push_str("}\n");
 }
 

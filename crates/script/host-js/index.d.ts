@@ -413,6 +413,16 @@ export type NativeOp =
   | { op: 'walk-nearest-bank'}
   | { op: 'inspect-route'; from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number};
 
+export type HelperResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
+
+/** prayerClear walk counts. timed_out may be nonzero; that is not all-off success. */
+export interface PrayerClearCounts {
+  clicked: number;
+  timed_out: number;
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -427,4 +437,14 @@ export interface NativeApi {
   inspectBegin(opts: { from: WorldTile; to: WorldTile; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; timeout_ms?: number }): number;
   inspectSettled(token: number): boolean;
   inspectValue(token: number): { ok: boolean; reason: string; bankPlanned: boolean; ticks: number; hops: Array<{ kind: string; locId: number; locName: string; action: string; option: number; from: WorldTile; to: WorldTile; ticks: number }>; request_id: number } | null;
+  prayerPoints(): HelperResult<number>;
+  prayerMax(): HelperResult<number>;
+  prayerFull(): HelperResult<boolean>;
+  prayerKnown(input: { name: string }): HelperResult<boolean>;
+  prayerAvailable(input: { name: string }): HelperResult<boolean>;
+  prayerActive(input: { name: string }): HelperResult<boolean>;
+  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step. */
+  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;
+  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. */
+  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;
 }

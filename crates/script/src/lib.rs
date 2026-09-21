@@ -93,6 +93,8 @@ pub use load::{transpile_ts, LoadIsolate};
 #[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
+mod prayer;
+#[cfg(feature = "load")]
 mod bank_open;
 #[cfg(feature = "load")]
 mod bank_withdraw;

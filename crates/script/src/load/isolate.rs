@@ -1427,6 +1427,7 @@ fn tick_loop(
                             });
                         }
                         crate::autocast::on_snapshot(&snap);
+                        crate::prayer::on_snapshot(&snap);
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);
                         crate::production::on_snapshot(&snap);
@@ -1445,6 +1446,7 @@ fn tick_loop(
                             crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
                             crate::autocast::on_hold(host_hold);
+                            crate::prayer::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
                             crate::teleport::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
@@ -1615,6 +1617,11 @@ fn tick_loop(
                     // Rust-owned v2 single-flight: do not re-enter tick
                     // while a previous returned Promise is pending.
                     // Snapshot posts still merge; this only skips tick.
+                    // Prayer's private machine advances here so the
+                    // existing NativeTick Promise can settle.
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
+                    );
                     let _ = runtime.block_on_event_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
@@ -1793,6 +1800,7 @@ fn tick_loop(
                 crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
                 crate::autocast::on_reset();
+                crate::prayer::on_reset();
                 crate::special::on_reset();
                 crate::teleport::on_reset();
                 crate::shop::on_reset();
@@ -1807,6 +1815,13 @@ fn tick_loop(
                 if v2_native {
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
+                    );
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
+                    );
+                    let _ = runtime.block_on_event_loop(
+                        rustyscript::deno_core::PollEventLoopOptions::default(),
+                        Some(Duration::from_millis(10)),
                     );
                 }
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
@@ -1824,6 +1839,7 @@ fn tick_loop(
                 crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
                 crate::autocast::on_pause();
+                crate::prayer::on_pause();
                 crate::special::on_pause();
                 crate::teleport::on_pause();
                 crate::shop::on_pause();
@@ -1846,6 +1862,7 @@ fn tick_loop(
                 crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
                 crate::autocast::on_resume();
+                crate::prayer::on_resume();
                 crate::special::on_resume();
                 crate::teleport::on_resume();
                 crate::shop::on_resume();
