@@ -533,10 +533,19 @@ export interface NativeApi {
   fightReset(input: { token: number }): HelperResult<null>;
   fightInterruptWatch(input: { token: number }): HelperResult<null>;
   fightBlocksLoot(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
+  holdBegin(input?: object): HelperResult<{ token: number }>;
+  holdValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
+  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */
+  holdNext(input: { token: number; reply?: unknown } & Record<string, unknown>): HoldStep;
 }
 
 export type FightStep =
   | { ok: true; status: 'continue'; token: number; kind: string }
   | { ok: true; status: 'done'; token: number; kind: 'yield' }
   | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }
+  | { ok: false; error: string };
+export type HoldStep =
+  | { ok: true; status: 'continue'; token: number; kind: string }
+  | { ok: true; status: 'done'; token: number; kind: 'yield' }
+  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
   | { ok: false; error: string };
