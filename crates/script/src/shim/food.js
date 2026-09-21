@@ -8,16 +8,19 @@ export const FOOD_OPTIONS = [
 
 export const MIN_EAT_HP = 5;
 
-const FOOD_HEAL = Object.fromEntries(globalThis.__rs2b0t_host?.content?.food_heals || []);
+function foodHealNative() {
+    return globalThis.__rs2b0t_food_heal_amount;
+}
 
 export function foodHealAmount(foodName) {
-    const key = String(foodName || '').trim();
-    if (Object.prototype.hasOwnProperty.call(FOOD_HEAL, key)) {
-        return FOOD_HEAL[key];
-    }
-    const hit = Object.keys(FOOD_HEAL).find((n) => n.toLowerCase() === key.toLowerCase());
-    if (hit) {
-        return FOOD_HEAL[hit];
+    const fn = foodHealNative();
+    if (typeof fn === 'function') {
+        const key = String(foodName || '').trim();
+        const row = fn(key);
+        if (row && row.ok === true && typeof row.value === 'number') {
+            return row.value;
+        }
+        throw notImpl('foodHealAmount');
     }
     throw notImpl('foodHealAmount');
 }
@@ -57,6 +60,10 @@ export function isFoodItem(name, foodName) {
 
 export function foodCount(items, foodName) {
     if (!Array.isArray(items)) return 0;
+    const fn = globalThis.__rs2b0t_food_count;
+    if (typeof fn === 'function') {
+        return fn(items, String(foodName));
+    }
     return items.filter((item) => item && isFoodItem(item.name, foodName)).length;
 }
 

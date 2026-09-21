@@ -334,6 +334,11 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;\n");
     out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
+    out.push_str("  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n");
+    out.push_str("  foodHealAmount(input: { foodName: string }): HelperResult<number>;\n");
+    out.push_str("  combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;\n");
+    out.push_str("  runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;\n");
+    out.push_str("  escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;\n");
     out.push_str("}\n");
 }
 

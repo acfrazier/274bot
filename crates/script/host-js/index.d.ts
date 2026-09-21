@@ -450,4 +450,9 @@ export interface NativeApi {
   prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;
   /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */
   prayerClear(): Promise<HelperResult<PrayerClearCounts>>;
+  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;
+  foodHealAmount(input: { foodName: string }): HelperResult<number>;
+  combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;
+  runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;
+  escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;
 }

@@ -6,12 +6,12 @@ use std::collections::HashSet;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct CombatKeepOptions {
-    food: String,
-    style: String,
-    spell: String,
-    ammo: String,
-    weapon: String,
-    extra: Vec<String>,
+    pub(crate) food: String,
+    pub(crate) style: String,
+    pub(crate) spell: String,
+    pub(crate) ammo: String,
+    pub(crate) weapon: String,
+    pub(crate) extra: Vec<String>,
 }
 
 pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
@@ -69,7 +69,7 @@ pub(crate) fn combat_keep_names(
     keep
 }
 
-fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
+pub(crate) fn food_forms(items: &[GameItem], food: &str) -> Vec<String> {
     let key = food.trim().to_lowercase();
     let Some(alias) = items
         .iter()

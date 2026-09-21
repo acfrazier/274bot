@@ -25,6 +25,8 @@ pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
 mod keep_list;
+pub mod escape_runes;
+pub mod food_policy;
 pub mod load;
 pub mod loadouts_store;
 pub mod params;
@@ -117,6 +119,8 @@ mod production;
 mod reach;
 #[cfg(feature = "load")]
 mod shop;
+#[cfg(feature = "load")]
+mod supply_v2;
 #[cfg(feature = "load")]
 mod special;
 #[cfg(feature = "load")]

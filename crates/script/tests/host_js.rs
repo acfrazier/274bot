@@ -48,6 +48,8 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("export type HelperResult"));
     assert!(src.contains("export interface PrayerClearCounts"));
     assert!(src.contains("prayerPoints(): HelperResult<number>"));
+    assert!(src.contains("foodCount(input: { items: ItemRow[]; foodName: string })"));
+    assert!(src.contains("escapeRunesFor(input: { id: string })"));
     assert!(src.contains(
         "prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>"
     ));

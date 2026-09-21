@@ -321,6 +321,11 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register combat keep names: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_supply_v2", |args: &[serde_json::Value]| {
+            Ok(crate::supply_v2::dispatch(args))
+        })
+        .map_err(|e| format!("register supply v2: {e}"))?;
     let selected_spells = game_data.clone();
     runtime
         .register_function(
@@ -368,6 +373,7 @@ pub(super) fn wire_runtime(
     crate::autocast::configure(game_data.as_deref());
     crate::prayer::configure(game_data.as_deref());
     crate::shop::configure(game_data.clone());
+    crate::supply_v2::configure(game_data.clone());
     let selected_autocast = game_data.clone();
     runtime
         .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
@@ -861,6 +867,7 @@ pub(super) fn wire_runtime(
         .eval::<()>(crate::shim::PRELUDE)
         .map_err(|e| format!("shim: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
+    super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     let content = format!(
@@ -1208,6 +1215,46 @@ api.prayerSet = function (input) {
 api.prayerClear = function () {
   // Same admission rule as prayerSet: busy if a pump is already installed.
   return runPrayerMachine({ op: 'begin-clear' });
+};
+function supplyV2(op, input) {
+  return globalThis.rustyscript.functions.__rs2b0t_supply_v2({ op: op, input: input });
+}
+function isItemRowArray(value) {
+  return Array.isArray(value)
+    || (value && typeof value === 'object' && typeof value.length === 'number');
+}
+api.foodCount = function (input) {
+  if (!input || !isItemRowArray(input.items) || typeof input.foodName !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return supplyV2('foodCount', input);
+};
+api.foodHealAmount = function (input) {
+  if (!input || typeof input.foodName !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return supplyV2('foodHealAmount', input);
+};
+api.combatKeepNames = function (input) {
+  if (!input || typeof input !== 'object' || typeof input.food !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return supplyV2('combatKeepNames', input);
+};
+api.runesPerCast = function (input) {
+  if (!input || typeof input.spellName !== 'string' || !Array.isArray(input.wielded)) {
+    return helperErr('invalid-args');
+  }
+  for (const row of input.wielded) {
+    if (typeof row !== 'string') return helperErr('invalid-args');
+  }
+  return supplyV2('runesPerCast', input);
+};
+api.escapeRunesFor = function (input) {
+  if (!input || typeof input.id !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return supplyV2('escapeRunesFor', input);
 };
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
