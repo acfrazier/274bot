@@ -8,8 +8,8 @@ use api::snapshot::WorldTile;
 use client::config::Cache;
 use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::router::{
-    find_missing_item_reqs_with_avoid, find_with_avoid, AvoidRect, FindOptions, Leg, Route,
-    RouteError,
+    find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded,
+    find_with_avoid, find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
 };
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
@@ -20,6 +20,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 const MAX_AVOID: usize = 16;
+/// Isolate unsettled-waiter cap. Host published storage plus admission
+/// equal this bound: RING(2)+HELD(1)=3. A fourth isolate begin is already
+/// local-stale; the host must not accept a fourth terminal.
+const RING: usize = 2;
+const HELD: usize = 1;
+const CAPACITY: usize = RING + HELD;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct InspectHop {
@@ -78,6 +84,11 @@ pub(super) struct InspectCapture {
     pub cache: Option<Arc<Cache>>,
     pub obj_names: Option<Arc<ObjNames>>,
     pub test_barrier: Option<Arc<InspectBarrier>>,
+    /// Injectable node budgets for I1 fixtures. `None` uses production
+    /// [`find_with_avoid`] / [`find_missing_item_reqs_with_avoid`].
+    pub search_budget_strict: Option<usize>,
+    pub search_budget_stand: Option<usize>,
+    pub search_budget_post: Option<usize>,
 }
 
 #[derive(Default)]
@@ -93,7 +104,6 @@ pub(super) struct InspectNav {
     pub latest: Option<InspectTerminal>,
     pub prev: Option<InspectTerminal>,
     pub held: Option<InspectTerminal>,
-    pub ring_posted: bool,
     pub observed_seq: u64,
     pub live_world: Option<Arc<NavWorld>>,
 }
@@ -127,19 +137,42 @@ impl InspectNav {
         self.replaced_id = id;
     }
 
+    fn published_count(&self) -> usize {
+        usize::from(self.latest.is_some())
+            + usize::from(self.prev.is_some())
+            + usize::from(self.held.is_some())
+    }
+
+    /// Admission is proven from isolate `UNSETTLED_MAX=3`:
+    /// published(latest+prev+held) + running + (replace-pending publish) +
+    /// the new request ≤ CAPACITY. Refusing here is backpressure, not a
+    /// silent drop of an already-accepted terminal.
+    fn can_admit(&self, replacing_pending: bool) -> bool {
+        let reserved = usize::from(self.running_id != 0)
+            + usize::from(replacing_pending)
+            + 1;
+        self.published_count() + reserved <= CAPACITY
+    }
+
+    fn max_ackable_seq(&self) -> u64 {
+        self.latest
+            .as_ref()
+            .map(|t| t.seq)
+            .unwrap_or(0)
+            .max(self.prev.as_ref().map(|t| t.seq).unwrap_or(0))
+    }
+
     fn publish(&mut self, mut term: InspectTerminal) {
         if term.seq == 0 {
             term.seq = self.next_seq();
         }
         if self.latest.is_none() {
             self.latest = Some(term);
-            self.ring_posted = false;
             return;
         }
         if self.prev.is_none() {
             self.prev = self.latest.take();
             self.latest = Some(term);
-            self.ring_posted = false;
             return;
         }
         if !self.can_wrap() {
@@ -150,24 +183,22 @@ impl InspectNav {
         }
         self.prev = self.latest.take();
         self.latest = Some(term);
-        self.ring_posted = false;
     }
 
     fn can_wrap(&self) -> bool {
         let Some(prev) = self.prev.as_ref() else {
             return true;
         };
-        self.ring_posted || self.observed_seq >= prev.seq
+        self.observed_seq >= prev.seq
     }
 
-    pub(super) fn mark_posted(&mut self) {
-        self.ring_posted = true;
-        if let Some(held) = self.held.take() {
-            self.publish(held);
+    pub(super) fn apply_ack(&mut self, seq: u64, generation: u64) {
+        if generation != self.generation || seq == 0 {
+            return;
         }
-    }
-
-    pub(super) fn apply_ack(&mut self, seq: u64) {
+        if seq > self.max_ackable_seq() {
+            return;
+        }
         if seq > self.observed_seq {
             self.observed_seq = seq;
         }
@@ -199,7 +230,6 @@ impl InspectNav {
         self.accepted_id = 0;
         self.replaced_id = 0;
         self.replaced_prev_id = 0;
-        self.ring_posted = true;
         self.observed_seq = 0;
     }
 }
@@ -251,22 +281,39 @@ pub(super) fn queue_inspect(
     obj_names: Option<Arc<ObjNames>>,
     req: InspectRequest,
 ) {
-    {
+    let Some(world) = world.clone() else {
         let mut all = navs.lock().unwrap();
         let bot = all.entry(name.to_string()).or_default();
-        bot.inspect.apply_ack(req.inspect_ack_seq);
-    }
-    if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
-        refuse(navs, name, req.request_id, "invalid-args");
-        return;
-    }
-    let Some(world) = world.clone() else {
-        refuse(navs, name, req.request_id, "missing-graph");
+        bot.inspect
+            .apply_ack(req.inspect_ack_seq, bot.inspect.generation);
+        if req.request_id == 0 {
+            return;
+        }
+        if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
+            return;
+        }
+        if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
+            refuse_locked(bot, req.request_id, "invalid-args");
+            return;
+        }
+        refuse_locked(bot, req.request_id, "missing-graph");
         return;
     };
     let token = {
         let mut all = navs.lock().unwrap();
         let bot = all.entry(name.to_string()).or_default();
+        bot.inspect
+            .apply_ack(req.inspect_ack_seq, bot.inspect.generation);
+        if req.request_id == 0 {
+            return;
+        }
+        if !bot.inspect.can_admit(bot.inspect.pending.is_some()) {
+            return;
+        }
+        if req.invalid_args || validate_request(req.from, req.to, &req.avoid).is_err() {
+            refuse_locked(bot, req.request_id, "invalid-args");
+            return;
+        }
         let generation = bot.inspect.generation;
         if let Some(old) = bot.inspect.pending.take() {
             bot.inspect.note_replaced(old.request_id);
@@ -298,6 +345,9 @@ pub(super) fn queue_inspect(
             cache,
             obj_names,
             test_barrier: take_test_barrier(),
+            search_budget_strict: None,
+            search_budget_stand: None,
+            search_budget_post: None,
         };
         bot.inspect.accepted_id = req.request_id;
         bot.inspect.live_world = Some(Arc::clone(&capture.world));
@@ -425,9 +475,7 @@ fn inspect_worker(navs: Arc<Mutex<HashMap<String, NavBot>>>, name: String, worke
     }
 }
 
-fn refuse(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str, request_id: u64, reason: &str) {
-    let mut all = navs.lock().unwrap();
-    let bot = all.entry(name.to_string()).or_default();
+fn refuse_locked(bot: &mut NavBot, request_id: u64, reason: &str) {
     if request_id == 0 {
         return;
     }
@@ -447,14 +495,14 @@ pub(super) fn reset_inspect(bot: &mut NavBot) {
 pub(super) fn calculate(capture: &InspectCapture) -> InspectTerminal {
     let pre = &capture.state;
     let avoid = capture.avoid.as_slice();
-    let strict = find_with_avoid(
-        &capture.world.collision,
-        &capture.world.graph,
+    let strict = search_path(
+        capture,
         capture.from,
         capture.to,
         capture.opts,
         pre,
         avoid,
+        capture.search_budget_strict,
     );
     match strict {
         Ok(route) => ok_terminal(capture, route, false),
@@ -473,15 +521,7 @@ fn calculate_bank(
     pre: &WorldState,
     avoid: &[AvoidRect],
 ) -> InspectTerminal {
-    let Some(missing) = find_missing_item_reqs_with_avoid(
-        &capture.world.collision,
-        &capture.world.graph,
-        capture.from,
-        capture.to,
-        capture.opts,
-        pre,
-        avoid,
-    ) else {
+    let Some(missing) = search_missing(capture, pre, avoid) else {
         return InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath");
     };
     let Some(plan) = plan_bank_fetch(
@@ -502,9 +542,8 @@ fn calculate_bank(
         }),
         _ => None,
     }) {
-        match find_with_avoid(
-            &capture.world.collision,
-            &capture.world.graph,
+        match search_path(
+            capture,
             capture.from,
             stand,
             FindOptions {
@@ -513,6 +552,7 @@ fn calculate_bank(
             },
             pre,
             avoid,
+            capture.search_budget_stand,
         ) {
             Ok(_) => {}
             Err(RouteError::BudgetExhausted) => {
@@ -530,9 +570,8 @@ fn calculate_bank(
             }
         }
     }
-    let post = find_with_avoid(
-        &capture.world.collision,
-        &capture.world.graph,
+    let post = search_path(
+        capture,
         capture.from,
         capture.to,
         FindOptions {
@@ -541,6 +580,7 @@ fn calculate_bank(
         },
         &plan.state,
         avoid,
+        capture.search_budget_post,
     );
     match post {
         Ok(route) => ok_terminal(capture, route, bank_planned),
@@ -552,6 +592,66 @@ fn calculate_bank(
             bank_planned,
             ..InspectTerminal::refusal(capture.request_id, capture.generation, "NoPath")
         },
+    }
+}
+
+fn search_path(
+    capture: &InspectCapture,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: Option<usize>,
+) -> Result<Route, RouteError> {
+    match budget {
+        Some(n) => find_with_avoid_bounded(
+            &capture.world.collision,
+            &capture.world.graph,
+            from,
+            to,
+            opts,
+            state,
+            avoid,
+            n,
+        ),
+        None => find_with_avoid(
+            &capture.world.collision,
+            &capture.world.graph,
+            from,
+            to,
+            opts,
+            state,
+            avoid,
+        ),
+    }
+}
+
+fn search_missing(
+    capture: &InspectCapture,
+    pre: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Vec<nav::router::MissingReq>> {
+    match capture.search_budget_strict {
+        Some(n) => find_missing_item_reqs_with_avoid_bounded(
+            &capture.world.collision,
+            &capture.world.graph,
+            capture.from,
+            capture.to,
+            capture.opts,
+            pre,
+            avoid,
+            n,
+        ),
+        None => find_missing_item_reqs_with_avoid(
+            &capture.world.collision,
+            &capture.world.graph,
+            capture.from,
+            capture.to,
+            capture.opts,
+            pre,
+            avoid,
+        ),
     }
 }
 
@@ -920,6 +1020,11 @@ mod tests {
                             return term.clone();
                         }
                     }
+                    if let Some(term) = bot.inspect.held.as_ref() {
+                        if term.request_id == id {
+                            return term.clone();
+                        }
+                    }
                 }
             }
             assert!(
@@ -1021,6 +1126,9 @@ mod tests {
             cache: None,
             obj_names: None,
             test_barrier: None,
+            search_budget_strict: None,
+            search_budget_stand: None,
+            search_budget_post: None,
         };
         let term = calculate(&capture);
         assert!(!term.ok);
@@ -1075,6 +1183,9 @@ mod tests {
             cache: None,
             obj_names: None,
             test_barrier: None,
+            search_budget_strict: None,
+            search_budget_stand: None,
+            search_budget_post: None,
         };
         let term = calculate(&capture);
         assert!(!term.ok, "PRE stand search must fail without the coins");
@@ -1120,6 +1231,9 @@ mod tests {
             cache: Some(named_cache()),
             obj_names: None,
             test_barrier: None,
+            search_budget_strict: None,
+            search_budget_stand: None,
+            search_budget_post: None,
         };
         let term = calculate(&capture);
         assert!(term.ok, "open walk to stand plus post boat should plan, got {}", term.reason);
@@ -1279,7 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn ring_holds_unacked_prev_instead_of_wrap() {
+    fn ring_holds_unacked_prev_until_apply_ack() {
         let mut nav = InspectNav::default();
         nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
         nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
@@ -1287,9 +1401,10 @@ mod tests {
         assert_eq!(nav.latest.as_ref().unwrap().request_id, 2);
         assert_eq!(nav.prev.as_ref().unwrap().request_id, 1);
         assert_eq!(nav.held.as_ref().unwrap().request_id, 3);
-        nav.mark_posted();
+        nav.apply_ack(nav.prev.as_ref().unwrap().seq, 0);
         assert_eq!(nav.latest.as_ref().unwrap().request_id, 3);
         assert_eq!(nav.prev.as_ref().unwrap().request_id, 2);
+        assert!(nav.held.is_none());
     }
 
     #[test]
@@ -1348,5 +1463,606 @@ mod tests {
         let term = wait_latest(&navs, 61);
         assert_eq!(term.request_id, 61);
         clear_barrier();
+    }
+
+    fn capture(
+        world: Arc<NavWorld>,
+        from: WorldTile,
+        to: WorldTile,
+        opts: FindOptions,
+        request_id: u64,
+        bank: Vec<(i32, i32)>,
+        strict: Option<usize>,
+        stand: Option<usize>,
+        post: Option<usize>,
+    ) -> InspectCapture {
+        InspectCapture {
+            request_id,
+            generation: 0,
+            world,
+            state: WorldState::empty(),
+            bank,
+            from,
+            to,
+            opts,
+            avoid: vec![],
+            cache: None,
+            obj_names: None,
+            test_barrier: None,
+            search_budget_strict: strict,
+            search_budget_stand: stand,
+            search_budget_post: post,
+        }
+    }
+
+    #[test]
+    fn budget_exhausted_distinct_from_nopath_strict_stand_post() {
+        let from = tile(0, 0, 0);
+        let far = tile(9, 9, 0);
+        let open = Arc::new(NavWorld::from_parts(
+            open_world(10, 10),
+            TransportGraph::default(),
+            vec![],
+        ));
+        let exhausted = calculate(&capture(
+            Arc::clone(&open),
+            from,
+            far,
+            FindOptions {
+                allow_wilderness: true,
+                ..FindOptions::default()
+            },
+            71,
+            vec![],
+            Some(8),
+            None,
+            None,
+        ));
+        assert!(!exhausted.ok);
+        assert_eq!(exhausted.reason, "BudgetExhausted");
+        assert!(!exhausted.bank_planned);
+
+        let blocked = calculate(&capture(
+            Arc::clone(&open),
+            from,
+            far,
+            FindOptions {
+                allow_wilderness: true,
+                ..FindOptions::default()
+            },
+            72,
+            vec![],
+            None,
+            None,
+            None,
+        ));
+        assert!(blocked.ok, "unbounded open walk must path, got {}", blocked.reason);
+
+        let bank_opts = FindOptions {
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        };
+        let mut stand_graph = TransportGraph::default();
+        let stand_far = tile(9, 9, 0);
+        let stand_dest = tile(2, 2, 1);
+        stand_graph.at.entry(from).or_default().push(0);
+        stand_graph.edges.push(edge(
+            TransportKind::Boat,
+            from,
+            stand_dest,
+            381,
+            vec![(995, 10)],
+        ));
+        let stand_world = Arc::new(NavWorld::from_parts(
+            open_world(10, 10),
+            stand_graph,
+            vec![BankStand {
+                name: "Bank booth".into(),
+                tile: stand_far,
+                access: BankAccess::Booth { op: 2 },
+            }],
+        ));
+        let stand_ex = calculate(&capture(
+            stand_world,
+            from,
+            stand_dest,
+            bank_opts,
+            73,
+            vec![(995, 10)],
+            None,
+            Some(8),
+            None,
+        ));
+        assert_eq!(stand_ex.reason, "BudgetExhausted");
+        assert!(!stand_ex.bank_planned);
+
+        let mut post_graph = TransportGraph::default();
+        let post_dest = tile(9, 9, 1);
+        let stand_near = tile(1, 1, 0);
+        post_graph.at.entry(from).or_default().push(0);
+        post_graph.edges.push(edge(
+            TransportKind::Boat,
+            from,
+            tile(0, 1, 1),
+            381,
+            vec![(995, 10)],
+        ));
+        let post_world = Arc::new(NavWorld::from_parts(
+            open_world(10, 10),
+            post_graph,
+            vec![BankStand {
+                name: "Bank booth".into(),
+                tile: stand_near,
+                access: BankAccess::Booth { op: 2 },
+            }],
+        ));
+        let stand_ok_post_ex = calculate(&capture(
+            post_world,
+            from,
+            post_dest,
+            bank_opts,
+            74,
+            vec![(995, 10)],
+            None,
+            None,
+            Some(8),
+        ));
+        assert_eq!(stand_ok_post_ex.reason, "BudgetExhausted");
+        assert!(stand_ok_post_ex.bank_planned);
+    }
+
+    #[test]
+    fn admission_refuses_fourth_when_ring_and_held_full() {
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        for id in 1..=3 {
+            queue_inspect(
+                &navs,
+                "p",
+                &Some(Arc::clone(&world)),
+                Some(WorldState::empty()),
+                vec![],
+                None,
+                None,
+                req(tile(0, 0, 0), tile(1, 1, 0), id),
+            );
+            let _ = wait_latest(&navs, id);
+        }
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 2);
+            assert_eq!(bot.inspect.prev.as_ref().unwrap().request_id, 1);
+            assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
+            assert_eq!(bot.inspect.accepted_id, 3);
+        }
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(2, 2, 0), 4),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.accepted_id, 3, "fourth must not be accepted");
+            assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 2);
+        }
+    }
+
+    #[test]
+    fn apply_ack_rejects_future_and_wrong_generation() {
+        let mut nav = InspectNav::default();
+        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
+        let prev_seq = nav.prev.as_ref().unwrap().seq;
+        nav.apply_ack(99, 0);
+        assert_eq!(nav.held.as_ref().unwrap().request_id, 3);
+        nav.apply_ack(prev_seq, 7);
+        assert_eq!(nav.held.as_ref().unwrap().request_id, 3);
+        nav.apply_ack(prev_seq, 0);
+        assert!(nav.held.is_none());
+        assert_eq!(nav.latest.as_ref().unwrap().request_id, 3);
+    }
+
+    #[test]
+    fn request_id_zero_is_ack_only() {
+        let mut nav = InspectNav::default();
+        nav.publish(InspectTerminal::refusal(1, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(2, 0, "NoPath"));
+        nav.publish(InspectTerminal::refusal(3, 0, "NoPath"));
+        let prev_seq = nav.prev.as_ref().unwrap().seq;
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new({
+            let mut m = HashMap::new();
+            m.insert(
+                "p".into(),
+                NavBot {
+                    inspect: nav,
+                    ..Default::default()
+                },
+            );
+            m
+        }));
+        let mut ack_only = req(tile(0, 0, 0), tile(1, 1, 0), 0);
+        ack_only.inspect_ack_seq = prev_seq;
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            ack_only,
+        );
+        let all = navs.lock().unwrap();
+        let bot = all.get("p").unwrap();
+        assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, 3);
+        assert!(bot.inspect.held.is_none());
+        assert_eq!(bot.inspect.accepted_id, 0);
+    }
+
+    fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
+        use script::isolate_fb::{
+            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
+            SnapshotInput,
+        };
+        let latest_hops = nav
+            .latest
+            .as_ref()
+            .map(|t| hop_inputs(&t.hops))
+            .unwrap_or_default();
+        let prev_hops = nav
+            .prev
+            .as_ref()
+            .map(|t| hop_inputs(&t.hops))
+            .unwrap_or_default();
+        let latest_in = nav
+            .latest
+            .as_ref()
+            .map(|t| terminal_to_input(t, &latest_hops))
+            .unwrap_or_default();
+        let prev_in = nav
+            .prev
+            .as_ref()
+            .map(|t| terminal_to_input(t, &prev_hops))
+            .unwrap_or_default();
+        let posted = nav.posted();
+        encode_snapshot_with_native(
+            &SnapshotInput {
+                tick,
+                here: None,
+                ingame: true,
+                inv: &[],
+                inv_size: 28,
+                stats: &[],
+                booths: &[],
+                nearest_booth: None,
+                banks: &[],
+                bank: &[],
+                bank_side: &[],
+                bank_open: false,
+                bank_loaded: false,
+                bank_generation: 0,
+                count_dialog_open: false,
+                withdraw_x_result_seq: 0,
+                withdraw_x_result: false,
+                withdraw_load_result_seq: 0,
+                withdraw_load_result: false,
+                bank_op_result_seq: 0,
+                bank_op_result: false,
+                hold,
+                ours: false,
+                npcs: &[],
+                locs: &[],
+                players: &[],
+                ground: &[],
+                equipment: &[],
+                chat_open: false,
+                chat_continue: false,
+                chat_text: None,
+                chat_options: &[],
+                side_tab: -1,
+                varps: &[],
+                combat_styles: &[],
+                run_energy: 0,
+                run_enabled: false,
+                retaliate_enabled: false,
+                my_name: None,
+                in_combat: false,
+                animating: false,
+                main_modal_id: -1,
+                chat_modal_id: -1,
+                make_products: &[],
+                side_tab_ifaces: &[],
+                spell_buttons: &[],
+                chat_lines: &[],
+                bank_note_on: -1,
+                bank_note_off: -1,
+                scene_state: 0,
+                weight: 0,
+                combat_level: 0,
+                camera_yaw: 0,
+                camera_pitch: 0,
+                teleports_enabled: false,
+                self_slot: 0,
+                trade_offer_open: false,
+                trade_confirm_open: false,
+                trade_partner: None,
+                trade_mine: &[],
+                trade_theirs: &[],
+                trade_side: &[],
+                trade_accept_id: -1,
+                trade_decline_id: -1,
+                shop_open: false,
+                shop_stock: &[],
+                reach: ReachViewInput::UNAVAILABLE,
+                attacked_by_player: false,
+                widgets: &[],
+            },
+            NativeFactsInput {
+                route_inspect: RouteInspectFactsInput {
+                    latest: latest_in,
+                    prev: prev_in,
+                    running_id: posted.running_id,
+                    pending_id: posted.pending_id,
+                    accepted_id: posted.accepted_id,
+                    replaced_id: posted.replaced_id,
+                    replaced_prev_id: posted.replaced_prev_id,
+                },
+                ..Default::default()
+            },
+        )
+    }
+
+    fn inspect_begin(iso: &script::LoadIsolate) -> u64 {
+        iso.probe("globalThis.rustyscript.functions.__rs2b0t_inspect({op:'begin'})")
+            .unwrap()
+            .as_u64()
+            .expect("token")
+    }
+
+    fn inspect_settled(iso: &script::LoadIsolate, token: u64) -> bool {
+        iso.probe(&format!(
+            "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'settled',token:{token}}})"
+        ))
+        .unwrap()
+        .as_bool()
+        .unwrap_or(false)
+    }
+
+    fn inspect_value(iso: &script::LoadIsolate, token: u64) -> serde_json::Value {
+        iso.probe(&format!(
+            "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token}}})"
+        ))
+        .unwrap()
+    }
+
+    fn drain_inspect_acks(iso: &script::LoadIsolate) -> Vec<(u64, u64)> {
+        iso.drain_interacts()
+            .into_iter()
+            .filter_map(|req| match req {
+                script::shim::InteractReq::InspectAck { seq, generation } => {
+                    Some((seq, generation))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
+        clear_barrier();
+        let src = r#"
+export const apiVersion = 2;
+export function tick() {}
+"#;
+        let iso = script::LoadIsolate::spawn(
+            src.into(),
+            script::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        let a = inspect_begin(&iso);
+        let b = inspect_begin(&iso);
+        let barrier = InspectBarrier::new();
+        install_barrier(Arc::clone(&barrier));
+        let world = world_with(TransportGraph::default(), vec![]);
+        let navs = Arc::new(Mutex::new(HashMap::new()));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(1, 1, 0), a),
+        );
+        barrier.wait_entered();
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(2, 2, 0), b),
+        );
+        let c_token = inspect_begin(&iso);
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(Arc::clone(&world)),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(3, 3, 0), c_token),
+        );
+        {
+            let all = navs.lock().unwrap();
+            let bot = all.get("p").unwrap();
+            assert_eq!(bot.inspect.running_id, a);
+            assert_eq!(bot.inspect.pending_id, c_token);
+            assert_eq!(bot.inspect.replaced_id, b);
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().request_id, b);
+            assert_eq!(bot.inspect.latest.as_ref().unwrap().reason, "stale");
+            assert!(bot.inspect.worker.is_some());
+        }
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            1,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(inspect_settled(&iso, b));
+        assert_eq!(inspect_value(&iso, b)["reason"], "stale");
+        assert!(!inspect_settled(&iso, a), "A must not stale before own drain");
+        assert!(!inspect_settled(&iso, c_token));
+        let acks = drain_inspect_acks(&iso);
+        assert!(!acks.is_empty(), "ACK must flush without a new inspect request");
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("p").unwrap();
+            for (seq, generation) in acks {
+                bot.inspect.apply_ack(seq, generation);
+            }
+        }
+        barrier.release();
+        let _ = wait_latest(&navs, a);
+        let _ = wait_latest(&navs, c_token);
+        iso.post_snapshot(encode_inspect_bytes(
+            &navs.lock().unwrap().get("p").unwrap().inspect,
+            2,
+            false,
+        ));
+        let _ = iso.probe("true").unwrap();
+        assert!(inspect_settled(&iso, a));
+        assert!(inspect_settled(&iso, c_token));
+        assert_eq!(inspect_value(&iso, a)["request_id"], a);
+        assert_eq!(inspect_value(&iso, c_token)["request_id"], c_token);
+        let more = drain_inspect_acks(&iso);
+        assert!(!more.is_empty());
+        {
+            let mut all = navs.lock().unwrap();
+            let bot = all.get_mut("p").unwrap();
+            for (seq, generation) in more {
+                bot.inspect.apply_ack(seq, generation);
+            }
+            assert!(bot.inspect.worker.is_none());
+        }
+
+        let mut burst = InspectNav::default();
+        for id in 11..=13 {
+            burst.publish(InspectTerminal::refusal(id, 0, "NoPath"));
+        }
+        assert_eq!(burst.held.as_ref().unwrap().request_id, 13);
+        let w1 = inspect_begin(&iso);
+        let w2 = inspect_begin(&iso);
+        iso.post_snapshot(encode_inspect_bytes(&burst, 3, false));
+        let _ = iso.probe("true").unwrap();
+        // Tokens differ from published ids; use host ids as begin tokens on a
+        // fresh isolate would. Re-bind: settle by posting ids equal to tokens.
+        let _ = (w1, w2);
+        let iso2 = script::LoadIsolate::spawn(
+            src.into(),
+            script::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        let t1 = inspect_begin(&iso2);
+        let t2 = inspect_begin(&iso2);
+        let t3 = inspect_begin(&iso2);
+        let mut aligned = InspectNav::default();
+        aligned.publish(InspectTerminal::refusal(t1, 0, "NoPath"));
+        aligned.publish(InspectTerminal::refusal(t2, 0, "NoPath"));
+        aligned.publish(InspectTerminal::refusal(t3, 0, "NoPath"));
+        iso2.post_snapshot(encode_inspect_bytes(&aligned, 4, false));
+        let _ = iso2.probe("true").unwrap();
+        assert!(inspect_settled(&iso2, t1));
+        assert!(inspect_settled(&iso2, t2));
+        assert!(!inspect_settled(&iso2, t3), "held is not posted until ack");
+        let burst_acks = drain_inspect_acks(&iso2);
+        assert!(!burst_acks.is_empty());
+        for (seq, generation) in burst_acks {
+            aligned.apply_ack(seq, generation);
+        }
+        assert_eq!(aligned.latest.as_ref().unwrap().request_id, t3);
+        assert!(aligned.held.is_none());
+        iso2.post_snapshot(encode_inspect_bytes(&aligned, 5, false));
+        let _ = iso2.probe("true").unwrap();
+        assert!(inspect_settled(&iso2, t3));
+        assert_eq!(inspect_value(&iso2, t3)["reason"], "NoPath");
+        let _ = drain_inspect_acks(&iso2);
+
+        let extra_a = t1.wrapping_add(50);
+        let extra_b = t1.wrapping_add(51);
+        let extra_c = t1.wrapping_add(52);
+        aligned.publish(InspectTerminal::refusal(extra_a, 0, "invalid-args"));
+        aligned.publish(InspectTerminal::refusal(extra_b, 0, "NoPath"));
+        assert_eq!(aligned.latest.as_ref().unwrap().request_id, extra_a);
+        assert_eq!(aligned.prev.as_ref().unwrap().request_id, t3);
+        assert_eq!(aligned.held.as_ref().unwrap().request_id, extra_b);
+        let before_latest = aligned.latest.as_ref().unwrap().request_id;
+        aligned.publish(InspectTerminal::refusal(extra_c, 0, "spawn-failed"));
+        assert_eq!(
+            aligned.latest.as_ref().unwrap().request_id,
+            before_latest,
+            "wrap-blocked publish must not drop the posted ring"
+        );
+        assert_eq!(aligned.held.as_ref().unwrap().request_id, extra_b);
+        assert!(!aligned.can_admit(false));
+
+        let hold_iso = script::LoadIsolate::spawn(
+            src.into(),
+            script::LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        let hold_tok = inspect_begin(&hold_iso);
+        hold_iso.post_snapshot(encode_inspect_bytes(&InspectNav::default(), 6, true));
+        let _ = hold_iso.probe("true").unwrap();
+        assert!(!inspect_settled(&hold_iso, hold_tok));
+
+        clear_barrier();
+        let reset_barrier = InspectBarrier::new();
+        install_barrier(Arc::clone(&reset_barrier));
+        queue_inspect(
+            &navs,
+            "p",
+            &Some(world),
+            Some(WorldState::empty()),
+            vec![],
+            None,
+            None,
+            req(tile(0, 0, 0), tile(4, 4, 0), 90),
+        );
+        reset_barrier.wait_entered();
+        {
+            let mut all = navs.lock().unwrap();
+            reset_inspect(all.get_mut("p").unwrap());
+            let bot = all.get("p").unwrap();
+            assert!(bot.inspect.worker.is_some());
+            assert_eq!(
+                Arc::strong_count(bot.inspect.worker.as_ref().unwrap()),
+                2,
+                "live worker token stays after reset"
+            );
+        }
+        reset_barrier.release();
+        clear_barrier();
+        iso.join();
+        iso2.join();
+        hold_iso.join();
     }
 }

@@ -1054,6 +1054,10 @@ pub enum InteractReq {
         #[serde(default)]
         inspect_ack_seq: u64,
     },
+    /// Isolate-applied inspect consume-ack. Not a public JS request.
+    /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
+    #[serde(rename = "inspect-ack")]
+    InspectAck { seq: u64, generation: u64 },
     /// Scene `try_move` packet (`Interactions::walk`) used by
     /// `DirectNavigator` and local client actions, not world `Traversal`.
     #[serde(rename = "walk-to")]

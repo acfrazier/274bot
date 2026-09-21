@@ -106,8 +106,10 @@ impl Terminal {
 struct HostInspect {
     latest_seq: u64,
     latest_id: u64,
+    latest_generation: u64,
     prev_seq: u64,
     prev_id: u64,
+    prev_generation: u64,
     #[allow(dead_code)]
     running_id: u64,
     #[allow(dead_code)]
@@ -125,9 +127,15 @@ struct Waiter {
     terminal: Option<Terminal>,
 }
 
+struct PendingAck {
+    seq: u64,
+    generation: u64,
+}
+
 struct InspectSlot {
     host: HostInspect,
     applied_seq: u64,
+    pending_ack: Option<PendingAck>,
     paused: bool,
     held: bool,
     unsettled: Vec<Waiter>,
@@ -140,8 +148,10 @@ impl InspectSlot {
             host: HostInspect {
                 latest_seq: 0,
                 latest_id: 0,
+                latest_generation: 0,
                 prev_seq: 0,
                 prev_id: 0,
+                prev_generation: 0,
                 running_id: 0,
                 pending_id: 0,
                 accepted_id: 0,
@@ -149,6 +159,7 @@ impl InspectSlot {
                 replaced_prev_id: 0,
             },
             applied_seq: 0,
+            pending_ack: None,
             paused: false,
             held: false,
             unsettled: Vec::new(),
@@ -176,11 +187,14 @@ impl InspectSlot {
     }
 
     fn observe(&mut self, snap: &SnapshotReader<'_>) {
+        let before = self.applied_seq;
         self.host = HostInspect {
             latest_seq: snap.route_inspect_seq(),
             latest_id: snap.route_inspect_request_id(),
+            latest_generation: snap.route_inspect_generation(),
             prev_seq: snap.route_inspect_prev_seq(),
             prev_id: snap.route_inspect_prev_request_id(),
+            prev_generation: snap.route_inspect_prev_generation(),
             running_id: snap.route_inspect_running_id(),
             pending_id: snap.route_inspect_pending_id(),
             accepted_id: snap.route_inspect_accepted_id(),
@@ -192,6 +206,17 @@ impl InspectSlot {
         }
         if self.host.prev_seq != 0 {
             self.applied_seq = self.applied_seq.max(self.host.prev_seq);
+        }
+        if self.applied_seq > before {
+            let generation = if self.host.latest_seq != 0 {
+                self.host.latest_generation
+            } else {
+                self.host.prev_generation
+            };
+            self.pending_ack = Some(PendingAck {
+                seq: self.applied_seq,
+                generation,
+            });
         }
         self.apply_published(snap);
         self.apply_replaced();
@@ -511,6 +536,18 @@ fn json_u64(value: Option<&Value>) -> u64 {
 
 pub(crate) fn on_snapshot(snap: &SnapshotReader<'_>) {
     SLOT.with(|slot| slot.borrow_mut().observe(snap));
+}
+
+/// Consume-ack for the isolate snapshot path. `None` when applied_seq did
+/// not advance. Separate from producer acceptance: posting a snapshot is
+/// not this acknowledgment.
+pub(crate) fn take_pending_ack() -> Option<(u64, u64)> {
+    SLOT.with(|slot| {
+        slot.borrow_mut()
+            .pending_ack
+            .take()
+            .map(|ack| (ack.seq, ack.generation))
+    })
 }
 
 pub(crate) fn on_reset() {
@@ -957,6 +994,44 @@ mod tests {
             },
         );
         assert!(!settled(token));
+    }
+
+    #[test]
+    fn apply_advances_pending_ack_only_when_seq_grows() {
+        on_reset();
+        let hop_a = hop("Captain Barnaby", 381);
+        observe(
+            empty_input(1),
+            facts(
+                terminal(2, 11, true, "", std::slice::from_ref(&hop_a)),
+                terminal(1, 10, true, "", &[]),
+                0,
+                0,
+                11,
+                0,
+                0,
+            ),
+        );
+        let first = take_pending_ack().expect("ack after apply");
+        assert_eq!(first.0, 2);
+        assert_eq!(first.1, 1);
+        assert!(take_pending_ack().is_none());
+        observe(
+            empty_input(2),
+            facts(
+                terminal(2, 11, true, "", std::slice::from_ref(&hop_a)),
+                terminal(1, 10, true, "", &[]),
+                0,
+                0,
+                11,
+                0,
+                0,
+            ),
+        );
+        assert!(
+            take_pending_ack().is_none(),
+            "same applied_seq must not re-ack"
+        );
     }
 
     #[test]

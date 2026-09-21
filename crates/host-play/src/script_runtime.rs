@@ -386,7 +386,6 @@ pub(super) fn script_observe_cached(
                                 b.inspect.posted(),
                             );
                             b.mark_walk_outcome_posted();
-                            b.inspect.mark_posted();
                             posted
                         }
                         None => (
@@ -1411,6 +1410,11 @@ pub(super) fn dispatch_script_interact_cached(
                     },
                 );
                 wrote = true;
+            }
+            InteractReq::InspectAck { seq, generation } => {
+                if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+                    bot.inspect.apply_ack(seq, generation);
+                }
             }
             InteractReq::Deposit { name } => {
                 let wanted = name.to_lowercase();

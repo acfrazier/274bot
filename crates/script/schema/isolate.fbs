@@ -412,6 +412,9 @@ table Interact {
   avoid: [AvoidRect];
   // Isolate-applied inspect seq ack. 0 = no new observation.
   inspect_ack_seq: ulong = 0;
+  // Inspect session generation from the applied snapshot. Required on
+  // inspect-ack so a caller cannot free terminals from another session.
+  inspect_ack_generation: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.

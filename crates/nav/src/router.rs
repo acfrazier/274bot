@@ -241,13 +241,29 @@ pub fn find_with_avoid(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Result<Route, RouteError> {
+    find_with_avoid_bounded(collision, graph, from, to, opts, state, avoid, NODE_BUDGET)
+}
+
+/// [`find_with_avoid`] with an injectable node-expansion cap. Production
+/// inspect uses [`find_with_avoid`] (the default [`NODE_BUDGET`]); tests
+/// may pass a smaller bound to distinguish `BudgetExhausted` from `NoPath`.
+pub fn find_with_avoid_bounded(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> Result<Route, RouteError> {
     find_bounded_impl(
         collision,
         graph,
         from,
         to,
         CostModel::running(),
-        NODE_BUDGET,
+        budget,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
@@ -302,13 +318,30 @@ pub fn find_missing_item_reqs_with_avoid(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Option<Vec<MissingReq>> {
+    find_missing_item_reqs_with_avoid_bounded(
+        collision, graph, from, to, opts, state, avoid, NODE_BUDGET,
+    )
+}
+
+/// [`find_missing_item_reqs_with_avoid`] with an injectable node-expansion
+/// cap. Production inspect uses the default-budget form.
+pub fn find_missing_item_reqs_with_avoid_bounded(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> Option<Vec<MissingReq>> {
     let route = find_bounded_impl(
         collision,
         graph,
         from,
         to,
         CostModel::running(),
-        NODE_BUDGET,
+        budget,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,

@@ -62,8 +62,12 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   `allow_teleports` / `allow_wilderness` / `allow_bank_fetch` default
   false. Optional `avoid` rects. Use `api.inspectBegin` for an isolate
   token and `inspectSettled` / `inspectValue` to query it. `request_id: 0`
-  is snapshot-only (`route_inspect_*`). Invented nonzero ids are
-  isolate-stale. Conditional bank preview never actions or latches a
+  is snapshot-only (`route_inspect_*`) and may carry consume-ack only.
+  Invented nonzero ids are isolate-stale. The isolate emits `inspect-ack`
+  on the existing FlatBuffer interact path after applying a published
+  terminal; that ack is not a public `api.request` op. Host admission is
+  bounded by the isolate's 3 unsettled waiters (2-deep ring + 1 held).
+  Conditional bank preview never actions or latches a
   bank session; `bank_planned` requires a PRE-state stand proof.
 
 User script owns bury/restock business logic. Navigation, action sequencing,

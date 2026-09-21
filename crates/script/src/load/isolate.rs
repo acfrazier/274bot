@@ -1412,6 +1412,20 @@ fn tick_loop(
                         crate::cake_stall::on_snapshot(&snap);
                         crate::walk_wait::on_snapshot(&snap);
                         crate::inspect_wait::on_snapshot(&snap);
+                        if let Some((seq, inspect_generation)) =
+                            crate::inspect_wait::take_pending_ack()
+                        {
+                            let generation =
+                                work_generation.load(std::sync::atomic::Ordering::Acquire);
+                            let req = crate::shim::InteractReq::InspectAck {
+                                seq,
+                                generation: inspect_generation,
+                            };
+                            let _ = out.send(ThreadMsg::Interact {
+                                bytes: ipc.encode_interact_batch(&[req]),
+                                generation,
+                            });
+                        }
                         crate::autocast::on_snapshot(&snap);
                         crate::teleport::on_snapshot(&snap);
                         crate::shop::on_snapshot(&snap);

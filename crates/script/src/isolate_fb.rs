@@ -369,6 +369,7 @@ const VT_IN_FROM_LEVEL: VOffsetT = 56;
 const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
 const VT_IN_AVOID: VOffsetT = 60;
 const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
+const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -4932,6 +4933,9 @@ impl InteractReader<'_> {
     pub fn inspect_ack_seq(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_SEQ, None) }.unwrap_or(0)
     }
+    pub fn inspect_ack_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_GENERATION, None) }.unwrap_or(0)
+    }
     pub fn avoid(&self) -> Vec<AvoidRectReader<'_>> {
         rows::<AvoidRectReader>(&self.tab, VT_IN_AVOID)
     }
@@ -4974,6 +4978,7 @@ impl Verifiable for InteractReader<'_> {
                 false,
             )?
             .visit_field::<u64>("inspect_ack_seq", VT_IN_INSPECT_ACK_SEQ, false)?
+            .visit_field::<u64>("inspect_ack_generation", VT_IN_INSPECT_ACK_GENERATION, false)?
             .finish();
         Ok(())
     }
@@ -6225,6 +6230,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 request_id: row.request_id(),
                 inspect_ack_seq: row.inspect_ack_seq(),
             }),
+            "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
+                seq: row.inspect_ack_seq(),
+                generation: row.inspect_ack_generation(),
+            }),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
@@ -6482,6 +6491,7 @@ fn interact_off<'b>(
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
         InteractReq::InspectRoute { .. } => "inspect-route",
+        InteractReq::InspectAck { .. } => "inspect-ack",
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
@@ -6715,6 +6725,12 @@ fn interact_off<'b>(
             if let Some(off) = avoid_off {
                 b.push_slot_always(VT_IN_AVOID, off);
             }
+        }
+        InteractReq::InspectAck { seq, generation } => {
+            if *seq != 0 {
+                b.push_slot_always(VT_IN_INSPECT_ACK_SEQ, *seq);
+            }
+            b.push_slot_always(VT_IN_INSPECT_ACK_GENERATION, *generation);
         }
         InteractReq::Walk {
             x,
@@ -7391,6 +7407,16 @@ pub(crate) mod tests {
         ];
         let bytes = encode_interact_batch(&reqs);
         assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+
+    #[test]
+    fn inspect_ack_roundtrip_preserves_seq_and_generation() {
+        let reqs = vec![InteractReq::InspectAck {
+            seq: 4,
+            generation: 2,
+        }];
+        let bytes = encode_interact_batch(&reqs);
+        assert_eq!(decode_interact_batch(&bytes).expect("ack"), reqs);
     }
 
     #[test]
