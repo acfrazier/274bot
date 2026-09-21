@@ -15,6 +15,17 @@
       "prayers": 15,
       "pickaxes": 6,
       "flour_six": 6,
+      "equipment_names": {
+        "bows": 12,
+        "crossbows": 10,
+        "darts": 7,
+        "arrows": 7,
+        "bolts": 9,
+        "melee_weapons": 33,
+        "staffs": 15,
+        "resolved": 74,
+        "absent": 19
+      },
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -43,8 +54,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1434435,
-      "sha256": "464ba5599caf14880057773c22e56f0083d9a0b2525ff553123aae7c4cacd70a",
+      "bytes": 1458988,
+      "sha256": "9549a5f4024be48ded038cc4c3d210b7dcb4d1991a28241624cda21e66407ac8",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -348,6 +359,17 @@
       "prayers": 15,
       "pickaxes": 6,
       "flour_six": 6,
+      "equipment_names": {
+        "bows": 12,
+        "crossbows": 10,
+        "darts": 7,
+        "arrows": 7,
+        "bolts": 9,
+        "melee_weapons": 33,
+        "staffs": 15,
+        "resolved": 74,
+        "absent": 19
+      },
       "autocast": {
         "staff_tab_root": 328,
         "spell_panel_root": 1829,
@@ -376,8 +398,8 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1496931,
-      "sha256": "09e6c869908c63177a1921dd20967038f919369b738731e222883aecf525c9bd",
+      "bytes": 1521484,
+      "sha256": "135281ed686f57eb3a1c203ab1e9228033f0106891fe66952c82a6818a30c46a",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

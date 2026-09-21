@@ -128,6 +128,313 @@ export function parsePack(text: string) {
     }
     return out;
 }
+
+const EQUIPMENT_FAMILY_ORDER = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs'] as const;
+type EquipmentFamilyId = (typeof EQUIPMENT_FAMILY_ORDER)[number];
+const EQUIPMENT_CURATED_RELATIVE = 'tools/game-data/equipment-names.curated.json';
+const EQUIPMENT_EVIDENCE_RELATIVE = 'tools/game-data/equipment-names.frozen.ts';
+const EQUIPMENT_FROZEN_EXPORTS: { exportName: string; family: EquipmentFamilyId }[] = [
+    { exportName: 'BOWS', family: 'bows' },
+    { exportName: 'CROSSBOWS', family: 'crossbows' },
+    { exportName: 'DARTS', family: 'darts' },
+    { exportName: 'ARROWS', family: 'arrows' },
+    { exportName: 'BOLTS', family: 'bolts' },
+    { exportName: 'MELEE_WEAPONS', family: 'melee_weapons' },
+    { exportName: 'STAFFS', family: 'staffs' },
+];
+
+export type EquipmentNameEntry = {
+    requested_name: string;
+    disposition: 'resolved' | 'absent' | 'ambiguous';
+    selected_name?: string;
+    alias?: string;
+    id?: number;
+    wear_position?: number;
+    disambiguation?: string;
+    absent_class?: 'no_exact_selected_match' | 'exact_match_ineligible';
+    candidates?: { alias: string; id: number; name: string; wear_position: number; note: string }[];
+};
+
+export type EquipmentExactNameJoin = {
+    matching: 'exact_display_name_only';
+    no_exact_selected_match_means: string;
+    bolts: {
+        generic_display_name: 'Bolts';
+        generic_is_substitute: false;
+        note: string;
+    };
+};
+
+export type EquipmentNamesFacts = {
+    curated_input: { path: string; bytes: number; sha256: string };
+    equipment_source: { path: string; bytes: number; sha256: string; commit?: string };
+    equipment_evidence: { path: string; bytes: number; sha256: string };
+    exact_name_join: EquipmentExactNameJoin;
+    bows: EquipmentNameEntry[];
+    crossbows: EquipmentNameEntry[];
+    darts: EquipmentNameEntry[];
+    arrows: EquipmentNameEntry[];
+    bolts: EquipmentNameEntry[];
+    melee_weapons: EquipmentNameEntry[];
+    staffs: EquipmentNameEntry[];
+};
+
+type EquipmentCurated = {
+    schema: string;
+    source: { path: string; sha256: string; bytes: number; commit?: string };
+    families: Record<EquipmentFamilyId, string[]>;
+};
+
+const EQUIPMENT_EXACT_NAME_JOIN: EquipmentExactNameJoin = {
+    matching: 'exact_display_name_only',
+    no_exact_selected_match_means: 'No exact display name in the selected item table. This is not a claim about all game content or global revision unavailability.',
+    bolts: {
+        generic_display_name: 'Bolts',
+        generic_is_substitute: false,
+        note: 'Frozen BOLTS members (Bronze bolts … Bone bolts) are absent under exact join. Generic Bolts / Bolts(p) are not substitutes and are not mapped onto those tier strings.',
+    },
+};
+
+function isWearableRow(item: ReturnType<typeof row>) {
+    return item.wear_position >= 0 || item.wear_position_2 >= 0 || item.wear_position_3 >= 0;
+}
+
+function isBankNoteRow(item: ReturnType<typeof row>) {
+    return item.certificate_template >= 0;
+}
+
+/** Dedicated single-quoted scanner for frozen equipment.ts arrays. Not a generic JS parser. */
+export function parseFrozenEquipmentSingleQuoted(text: string, start: number): { value: string; end: number } {
+    if (text[start] !== "'") throw new Error(`equipment frozen: expected single quote at ${start}`);
+    let index = start + 1;
+    let value = '';
+    while (index < text.length) {
+        const ch = text[index];
+        if (ch === '\\') {
+            const next = text[index + 1];
+            if (next !== "'" && next !== '\\') throw new Error(`equipment frozen: unsupported escape at ${index}`);
+            value += next;
+            index += 2;
+            continue;
+        }
+        if (ch === "'") return { value, end: index + 1 };
+        if (ch === '\n' || ch === '\r') throw new Error('equipment frozen: unterminated string');
+        value += ch;
+        index += 1;
+    }
+    throw new Error('equipment frozen: unterminated string');
+}
+
+export function parseFrozenEquipmentNameArrays(text: string): Record<EquipmentFamilyId, string[]> {
+    const out = {} as Record<EquipmentFamilyId, string[]>;
+    for (const { exportName, family } of EQUIPMENT_FROZEN_EXPORTS) {
+        const header = `export const ${exportName}: string[] = [`;
+        const start = text.indexOf(header);
+        if (start < 0) throw new Error(`equipment frozen: missing ${exportName}`);
+        if (text.indexOf(header, start + 1) >= 0) throw new Error(`equipment frozen: duplicate ${exportName}`);
+        let index = start + header.length;
+        const names: string[] = [];
+        let closed = false;
+        while (index < text.length) {
+            const ch = text[index];
+            if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === ',') {
+                index += 1;
+                continue;
+            }
+            if (ch === ']') {
+                out[family] = names;
+                closed = true;
+                break;
+            }
+            if (ch === "'") {
+                const parsed = parseFrozenEquipmentSingleQuoted(text, index);
+                if (!parsed.value) throw new Error(`equipment frozen: empty name in ${exportName}`);
+                names.push(parsed.value);
+                index = parsed.end;
+                continue;
+            }
+            throw new Error(`equipment frozen: unexpected token in ${exportName} at ${index}`);
+        }
+        if (!closed) throw new Error(`equipment frozen: unterminated ${exportName}`);
+        if (names.length === 0) throw new Error(`equipment frozen: empty ${exportName}`);
+    }
+    return out;
+}
+
+function assertCuratedMatchesFrozen(curated: EquipmentCurated, frozen: Record<EquipmentFamilyId, string[]>) {
+    const extra = Object.keys(curated.families).filter((key) => !EQUIPMENT_FAMILY_ORDER.includes(key as EquipmentFamilyId));
+    if (extra.length > 0) throw new Error(`equipment names curated: unknown families ${extra.join(', ')}`);
+    for (const family of EQUIPMENT_FAMILY_ORDER) {
+        const curatedNames = curated.families[family];
+        const frozenNames = frozen[family];
+        if (!Array.isArray(curatedNames)) throw new Error(`equipment names curated: missing family ${family}`);
+        if (curatedNames.length !== frozenNames.length) {
+            throw new Error(`equipment names curated: ${family} length ${curatedNames.length} != frozen ${frozenNames.length}`);
+        }
+        for (let index = 0; index < frozenNames.length; index += 1) {
+            if (curatedNames[index] !== frozenNames[index]) {
+                throw new Error(`equipment names curated: ${family}[${index}] ${JSON.stringify(curatedNames[index])} != frozen ${JSON.stringify(frozenNames[index])}`);
+            }
+        }
+    }
+}
+
+export function loadEquipmentNamesCurated(repoRoot: string = root): EquipmentCurated {
+    const curatedPath = path.join(repoRoot, EQUIPMENT_CURATED_RELATIVE);
+    if (!fs.existsSync(curatedPath)) throw new Error(`equipment names curated missing at ${curatedPath}`);
+    const curated = JSON.parse(fs.readFileSync(curatedPath, 'utf8')) as EquipmentCurated;
+    if (curated.schema !== 'r018-equipment-names-curated-1') {
+        throw new Error(`equipment names curated schema mismatch: ${curated.schema}`);
+    }
+    for (const family of EQUIPMENT_FAMILY_ORDER) {
+        const names = curated.families[family];
+        if (!Array.isArray(names) || names.length === 0) {
+            throw new Error(`equipment names curated: missing family ${family}`);
+        }
+        const seen = new Set<string>();
+        for (const name of names) {
+            if (!name || typeof name !== 'string') throw new Error(`equipment names curated: malformed name in ${family}`);
+            if (seen.has(name)) throw new Error(`equipment names curated: duplicate ${family} name ${name}`);
+            seen.add(name);
+        }
+    }
+    const evidencePath = path.join(repoRoot, EQUIPMENT_EVIDENCE_RELATIVE);
+    if (!fs.existsSync(evidencePath)) throw new Error(`equipment evidence missing at ${evidencePath}`);
+    const evidenceDigest = sha256(evidencePath);
+    if (evidenceDigest.sha256 !== curated.source.sha256 || evidenceDigest.bytes !== curated.source.bytes) {
+        throw new Error(`equipment evidence pin mismatch: expected ${curated.source.sha256}/${curated.source.bytes}, got ${evidenceDigest.sha256}/${evidenceDigest.bytes}`);
+    }
+    assertCuratedMatchesFrozen(curated, parseFrozenEquipmentNameArrays(fs.readFileSync(evidencePath, 'utf8')));
+    return curated;
+}
+
+function requireObjPack(objPack: Map<string, number> | undefined): Map<string, number> {
+    if (!(objPack instanceof Map)) throw new Error('equipment names: missing required obj.pack');
+    return objPack;
+}
+
+export function joinEquipmentName(
+    family: EquipmentFamilyId,
+    requestedName: string,
+    items: ReturnType<typeof row>[],
+    objPack: Map<string, number>,
+): EquipmentNameEntry {
+    const pack = requireObjPack(objPack);
+    const exact = items.filter((item) => item.name === requestedName);
+    let pool = exact.filter((item) => !isBankNoteRow(item));
+    const notes = exact.filter((item) => isBankNoteRow(item));
+    if (family === 'bows' || family === 'crossbows' || family === 'melee_weapons' || family === 'staffs') {
+        pool = pool.filter((item) => isWearableRow(item));
+        if (family === 'bows') {
+            pool = pool.filter((item) => item.alias !== null && !item.alias.startsWith('unstrung_'));
+        }
+    } else if (family === 'darts' || family === 'arrows' || family === 'bolts') {
+        pool = pool.filter((item) => isWearableRow(item));
+    }
+    let blackDaggerPreference = false;
+    if (family === 'melee_weapons' && requestedName === 'Black dagger' && pool.length > 1) {
+        const standard = pool.filter((item) => item.alias === 'black_dagger');
+        const quest = pool.filter((item) => item.alias === 'deathdagger');
+        if (
+            standard.length === 1
+            && quest.length === 1
+            && pack.get('black_dagger') === standard[0]!.id
+            && pack.get('deathdagger') === quest[0]!.id
+        ) {
+            pool = standard;
+            blackDaggerPreference = true;
+        }
+    }
+    if (pool.length === 1) {
+        const item = pool[0]!;
+        if (!item.alias) throw new Error(`equipment names ${family}: ${requestedName} resolved without alias`);
+        const packed = pack.get(item.alias);
+        if (packed === undefined) throw new Error(`equipment names ${family}: missing obj.pack alias ${item.alias}`);
+        if (packed !== item.id) throw new Error(`equipment names ${family}: obj.pack ${item.alias}=${packed} != decoded ${item.id}`);
+        return {
+            requested_name: requestedName,
+            disposition: 'resolved',
+            selected_name: item.name ?? requestedName,
+            alias: item.alias,
+            id: item.id,
+            wear_position: item.wear_position,
+            disambiguation: blackDaggerPreference
+                ? 'prefer_standard_pack_alias_black_dagger'
+                : exact.length !== 1
+                    ? 'exclude_bank_note_prefer_wearable'
+                    : undefined,
+        };
+    }
+    if (pool.length === 0) {
+        return {
+            requested_name: requestedName,
+            disposition: 'absent',
+            absent_class: exact.length === 0 ? 'no_exact_selected_match' : 'exact_match_ineligible',
+            candidates: exact.length > 0
+                ? exact.map((item) => ({
+                    alias: item.alias ?? '',
+                    id: item.id,
+                    name: item.name ?? requestedName,
+                    wear_position: item.wear_position,
+                    note: isBankNoteRow(item) ? 'bank_note' : 'filtered_out',
+                }))
+                : notes.map((item) => ({
+                    alias: item.alias ?? '',
+                    id: item.id,
+                    name: item.name ?? requestedName,
+                    wear_position: item.wear_position,
+                    note: 'bank_note_only',
+                })),
+        };
+    }
+    return {
+        requested_name: requestedName,
+        disposition: 'ambiguous',
+        candidates: pool.map((item) => ({
+            alias: item.alias ?? '',
+            id: item.id,
+            name: item.name ?? requestedName,
+            wear_position: item.wear_position,
+            note: 'wearable_candidate',
+        })),
+    };
+}
+
+export function extractEquipmentNamesFacts(items: ReturnType<typeof row>[], objPack: Map<string, number>, repoRoot: string = root): EquipmentNamesFacts {
+    const pack = requireObjPack(objPack);
+    const curated = loadEquipmentNamesCurated(repoRoot);
+    const curatedPath = path.join(repoRoot, EQUIPMENT_CURATED_RELATIVE);
+    const evidencePath = path.join(repoRoot, EQUIPMENT_EVIDENCE_RELATIVE);
+    const curatedDigest = sha256(curatedPath);
+    const evidenceDigest = sha256(evidencePath);
+    const out: EquipmentNamesFacts = {
+        curated_input: { path: path.relative(repoRoot, curatedPath).replaceAll('\\', '/'), ...curatedDigest },
+        equipment_source: {
+            path: curated.source.path,
+            bytes: curated.source.bytes,
+            sha256: curated.source.sha256,
+            commit: curated.source.commit,
+        },
+        equipment_evidence: { path: EQUIPMENT_EVIDENCE_RELATIVE, ...evidenceDigest },
+        exact_name_join: EQUIPMENT_EXACT_NAME_JOIN,
+        bows: [],
+        crossbows: [],
+        darts: [],
+        arrows: [],
+        bolts: [],
+        melee_weapons: [],
+        staffs: [],
+    };
+    for (const family of EQUIPMENT_FAMILY_ORDER) {
+        const entries = curated.families[family].map((requestedName) => joinEquipmentName(family, requestedName, items, pack));
+        const ambiguous = entries.filter((entry) => entry.disposition === 'ambiguous');
+        if (ambiguous.length > 0) {
+            throw new Error(`equipment names ${family}: ambiguous joins ${ambiguous.map((row) => row.requested_name).join(', ')}`);
+        }
+        out[family] = entries;
+    }
+    return out;
+}
 export function extractAutocastControls(content: string) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
@@ -1015,8 +1322,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`); const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

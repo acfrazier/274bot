@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+
+const repoRoot = path.resolve(import.meta.dirname, '../..');
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -475,6 +477,161 @@ assert.throws(
     () => extractFlourSixFacts(toolFlour, [{ id: 1931, debugname: 'pot_empty', name: 'Pot', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }]),
     /pot_flour join/,
     'missing pot_flour must fail closed',
+);
+
+const equipmentItems = [
+    { alias: 'shortbow', id: 841, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'unstrung_shortbow', id: 50, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'black_dagger', id: 1217, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'deathdagger', id: 746, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    { alias: 'bronze_arrow', id: 882, name: 'Bronze arrow', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
+];
+const equipmentPack = new Map<string, number>([
+    ['shortbow', 841],
+    ['cert_shortbow', 842],
+    ['unstrung_shortbow', 50],
+    ['black_dagger', 1217],
+    ['deathdagger', 746],
+    ['bronze_arrow', 882],
+]);
+const frozenText = fs.readFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.frozen.ts'), 'utf8');
+assert.equal(parseFrozenEquipmentSingleQuoted("'Karil\\'s crossbow'", 0).value, "Karil's crossbow");
+const frozenFamilies = parseFrozenEquipmentNameArrays(frozenText);
+assert.equal(frozenFamilies.crossbows.at(-1), "Karil's crossbow");
+assert.deepEqual(frozenFamilies.bolts, [
+    'Bronze bolts', 'Iron bolts', 'Steel bolts', 'Black bolts', 'Mithril bolts', 'Adamant bolts', 'Rune bolts',
+    'Broad bolts', 'Bone bolts',
+]);
+const curated = loadEquipmentNamesCurated();
+assert.deepEqual(curated.families.crossbows, frozenFamilies.crossbows);
+assert.deepEqual(curated.families.bows, frozenFamilies.bows);
+assert.equal(curated.families.crossbows.includes('Karil\\'), false);
+
+function isolatedEquipmentRoot(mutate?: (curatedJson: ReturnType<typeof loadEquipmentNamesCurated>) => ReturnType<typeof loadEquipmentNamesCurated> | void) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-isolated-'));
+    fs.mkdirSync(path.join(dir, 'tools/game-data'), { recursive: true });
+    const next = structuredClone(curated);
+    mutate?.(next);
+    fs.writeFileSync(path.join(dir, 'tools/game-data/equipment-names.curated.json'), `${JSON.stringify(next, null, 2)}\n`);
+    fs.copyFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.frozen.ts'), path.join(dir, 'tools/game-data/equipment-names.frozen.ts'));
+    return dir;
+}
+
+const isolated = isolatedEquipmentRoot();
+assert.deepEqual(loadEquipmentNamesCurated(isolated).families, frozenFamilies);
+const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack, isolated);
+assert.equal(isolatedFacts.crossbows.at(-1)?.requested_name, "Karil's crossbow");
+assert.equal(isolatedFacts.equipment_evidence.path, 'tools/game-data/equipment-names.frozen.ts');
+
+const curatedOnly = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-curated-only-'));
+fs.mkdirSync(path.join(curatedOnly, 'tools/game-data'), { recursive: true });
+fs.copyFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.curated.json'), path.join(curatedOnly, 'tools/game-data/equipment-names.curated.json'));
+assert.throws(
+    () => loadEquipmentNamesCurated(curatedOnly),
+    /equipment evidence missing/,
+    'loader must not require a sibling checkout; missing local evidence fails closed',
+);
+
+const malformed = isolatedEquipmentRoot((copy) => {
+    copy.families.crossbows[9] = 'Karil\\';
+});
+assert.throws(
+    () => loadEquipmentNamesCurated(malformed),
+    /crossbows\[9\].*Karil/,
+    'malformed known curated Karil must fail closed before selected matching',
+);
+
+const wrongOrder = isolatedEquipmentRoot((copy) => {
+    const [first, second] = copy.families.bows;
+    copy.families.bows[0] = second!;
+    copy.families.bows[1] = first!;
+});
+assert.throws(
+    () => loadEquipmentNamesCurated(wrongOrder),
+    /bows\[0\]/,
+    'wrong curated order must fail closed against frozen evidence',
+);
+
+const unknown = isolatedEquipmentRoot((copy) => {
+    copy.families.bows.push('Laser gun');
+});
+assert.throws(
+    () => loadEquipmentNamesCurated(unknown),
+    /bows length 13 != frozen 12/,
+    'unknown curated membership must fail closed',
+);
+
+const curatedCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-curated-'));
+fs.mkdirSync(path.join(curatedCopy, 'tools/game-data'), { recursive: true });
+fs.writeFileSync(path.join(curatedCopy, 'tools/game-data/equipment-names.curated.json'), JSON.stringify({
+    ...curated,
+    families: { ...curated.families, melee_weapons: ['Dup', 'Dup'] },
+}, null, 2));
+assert.throws(
+    () => loadEquipmentNamesCurated(curatedCopy),
+    /duplicate melee_weapons name Dup/,
+    'curated duplicate family rows must fail closed before evidence compare',
+);
+
+const equipmentFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack);
+const shortbow = equipmentFacts.bows.find((row) => row.requested_name === 'Shortbow');
+assert.equal(shortbow?.disposition, 'resolved');
+assert.equal(shortbow?.alias, 'shortbow');
+assert.equal(shortbow?.id, 841);
+assert.equal(shortbow?.disambiguation, 'exclude_bank_note_prefer_wearable');
+const blackDagger = equipmentFacts.melee_weapons.find((row) => row.requested_name === 'Black dagger');
+assert.equal(blackDagger?.disposition, 'resolved');
+assert.equal(blackDagger?.alias, 'black_dagger');
+assert.equal(blackDagger?.id, 1217);
+assert.equal(blackDagger?.disambiguation, 'prefer_standard_pack_alias_black_dagger');
+const dragonArrow = equipmentFacts.arrows.find((row) => row.requested_name === 'Dragon arrow');
+assert.equal(dragonArrow?.disposition, 'absent');
+assert.equal(dragonArrow?.absent_class, 'no_exact_selected_match');
+const karil = equipmentFacts.crossbows.find((row) => row.requested_name === "Karil's crossbow");
+assert.equal(karil?.disposition, 'absent');
+assert.equal(karil?.absent_class, 'no_exact_selected_match');
+assert.equal(equipmentFacts.exact_name_join.bolts.generic_is_substitute, false);
+
+const noteOnly = extractEquipmentNamesFacts([
+    { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
+], new Map([['cert_shortbow', 842]]));
+assert.equal(noteOnly.bows.find((row) => row.requested_name === 'Shortbow')?.absent_class, 'exact_match_ineligible');
+assert.equal(noteOnly.arrows.find((row) => row.requested_name === 'Dragon arrow')?.absent_class, 'no_exact_selected_match');
+
+const genericBolts = extractEquipmentNamesFacts([
+    { alias: 'bolt', id: 877, name: 'Bolts', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
+], new Map([['bolt', 877]]));
+assert.equal(genericBolts.bolts.find((row) => row.requested_name === 'Bronze bolts')?.absent_class, 'no_exact_selected_match');
+assert.equal(genericBolts.bolts.some((row) => row.requested_name === 'Bolts' || row.alias === 'bolt'), false);
+assert.equal(genericBolts.exact_name_join.bolts.generic_display_name, 'Bolts');
+
+assert.throws(
+    () => extractEquipmentNamesFacts([
+        { alias: 'bronze_scimitar', id: 1, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+        { alias: 'bronze_scimitar_dup', id: 2, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
+    ], new Map([['bronze_scimitar', 1], ['bronze_scimitar_dup', 2]])),
+    /ambiguous joins Bronze scimitar/,
+    'duplicate wieldable display names must fail closed at generate time',
+);
+assert.throws(
+    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 999], ['black_dagger', 1217], ['deathdagger', 746], ['bronze_arrow', 882]])),
+    /obj\.pack shortbow=999/,
+    'selected pack id mismatch must fail closed',
+);
+assert.throws(
+    () => extractEquipmentNamesFacts(equipmentItems, undefined as unknown as Map<string, number>),
+    /missing required obj\.pack/,
+    'missing required pack must fail closed',
+);
+assert.throws(
+    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 841], ['black_dagger', 1217], ['bronze_arrow', 882]])),
+    /ambiguous joins Black dagger/,
+    'black dagger preference without independent pack support stays ambiguous',
+);
+assert.equal(
+    joinEquipmentName('arrows', 'Dragon arrow', [], equipmentPack).absent_class,
+    'no_exact_selected_match',
 );
 
 console.log('generate fixture passed');

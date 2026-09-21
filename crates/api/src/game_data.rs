@@ -453,6 +453,100 @@ pub struct FlourSixFacts {
     pub bank_tile: ProvenanceTile,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentInputPin {
+    pub path: String,
+    pub bytes: u64,
+    pub sha256: String,
+    #[serde(default)]
+    pub commit: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentNameCandidate {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub wear_position: i32,
+    pub note: String,
+}
+
+/// One frozen equipment.ts display name joined to selected item facts.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentNameEntry {
+    pub requested_name: String,
+    pub disposition: String,
+    #[serde(default)]
+    pub selected_name: Option<String>,
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub id: Option<i32>,
+    #[serde(default)]
+    pub wear_position: Option<i32>,
+    #[serde(default)]
+    pub disambiguation: Option<String>,
+    #[serde(default)]
+    pub absent_class: Option<String>,
+    #[serde(default)]
+    pub candidates: Option<Vec<EquipmentNameCandidate>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentBoltJoinLimitation {
+    pub generic_display_name: String,
+    pub generic_is_substitute: bool,
+    pub note: String,
+}
+
+/// Exact display-name join limitation: a miss is not a global content claim.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentExactNameJoin {
+    pub matching: String,
+    pub no_exact_selected_match_means: String,
+    pub bolts: EquipmentBoltJoinLimitation,
+}
+
+/// Curated rs2b0t combat equipment name families with selected-revision joins.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EquipmentNamesFacts {
+    pub curated_input: EquipmentInputPin,
+    pub equipment_source: EquipmentInputPin,
+    #[serde(default)]
+    pub equipment_evidence: Option<EquipmentInputPin>,
+    #[serde(default)]
+    pub exact_name_join: Option<EquipmentExactNameJoin>,
+    pub bows: Vec<EquipmentNameEntry>,
+    pub crossbows: Vec<EquipmentNameEntry>,
+    pub darts: Vec<EquipmentNameEntry>,
+    pub arrows: Vec<EquipmentNameEntry>,
+    pub bolts: Vec<EquipmentNameEntry>,
+    pub melee_weapons: Vec<EquipmentNameEntry>,
+    pub staffs: Vec<EquipmentNameEntry>,
+}
+
+impl EquipmentNamesFacts {
+    pub fn family(&self, family: &str) -> Option<&[EquipmentNameEntry]> {
+        match family.trim().to_ascii_lowercase().as_str() {
+            "bows" => Some(&self.bows),
+            "crossbows" => Some(&self.crossbows),
+            "darts" => Some(&self.darts),
+            "arrows" => Some(&self.arrows),
+            "bolts" => Some(&self.bolts),
+            "melee_weapons" | "melee" => Some(&self.melee_weapons),
+            "staffs" | "staves" => Some(&self.staffs),
+            _ => None,
+        }
+    }
+
+    pub fn entry(&self, family: &str, requested_name: &str) -> Option<&EquipmentNameEntry> {
+        let wanted = requested_name.trim();
+        self.family(family)?
+            .iter()
+            .find(|row| row.requested_name.eq_ignore_ascii_case(wanted))
+    }
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -486,6 +580,8 @@ pub struct SelectedGameData {
     nurmof_essence: Option<NurmofEssenceFacts>,
     #[serde(default)]
     flour_six: Option<FlourSixFacts>,
+    #[serde(default)]
+    equipment_names: Option<EquipmentNamesFacts>,
 }
 
 impl SelectedGameData {
@@ -655,6 +751,15 @@ impl SelectedGameData {
 
     pub fn flour_six(&self) -> Option<&FlourSixFacts> {
         self.flour_six.as_ref()
+    }
+
+    pub fn equipment_names(&self) -> Option<&EquipmentNamesFacts> {
+        self.equipment_names.as_ref()
+    }
+
+    /// Resolved equipment family row by frozen display name, when present.
+    pub fn equipment_name(&self, family: &str, requested_name: &str) -> Option<&EquipmentNameEntry> {
+        self.equipment_names()?.entry(family, requested_name)
     }
 
     /// Mapsquare predicate from generated facts. `None` when `nurmof_essence` is absent.

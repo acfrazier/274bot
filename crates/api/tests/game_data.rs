@@ -442,3 +442,103 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
         assert_eq!(data.item_by_alias("pot_empty").expect("pot").id, flour.pot.id);
     }
 }
+
+#[test]
+fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let equipment = data.equipment_names().expect("equipment names facts");
+        assert_eq!(equipment.bows.len(), 12);
+        assert_eq!(equipment.crossbows.len(), 10);
+        assert_eq!(equipment.darts.len(), 7);
+        assert_eq!(equipment.arrows.len(), 7);
+        assert_eq!(equipment.bolts.len(), 9);
+        assert_eq!(equipment.melee_weapons.len(), 33);
+        assert_eq!(equipment.staffs.len(), 15);
+        assert_eq!(
+            equipment.equipment_source.sha256,
+            "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3"
+        );
+        let resolved = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "resolved")
+            .count();
+        let absent = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "absent")
+            .count();
+        assert_eq!(resolved, 74, "count summary revision {}", revision.as_i32());
+        assert_eq!(absent, 19, "count summary revision {}", revision.as_i32());
+        let shortbow = data
+            .equipment_name("bows", "Shortbow")
+            .expect("shortbow row");
+        assert_eq!(shortbow.disposition, "resolved");
+        assert_eq!(shortbow.alias.as_deref(), Some("shortbow"));
+        assert_eq!(shortbow.id, Some(841));
+        assert_eq!(
+            data.item_by_alias("shortbow").expect("shortbow item").id,
+            841
+        );
+        let black_dagger = data
+            .equipment_name("melee_weapons", "Black dagger")
+            .expect("black dagger row");
+        assert_eq!(black_dagger.alias.as_deref(), Some("black_dagger"));
+        assert_eq!(black_dagger.id, Some(1217));
+        assert_eq!(
+            black_dagger.disambiguation.as_deref(),
+            Some("prefer_standard_pack_alias_black_dagger")
+        );
+        let dragon_arrow = data
+            .equipment_name("arrows", "Dragon arrow")
+            .expect("dragon arrow row");
+        assert_eq!(dragon_arrow.disposition, "absent");
+        assert_eq!(
+            dragon_arrow.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let bronze_bolts = data
+            .equipment_name("bolts", "Bronze bolts")
+            .expect("bronze bolts row");
+        assert_eq!(bronze_bolts.disposition, "absent");
+        assert_eq!(
+            bronze_bolts.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let karil = data
+            .equipment_name("crossbows", "Karil's crossbow")
+            .expect("karil row");
+        assert_eq!(karil.requested_name, "Karil's crossbow");
+        assert_eq!(karil.disposition, "absent");
+        assert_eq!(
+            karil.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let join = equipment.exact_name_join.as_ref().expect("exact join note");
+        assert_eq!(join.matching, "exact_display_name_only");
+        assert!(!join.bolts.generic_is_substitute);
+        assert_eq!(join.bolts.generic_display_name, "Bolts");
+        assert!(equipment
+            .bolts
+            .iter()
+            .all(|row| row.requested_name != "Bolts"));
+        assert!(data
+            .items()
+            .iter()
+            .any(|item| item.name.as_deref() == Some("Bolts")));
+        assert!(data.equipment_name("bows", "Not a bow").is_none());
+    }
+}

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { verifyCacheIdentity } from './cache-identity.ts';
+import { loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parsePack } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; content_id: string; nav_sha256: string; flags_sha256: string } }> = {
     274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
@@ -132,6 +133,74 @@ for (const revision of [274, 289]) {
     if (flour.bank_tile.provenance !== 'curated' || flour.bank_tile.x !== 2725 || flour.bank_tile.z !== 3491) throw new Error(`${revision}: flour bank tile ${JSON.stringify(flour.bank_tile)}`);
     const joinedPot = byAlias.get('pot_empty') as any;
     if (!joinedPot || joinedPot.id !== flour.pot.id) throw new Error(`${revision}: flour pot join`);
-    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
+    const equipment = payload.equipment_names;
+    if (!equipment) throw new Error(`${revision}: missing equipment_names`);
+    const curatedMembership = loadEquipmentNamesCurated();
+    const frozenFamilies = parseFrozenEquipmentNameArrays(fs.readFileSync(path.join(root, 'tools/game-data/equipment-names.frozen.ts'), 'utf8'));
+    const objPack = parsePack(fs.readFileSync(path.join(pin.contentRoot, 'pack/obj.pack'), 'utf8'));
+    if (objPack.size === 0) throw new Error(`${revision}: empty pack/obj.pack`);
+    assertEqual(equipment.equipment_source.sha256, 'ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3', `${revision} equipment.ts pin`);
+    assertEqual(equipment.equipment_source.bytes, 2360, `${revision} equipment.ts bytes`);
+    assertEqual(equipment.equipment_evidence?.sha256, 'ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3', `${revision} equipment evidence pin`);
+    assertEqual(equipment.equipment_evidence?.path, 'tools/game-data/equipment-names.frozen.ts', `${revision} equipment evidence path`);
+    if (!equipment.exact_name_join || equipment.exact_name_join.matching !== 'exact_display_name_only' || equipment.exact_name_join.bolts?.generic_is_substitute !== false || equipment.exact_name_join.bolts?.generic_display_name !== 'Bolts') {
+        throw new Error(`${revision}: exact_name_join limitation missing ${JSON.stringify(equipment.exact_name_join)}`);
+    }
+    const familyCounts = {
+        bows: 12,
+        crossbows: 10,
+        darts: 7,
+        arrows: 7,
+        bolts: 9,
+        melee_weapons: 33,
+        staffs: 15,
+    };
+    for (const [family, count] of Object.entries(familyCounts)) {
+        const rows = equipment[family] ?? [];
+        const expectedNames = frozenFamilies[family as keyof typeof frozenFamilies];
+        assertEqual(rows.length, count, `${revision} equipment ${family} row count summary`);
+        assertEqual(JSON.stringify(curatedMembership.families[family as keyof typeof curatedMembership.families]), JSON.stringify(expectedNames), `${revision} curated vs independently parsed frozen ${family}`);
+        assertEqual(JSON.stringify(rows.map((row: any) => row.requested_name)), JSON.stringify(expectedNames), `${revision} equipment ${family} order vs frozen evidence`);
+        if (rows.some((row: any) => row.disposition === 'ambiguous')) throw new Error(`${revision}: equipment ${family} must not publish ambiguous rows`);
+    }
+    const resolved = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs']
+        .flatMap((family) => equipment[family])
+        .filter((row: any) => row.disposition === 'resolved');
+    const absent = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs']
+        .flatMap((family) => equipment[family])
+        .filter((row: any) => row.disposition === 'absent');
+    assertEqual(resolved.length, 74, `${revision} equipment resolved count summary`);
+    assertEqual(absent.length, 19, `${revision} equipment absent count summary`);
+    const shortbow = equipment.bows.find((row: any) => row.requested_name === 'Shortbow');
+    if (!shortbow || shortbow.disposition !== 'resolved' || shortbow.alias !== 'shortbow' || shortbow.id !== 841) throw new Error(`${revision}: Shortbow join ${JSON.stringify(shortbow)}`);
+    const blackDagger = equipment.melee_weapons.find((row: any) => row.requested_name === 'Black dagger');
+    if (!blackDagger || blackDagger.disposition !== 'resolved' || blackDagger.alias !== 'black_dagger' || blackDagger.id !== 1217 || blackDagger.disambiguation !== 'prefer_standard_pack_alias_black_dagger') {
+        throw new Error(`${revision}: Black dagger join ${JSON.stringify(blackDagger)}`);
+    }
+    if (objPack.get('black_dagger') !== 1217 || objPack.get('deathdagger') !== 746) {
+        throw new Error(`${revision}: black dagger pack aliases ${objPack.get('black_dagger')}/${objPack.get('deathdagger')}`);
+    }
+    const dragonArrow = equipment.arrows.find((row: any) => row.requested_name === 'Dragon arrow');
+    if (!dragonArrow || dragonArrow.disposition !== 'absent' || dragonArrow.absent_class !== 'no_exact_selected_match') throw new Error(`${revision}: Dragon arrow absent ${JSON.stringify(dragonArrow)}`);
+    const bronzeBolt = equipment.bolts.find((row: any) => row.requested_name === 'Bronze bolts');
+    if (!bronzeBolt || bronzeBolt.disposition !== 'absent' || bronzeBolt.absent_class !== 'no_exact_selected_match') throw new Error(`${revision}: Bronze bolts absent ${JSON.stringify(bronzeBolt)}`);
+    const bronzeCrossbow = equipment.crossbows.find((row: any) => row.requested_name === 'Bronze crossbow');
+    if (!bronzeCrossbow || bronzeCrossbow.disposition !== 'absent' || bronzeCrossbow.absent_class !== 'no_exact_selected_match') throw new Error(`${revision}: Bronze crossbow absent ${JSON.stringify(bronzeCrossbow)}`);
+    const karil = equipment.crossbows.find((row: any) => row.requested_name === "Karil's crossbow");
+    if (!karil || karil.disposition !== 'absent' || karil.absent_class !== 'no_exact_selected_match') throw new Error(`${revision}: Karil's crossbow ${JSON.stringify(karil)}`);
+    if (equipment.crossbows.some((row: any) => row.requested_name === 'Karil\\' || row.requested_name === "Karil\\")) throw new Error(`${revision}: malformed Karil membership leaked`);
+    if (equipment.bolts.some((row: any) => row.requested_name === 'Bolts' || row.selected_name === 'Bolts' || row.alias === 'bolt')) {
+        throw new Error(`${revision}: generic Bolts must not map onto frozen bolt tiers`);
+    }
+    const genericBolts = payload.items.filter((item: any) => item.name === 'Bolts');
+    if (genericBolts.length === 0) throw new Error(`${revision}: selected table must contain generic Bolts so the non-mapping is testable`);
+    for (const row of resolved) {
+        if (!row.alias || row.id === undefined) throw new Error(`${revision}: resolved equipment missing join ${JSON.stringify(row)}`);
+        const joined = payload.items.find((item: any) => item.alias === row.alias);
+        if (!joined || joined.id !== row.id || joined.name !== row.selected_name) throw new Error(`${revision}: equipment join drift ${JSON.stringify(row)}`);
+        const packed = objPack.get(row.alias);
+        if (packed !== row.id) throw new Error(`${revision}: equipment obj.pack mismatch ${JSON.stringify(row)} pack=${packed}`);
+    }
+    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results }; const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
