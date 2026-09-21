@@ -42,7 +42,8 @@ Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 ### Supported requests
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `withdraw`,
-`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`.
+`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`,
+`inspect-route`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
 
@@ -57,6 +58,24 @@ Completion is the next snapshots' seq/result fields, not a Promise.
 - `walk-nearest-bank` uses host packed nav with default-false FindOptions.
   Watch `walk_outcome_seq` / `walk_outcome_failed` and `here` vs `banks`.
   No packed stand fails closed in Rust.
+- `inspect-route` is a pure preview. Required `from` / `to` tiles. Omitted
+  `allow_teleports` / `allow_wilderness` / `allow_bank_fetch` default
+  false. Optional `avoid` rects. Use `api.inspectBegin` for an isolate
+  token and `inspectSettled` / `inspectValue` to query it. `request_id: 0`
+  is snapshot-only: a real host preview still publishes `route_inspect_*`
+  and creates no waiter. Invented nonzero ids are isolate-stale and are
+  dropped before a host job is queued. The isolate emits `inspect-ack`
+  on the existing FlatBuffer interact path after applying a published
+  terminal; that ack is not a public `api.request` op and cannot be
+  piggybacked on `inspect-route`. Host admission counts unobserved
+  terminals only (2-deep ring + 1 held). A registered token the host
+  cannot reserve is posted in `route_inspect_refused_id{,_2,_3}` and
+  settles `stale`; the ring/held accepted results stay until ACK.
+  `route_inspect_unobserved` is last-seen fullness, not a reservation.
+  Snapshot-only `0` shares the same admit budget and does not take a
+  refuse-mailbox slot. Conditional bank preview never actions or
+  latches a bank session; `bank_planned` requires a PRE-state stand
+  proof.
 
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.

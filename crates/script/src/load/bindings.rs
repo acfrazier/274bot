@@ -219,6 +219,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register walk: {e}"))?;
     runtime
+        .register_function("__rs2b0t_inspect", |args: &[serde_json::Value]| {
+            Ok(crate::inspect_wait::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register inspect: {e}"))?;
+    runtime
         .register_function("__rs2b0t_cake_stall", |args: &[serde_json::Value]| {
             Ok(crate::cake_stall::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -922,9 +929,19 @@ const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
   'bank_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
   'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
-  'bank_op_result_seq','bank_op_result','walk_outcome_seq','walk_outcome_generation',
+  'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
   'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
   'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
+  'route_inspect_seq','route_inspect_generation','route_inspect_request_id',
+  'route_inspect_ok','route_inspect_reason','route_inspect_bank_planned',
+  'route_inspect_ticks','route_inspect_hops',
+  'route_inspect_prev_seq','route_inspect_prev_generation','route_inspect_prev_request_id',
+  'route_inspect_prev_ok','route_inspect_prev_reason','route_inspect_prev_bank_planned',
+  'route_inspect_prev_ticks','route_inspect_prev_hops',
+  'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
+  'route_inspect_replaced_id','route_inspect_replaced_prev_id',
+  'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
+  'route_inspect_unobserved',
 ]);
 const V2_OPS = {
   'held': ['name','action'],
@@ -938,12 +955,14 @@ const V2_OPS = {
   'walk': ['x','z','level'],
   'walk-near': ['x','z','level','radius'],
   'walk-nearest-bank': [],
+  'inspect-route': ['from','to'],
 };
 const OPTIONAL = {
   'open-booth': ['name','action'],
   'open-stand': ['name','stand_op','choose'],
   'walk': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
   'walk-near': ['allow_teleports','allow_wilderness','allow_bank_fetch','request_id'],
+  'inspect-route': ['allow_teleports','allow_wilderness','allow_bank_fetch','avoid','request_id'],
 };
 function host() {
   return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
@@ -1024,6 +1043,18 @@ function enqueueRequest(op) {
   for (const field of extra) {
     if (op[field] !== undefined) row[field] = op[field];
   }
+  if (op.op === 'inspect-route') {
+    const from = op.from || {};
+    const to = op.to || {};
+    row.from_x = from.x;
+    row.from_z = from.z;
+    row.from_level = from.level == null ? 0 : from.level;
+    row.x = to.x;
+    row.z = to.z;
+    row.level = to.level == null ? 0 : to.level;
+    delete row.from;
+    delete row.to;
+  }
   const h = host();
   h.interact = h.interact || [];
   h.interact.push(row);
@@ -1045,6 +1076,35 @@ const api = {
   },
   get paint() { return paintRecorder(); },
   request(op) { enqueueRequest(op); },
+  inspectBegin(opts) {
+    const o = opts || {};
+    const fn = globalThis.rustyscript.functions.__rs2b0t_inspect;
+    const token = fn({
+      op: 'begin',
+      from: o.from,
+      to: o.to,
+      opts: o.opts || o,
+      timeout_ms: o.timeout_ms,
+    });
+    if (fn({ op: 'settled', token }) === true) return token;
+    enqueueRequest({
+      op: 'inspect-route',
+      from: o.from,
+      to: o.to,
+      allow_teleports: o.allow_teleports === true,
+      allow_wilderness: o.allow_wilderness === true,
+      allow_bank_fetch: o.allow_bank_fetch === true,
+      avoid: o.avoid || [],
+      request_id: token,
+    });
+    return token;
+  },
+  inspectSettled(token) {
+    return globalThis.rustyscript.functions.__rs2b0t_inspect({ op: 'settled', token }) === true;
+  },
+  inspectValue(token) {
+    return globalThis.rustyscript.functions.__rs2b0t_inspect({ op: 'value', token });
+  },
 };
 globalThis.__rs_api = api;
 globalThis.__rs_api_family = 2;
