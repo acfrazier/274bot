@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -610,6 +610,7 @@ pub enum CoreCase {
     PrayerV1,
     LineOfSightV2,
     ActorObservationV2,
+    FightFieldV2,
 }
 
 impl CoreCase {
@@ -746,6 +747,7 @@ impl CoreCase {
             "prayer_v1_ts" => Ok(Self::PrayerV1),
             "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
             "actor_observation_v2_ts" => Ok(Self::ActorObservationV2),
+            "fight_field_v2_ts" => Ok(Self::FightFieldV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -885,6 +887,7 @@ impl CoreCase {
             Self::PrayerV1 => "prayer_v1_ts",
             Self::LineOfSightV2 => "line_of_sight_v2_ts",
             Self::ActorObservationV2 => "actor_observation_v2_ts",
+            Self::FightFieldV2 => "fight_field_v2_ts",
         }
     }
 
@@ -992,6 +995,7 @@ impl CoreCase {
             Self::PrayerV1 => "prayer_v1",
             Self::LineOfSightV2 => "line_of_sight_v2",
             Self::ActorObservationV2 => "actor_observation_v2",
+            Self::FightFieldV2 => "fight_field_v2",
         }
     }
 
@@ -1014,6 +1018,10 @@ impl CoreCase {
         matches!(self, Self::ActorObservationV2)
     }
 
+    pub fn copies_fight_field(self) -> bool {
+        matches!(self, Self::FightFieldV2)
+    }
+
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::PrayerV2 => Some(PRAYER_V2_STOP),
@@ -1032,6 +1040,13 @@ impl CoreCase {
     pub fn actor_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::ActorObservationV2 => Some(ACTOR_OBSERVATION_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn fight_field_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::FightFieldV2 => Some(FIGHT_FIELD_V2_STOP),
             _ => None,
         }
     }
@@ -1143,6 +1158,9 @@ pub struct Observation {
     /// Compact chosen NPC + LOS helper result. Empty unless the active Core
     /// case asked for actor observation. Never a world or NPC-table copy.
     pub actor: ActorObservation,
+    /// Compact fight-field NPC + both LOS helper results. Empty unless the
+    /// active Core case asked for fight field. Never a world or NPC-table copy.
+    pub fight: FightFieldObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1655,6 +1673,7 @@ impl Observation {
             route_inspect_has_terminal: false,
             los: LineOfSightObservation::default(),
             actor: ActorObservation::default(),
+            fight: FightFieldObservation::default(),
         }
     }
 
@@ -1832,6 +1851,93 @@ impl Observation {
             host_los,
             self_target_kind,
             self_target_index,
+            receipt,
+        };
+    }
+
+    /// Compact host identity, one size>=1 NPC, both existing LOS helper
+    /// results, and the script paint receipt. Never copies the NPC table.
+    pub fn attach_fight_field(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_fight_field_receipt_from_paint);
+        let npc = choose_fight_field_npc(snapshot.npcs(), receipt.as_ref()).map(|row| {
+            FightFieldNpc {
+                index: row.index as i32,
+                size: row.size,
+                tile_x: row.tile.x,
+                tile_z: row.tile.z,
+                nx: row.network.x,
+                nz: row.network.z,
+                level: row.tile.level,
+            }
+        });
+        let query = if scene.available {
+            Some(CollisionQuery {
+                available: scene.available,
+                base_x: scene.base_x,
+                base_z: scene.base_z,
+                level: scene.level,
+                width: scene.width,
+                height: scene.height,
+                flags: Arc::from(scene.collision_flags.as_slice()),
+            })
+        } else {
+            None
+        };
+        let (host_los_network, host_los_tile) = match (here, npc.as_ref(), query.as_ref()) {
+            (Some(from), Some(npc), Some(query)) => {
+                let from_tile = WorldTile {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                };
+                let network = line_of_sight_v2(
+                    Some(query),
+                    from_tile,
+                    WorldTile {
+                        x: npc.nx,
+                        z: npc.nz,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok();
+                let tile = line_of_sight_v2(
+                    Some(query),
+                    from_tile,
+                    WorldTile {
+                        x: npc.tile_x,
+                        z: npc.tile_z,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok();
+                (network, tile)
+            }
+            _ => (None, None),
+        };
+        self.fight = FightFieldObservation {
+            available: scene.available,
+            identity,
+            here,
+            npc,
+            host_los_network,
+            host_los_tile,
             receipt,
         };
     }
@@ -2220,6 +2326,8 @@ pub const LOS_V2_STOP: &str = "line of sight qualification complete";
 pub const LOS_RECEIPT_PREFIX: &str = "los-receipt:";
 pub const ACTOR_OBSERVATION_V2_STOP: &str = "actor observation qualification complete";
 pub const ACTOR_RECEIPT_PREFIX: &str = "actor-receipt:";
+pub const FIGHT_FIELD_V2_STOP: &str = "fight field qualification complete";
+pub const FIGHT_FIELD_RECEIPT_PREFIX: &str = "fight-field-receipt:";
 pub const LOS_WALK_SCENERY: i32 = 0x100;
 pub const LOS_V_N: i32 = 0x400;
 pub const LOS_V_E: i32 = 0x1000;
@@ -2783,6 +2891,210 @@ impl ActorObservationDeliveryCycle {
             && npc.tile_z == receipt.rendered.z
             && receipt.los.v2 == host_los
             && receipt.los.v1 == host_los
+    }
+}
+
+/// File and Core share this rule: min `(distance, index)` among `size >= 1`.
+/// After the script posts a receipt, look that index up so headed join verifies
+/// the observed row instead of independently picking another NPC.
+fn choose_fight_field_npc<'a>(
+    npcs: &'a [NpcView],
+    receipt: Option<&FightFieldScriptReceipt>,
+) -> Option<&'a NpcView> {
+    if let Some(index) = receipt.map(|row| row.index) {
+        return npcs
+            .iter()
+            .find(|row| row.size >= 1 && row.index as i32 == index);
+    }
+    npcs.iter()
+        .filter(|row| row.size >= 1)
+        .min_by_key(|row| (row.distance, row.index))
+}
+
+fn parse_fight_field_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<FightFieldScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(FIGHT_FIELD_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+fn fight_field_effect_is_attack(receipt: &FightFieldScriptReceipt) -> bool {
+    fn is_attack(value: &str) -> bool {
+        value.eq_ignore_ascii_case("npc") || value.eq_ignore_ascii_case("attack")
+    }
+    receipt.kind.as_deref().is_some_and(is_attack)
+        || receipt.effect.as_deref().is_some_and(is_attack)
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FightFieldScriptReceipt {
+    pub index: i32,
+    pub size: i32,
+    pub tile: ActorObservationPoint,
+    pub network_origin: ActorObservationPoint,
+    pub los_network: bool,
+    pub los_tile: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct FightFieldNpc {
+    pub index: i32,
+    pub size: i32,
+    pub tile_x: i32,
+    pub tile_z: i32,
+    pub nx: i32,
+    pub nz: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FightFieldObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<FightFieldNpc>,
+    pub host_los_network: Option<bool>,
+    pub host_los_tile: Option<bool>,
+    pub receipt: Option<FightFieldScriptReceipt>,
+}
+
+impl Default for FightFieldObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            identity: LineOfSightIdentity::default(),
+            here: None,
+            npc: None,
+            host_los_network: None,
+            host_los_tile: None,
+            receipt: None,
+        }
+    }
+}
+
+pub fn fight_field_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.fight.available
+        && baseline.fight.here.is_some()
+}
+
+fn fight_field_receipt_joined(now: &FightFieldObservation) -> bool {
+    let (Some(npc), Some(here), Some(host_los_network), Some(host_los_tile), Some(receipt)) = (
+        now.npc.as_ref(),
+        now.here,
+        now.host_los_network,
+        now.host_los_tile,
+        now.receipt.as_ref(),
+    ) else {
+        return false;
+    };
+    now.available
+        && npc.size >= 1
+        && here.level == npc.level
+        && receipt.index == npc.index
+        && receipt.size == npc.size
+        && receipt.tile.x == npc.tile_x
+        && receipt.tile.z == npc.tile_z
+        && receipt.network_origin.x == npc.nx
+        && receipt.network_origin.z == npc.nz
+        && receipt.los_network == host_los_network
+        && receipt.los_tile == host_los_tile
+        && !fight_field_effect_is_attack(receipt)
+}
+
+/// Post-Start witness: one packed size>=1 NPC, joined script receipt, named stop, no Attack.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FightFieldDeliveryCycle {
+    pub identity: Option<LineOfSightIdentity>,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<FightFieldNpc>,
+    pub host_los_network: Option<bool>,
+    pub host_los_tile: Option<bool>,
+    pub receipt: Option<FightFieldScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl FightFieldDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.fight.available {
+            if let Some(npc) = now.fight.npc.clone() {
+                if npc.size >= 1 {
+                    self.identity = Some(now.fight.identity);
+                    self.here = now.fight.here;
+                    self.npc = Some(npc);
+                    self.host_los_network = now.fight.host_los_network;
+                    self.host_los_tile = now.fight.host_los_tile;
+                }
+            }
+        }
+        if fight_field_receipt_joined(&now.fight) {
+            self.identity = Some(now.fight.identity);
+            self.here = now.fight.here;
+            self.npc = now.fight.npc.clone();
+            self.host_los_network = now.fight.host_los_network;
+            self.host_los_tile = now.fight.host_los_tile;
+            self.receipt = now.fight.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (
+            Some(identity),
+            Some(here),
+            Some(npc),
+            Some(host_los_network),
+            Some(host_los_tile),
+            Some(receipt),
+        ) = (
+            self.identity,
+            self.here,
+            self.npc.as_ref(),
+            self.host_los_network,
+            self.host_los_tile,
+            self.receipt.as_ref(),
+        )
+        else {
+            return false;
+        };
+        identity.level == here.level
+            && npc.size >= 1
+            && npc.index == receipt.index
+            && npc.size == receipt.size
+            && npc.tile_x == receipt.tile.x
+            && npc.tile_z == receipt.tile.z
+            && npc.nx == receipt.network_origin.x
+            && npc.nz == receipt.network_origin.z
+            && receipt.los_network == host_los_network
+            && receipt.los_tile == host_los_tile
+            && !fight_field_effect_is_attack(receipt)
     }
 }
 
@@ -3733,6 +4045,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
         CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
         CoreCase::ActorObservationV2 => actor_observation_baseline_ready(baseline),
+        CoreCase::FightFieldV2 => fight_field_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -4095,6 +4408,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::ActorObservationV2 => {
             "ingame && scene_state==2 && SceneView.available, here on the published plane"
         }
+        CoreCase::FightFieldV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -4167,6 +4483,7 @@ pub struct CoreWitness {
     pub prayer_delivery_cycle: PrayerDeliveryCycle,
     pub line_of_sight_cycle: LineOfSightDeliveryCycle,
     pub actor_observation_cycle: ActorObservationDeliveryCycle,
+    pub fight_field_cycle: FightFieldDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -9469,6 +9786,7 @@ impl CoreWitness {
             prayer_delivery_cycle: PrayerDeliveryCycle::default(),
             line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
             actor_observation_cycle: ActorObservationDeliveryCycle::default(),
+            fight_field_cycle: FightFieldDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -9702,6 +10020,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::ActorObservationV2) {
             self.actor_observation_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::FightFieldV2) {
+            self.fight_field_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -9951,6 +10272,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::FightFieldV2 => {
+                if let Some(expected) = self.case.fight_field_stop_reason() {
+                    self.fight_field_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -10168,6 +10495,7 @@ impl CoreWitness {
             CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
             CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
             CoreCase::ActorObservationV2 => self.actor_observation_cycle.qualified(),
+            CoreCase::FightFieldV2 => self.fight_field_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -10266,6 +10594,7 @@ impl CoreWitness {
             "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
             "prayer_delivery_cycle": self.prayer_delivery_cycle,
             "line_of_sight_cycle": self.line_of_sight_cycle,
+            "fight_field_cycle": self.fight_field_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -10582,6 +10911,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_fight = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_fight_field()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -10596,6 +10932,9 @@ impl CoreWatch {
             }
             if copies_actor {
                 observation.attach_actor_observation(snapshot, paint);
+            }
+            if copies_fight {
+                observation.attach_fight_field(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -10646,6 +10985,21 @@ impl CoreWatch {
                 case.copies_actor_observation()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the fight-field File card. Callers attach paint and
+    /// one packed NPC row only then.
+    pub fn copies_fight_field(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_fight_field()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }
@@ -10887,6 +11241,77 @@ mod actor_observation_selection_tests {
         assert_eq!(chosen.name.as_deref(), Some("Far"));
         let nearest = receipt_for(11);
         let chosen = choose_actor_observation_npc(&rows, Some(&nearest)).expect("receipt index 11");
+        assert_eq!(chosen.index, 11);
+    }
+}
+
+#[cfg(test)]
+mod fight_field_selection_tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    fn npc(index: usize, distance: i32, size: i32) -> NpcView {
+        NpcView {
+            index,
+            r#type: Some(1),
+            name: Some("Npc".into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 3201,
+                z: 3205,
+                level: 0,
+            },
+            distance,
+            animation: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 5,
+            total_health: 5,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 2,
+            size,
+            network: WorldTile {
+                x: 3205,
+                z: 3201,
+                level: 0,
+            },
+            x: 3201,
+            z: 3205,
+            yaw: 0,
+        }
+    }
+
+    fn receipt_for(index: i32) -> FightFieldScriptReceipt {
+        FightFieldScriptReceipt {
+            index,
+            size: 2,
+            ..FightFieldScriptReceipt::default()
+        }
+    }
+
+    #[test]
+    fn chooses_nearest_size_ge_1_not_array_first() {
+        let rows = [npc(1, 0, 0), npc(3, 8, 1), npc(11, 1, 2)];
+        let chosen = choose_fight_field_npc(&rows, None).expect("nearest size>=1");
+        assert_eq!(chosen.index, 11);
+        assert_eq!(chosen.size, 2);
+    }
+
+    #[test]
+    fn receipt_index_selects_that_row_not_nearest() {
+        let rows = [npc(1, 0, 0), npc(3, 8, 1), npc(11, 1, 2)];
+        let receipt = receipt_for(3);
+        let chosen = choose_fight_field_npc(&rows, Some(&receipt)).expect("receipt index 3");
+        assert_eq!(chosen.index, 3);
+        let nearest = receipt_for(11);
+        let chosen = choose_fight_field_npc(&rows, Some(&nearest)).expect("receipt index 11");
         assert_eq!(chosen.index, 11);
     }
 }

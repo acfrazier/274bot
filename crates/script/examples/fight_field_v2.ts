@@ -94,7 +94,8 @@ export function tick(api: NativeApi): void {
     if (!step.ok) {
         throw new Error(step.error);
     }
-    if ('kind' in step && step.kind === 'npc') {
+    const kind = 'kind' in step ? step.kind : undefined;
+    if (kind === 'npc' || kind === 'Attack' || kind === 'attack') {
         throw new Error('fight field witness must not emit npc / Attack');
     }
 
@@ -116,7 +117,15 @@ export function tick(api: NativeApi): void {
         throw new Error('networkOrigin must equal packed nx,nz');
     }
 
-    const receipt = {
+    const receipt: {
+        index: number;
+        size: number;
+        tile: { x: number; z: number };
+        networkOrigin: { x: number; z: number };
+        losNetwork: boolean;
+        losTile: boolean;
+        kind?: string;
+    } = {
         index: n.index,
         size: n.size,
         tile: { x: n.x, z: n.z },
@@ -124,10 +133,15 @@ export function tick(api: NativeApi): void {
         losNetwork: losNetwork.value,
         losTile: losTile.value,
     };
-    api.log(`${RECEIPT_PREFIX}${JSON.stringify(receipt)}`);
+    if (typeof kind === 'string') {
+        receipt.kind = kind;
+    }
+    const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
+    api.log(line);
     api.paint
         .begin()
         .title('fight field v2')
+        .row(line)
         .row(`index=${n.index} size=${n.size}`)
         .row('tile', `${n.x},${n.z}`, 'network', `${origin.x},${origin.z}`)
         .row('losNetwork', String(losNetwork.value), 'losTile', String(losTile.value))

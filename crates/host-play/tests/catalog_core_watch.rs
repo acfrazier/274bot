@@ -14,7 +14,8 @@ use host_play::catalog_core::{
 use host_play::catalog_core::{
     ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
     ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
-    ActorObservationSelfTarget, ACTOR_OBSERVATION_V2_STOP,
+    ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
+    ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
 };
 
 fn thiever_observation() -> Observation {
@@ -2307,4 +2308,316 @@ fn actor_observation_join_agrees_on_nearest_not_array_first() {
     watch
         .qualify()
         .expect("File receipt and Core join agree on nearest index 11");
+}
+
+fn fight_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn fight_npc() -> FightFieldNpc {
+    FightFieldNpc {
+        index: 7,
+        size: 4,
+        tile_x: 3201,
+        tile_z: 3205,
+        nx: 3205,
+        nz: 3201,
+        level: 0,
+    }
+}
+
+fn fight_receipt(
+    npc: &FightFieldNpc,
+    los_network: bool,
+    los_tile: bool,
+) -> FightFieldScriptReceipt {
+    FightFieldScriptReceipt {
+        index: npc.index,
+        size: npc.size,
+        tile: ActorObservationPoint {
+            x: npc.tile_x,
+            z: npc.tile_z,
+        },
+        network_origin: ActorObservationPoint {
+            x: npc.nx,
+            z: npc.nz,
+        },
+        los_network,
+        los_tile,
+        kind: None,
+        effect: None,
+    }
+}
+
+fn fight_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.fight = FightFieldObservation {
+        available: true,
+        identity: fight_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        ..FightFieldObservation::default()
+    };
+    observation
+}
+
+fn fight_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let npc = fight_npc();
+    observation.fight.npc = Some(npc.clone());
+    observation.fight.host_los_network = Some(true);
+    observation.fight.host_los_tile = Some(false);
+    observation.fight.receipt = Some(fight_receipt(&npc, true, false));
+    observation
+}
+
+fn fight_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn fight_field_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    assert!(case.copies_fight_field());
+    assert!(!case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = fight_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        fight_stop(joined, FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("host npc, joined receipt, and named stop");
+}
+
+#[test]
+fn fight_field_rejects_noquery_nonpc_identity_packed_and_wrong_stop() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        fight_stop(baseline.clone(), FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_npc = fight_joined(baseline.clone());
+    no_npc.fight.npc = None;
+    no_npc.fight.receipt = None;
+    no_npc.script_lifecycle =
+        fight_stop(no_npc.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_npc, false);
+    assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = fight_joined(baseline.clone());
+    if let Some(receipt) = mismatch.fight.receipt.as_mut() {
+        receipt.network_origin.x = 0;
+    }
+    mismatch.script_lifecycle =
+        fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script packed vs rendered disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut identity = fight_joined(baseline.clone());
+    if let Some(receipt) = identity.fight.receipt.as_mut() {
+        receipt.index = 99;
+    }
+    identity.script_lifecycle =
+        fight_stop(identity.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", identity, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = fight_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", fight_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn fight_field_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = fight_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = fight_ready();
+    missing.fight.available = false;
+    missing.fight.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+}
+
+#[test]
+fn fight_field_join_agrees_on_nearest_not_array_first() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let array_first = FightFieldNpc {
+        index: 3,
+        size: 1,
+        tile_x: 3208,
+        tile_z: 3208,
+        nx: 3208,
+        nz: 3208,
+        level: 0,
+    };
+    let nearest = FightFieldNpc {
+        index: 11,
+        size: 2,
+        tile_x: 3202,
+        tile_z: 3202,
+        nx: 3203,
+        nz: 3201,
+        level: 0,
+    };
+
+    let mut mismatch = baseline.clone();
+    mismatch.tick += 1;
+    mismatch.fight.npc = Some(array_first);
+    mismatch.fight.host_los_network = Some(true);
+    mismatch.fight.host_los_tile = Some(false);
+    mismatch.fight.receipt = Some(fight_receipt(&nearest, true, false));
+    mismatch.script_lifecycle =
+        fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "array-first host npc vs nearest File receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut joined = baseline;
+    joined.tick += 1;
+    joined.fight.npc = Some(nearest.clone());
+    joined.fight.host_los_network = Some(true);
+    joined.fight.host_los_tile = Some(false);
+    joined.fight.receipt = Some(fight_receipt(&nearest, true, false));
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        fight_stop(joined, FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on nearest index 11");
+}
+
+#[test]
+fn fight_field_rejects_forged_npc_attack_step() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut npc_kind = fight_joined(baseline.clone());
+    if let Some(receipt) = npc_kind.fight.receipt.as_mut() {
+        receipt.kind = Some("npc".into());
+    }
+    npc_kind.script_lifecycle =
+        fight_stop(npc_kind.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", npc_kind, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged npc fightNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut attack = fight_joined(baseline);
+    if let Some(receipt) = attack.fight.receipt.as_mut() {
+        receipt.effect = Some("Attack".into());
+    }
+    attack.script_lifecycle = fight_stop(attack.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", attack, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged Attack effect cannot pass"
+    );
 }
