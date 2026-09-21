@@ -44,7 +44,9 @@ function hopHasBarnaby(
 }
 
 function ready(api: NativeApi): boolean {
-    return api.snapshot?.ingame === true && api.snapshot.scene_state === 2;
+    // NativeSnapshot publishes `ingame` and `here`. `scene_state` exists on
+    // the raw ScriptSnapshot / host Core gate, not the v2 native projection.
+    return api.snapshot.ingame === true && api.snapshot.here != null;
 }
 
 function fail(api: NativeApi, reason: string): void {
@@ -83,7 +85,7 @@ export function tick(api: NativeApi): void {
             readySince = api.tick;
         }
         if (api.tick - readySince > READY_TICK_LIMIT) {
-            fail(api, 'not ready: ingame && scene_state==2 never arrived');
+            fail(api, 'not ready: ingame && here never arrived');
         }
         return;
     }
