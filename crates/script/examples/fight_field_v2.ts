@@ -4,8 +4,10 @@ import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
 
 /**
- * Headed File witness: field observation only. fightValidate plus at most
- * one fightNext must not emit npc / Attack.
+ * Headed File witness: field observation only. Melee style so field() uses
+ * posted distance / rendered SW (from === null), not safespot LOS. fightValidate
+ * plus at most one fightNext must not emit npc / Attack. LOS is recorded in the
+ * receipt only; stop does not require losNetwork/losTile true.
  */
 export const apiVersion = 2;
 
@@ -59,7 +61,7 @@ export function tick(api: NativeApi): void {
         retreatHp: 0.2,
         hasFood: true,
         needEat: false,
-        style: 'range',
+        style: 'melee',
         safespotIndex: 0,
         buryBones: false,
         boneName: 'Bones',
