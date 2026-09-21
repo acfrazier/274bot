@@ -5,7 +5,7 @@
   "checkout": "/Users/acfrazier/experiments/274bot/.worktrees/r018-supply-helpers",
   "branch": "codex/r018-supply-helpers",
   "base": "2c1d58e5a35678a0432cb19f421e70b0a0a565a6",
-  "commit": null,
+  "commit": "c37a21ad89c1cc4498aa572088ca4858f32a002f",
   "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/release-0.1.8/target",
   "commands": [
     "BOT_NAV_BUILD=skip CARGO_TARGET_DIR=/Users/acfrazier/experiments/274bot/.worktrees/release-0.1.8/target cargo test -p script --offline --locked -j4 --test supply_helpers --test combat_keep_names --test combat_start_helpers --test native_api_v2 --test host_js"

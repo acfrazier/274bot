@@ -53,4 +53,4 @@ All listed tests green (see receipt log). Offline pure-function proof only; no L
 - `crates/script/tests/supply_helpers.rs`, `combat_start_helpers.rs`, `host_js.rs`
 - `docs/api/js-api-v2.md`
 
-Commit: _(filled after commit)_.
+Commit: `c37a21ad89c1cc4498aa572088ca4858f32a002f`.
