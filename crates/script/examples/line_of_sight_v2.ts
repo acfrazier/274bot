@@ -63,7 +63,13 @@ function selectPairs(here: Tile, c: NativeApi['snapshot']['collision']): { open:
                     if (chebyshev(here, to) > RADIUS) continue;
                     const dst = flagAt(c, to.x, to.z);
                     if (dst === undefined) continue;
-                    if (!blocked && (dst & mask) !== 0) {
+                    // Source WALK_SCENERY clear on both pairs: scenery on the
+                    // source makes LOS return false before wall tracing.
+                    if (
+                        !blocked &&
+                        (src & WALK_SCENERY) === 0 &&
+                        (dst & mask) !== 0
+                    ) {
                         blocked = { from, to, src, dst, mask };
                     } else if (!open && (src & WALK_SCENERY) === 0 && (dst & mask) === 0) {
                         open = { from, to, src, dst, mask };

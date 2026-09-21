@@ -2252,8 +2252,12 @@ pub fn line_of_sight_pair_is_open(pair: &LineOfSightPair) -> bool {
 pub fn line_of_sight_pair_is_blocked(pair: &LineOfSightPair) -> bool {
     let dx = pair.to.x - pair.from.x;
     let dz = pair.to.z - pair.from.z;
+    // Source WALK_SCENERY must be clear: the LOS helper returns false on
+    // source scenery before ray tracing, so a scenery-sourced negative is
+    // not attributable to the entering V-wall.
     pair.from.level == pair.to.level
         && los_entering_mask(dx, dz) == Some(pair.mask)
+        && pair.src & LOS_WALK_SCENERY == 0
         && pair.dst & pair.mask != 0
 }
 

@@ -324,6 +324,72 @@ fn dest_vis_alone_is_fixture_failure_not_a_blocked_pair() {
 }
 
 #[test]
+fn source_scenery_entering_v_is_fixture_failure_not_wall_negative() {
+    // Source at (3202,3201) has WALK_SCENERY; dest east has entering V_W.
+    // Helper would return false on source scenery before wall tracing.
+    let mut flags = OPEN_FLAGS;
+    flags[2 * 16 + 1] = 0x100; // WALK_SCENERY at 3202,3201
+    flags[3 * 16 + 1] = 0x10000; // V_W at 3203,3201
+    let js = script::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
+        .expect("transpile line_of_sight_v2.ts");
+    let iso = spawn_v2(&js);
+    let bytes =
+        encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let logs = iso.drain_logs();
+    iso.join();
+    assert!(
+        logs.iter().any(|line| line.contains("fixture failure")),
+        "source-scenery + entering V must fail the pair fixture: {logs:?}"
+    );
+    assert!(
+        logs.iter().all(|line| !line.contains("los-receipt:")),
+        "source-scenery negative must not publish a receipt: {logs:?}"
+    );
+}
+
+#[test]
+fn example_skips_source_scenery_blocked_and_selects_clear_wall() {
+    // r=1 scenery source + V wall is closer; clear-source wall further east.
+    // Selector must continue to the clear-source wall pair.
+    let mut flags = OPEN_FLAGS;
+    // from (3202,3201)=lx2,lz1 scenery; dest (3203,3201) V_W — invalid blocked.
+    flags[2 * 16 + 1] = 0x100;
+    flags[3 * 16 + 1] = 0x10000;
+    // clear from (3204,3201)=lx4,lz1; dest (3205,3201) V_W — valid blocked.
+    flags[5 * 16 + 1] = 0x10000;
+    let js = script::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
+        .expect("transpile line_of_sight_v2.ts");
+    let iso = spawn_v2(&js);
+    let bytes =
+        encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    let paint = iso.paint().expect("example paint receipt");
+    let line = paint
+        .lines
+        .iter()
+        .find(|row| row.starts_with("los-receipt:"))
+        .expect("compact los-receipt paint line");
+    let receipt: serde_json::Value =
+        serde_json::from_str(line.strip_prefix("los-receipt:").unwrap()).unwrap();
+    assert_eq!(receipt["blocked"]["from"]["x"], 3204);
+    assert_eq!(receipt["blocked"]["to"]["x"], 3205);
+    assert_eq!(receipt["blocked"]["src"], 0);
+    assert_eq!(receipt["blocked"]["mask"], 0x10000);
+    assert_eq!(receipt["blocked"]["v2"], false);
+    assert_eq!(receipt["open"]["v2"], true);
+    assert_eq!(
+        iso.script_stop_receipt().expect("named helper stop").reason,
+        "line of sight qualification complete"
+    );
+    iso.join();
+}
+
+#[test]
 fn v2_invalid_args_and_size_cap_when_width_zero() {
     let iso = spawn_v2(
         r#"

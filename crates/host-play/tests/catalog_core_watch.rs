@@ -1608,6 +1608,77 @@ fn line_of_sight_selection_uses_v_mask_not_walk_or_dest_vis() {
 }
 
 #[test]
+fn line_of_sight_rejects_source_scenery_blocked_despite_entering_v() {
+    // Matches the R2 root disqualification shape: dest carries entering V_E
+    // (and more), but source WALK_SCENERY makes the helper return false before
+    // wall tracing — not a wall-specific negative.
+    let scenery_src = LOS_WALK_SCENERY | 0x210080;
+    let pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3217,
+            z: 3217,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3216,
+            z: 3217,
+            level: 0,
+        },
+        src: scenery_src,
+        dst: LOS_V_E | 0x8,
+        mask: LOS_V_E,
+    };
+    assert!(
+        !line_of_sight_pair_is_blocked(&pair),
+        "source WALK_SCENERY + entering V is not a wall-specific blocked pair"
+    );
+
+    let here = LineOfSightTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    // Only candidate: from (6,5) has WALK_SCENERY, dest (7,5) has V_W.
+    let scenery_only = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && z == 5 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, scenery_only).is_err(),
+        "source-scenery-only negative must fail the fixture honestly"
+    );
+
+    // Earlier scenery+V candidate at r=1, clear-source V-wall at r=2.
+    // Selector must skip the scenery source and latch the clear wall pair.
+    let skip_to_clear = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && z == 5 {
+            Some(LOS_V_W)
+        } else if x == 7 && z == 6 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    let (open, blocked) =
+        select_line_of_sight_pairs(here, skip_to_clear).expect("clear-source V-wall pair");
+    assert!(line_of_sight_pair_is_open(&open));
+    assert!(line_of_sight_pair_is_blocked(&blocked));
+    assert_eq!(blocked.src & LOS_WALK_SCENERY, 0);
+    assert_eq!(blocked.from.x, 6);
+    assert_eq!(blocked.from.z, 6);
+    assert_eq!(blocked.to.x, 7);
+    assert_eq!(blocked.to.z, 6);
+    assert_eq!(blocked.mask, LOS_V_W);
+}
+
+#[test]
 fn line_of_sight_v2_requires_joined_receipt_and_named_stop() {
     let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
     assert!(case.copies_line_of_sight());
@@ -1756,7 +1827,7 @@ fn line_of_sight_rejects_walk_mask_dest_vis_unready_and_missing() {
     watch.configure(case, "catalogtest");
     watch.observe("catalogtest", baseline.clone(), false);
     watch.begin_start("catalogtest").unwrap();
-    let mut vis = los_joined(baseline);
+    let mut vis = los_joined(baseline.clone());
     let vis_pair = LineOfSightPair {
         from: LineOfSightTile {
             x: 3201,
@@ -1781,6 +1852,38 @@ fn line_of_sight_rejects_walk_mask_dest_vis_unready_and_missing() {
     assert!(
         watch.qualify().is_err(),
         "destination VIS_SCENERY alone is not a blocked pair"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut scenery_src = los_joined(baseline);
+    let scenery_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        // R2 shape: source WALK_SCENERY set, dest still carries entering V.
+        src: LOS_WALK_SCENERY | 0x210080,
+        dst: LOS_V_W | 0x8,
+        mask: LOS_V_W,
+    };
+    scenery_src.los.host_blocked = Some(scenery_pair);
+    if let Some(receipt) = scenery_src.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(scenery_pair, false, false);
+    }
+    scenery_src.script_lifecycle =
+        los_stop(scenery_src.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", scenery_src, false);
+    assert!(
+        watch.qualify().is_err(),
+        "source WALK_SCENERY blocked pair cannot join Core even with entering V"
     );
 }
 
