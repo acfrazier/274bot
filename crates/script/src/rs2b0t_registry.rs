@@ -815,6 +815,24 @@ pub(crate) fn is_revision_fact_option_ident(ident: &str) -> bool {
     )
 }
 
+/// W1c `equipment_names` families backing a frozen settings `options` /
+/// `optionsFrom` ident. `RANGED_WEAPONS` and `ROCK_CRAB_RANGED_WEAPONS` mirror
+/// `.superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/ranged.ts`
+/// (`[...BOWS, ...DARTS]`). `AXES` and `DROP_DB` stay outside W1c.
+pub(crate) fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static str]> {
+    Some(match ident {
+        "STAFFS" => &["staffs"],
+        "BOWS" => &["bows"],
+        "CROSSBOWS" => &["crossbows"],
+        "DARTS" => &["darts"],
+        "ARROWS" => &["arrows"],
+        "BOLTS" => &["bolts"],
+        "MELEE_WEAPONS" => &["melee_weapons"],
+        "RANGED_WEAPONS" | "ROCK_CRAB_RANGED_WEAPONS" => &["bows", "darts"],
+        _ => return None,
+    })
+}
+
 /// Host-owned finite option tables for imported / parent-dir identifiers
 /// whose bodies are not in the same-directory settings blob. Values are
 /// copied from the frozen rs2b0t pin; this is not a JS evaluator.
@@ -2607,10 +2625,24 @@ export const SETTINGS = {
         let staff = setting(&schema, "staff");
         assert!(
             staff.options.is_empty(),
-            "W1 equipment must stay unpublished: {:?}",
+            "W1 equipment must stay unpublished at parse time: {:?}",
             staff.options
         );
         assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
+    }
+
+    #[test]
+    fn w1c_equipment_union_idents_match_frozen_ranged_ts() {
+        assert_eq!(
+            super::w1c_equipment_option_families("RANGED_WEAPONS"),
+            Some(&["bows", "darts"][..])
+        );
+        assert_eq!(
+            super::w1c_equipment_option_families("ROCK_CRAB_RANGED_WEAPONS"),
+            Some(&["bows", "darts"][..])
+        );
+        assert!(super::w1c_equipment_option_families("AXES").is_none());
+        assert!(super::w1c_equipment_option_families("DROP_DB").is_none());
     }
 
     #[test]
@@ -2899,22 +2931,17 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         );
     }
 
-    /// Bounded frozen same-dir walk. Not UI proof. Requires `$RS2B0T`.
-    #[test]
-    #[ignore = "requires absolute RS2B0T frozen catalog"]
-    fn frozen_catalog_settings_audit() {
-        let root = PathBuf::from(
-            std::env::var("RS2B0T").expect("RS2B0T must name the frozen catalog root"),
-        );
-        assert!(root.is_absolute(), "RS2B0T must be absolute");
-        let index_path = registry_index_path(&root);
+    fn load_frozen_catalog_index_and_sources(
+        root: &std::path::Path,
+    ) -> (String, HashMap<String, String>) {
+        let index_path = registry_index_path(root);
         let index = std::fs::read_to_string(&index_path)
             .unwrap_or_else(|e| panic!("read {}: {e}", index_path.display()));
         let skeleton = parse_registry_with_sources(&index, &HashMap::new())
             .expect("frozen index parses without sources");
         let mut sources = HashMap::new();
         for card in &skeleton {
-            let Some(path) = script_file_path(&root, &card.rel_path) else {
+            let Some(path) = script_file_path(root, &card.rel_path) else {
                 continue;
             };
             if let Ok(text) = std::fs::read_to_string(&path) {
@@ -2956,6 +2983,100 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
                 .entry("./src/bot/data/shopdb.js".into())
                 .or_insert(text);
         }
+        (index, sources)
+    }
+
+    /// Parser → resolver proof on production FireGiant SETTINGS (`staff`/`bow`).
+    /// Not UI proof. Requires `$RS2B0T` (frozen pin root).
+    #[test]
+    #[ignore = "requires absolute RS2B0T frozen catalog"]
+    fn frozen_fire_giant_w1c_equipment_settings_resolve_from_parsed_catalog() {
+        use crate::loadouts_store::{resolve_setting_options_with_labels, LoadoutsStore};
+        use client::io::ClientRevision;
+
+        const FROZEN_SETTINGS: &str =
+            "src/bot/scripts/FireGiant/FireGiant.ts";
+        const FROZEN_PIN: &str = "beecd9126b";
+
+        let root = PathBuf::from(
+            std::env::var("RS2B0T").expect("RS2B0T must name the frozen catalog root"),
+        );
+        assert!(root.is_absolute(), "RS2B0T must be absolute");
+        let settings_path = root.join(FROZEN_SETTINGS);
+        assert!(
+            settings_path.is_file(),
+            "expected frozen FireGiant SETTINGS at {}",
+            settings_path.display()
+        );
+
+        let (index, sources) = load_frozen_catalog_index_and_sources(&root);
+        let cards =
+            parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
+        let fire = cards
+            .iter()
+            .find(|c| c.name == "FireGiant")
+            .expect("FireGiant card from frozen index.ts");
+        assert!(
+            fire.rel_path.contains("FireGiant"),
+            "card path must reference FireGiant: {}",
+            fire.rel_path
+        );
+
+        let staff = setting(&fire.settings_schema, "staff");
+        let bow = setting(&fire.settings_schema, "bow");
+        assert!(
+            staff.options.is_empty(),
+            "parse-time STAFFS must stay empty: {:?}",
+            staff.options
+        );
+        assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
+        assert!(
+            bow.options.is_empty(),
+            "parse-time BOWS must stay empty: {:?}",
+            bow.options
+        );
+        assert_eq!(bow.options_from.as_deref(), Some("BOWS"));
+
+        let store = LoadoutsStore::at(std::env::temp_dir().join("274bot-w1c-firegiant-resolve"));
+        let r274 = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(ClientRevision::R289).unwrap();
+
+        let staff_274 =
+            resolve_setting_options_with_labels(staff, &store, Some(r274.as_ref()));
+        let staff_289 =
+            resolve_setting_options_with_labels(staff, &store, Some(r289.as_ref()));
+        assert_eq!(staff_274, staff_289);
+        assert_eq!(staff_274.values.len(), 15);
+        assert_eq!(staff_274.values[0], "Staff");
+        assert!(staff_274.values.contains(&"Staff of air".to_string()));
+        assert_eq!(staff_274.label_for("Staff of air"), "Staff of air");
+        assert_eq!(staff_274.values.len(), staff_274.labels.len());
+
+        let bow_274 = resolve_setting_options_with_labels(bow, &store, Some(r274.as_ref()));
+        let bow_289 = resolve_setting_options_with_labels(bow, &store, Some(r289.as_ref()));
+        assert_eq!(bow_274, bow_289);
+        assert_eq!(bow_274.values.len(), 12);
+        assert_eq!(bow_274.values[0], "Shortbow");
+        assert!(bow_274.values.contains(&"Maple shortbow".to_string()));
+        assert_eq!(bow_274.label_for("Maple shortbow"), "Maple shortbow");
+        assert_eq!(bow_274.values.len(), bow_274.labels.len());
+
+        eprintln!(
+            "frozen FireGiant pin={FROZEN_PIN} settings={FROZEN_SETTINGS} staff={} bow={}",
+            staff_274.values.len(),
+            bow_274.values.len()
+        );
+    }
+
+    /// Bounded frozen same-dir walk. Not UI proof. Requires `$RS2B0T`.
+    #[test]
+    #[ignore = "requires absolute RS2B0T frozen catalog"]
+    fn frozen_catalog_settings_audit() {
+        let root = PathBuf::from(
+            std::env::var("RS2B0T").expect("RS2B0T must name the frozen catalog root"),
+        );
+        assert!(root.is_absolute(), "RS2B0T must be absolute");
+        let (index, sources) = load_frozen_catalog_index_and_sources(&root);
         let cards = parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
         let by_name: HashMap<&str, &RegistryCard> =
             cards.iter().map(|c| (c.name.as_str(), c)).collect();
