@@ -33,11 +33,13 @@ fn prayer_seed_steps() -> Vec<Step> {
         },
     });
     steps.push(Step {
-        name: "setvar prayer 83..97 off and prove first overlay before Start",
+        name: "setvar prayer0..prayer14 off and prove first overlay before Start",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
-                for varp in PRAYER_VARP0..=97 {
-                    cheat(c, &format!("setvar {varp} 0"));
+                // The engine resolves setvar by debugname; varp.pack maps
+                // prayer0..prayer14 to 83..97. Core checks all 15 at Start.
+                for index in 0..15 {
+                    cheat(c, &format!("setvar prayer{index} 0"));
                 }
                 true
             }),
@@ -129,8 +131,7 @@ mod tests {
         );
         assert!(
             s.steps[..start].iter().any(|st| {
-                st.name.contains("83..97")
-                    && st.wait.arm
+                st.wait.arm
                         == Proof::VarpExact {
                             id: PRAYER_VARP0,
                             value: 0,
