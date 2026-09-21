@@ -396,3 +396,201 @@ export class WalkToSpot {
         }
     }
 }
+
+function enterCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_enter
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('EnterLair');
+    }
+    return fn(payload);
+}
+
+function phrase(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value.source === 'string') return value.source;
+    return String(value);
+}
+
+function enterProjection(host, site) {
+    const talk = site.talkGate || null;
+    const fee = site.feeGate || null;
+    const gate = site.gate || null;
+    return {
+        parked: host.parked === true,
+        shieldReady: typeof host.shieldReady === 'function' ? host.shieldReady() === true : false,
+        hpFraction: typeof host.hpFraction === 'function' ? host.hpFraction() : 1,
+        panicHp: typeof host.panicHp === 'function' ? host.panicHp() : 0.2,
+        key: site.key,
+        boxes: site.boxes || [],
+        approach: (site.approach || []).map(tile),
+        talkGate: talk ? {
+            npc: talk.npc,
+            op: talk.op,
+            choose: phrase(talk.choose),
+            stand: tile(talk.stand),
+        } : null,
+        feeGate: fee ? {
+            npc: fee.npc,
+            op: fee.op,
+            coins: fee.coins,
+            stand: tile(fee.stand),
+            entrance: fee.entrance || null,
+            paidLine: phrase(fee.paidLine),
+            prepaidLine: phrase(fee.prepaidLine),
+        } : null,
+        gate: gate ? {
+            locId: gate.locId,
+            op: gate.op,
+            outside: tile(gate.outside),
+        } : null,
+        keyItem: site.keyItem || null,
+        route: site.route || null,
+    };
+}
+
+function beginWalk(step, radius) {
+    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walk
+        : undefined;
+    if (typeof walkFn !== 'function') {
+        throw notImpl('walk');
+    }
+    return walkFn({
+        op: 'begin',
+        x: step.x,
+        z: step.z,
+        level: step.level,
+        radius,
+        allow_teleports: false,
+    });
+}
+
+export class EnterLair {
+    constructor(host, site) {
+        this.host = host;
+        this.site = site;
+        const started = enterCall({ op: 'begin' });
+        this.token = started.token;
+    }
+
+    validate() {
+        const out = enterCall({ op: 'validate', token: this.token, ...enterProjection(this.host, this.site) });
+        return out === true || out?.value === true;
+    }
+
+    async execute() {
+        let reply = null;
+        for (;;) {
+            const step = enterCall({
+                op: 'next',
+                token: this.token,
+                reply,
+                ...enterProjection(this.host, this.site),
+            });
+            reply = null;
+            if (!step || step.kind === 'aborted') {
+                return false;
+            }
+            if (step.kind === 'yield') {
+                return step.value === true;
+            }
+            switch (step.kind) {
+                case 'log':
+                    this.host.log?.(step.message);
+                    break;
+                case 'status':
+                    this.host.setStatus?.(step.message);
+                    break;
+                case 'walk': {
+                    const walkToken = beginWalk(step, 0);
+                    queue({
+                        op: 'walk',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        radius: 0,
+                        request_id: walkToken,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                    });
+                    reply = { queued: true, walkToken };
+                    break;
+                }
+                case 'walk-near': {
+                    const walkToken = beginWalk(step, Number(step.radius));
+                    queue({
+                        op: 'walk-near',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        radius: Number(step.radius),
+                        request_id: walkToken,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                    });
+                    reply = { queued: true, walkToken };
+                    break;
+                }
+                case 'npc':
+                    queue({
+                        op: 'npc',
+                        name: step.name,
+                        action: step.action,
+                        index: step.index,
+                    });
+                    reply = { queued: true };
+                    break;
+                case 'continue':
+                    queue({ op: 'continue' });
+                    break;
+                case 'answer':
+                    queue({ op: 'answer', option: step.option });
+                    break;
+                case 'close-modal':
+                    queue({ op: 'close-modal' });
+                    break;
+                case 'loc':
+                    queue({
+                        op: 'loc',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        action: step.action,
+                        id: step.id,
+                    });
+                    reply = { queued: true };
+                    break;
+                case 'use-on':
+                    queue({
+                        op: 'use-on',
+                        name: step.name,
+                        kind: 'loc',
+                        x: step.x,
+                        z: step.z,
+                        level: step.level,
+                        source_item_id: step.id,
+                        source_item_slot: step.slot,
+                        index: null,
+                    });
+                    reply = { queued: true };
+                    break;
+                case 'sustain':
+                    await Sustain.run();
+                    break;
+                case 'delay-ticks':
+                    await Execution.delayTicks(Number(step.n) || 1);
+                    break;
+                case 'wait':
+                    await Execution.delayTicks(1);
+                    break;
+                default:
+                    return false;
+            }
+        }
+    }
+}

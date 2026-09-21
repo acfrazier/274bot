@@ -439,6 +439,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register walkspot: {e}"))?;
     runtime
+        .register_function("__rs2b0t_enter", |args: &[serde_json::Value]| {
+            Ok(crate::hunt_lair::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register enter: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_production",
             move |args: &[serde_json::Value]| {
@@ -1441,6 +1448,32 @@ api.walkspotNext = function (input) {
   }
   if (out.kind === 'yield') {
     return { ok: true, status: 'done', token: out.token, kind: 'yield' };
+  }
+  return { ok: true, status: 'continue', token: out.token, ...out };
+};
+function enterCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_enter(payload);
+}
+api.enterBegin = function (input) {
+  const out = enterCall({ op: 'begin', ...(input || {}) });
+  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
+  return helperOk({ token: out.token });
+};
+api.enterValidate = function (input) {
+  if (!input || input.token == null) return helperErr('invalid-args');
+  const out = enterCall({ op: 'validate', ...input });
+  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+  return helperOk(out === true || out?.value === true);
+};
+api.enterNext = function (input) {
+  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
+  const out = enterCall({ op: 'next', ...input });
+  if (!out) return { ok: false, error: 'aborted' };
+  if (out.kind === 'aborted') {
+    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
+  }
+  if (out.kind === 'yield') {
+    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
   }
   return { ok: true, status: 'continue', token: out.token, ...out };
 };
