@@ -127,6 +127,32 @@ existing Rust machine. Additional public error: `busy`.
 
 See `crates/script/examples/prayer_v2.ts`.
 
+## Supply helpers
+
+Five sync `HelperResult` methods over selected-revision facts (food count/heal,
+combat keep list, runes per cast, escape teleport requirements). v1 compat
+exports `foodCount`, `foodHealAmount`, `combatKeepNames`, and `runesPerCast`
+keep their existing JSON helper paths where applicable; `foodCount` and
+`foodHealAmount` marshal through typed native hooks with Rust policy.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `foodCount({ items, foodName })` | slot count | `invalid-args`, `missing-selected-data` |
+
+`foodCount` takes a real `ItemRow[]`. `api.snapshot.inv` is the host array view
+(`Array.isArray` is true); pass it directly. Arbitrary `{ length }` objects are
+`invalid-args`. `Array.from(api.snapshot.inv)` is optional, not required.
+| `foodHealAmount({ foodName })` | fixed heal | `unknown-food`, `missing-selected-data` |
+| `combatKeepNames({ food, … })` | string[] | `invalid-args`, `missing-selected-data` |
+| `runesPerCast({ spellName, wielded })` | costs or `null` | `invalid-args`, `missing-selected-data` |
+| `escapeRunesFor({ id })` | `{ runes, level, label }` | `unknown-id`, `missing-selected-data` |
+
+`escapeRunesFor` resolves `id` with exact `magic_spell_teleport_{id}` rows (no
+cast `available()` filter). Public v1 `escapeRunesFor` export remains W5 hunt
+integration; the Rust fact module is shared when that lands.
+
+Example: `crates/script/examples/supply_helpers_v2.ts`.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that

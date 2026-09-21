@@ -1,3 +1,4 @@
+use client::io::ClientRevision;
 use script::{LoadIsolate, LoadShape};
 
 fn probe_json(src: &str) -> serde_json::Value {
@@ -106,7 +107,8 @@ export default class T extends LoopingBot {
 
 #[test]
 fn food_forms_are_generated_aliases_and_count_slots() {
-    let value = probe_json(
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
         r#"
 import { foodForms, foodCount, isFoodItem } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
@@ -129,8 +131,17 @@ export default class T extends LoopingBot {
         });
     }
 }
-"#,
-    );
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
     assert_eq!(
         value["cake"],
         serde_json::json!(["cake", "2/3 cake", "slice of cake"])
