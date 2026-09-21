@@ -4,6 +4,7 @@ pub(crate) mod pair;
 pub(crate) mod production;
 pub(crate) mod ranging_guild;
 pub(crate) mod render;
+pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
 
@@ -66,6 +67,9 @@ pub(crate) use ranging_guild::{
     ranging_guild_round_scenario,
 };
 pub(crate) use render::render_smoke_scenario;
+pub(crate) use route_inspect::{
+    brimhaven_moss_inspect_v1_scenario, route_inspect_brimhaven_v2_scenario,
+};
 pub(crate) use script_basics::{
     bone_burier_scenario, bone_burier_v2_scenario, lamp_redemption_scenario, maze_owned_scenario,
     strange_plant_owned_scenario,

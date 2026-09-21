@@ -307,7 +307,7 @@ pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
 /// Lookup is by file name including extension so `.ts` and `.js` stay distinct.
 pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
     match file_name {
-        "bone_burier_v2.ts" | "bone_burier_v2.js" => {
+        "bone_burier_v2.ts" | "bone_burier_v2.js" | "route_inspect_brimhaven_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);

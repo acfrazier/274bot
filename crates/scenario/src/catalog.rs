@@ -65,6 +65,14 @@ const REGISTRY: &[Entry] = &[
     Entry::new("nav_shantay", scenarios::nav_shantay_scenario),
     Entry::new("nav_routes", scenarios::nav_routes_scenario),
     Entry::new("nav_paint_path", scenarios::nav_paint_path_scenario),
+    Entry::new(
+        "brimhaven_moss_inspect_v1",
+        scenarios::brimhaven_moss_inspect_v1_scenario,
+    ),
+    Entry::new(
+        "route_inspect_brimhaven_v2_ts",
+        scenarios::route_inspect_brimhaven_v2_scenario,
+    ),
     Entry::new("bone_burier", scenarios::bone_burier_scenario),
     Entry::new("lamp_redemption", scenarios::lamp_redemption_scenario),
     Entry::new("bone_burier_v2_ts", bone_burier_v2_ts_scenario),
